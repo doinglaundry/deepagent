@@ -91,7 +91,7 @@
 **Purpose**: 处理跨故事体验、文档与占位扩展点。
 
 - [x] T026 [Polish] 完善非 happy path UX：处理非仓库启动、配置缺失、模型不可用、插件端点不可达等情况，修改 `internal/cli/render/render.go`、`internal/cli/status/status.go`、`internal/plugin/gateway/gateway.go`
-- [ ] T027 [P] [Polish] 回写并校对开发文档，确保实现结果与 `specs/20260423-eino-cli-mvp/quickstart.md`、`specs/20260423-eino-cli-mvp/contracts/cli-control.openapi.yaml` 一致
+- [x] T027 [P] [Polish] 回写并校对开发文档，确保实现结果与 `specs/20260423-eino-cli-mvp/quickstart.md`、`specs/20260423-eino-cli-mvp/contracts/cli-control.openapi.yaml` 一致
 - [ ] T028 [Polish] 按 `specs/20260423-eino-cli-mvp/quickstart.md` 手工走通 MVP 演示脚本，并修正发现的实现/文档偏差
 
 ---

@@ -154,9 +154,6 @@ components:
       properties:
         workspaceRoot:
           type: string
-        restrictedMode:
-          type: boolean
-          default: false
       required: [workspaceRoot]
     SubmitCommandRequest:
       type: object
@@ -170,14 +167,11 @@ components:
     CommandAccepted:
       type: object
       properties:
-        commandId:
-          type: string
-        runId:
-          type: string
-        status:
-          type: string
-          enum: [accepted, running]
-      required: [commandId, runId, status]
+        command:
+          $ref: '#/components/schemas/Command'
+        run:
+          $ref: '#/components/schemas/AgentRun'
+      required: [command, run]
     ApprovalDecision:
       type: object
       properties:
@@ -190,15 +184,15 @@ components:
     SaveCheckpointRequest:
       type: object
       properties:
-        contextExcerpt:
+        sessionId:
           type: string
-        pendingConfirmation:
+        workspaceRoot:
+          type: string
+        lastInput:
+          type: string
+        awaitingApproval:
           type: boolean
-        openTaskIds:
-          type: array
-          items:
-            type: string
-      required: [contextExcerpt, pendingConfirmation, openTaskIds]
+      required: [sessionId, workspaceRoot, awaitingApproval]
     Session:
       type: object
       properties:
@@ -206,15 +200,41 @@ components:
           type: string
         workspaceRoot:
           type: string
-        restrictedMode:
-          type: boolean
         startedAt:
           type: string
           format: date-time
         lastActiveAt:
           type: string
           format: date-time
-      required: [id, workspaceRoot, restrictedMode, startedAt, lastActiveAt]
+      required: [id, workspaceRoot, startedAt, lastActiveAt]
+    Command:
+      type: object
+      properties:
+        id:
+          type: string
+        sessionId:
+          type: string
+        rawInput:
+          type: string
+        inputType:
+          type: string
+          enum: [natural_language, slash_command]
+        status:
+          type: string
+          enum: [accepted, running, completed, failed]
+        output:
+          type: string
+        errorCode:
+          type: string
+        errorMessage:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+      required: [id, sessionId, rawInput, inputType, status, createdAt]
     AgentRun:
       type: object
       properties:
@@ -229,52 +249,71 @@ components:
         status:
           type: string
           enum: [pending, streaming, completed, failed]
-        finalOutput:
+        result:
+          $ref: '#/components/schemas/Result'
+        startedAt:
           type: string
-        errorMessage:
+          format: date-time
+        invocations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolInvocation'
+      required: [id, sessionId, commandId, modelName, status, startedAt]
+    Result:
+      type: object
+      properties:
+        success:
+          type: boolean
+        code:
           type: string
-      required: [id, sessionId, commandId, modelName, status]
+          enum: [config_error, workspace_error, runtime_error, tool_error]
+        message:
+          type: string
+        output:
+          type: string
+        needsUser:
+          type: boolean
+      required: [success]
     ToolInvocation:
       type: object
       properties:
         id:
           type: string
-        agentRunId:
-          type: string
         toolName:
           type: string
+        arguments:
+          type: array
+          items:
+            type: string
         approvalStatus:
           type: string
           enum: [not_required, awaiting_approval, approved, rejected]
         executionStatus:
           type: string
-          enum: [requested, executing, succeeded, failed, rejected, timed_out]
-        stdoutSummary:
-          type: string
-        stderrSummary:
+          enum: [requested, executing, succeeded, failed, rejected]
+        output:
           type: string
         errorMessage:
           type: string
-      required: [id, agentRunId, toolName, approvalStatus, executionStatus]
-    Checkpoint:
-      type: object
-      properties:
-        id:
-          type: string
-        sessionId:
-          type: string
-        contextExcerpt:
-          type: string
-        pendingConfirmation:
-          type: boolean
-        openTaskIds:
-          type: array
-          items:
-            type: string
         createdAt:
           type: string
           format: date-time
-      required: [id, sessionId, contextExcerpt, pendingConfirmation, openTaskIds, createdAt]
+      required: [id, toolName, arguments, approvalStatus, executionStatus, createdAt]
+    Checkpoint:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        workspaceRoot:
+          type: string
+        lastInput:
+          type: string
+        awaitingApproval:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+      required: [sessionId, workspaceRoot, awaitingApproval, updatedAt]
     ResumeSessionResponse:
       type: object
       properties:
@@ -294,15 +333,7 @@ components:
           type: string
         title:
           type: string
-        description:
-          type: string
         status:
           type: string
           enum: [pending, in_progress, completed, blocked, failed]
-        blockedBy:
-          type: array
-          items:
-            type: string
-        resultSummary:
-          type: string
       required: [id, title, status]
