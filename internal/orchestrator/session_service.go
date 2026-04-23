@@ -57,7 +57,7 @@ func (s *Service) Submit(ctx context.Context, sess session.Session, route router
 		ID:        fmt.Sprintf("run-%d", now.UnixNano()),
 		SessionID: sess.ID,
 		CommandID: command.ID,
-		ModelName: "noop-model",
+		ModelName: s.runtime.Name(),
 		Status:    AgentRunStatusStreaming,
 		StartedAt: now,
 	}

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"eino-cli/internal/cli/render"
 	"eino-cli/internal/cli/repl"
@@ -40,7 +41,10 @@ func New() (*App, error) {
 		// MVP 阶段插件不可用不阻断主链路，保留显式检查作为 UX 提示边界。
 	}
 
-	runtime := eino.NewNoopRuntime("noop-model")
+	runtime, err := buildRuntime(cfg)
+	if err != nil {
+		return nil, err
+	}
 	persistence := orchestrator.NewPersistence(
 		session.NewStore(cfg.SessionsDir),
 		checkpoint.NewStore(cfg.CheckpointDir),
@@ -55,4 +59,15 @@ func New() (*App, error) {
 
 func (a *App) Run() error {
 	return a.runner.Run(context.Background())
+}
+
+func buildRuntime(cfg config.Config) (eino.Runtime, error) {
+	switch cfg.RuntimeProvider {
+	case "", "noop":
+		return eino.NewNoopRuntime(cfg.RuntimeModel), nil
+	case "local_service":
+		return eino.NewLocalServiceRuntime(cfg.RuntimeBaseURL, cfg.RuntimeModel, time.Duration(cfg.RuntimeTimeout)*time.Second), nil
+	default:
+		return nil, fmt.Errorf("unsupported runtime provider: %s", cfg.RuntimeProvider)
+	}
 }
