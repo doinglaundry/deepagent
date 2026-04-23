@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "mode": "all_done",
+  "phase": "finished",
+  "active_spec": "specs/20260423-eino-cli-mvp/tasks.md",
+  "current_task_id": "",
+  "last_completed_task_id": "T028",
+  "allow_stop_reason": "all tasks completed"
+}
