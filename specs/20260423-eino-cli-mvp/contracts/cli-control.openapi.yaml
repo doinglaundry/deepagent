@@ -1,0 +1,308 @@
+openapi: 3.1.0
+info:
+  title: Eino CLI Control Plane
+  version: 0.1.0
+  description: >-
+    MVP control-plane contract for the local Eino CLI. These endpoints describe
+    logical module boundaries for REPL, orchestrator, tools, session recovery,
+    and task tracking; they do not imply a remote network deployment.
+servers:
+  - url: local://eino-cli
+paths:
+  /sessions:
+    post:
+      summary: Start a new CLI session
+      operationId: createSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+  /sessions/{sessionId}/commands:
+    post:
+      summary: Submit a natural-language input or slash command
+      operationId: submitCommand
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitCommandRequest'
+      responses:
+        '202':
+          description: Command accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandAccepted'
+  /agent-runs/{runId}:
+    get:
+      summary: Get the current single-agent run state
+      operationId: getAgentRun
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Agent run state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+  /tool-invocations/{invocationId}/approve:
+    post:
+      summary: Approve or reject a pending high-risk tool invocation
+      operationId: approveToolInvocation
+      parameters:
+        - $ref: '#/components/parameters/InvocationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalDecision'
+      responses:
+        '200':
+          description: Approval decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolInvocation'
+  /sessions/{sessionId}/checkpoint:
+    post:
+      summary: Persist the latest recoverable checkpoint for a session
+      operationId: saveCheckpoint
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveCheckpointRequest'
+      responses:
+        '200':
+          description: Checkpoint saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Checkpoint'
+  /sessions/{sessionId}/resume:
+    post:
+      summary: Resume the latest checkpoint for a session
+      operationId: resumeSession
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Session resumed from latest checkpoint
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeSessionResponse'
+  /sessions/{sessionId}/tasks:
+    get:
+      summary: List task state for a session
+      operationId: listTasks
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Current task list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Task'
+                required: [tasks]
+components:
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+    InvocationId:
+      name: invocationId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    CreateSessionRequest:
+      type: object
+      properties:
+        workspaceRoot:
+          type: string
+        restrictedMode:
+          type: boolean
+          default: false
+      required: [workspaceRoot]
+    SubmitCommandRequest:
+      type: object
+      properties:
+        rawInput:
+          type: string
+        inputType:
+          type: string
+          enum: [natural_language, slash_command]
+      required: [rawInput, inputType]
+    CommandAccepted:
+      type: object
+      properties:
+        commandId:
+          type: string
+        runId:
+          type: string
+        status:
+          type: string
+          enum: [accepted, running]
+      required: [commandId, runId, status]
+    ApprovalDecision:
+      type: object
+      properties:
+        decision:
+          type: string
+          enum: [approved, rejected]
+        reason:
+          type: string
+      required: [decision]
+    SaveCheckpointRequest:
+      type: object
+      properties:
+        contextExcerpt:
+          type: string
+        pendingConfirmation:
+          type: boolean
+        openTaskIds:
+          type: array
+          items:
+            type: string
+      required: [contextExcerpt, pendingConfirmation, openTaskIds]
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+        workspaceRoot:
+          type: string
+        restrictedMode:
+          type: boolean
+        startedAt:
+          type: string
+          format: date-time
+        lastActiveAt:
+          type: string
+          format: date-time
+      required: [id, workspaceRoot, restrictedMode, startedAt, lastActiveAt]
+    AgentRun:
+      type: object
+      properties:
+        id:
+          type: string
+        sessionId:
+          type: string
+        commandId:
+          type: string
+        modelName:
+          type: string
+        status:
+          type: string
+          enum: [pending, streaming, completed, failed]
+        finalOutput:
+          type: string
+        errorMessage:
+          type: string
+      required: [id, sessionId, commandId, modelName, status]
+    ToolInvocation:
+      type: object
+      properties:
+        id:
+          type: string
+        agentRunId:
+          type: string
+        toolName:
+          type: string
+        approvalStatus:
+          type: string
+          enum: [not_required, awaiting_approval, approved, rejected]
+        executionStatus:
+          type: string
+          enum: [requested, executing, succeeded, failed, rejected, timed_out]
+        stdoutSummary:
+          type: string
+        stderrSummary:
+          type: string
+        errorMessage:
+          type: string
+      required: [id, agentRunId, toolName, approvalStatus, executionStatus]
+    Checkpoint:
+      type: object
+      properties:
+        id:
+          type: string
+        sessionId:
+          type: string
+        contextExcerpt:
+          type: string
+        pendingConfirmation:
+          type: boolean
+        openTaskIds:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, sessionId, contextExcerpt, pendingConfirmation, openTaskIds, createdAt]
+    ResumeSessionResponse:
+      type: object
+      properties:
+        session:
+          $ref: '#/components/schemas/Session'
+        checkpoint:
+          $ref: '#/components/schemas/Checkpoint'
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+      required: [session, checkpoint, tasks]
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [pending, in_progress, completed, blocked, failed]
+        blockedBy:
+          type: array
+          items:
+            type: string
+        resultSummary:
+          type: string
+      required: [id, title, status]

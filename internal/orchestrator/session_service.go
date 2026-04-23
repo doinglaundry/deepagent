@@ -1,0 +1,96 @@
+package orchestrator
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"eino-cli/internal/cli/router"
+	"eino-cli/internal/runtime/eino"
+	"eino-cli/internal/session"
+	"eino-cli/internal/tools/execute"
+	"eino-cli/internal/tools/policy"
+	"eino-cli/internal/tools/registry"
+)
+
+type AgentRun struct {
+	ID          string                   `json:"id"`
+	SessionID   string                   `json:"session_id"`
+	CommandID   string                   `json:"command_id"`
+	ModelName   string                   `json:"model_name"`
+	Status      AgentRunStatus           `json:"status"`
+	Result      eino.Result              `json:"result"`
+	StartedAt   time.Time                `json:"started_at"`
+	Invocations []session.ToolInvocation `json:"invocations,omitempty"`
+}
+
+type CommandAccepted struct {
+	Command session.Command `json:"command"`
+	Run     AgentRun        `json:"run"`
+}
+
+type Service struct {
+	runtime  eino.Runtime
+	registry *registry.Registry
+	executor *execute.Executor
+	policy   *policy.Policy
+}
+
+func NewService(runtime eino.Runtime, registry *registry.Registry, executor *execute.Executor, policy *policy.Policy) *Service {
+	return &Service{runtime: runtime, registry: registry, executor: executor, policy: policy}
+}
+
+func (s *Service) Submit(ctx context.Context, sess session.Session, route router.Route) (CommandAccepted, error) {
+	now := time.Now()
+	command := session.NewCommand(fmt.Sprintf("cmd-%d", now.UnixNano()), sess.ID, route.RawInput, session.CommandInputType(route.InputType), now)
+	command.Status = session.CommandStatusRunning
+
+	run := AgentRun{
+		ID:        fmt.Sprintf("run-%d", now.UnixNano()),
+		SessionID: sess.ID,
+		CommandID: command.ID,
+		ModelName: "noop-model",
+		Status:    AgentRunStatusStreaming,
+		StartedAt: now,
+	}
+
+	if route.InputType == router.InputTypeSlashCommand {
+		if handled, invocation, result, err := s.tryToolInvocation(route, sess.WorkspaceRoot, now); handled {
+			run.Invocations = append(run.Invocations, invocation)
+			if err != nil {
+				command.Status = session.CommandStatusFailed
+				command.CompletedAt = now
+				command.ErrorCode = string(eino.ErrorCodeTool)
+				command.ErrorMessage = err.Error()
+				run.Status = AgentRunStatusFailed
+				run.Result = eino.FailureResult(eino.ErrorCodeTool, err.Error())
+				return CommandAccepted{Command: command, Run: run}, nil
+			}
+			command.Status = session.CommandStatusCompleted
+			command.CompletedAt = now
+			command.Output = result.Output
+			run.Status = AgentRunStatusCompleted
+			run.Result = result
+			return CommandAccepted{Command: command, Run: run}, nil
+		}
+	}
+
+	result, err := s.runtime.Execute(ctx, route.RawInput)
+	if err != nil {
+		command.Status = session.CommandStatusFailed
+		run.Status = AgentRunStatusFailed
+		run.Result = eino.FailureResult(eino.ErrorCodeRuntime, err.Error())
+		return CommandAccepted{Command: command, Run: run}, nil
+	}
+
+	command.Status = session.CommandStatusCompleted
+	command.CompletedAt = now
+	command.Output = result.Output
+	command.ErrorCode = string(result.Code)
+	command.ErrorMessage = result.Message
+
+	run.Status = AgentRunStatusCompleted
+	run.Result = result
+
+	return CommandAccepted{Command: command, Run: run}, nil
+}
