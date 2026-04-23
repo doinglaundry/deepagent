@@ -16,7 +16,7 @@
 
 **Purpose**: 初始化 Go CLI 项目骨架和核心目录。
 
-- [x] T001 [Setup] 初始化 Go 模块并创建 CLI 入口 `go.mod`、`cmd/eino-cli/main.go`
+- [x] T001 [Setup] 初始化 Go 模块并创建 CLI 入口 `go.mod`、`main.go`
 - [x] T002 [P] [Setup] 创建 REPL 相关骨架文件 `internal/cli/repl/repl.go`、`internal/cli/router/router.go`、`internal/cli/render/render.go`、`internal/cli/status/status.go`、`internal/cli/taskview/taskview.go`
 - [x] T003 [P] [Setup] 创建 runtime 与 orchestrator 骨架文件 `internal/runtime/eino/runtime.go`、`internal/orchestrator/orchestrator.go`、`internal/orchestrator/types.go`
 - [x] T004 [P] [Setup] 创建 workspace、tools、session、memory、task、config 骨架文件 `internal/workspace/workspace.go`、`internal/tools/tool.go`、`internal/session/session.go`、`internal/task/task.go`、`internal/memory/store/store.go`、`internal/config/config.go`
@@ -31,7 +31,7 @@
 - [x] T006 [P] [Foundational] 实现工作区识别与基础扫描 `internal/workspace/workspace.go`、`internal/workspace/scan/scan.go`
 - [x] T007 [P] [Foundational] 定义共享领域模型与状态枚举 `internal/orchestrator/types.go`、`internal/session/session.go`、`internal/task/task.go`、`internal/tools/tool.go`
 - [x] T008 [Foundational] 实现统一错误模型与结果封装，对齐 `specs/20260423-eino-cli-mvp/contracts/cli-control.openapi.yaml`，修改 `internal/runtime/eino/result.go`、`internal/cli/render/types.go`
-- [x] T009 [Foundational] 打通应用启动装配链路，在 `cmd/eino-cli/main.go` 中连接 config、workspace、repl 构造流程
+- [x] T009 [Foundational] 打通应用启动装配链路，在 `main.go` 中连接 config、workspace、repl 构造流程
 
 **Checkpoint**: Foundation 完成后，用户故事任务才可开始。
 

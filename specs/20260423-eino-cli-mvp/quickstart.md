@@ -6,7 +6,7 @@
 
 ## Current Implemented Scope
 
-- CLI 入口为 `cmd/eino-cli/main.go`，应用装配位于 `internal/app/app.go`
+- CLI 入口为 `main.go`，应用装配位于 `internal/app/app.go`
 - 启动时加载本地状态目录 `.eino-cli/`，包含 `sessions/`、`memory/`、`checkpoints/`
 - 仅支持在 Git 仓库内启动；非仓库目录会直接报错
 - REPL 支持自然语言输入与 slash command 路由
@@ -23,7 +23,7 @@
 1. 可选：如果希望从干净状态开始演示，先删除工作区内已有的 `.eino-cli/` 状态目录；如果保留旧状态，CLI 首次启动时也可能先显示已有 session 的 resume 信息
 2. 在一个 Git 仓库根目录执行：
    ```bash
-   go run ./cmd/eino-cli
+   go run .
    ```
 3. 启动后确认看到状态输出，包含当前 workspace、`single-agent` 模式，以及 plugin gateway unavailable warning；如果工作区里已有 checkpoint，也可能先看到一段 `resume session` 输出
 4. 输入自然语言请求，例如：
