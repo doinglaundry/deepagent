@@ -78,6 +78,15 @@ func (r *REPL) Run(ctx context.Context) error {
 	if err := r.Store.Save(r.Session); err != nil {
 		return err
 	}
+	if snapshot, ok, err := checkpoint.RecoverLatest(r.Config.CheckpointDir); err == nil && ok && snapshot.SessionID == r.Session.ID {
+		message, err := resumeMessage(r.Session, snapshot, r.Retriever)
+		if err != nil {
+			return err
+		}
+		if err := r.Renderer.Render(message); err != nil {
+			return err
+		}
+	}
 
 	if err := r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"}); err != nil {
 		return err

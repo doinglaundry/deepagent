@@ -79,7 +79,7 @@
 - [x] T021 [P] [US3] 实现 checkpoint 保存与恢复逻辑 `internal/session/checkpoint/store.go`、`internal/session/checkpoint/recover.go`
 - [x] T022 [P] [US3] 实现任务规划、任务跟踪与任务列表展示 `internal/task/planner/planner.go`、`internal/task/tracker/tracker.go`、`internal/cli/taskview/taskview.go`
 - [x] T023 [P] [US3] 实现项目级轻量记忆的存储、召回与策略 `internal/memory/store/store.go`、`internal/memory/retrieval/retrieval.go`、`internal/memory/policy/policy.go`
-- [ ] T024 [US3] 实现上下文注入与恢复入口 `internal/session/inject/inject.go`、`internal/cli/repl/resume.go`
+- [x] T024 [US3] 实现上下文注入与恢复入口 `internal/session/inject/inject.go`、`internal/cli/repl/resume.go`
 - [ ] T025 [US3] 将 checkpoint / task / memory 的写入挂接到 orchestrator 完成链路 `internal/orchestrator/orchestrator.go`、`internal/session/session.go`
 
 **Checkpoint**: User Story 3 完成后，CLI 的持续使用体验可独立验证。
