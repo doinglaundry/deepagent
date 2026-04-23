@@ -8,6 +8,8 @@ import (
 	"eino-cli/internal/cli/router"
 	"eino-cli/internal/runtime/eino"
 	"eino-cli/internal/session"
+	"eino-cli/internal/session/checkpoint"
+	"eino-cli/internal/task"
 	"eino-cli/internal/tools/execute"
 	"eino-cli/internal/tools/policy"
 	"eino-cli/internal/tools/registry"
@@ -30,14 +32,20 @@ type CommandAccepted struct {
 }
 
 type Service struct {
-	runtime  eino.Runtime
-	registry *registry.Registry
-	executor *execute.Executor
-	policy   *policy.Policy
+	runtime     eino.Runtime
+	registry    *registry.Registry
+	executor    *execute.Executor
+	policy      *policy.Policy
+	persistence *Persistence
 }
 
 func NewService(runtime eino.Runtime, registry *registry.Registry, executor *execute.Executor, policy *policy.Policy) *Service {
 	return &Service{runtime: runtime, registry: registry, executor: executor, policy: policy}
+}
+
+func (s *Service) WithPersistence(persistence *Persistence) *Service {
+	s.persistence = persistence
+	return s
 }
 
 func (s *Service) Submit(ctx context.Context, sess session.Session, route router.Route) (CommandAccepted, error) {
@@ -64,6 +72,7 @@ func (s *Service) Submit(ctx context.Context, sess session.Session, route router
 				command.ErrorMessage = err.Error()
 				run.Status = AgentRunStatusFailed
 				run.Result = eino.FailureResult(eino.ErrorCodeTool, err.Error())
+				s.persist(sess, route, run)
 				return CommandAccepted{Command: command, Run: run}, nil
 			}
 			command.Status = session.CommandStatusCompleted
@@ -71,6 +80,7 @@ func (s *Service) Submit(ctx context.Context, sess session.Session, route router
 			command.Output = result.Output
 			run.Status = AgentRunStatusCompleted
 			run.Result = result
+			s.persist(sess, route, run)
 			return CommandAccepted{Command: command, Run: run}, nil
 		}
 	}
@@ -80,6 +90,7 @@ func (s *Service) Submit(ctx context.Context, sess session.Session, route router
 		command.Status = session.CommandStatusFailed
 		run.Status = AgentRunStatusFailed
 		run.Result = eino.FailureResult(eino.ErrorCodeRuntime, err.Error())
+		s.persist(sess, route, run)
 		return CommandAccepted{Command: command, Run: run}, nil
 	}
 
@@ -91,6 +102,27 @@ func (s *Service) Submit(ctx context.Context, sess session.Session, route router
 
 	run.Status = AgentRunStatusCompleted
 	run.Result = result
+	s.persist(sess, route, run)
 
 	return CommandAccepted{Command: command, Run: run}, nil
+}
+
+func (s *Service) persist(sess session.Session, route router.Route, run AgentRun) {
+	if s.persistence == nil {
+		return
+	}
+	updatedSession := sess.Touch(time.Now())
+	_ = s.persistence.SaveSession(updatedSession)
+	_ = s.persistence.SaveCheckpoint(checkpoint.Snapshot{
+		SessionID:        sess.ID,
+		WorkspaceRoot:    sess.WorkspaceRoot,
+		LastInput:        route.RawInput,
+		AwaitingApproval: len(run.Invocations) > 0 && run.Invocations[0].ApprovalStatus == session.ApprovalStatusAwaitingApproval,
+		UpdatedAt:        time.Now(),
+	})
+	status := task.StatusCompleted
+	if !run.Result.Success {
+		status = task.StatusFailed
+	}
+	_ = s.persistence.SaveTask(sess, task.Task{ID: run.CommandID, Title: route.RawInput, Status: status})
 }

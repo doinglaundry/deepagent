@@ -6,8 +6,12 @@ import (
 	"eino-cli/internal/cli/render"
 	"eino-cli/internal/cli/repl"
 	"eino-cli/internal/config"
+	memorypolicy "eino-cli/internal/memory/policy"
+	memorystore "eino-cli/internal/memory/store"
 	"eino-cli/internal/orchestrator"
 	"eino-cli/internal/runtime/eino"
+	"eino-cli/internal/session"
+	"eino-cli/internal/session/checkpoint"
 	"eino-cli/internal/tools/execute"
 	"eino-cli/internal/tools/policy"
 	"eino-cli/internal/tools/registry"
@@ -30,7 +34,13 @@ func New() (*App, error) {
 	}
 
 	runtime := eino.NewNoopRuntime("noop-model")
-	service := orchestrator.NewService(runtime, registry.New(), execute.New(), policy.New())
+	persistence := orchestrator.NewPersistence(
+		session.NewStore(cfg.SessionsDir),
+		checkpoint.NewStore(cfg.CheckpointDir),
+		memorystore.NewStore(cfg.MemoryDir),
+		memorypolicy.New(),
+	)
+	service := orchestrator.NewService(runtime, registry.New(), execute.New(), policy.New()).WithPersistence(persistence)
 	renderer := render.NewConsoleRenderer(nil)
 
 	return &App{runner: repl.New(cfg, manifest, renderer, service)}, nil
