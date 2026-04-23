@@ -20,22 +20,23 @@
 
 ## MVP Demo Script
 
-1. 在一个 Git 仓库根目录执行：
+1. 可选：如果希望从干净状态开始演示，先删除工作区内已有的 `.eino-cli/` 状态目录；如果保留旧状态，CLI 首次启动时也可能先显示已有 session 的 resume 信息
+2. 在一个 Git 仓库根目录执行：
    ```bash
    go run ./cmd/eino-cli
    ```
-2. 启动后确认首先看到状态输出，包含当前 workspace、`single-agent` 模式，以及 plugin gateway unavailable warning
-3. 输入自然语言请求，例如：
+3. 启动后确认看到状态输出，包含当前 workspace、`single-agent` 模式，以及 plugin gateway unavailable warning；如果工作区里已有 checkpoint，也可能先看到一段 `resume session` 输出
+4. 输入自然语言请求，例如：
    ```text
    介绍一下当前项目
    ```
    预期看到 `stub response from noop-model`
-4. 输入内置命令查看帮助：
+5. 输入内置命令查看帮助：
    ```text
    /help
    ```
    预期看到当前支持的命令列表
-5. 输入低风险工具命令：
+6. 输入低风险工具命令：
    ```text
    /ls
    ```
@@ -44,25 +45,25 @@
    /read go.mod
    ```
    预期直接返回目录列表或文件内容
-6. 输入高风险工具命令：
+7. 输入高风险工具命令：
    ```text
    /shell pwd
    ```
    预期看到确认/拒绝提示，并以 `tool_error` 呈现当前 MVP 不允许执行的结果
-7. 输入一条新的自然语言请求后退出：
+8. 输入：
    ```text
    /exit
    ```
-8. 再次执行 `go run ./cmd/eino-cli`，预期启动时出现 `resume session` 输出，包含最近 `last input`，并在存在 memory 时显示 `memory context`
-9. 输入：
-   ```text
-   /tasks
-   ```
-   与：
-   ```text
-   /memory
-   ```
-   预期分别看到当前任务视图和已保存的项目级 memory
+9. 再次执行 `go run ./cmd/eino-cli`，预期启动时出现 `resume session` 输出，包含最近 `last input`，并在存在 memory 时显示 `memory context`
+10. 输入：
+    ```text
+    /tasks
+    ```
+    与：
+    ```text
+    /memory
+    ```
+    预期 `/tasks` 返回当前会话内的任务视图（在新会话里可能是 `tasks: none`），`/memory` 返回已保存的项目级 memory
 
 ## Contract-Driven Checks
 
