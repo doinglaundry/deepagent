@@ -13,6 +13,9 @@ import (
 	clistatus "eino-cli/internal/cli/status"
 	"eino-cli/internal/cli/taskview"
 	"eino-cli/internal/config"
+	memorypolicy "eino-cli/internal/memory/policy"
+	memoryretrieval "eino-cli/internal/memory/retrieval"
+	memorystore "eino-cli/internal/memory/store"
 	"eino-cli/internal/orchestrator"
 	"eino-cli/internal/session"
 	"eino-cli/internal/session/checkpoint"
@@ -36,6 +39,9 @@ type REPL struct {
 	Orchestrator    *orchestrator.Service
 	Planner         *planner.Planner
 	Tracker         *tracker.Tracker
+	MemoryStore     *memorystore.Store
+	MemoryPolicy    *memorypolicy.Policy
+	Retriever       *memoryretrieval.Retriever
 }
 
 func New(cfg config.Config, manifest workspace.Manifest, renderer render.Renderer, service *orchestrator.Service) *REPL {
@@ -48,6 +54,9 @@ func New(cfg config.Config, manifest workspace.Manifest, renderer render.Rendere
 	}
 	plan := planner.New()
 	tracked := tracker.New(nil)
+	memoryStore := memorystore.NewStore(cfg.MemoryDir)
+	memoryPolicy := memorypolicy.New()
+	memoryRetriever := memoryretrieval.New(memoryStore)
 	return &REPL{
 		Config:          cfg,
 		Workspace:       manifest,
@@ -59,6 +68,9 @@ func New(cfg config.Config, manifest workspace.Manifest, renderer render.Rendere
 		Orchestrator:    service,
 		Planner:         plan,
 		Tracker:         tracked,
+		MemoryStore:     memoryStore,
+		MemoryPolicy:    memoryPolicy,
+		Retriever:       memoryRetriever,
 	}
 }
 
@@ -102,6 +114,17 @@ func (r *REPL) Run(ctx context.Context) error {
 			r.Tracker = tracker.New(planned)
 			if len(planned) > 0 {
 				r.Tracker.SetStatus(planned[0].ID, "in_progress")
+			}
+			memory := memorystore.Memory{
+				Key:       fmt.Sprintf("memory-%d", time.Now().UnixNano()),
+				Content:   route.RawInput,
+				Scope:     r.Workspace.RootPath,
+				UpdatedAt: time.Now(),
+			}
+			if r.MemoryPolicy.Allow(memory) {
+				if err := r.MemoryStore.Save(memory); err != nil {
+					return err
+				}
 			}
 		}
 		if handled, err := r.handleBuiltin(route); handled || err != nil {
@@ -159,11 +182,25 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 
 	switch route.CommandName {
 	case "help":
-		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "支持的命令: /help, /status, /tasks, /exit, /read <file>, /ls [dir], /shell <command>"})
+		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "支持的命令: /help, /status, /tasks, /memory, /exit, /read <file>, /ls [dir], /shell <command>"})
 	case "status":
 		return true, r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"})
 	case "tasks":
 		return true, r.Renderer.Render(render.Message{Kind: "tasks", Content: taskview.FromTasks(r.Tracker.Tasks()).String()})
+	case "memory":
+		memories, err := r.Retriever.Find("")
+		if err != nil {
+			return true, err
+		}
+		if len(memories) == 0 {
+			return true, r.Renderer.Render(render.Message{Kind: "memory", Content: "memory: none"})
+		}
+		lines := make([]string, 0, len(memories)+1)
+		lines = append(lines, "memory:")
+		for _, memory := range memories {
+			lines = append(lines, fmt.Sprintf("- %s", memory.Content))
+		}
+		return true, r.Renderer.Render(render.Message{Kind: "memory", Content: strings.Join(lines, "\n")})
 	default:
 		return false, nil
 	}
