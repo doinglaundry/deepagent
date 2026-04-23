@@ -2,8 +2,10 @@ package eino
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,5 +48,23 @@ func TestLocalServiceRuntimeExecuteInvalidJSON(t *testing.T) {
 	runtime := NewLocalServiceRuntime(server.URL, "local-model", time.Second)
 	if _, err := runtime.Execute(context.Background(), "hello"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestLocalServiceRuntimeExecuteUnavailable(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+
+	runtime := NewLocalServiceRuntime("http://"+addr, "local-model", time.Second)
+	_, err = runtime.Execute(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "local runtime unavailable") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

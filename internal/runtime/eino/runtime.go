@@ -15,10 +15,6 @@ type Runtime interface {
 	Name() string
 }
 
-type NoopRuntime struct {
-	ModelName string
-}
-
 type LocalServiceRuntime struct {
 	BaseURL string
 	Model   string
@@ -34,10 +30,6 @@ type chatResponse struct {
 	Output string `json:"output"`
 }
 
-func NewNoopRuntime(modelName string) NoopRuntime {
-	return NoopRuntime{ModelName: strings.TrimSpace(modelName)}
-}
-
 func NewLocalServiceRuntime(baseURL, model string, timeout time.Duration) LocalServiceRuntime {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -47,17 +39,6 @@ func NewLocalServiceRuntime(baseURL, model string, timeout time.Duration) LocalS
 		Model:   strings.TrimSpace(model),
 		Client:  &http.Client{Timeout: timeout},
 	}
-}
-
-func (n NoopRuntime) Execute(context.Context, string) (Result, error) {
-	return SuccessResult(fmt.Sprintf("stub response from %s", n.Name())), nil
-}
-
-func (n NoopRuntime) Name() string {
-	if strings.TrimSpace(n.ModelName) == "" {
-		return "noop-model"
-	}
-	return strings.TrimSpace(n.ModelName)
 }
 
 func (r LocalServiceRuntime) Execute(ctx context.Context, prompt string) (Result, error) {

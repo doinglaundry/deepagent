@@ -22,15 +22,14 @@ func Load(root string) (Config, error) {
 
 	stateDir := filepath.Join(root, ".eino-cli")
 	cfg := Config{
-		RootDir:         root,
-		StateDir:        stateDir,
-		SessionsDir:     filepath.Join(stateDir, "sessions"),
-		MemoryDir:       filepath.Join(stateDir, "memory"),
-		CheckpointDir:   filepath.Join(stateDir, "checkpoints"),
-		RuntimeProvider: envOrDefault("EINO_RUNTIME_PROVIDER", "noop"),
-		RuntimeBaseURL:  envOrDefault("EINO_RUNTIME_BASE_URL", "http://127.0.0.1:8080"),
-		RuntimeModel:    envOrDefault("EINO_RUNTIME_MODEL", "local-model"),
-		RuntimeTimeout:  envOrDefaultInt("EINO_RUNTIME_TIMEOUT", 10),
+		RootDir:        root,
+		StateDir:       stateDir,
+		SessionsDir:    filepath.Join(stateDir, "sessions"),
+		MemoryDir:      filepath.Join(stateDir, "memory"),
+		CheckpointDir:  filepath.Join(stateDir, "checkpoints"),
+		RuntimeBaseURL: envOrDefault("EINO_RUNTIME_BASE_URL", "http://127.0.0.1:8080"),
+		RuntimeModel:   envOrDefault("EINO_RUNTIME_MODEL", "local-model"),
+		RuntimeTimeout: envOrDefaultInt("EINO_RUNTIME_TIMEOUT", 10),
 	}
 
 	if err := ensureDirs(cfg); err != nil {

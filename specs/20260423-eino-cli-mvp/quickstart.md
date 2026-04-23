@@ -10,7 +10,7 @@
 - 启动时加载本地状态目录 `.eino-cli/`，包含 `sessions/`、`memory/`、`checkpoints/`
 - 仅支持在 Git 仓库内启动；非仓库目录会直接报错
 - REPL 支持自然语言输入与 slash command 路由
-- Runtime 当前为 `noop-model`，自然语言请求返回占位响应
+- Runtime 仅支持本地 HTTP 服务调用，默认请求 `http://127.0.0.1:8080/v1/chat`
 - 内置工具仅包含 `/read <file>`、`/ls [dir]`、`/shell <command>`
 - `/shell` 被标记为高风险操作，会进入 `awaiting_approval`，当前 MVP 只展示拒绝/待确认提示，不真正放行执行
 - REPL 内置命令支持 `/help`、`/status`、`/tasks`、`/memory`、`/exit`
@@ -21,22 +21,26 @@
 ## MVP Demo Script
 
 1. 可选：如果希望从干净状态开始演示，先删除工作区内已有的 `.eino-cli/` 状态目录；如果保留旧状态，CLI 首次启动时也可能先显示已有 session 的 resume 信息
-2. 在一个 Git 仓库根目录执行：
+2. 先在一个终端启动本地 runtime 服务：
+   ```bash
+   go run ./cmd/eino-runtime
+   ```
+3. 在同一个 Git 仓库根目录的另一个终端执行：
    ```bash
    go run .
    ```
-3. 启动后确认看到状态输出，包含当前 workspace、`single-agent` 模式，以及 plugin gateway unavailable warning；如果工作区里已有 checkpoint，也可能先看到一段 `resume session` 输出
-4. 输入自然语言请求，例如：
+4. 启动后确认看到状态输出，包含当前 workspace、`single-agent` 模式，以及 plugin gateway unavailable warning；如果工作区里已有 checkpoint，也可能先看到一段 `resume session` 输出
+5. 输入自然语言请求，例如：
    ```text
    介绍一下当前项目
    ```
-   预期看到 `stub response from noop-model`
-5. 输入内置命令查看帮助：
+   预期看到本地 runtime 返回的响应，例如 `local service response from local-model: 介绍一下当前项目`
+6. 输入内置命令查看帮助：
    ```text
    /help
    ```
    预期看到当前支持的命令列表
-6. 输入低风险工具命令：
+7. 输入低风险工具命令：
    ```text
    /ls
    ```
@@ -45,17 +49,17 @@
    /read go.mod
    ```
    预期直接返回目录列表或文件内容
-7. 输入高风险工具命令：
+8. 输入高风险工具命令：
    ```text
    /shell pwd
    ```
    预期看到确认/拒绝提示，并以 `tool_error` 呈现当前 MVP 不允许执行的结果
-8. 输入：
+9. 输入：
    ```text
    /exit
    ```
-9. 再次执行 `go run ./cmd/eino-cli`，预期启动时出现 `resume session` 输出，包含最近 `last input`，并在存在 memory 时显示 `memory context`
-10. 输入：
+10. 再次执行 `go run .`，预期启动时出现 `resume session` 输出，包含最近 `last input`，并在存在 memory 时显示 `memory context`
+11. 输入：
     ```text
     /tasks
     ```
@@ -64,6 +68,7 @@
     /memory
     ```
     预期 `/tasks` 返回当前会话内的任务视图（在新会话里可能是 `tasks: none`），`/memory` 返回已保存的项目级 memory
+12. 如需验证失败路径，停止 `cmd/eino-runtime` 后再次启动 CLI 并提交自然语言请求，预期看到 `runtime_error`，且不会回退到任何 stub/noop 响应
 
 ## Contract-Driven Checks
 
@@ -84,7 +89,7 @@
 - `go test ./...` 应通过，作为当前 MVP 的基础构建验证
 - 非 Git 仓库启动属于预期失败路径，应输出 `workspace is not a git repository`
 - plugin gateway 不可用属于预期 warning，不阻断主链路
-- 当前没有真实模型调用、没有真正的 tool approval 放行、也没有远程 control plane 服务
+- 当前没有真正的 tool approval 放行，也没有远程 control plane 服务
 
 ## Out of Scope for This Iteration
 
