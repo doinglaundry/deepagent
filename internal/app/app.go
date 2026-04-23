@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 
 	"eino-cli/internal/cli/render"
 	"eino-cli/internal/cli/repl"
@@ -9,6 +10,7 @@ import (
 	memorypolicy "eino-cli/internal/memory/policy"
 	memorystore "eino-cli/internal/memory/store"
 	"eino-cli/internal/orchestrator"
+	"eino-cli/internal/plugin/gateway"
 	"eino-cli/internal/runtime/eino"
 	"eino-cli/internal/session"
 	"eino-cli/internal/session/checkpoint"
@@ -30,7 +32,12 @@ func New() (*App, error) {
 
 	manifest, err := workspace.Discover(cfg.RootDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load workspace: %w", err)
+	}
+
+	pluginGateway := gateway.New()
+	if err := pluginGateway.Check(); err != nil {
+		// MVP 阶段插件不可用不阻断主链路，保留显式检查作为 UX 提示边界。
 	}
 
 	runtime := eino.NewNoopRuntime("noop-model")

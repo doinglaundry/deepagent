@@ -88,7 +88,7 @@ func (r *REPL) Run(ctx context.Context) error {
 		}
 	}
 
-	if err := r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"}); err != nil {
+	if err := r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle", Warning: "plugin gateway unavailable in current MVP"}); err != nil {
 		return err
 	}
 
