@@ -11,10 +11,13 @@ import (
 	"eino-cli/internal/cli/render"
 	"eino-cli/internal/cli/router"
 	clistatus "eino-cli/internal/cli/status"
+	"eino-cli/internal/cli/taskview"
 	"eino-cli/internal/config"
 	"eino-cli/internal/orchestrator"
 	"eino-cli/internal/session"
 	"eino-cli/internal/session/checkpoint"
+	"eino-cli/internal/task/planner"
+	"eino-cli/internal/task/tracker"
 	"eino-cli/internal/workspace"
 )
 
@@ -31,6 +34,8 @@ type REPL struct {
 	Parser          *router.Parser
 	Renderer        render.Renderer
 	Orchestrator    *orchestrator.Service
+	Planner         *planner.Planner
+	Tracker         *tracker.Tracker
 }
 
 func New(cfg config.Config, manifest workspace.Manifest, renderer render.Renderer, service *orchestrator.Service) *REPL {
@@ -41,6 +46,8 @@ func New(cfg config.Config, manifest workspace.Manifest, renderer render.Rendere
 	if latest, ok, err := store.LoadLatest(); err == nil && ok && latest.WorkspaceRoot == manifest.RootPath {
 		currentSession = latest.Touch(now)
 	}
+	plan := planner.New()
+	tracked := tracker.New(nil)
 	return &REPL{
 		Config:          cfg,
 		Workspace:       manifest,
@@ -50,6 +57,8 @@ func New(cfg config.Config, manifest workspace.Manifest, renderer render.Rendere
 		Parser:          router.New(),
 		Renderer:        renderer,
 		Orchestrator:    service,
+		Planner:         plan,
+		Tracker:         tracked,
 	}
 }
 
@@ -88,6 +97,13 @@ func (r *REPL) Run(ctx context.Context) error {
 		}
 
 		route := r.Parser.Parse(input)
+		if route.InputType == router.InputTypeNaturalLanguage {
+			planned := r.Planner.Plan(route.RawInput)
+			r.Tracker = tracker.New(planned)
+			if len(planned) > 0 {
+				r.Tracker.SetStatus(planned[0].ID, "in_progress")
+			}
+		}
 		if handled, err := r.handleBuiltin(route); handled || err != nil {
 			if err != nil {
 				return err
@@ -104,11 +120,11 @@ func (r *REPL) Run(ctx context.Context) error {
 		}
 
 		snapshot := checkpoint.Snapshot{
-			SessionID:       r.Session.ID,
-			WorkspaceRoot:   r.Workspace.RootPath,
-			LastInput:       route.RawInput,
+			SessionID:        r.Session.ID,
+			WorkspaceRoot:    r.Workspace.RootPath,
+			LastInput:        route.RawInput,
 			AwaitingApproval: len(accepted.Run.Invocations) > 0 && accepted.Run.Invocations[0].ApprovalStatus == session.ApprovalStatusAwaitingApproval,
-			UpdatedAt:       time.Now(),
+			UpdatedAt:        time.Now(),
 		}
 		if err := r.CheckpointStore.Save(snapshot); err != nil {
 			return err
@@ -143,9 +159,11 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 
 	switch route.CommandName {
 	case "help":
-		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "支持的命令: /help, /status, /exit, /read <file>, /ls [dir], /shell <command>"})
+		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "支持的命令: /help, /status, /tasks, /exit, /read <file>, /ls [dir], /shell <command>"})
 	case "status":
 		return true, r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"})
+	case "tasks":
+		return true, r.Renderer.Render(render.Message{Kind: "tasks", Content: taskview.FromTasks(r.Tracker.Tasks()).String()})
 	default:
 		return false, nil
 	}
