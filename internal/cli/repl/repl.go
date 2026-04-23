@@ -14,6 +14,7 @@ import (
 	"eino-cli/internal/config"
 	"eino-cli/internal/orchestrator"
 	"eino-cli/internal/session"
+	"eino-cli/internal/session/checkpoint"
 	"eino-cli/internal/workspace"
 )
 
@@ -22,30 +23,33 @@ type Runner interface {
 }
 
 type REPL struct {
-	Config       config.Config
-	Workspace    workspace.Manifest
-	Session      session.Session
-	Store        *session.Store
-	Parser       *router.Parser
-	Renderer     render.Renderer
-	Orchestrator *orchestrator.Service
+	Config          config.Config
+	Workspace       workspace.Manifest
+	Session         session.Session
+	Store           *session.Store
+	CheckpointStore *checkpoint.Store
+	Parser          *router.Parser
+	Renderer        render.Renderer
+	Orchestrator    *orchestrator.Service
 }
 
 func New(cfg config.Config, manifest workspace.Manifest, renderer render.Renderer, service *orchestrator.Service) *REPL {
 	now := time.Now()
 	store := session.NewStore(cfg.SessionsDir)
+	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
 	currentSession := session.New(fmt.Sprintf("session-%d", now.UnixNano()), manifest.RootPath, now)
 	if latest, ok, err := store.LoadLatest(); err == nil && ok && latest.WorkspaceRoot == manifest.RootPath {
 		currentSession = latest.Touch(now)
 	}
 	return &REPL{
-		Config:       cfg,
-		Workspace:    manifest,
-		Session:      currentSession,
-		Store:        store,
-		Parser:       router.New(),
-		Renderer:     renderer,
-		Orchestrator: service,
+		Config:          cfg,
+		Workspace:       manifest,
+		Session:         currentSession,
+		Store:           store,
+		CheckpointStore: checkpointStore,
+		Parser:          router.New(),
+		Renderer:        renderer,
+		Orchestrator:    service,
 	}
 }
 
@@ -97,6 +101,17 @@ func (r *REPL) Run(ctx context.Context) error {
 				return renderErr
 			}
 			continue
+		}
+
+		snapshot := checkpoint.Snapshot{
+			SessionID:       r.Session.ID,
+			WorkspaceRoot:   r.Workspace.RootPath,
+			LastInput:       route.RawInput,
+			AwaitingApproval: len(accepted.Run.Invocations) > 0 && accepted.Run.Invocations[0].ApprovalStatus == session.ApprovalStatusAwaitingApproval,
+			UpdatedAt:       time.Now(),
+		}
+		if err := r.CheckpointStore.Save(snapshot); err != nil {
+			return err
 		}
 
 		if len(accepted.Run.Invocations) > 0 {

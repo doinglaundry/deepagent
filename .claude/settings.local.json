@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo *)",
+      "Bash(gh api *)",
+      "mcp__lark-docs__import_markdown_to_lark",
+      "Bash(open *)",
+      "Bash(node *)",
+      "Bash(python3 *)",
+      "Bash(npm run lint)",
+      "Bash(npm run test *)",
+      "Bash(git *)",
+      "Bash(go test *)",
+      "Bash(go *)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "lark-docs",
+    "tika"
+  ],
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/bytedance/GolandProjects/LLM/.claude/hooks/stop-hook.py"
+          }
+        ]
+      }
+    ]
+  }
+}

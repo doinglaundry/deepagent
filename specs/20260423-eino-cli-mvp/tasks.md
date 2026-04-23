@@ -76,7 +76,7 @@
 **Independent Test**: 启动一轮包含任务进度变化和待确认状态的会话，中断 CLI 后重新进入，可以恢复最近 checkpoint、看到任务列表并继续执行。
 
 - [x] T020 [P] [US3] 实现会话历史持久化与启动加载 `internal/session/store.go`、`internal/session/session.go`
-- [ ] T021 [P] [US3] 实现 checkpoint 保存与恢复逻辑 `internal/session/checkpoint/store.go`、`internal/session/checkpoint/recover.go`
+- [x] T021 [P] [US3] 实现 checkpoint 保存与恢复逻辑 `internal/session/checkpoint/store.go`、`internal/session/checkpoint/recover.go`
 - [ ] T022 [P] [US3] 实现任务规划、任务跟踪与任务列表展示 `internal/task/planner/planner.go`、`internal/task/tracker/tracker.go`、`internal/cli/taskview/taskview.go`
 - [ ] T023 [P] [US3] 实现项目级轻量记忆的存储、召回与策略 `internal/memory/store/store.go`、`internal/memory/retrieval/retrieval.go`、`internal/memory/policy/policy.go`
 - [ ] T024 [US3] 实现上下文注入与恢复入口 `internal/session/inject/inject.go`、`internal/cli/repl/resume.go`
