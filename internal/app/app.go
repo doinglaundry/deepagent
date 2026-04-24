@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"eino-cli/internal/cli/render"
 	"eino-cli/internal/cli/repl"
@@ -41,10 +40,14 @@ func New() (*App, error) {
 		// MVP 阶段插件不可用不阻断主链路，保留显式检查作为 UX 提示边界。
 	}
 
-	runtime := buildRuntime(cfg)
+	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
+	runtime, err := buildRuntime(cfg, checkpointStore)
+	if err != nil {
+		return nil, err
+	}
 	persistence := orchestrator.NewPersistence(
 		session.NewStore(cfg.SessionsDir),
-		checkpoint.NewStore(cfg.CheckpointDir),
+		checkpointStore,
 		memorystore.NewStore(cfg.MemoryDir),
 		memorypolicy.New(),
 	)
@@ -58,6 +61,10 @@ func (a *App) Run() error {
 	return a.runner.Run(context.Background())
 }
 
-func buildRuntime(cfg config.Config) eino.Runtime {
-	return eino.NewLocalServiceRuntime(cfg.RuntimeBaseURL, cfg.RuntimeModel, time.Duration(cfg.RuntimeTimeout)*time.Second)
+func buildRuntime(cfg config.Config, checkpointStore *checkpoint.Store) (eino.Runtime, error) {
+	runtime, err := eino.NewDeepAgentRuntime(context.Background(), cfg.RuntimeModel, checkpointStore)
+	if err != nil {
+		return nil, fmt.Errorf("init deep runtime: %w", err)
+	}
+	return runtime, nil
 }

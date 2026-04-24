@@ -17,6 +17,7 @@ DEFAULT_STATE = {
     "current_task_id": "",
     "last_completed_task_id": "",
     "allow_stop_reason": "",
+    "last_pushed_phase": "",
 }
 
 
@@ -69,18 +70,18 @@ def repo_root_for(path: Path) -> Path:
         return current
 
 
-def load_state(repo_root: Path) -> dict[str, Any]:
+def load_state(repo_root: Path) -> tuple[dict[str, Any], Path]:
     state_path = repo_root / ".claude" / "continuation-state.json"
     if not state_path.exists():
-        return dict(DEFAULT_STATE)
+        return dict(DEFAULT_STATE), state_path
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
     except Exception:
-        return dict(DEFAULT_STATE)
+        return dict(DEFAULT_STATE), state_path
     state = dict(DEFAULT_STATE)
     if isinstance(data, dict):
         state.update(data)
-    return state
+    return state, state_path
 
 
 def locate_tasks_file(repo_root: Path, state: dict[str, Any]) -> Optional[Path]:
@@ -170,18 +171,126 @@ def should_allow(state: dict[str, Any], tasks: list[dict[str, Any]]) -> tuple[bo
     )
 
 
+def parse_phase_name(tasks: list[dict[str, Any]], task_id: str) -> str:
+    for task in tasks:
+        if task["id"] == task_id:
+            return str(task.get("phase", "")).strip()
+    return ""
+
+
+def normalize_phase_name(phase: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", phase).strip("_")
+
+
+def phase_has_changes(repo_root: Path) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "status", "--short"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return False
+
+    for raw in result.stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("?? "):
+            path = line[3:]
+        else:
+            if len(line) < 3:
+                continue
+            path = line[3:]
+        if path == ".claude/continuation-state.json":
+            continue
+        return True
+    return False
+
+
+def run_git(repo_root: Path, args: list[str]) -> tuple[bool, str]:
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = (result.stdout + "\n" + result.stderr).strip()
+    return result.returncode == 0, output
+
+
+def auto_commit_push_phase(repo_root: Path, state: dict[str, Any], tasks: list[dict[str, Any]]) -> tuple[bool, str]:
+    task_id = str(state.get("current_task_id", "")).strip()
+    if not task_id:
+        return True, ""
+
+    phase_name = parse_phase_name(tasks, task_id)
+    if not phase_name:
+        return True, ""
+
+    if not phase_complete(tasks, task_id):
+        return True, ""
+
+    phase_key = normalize_phase_name(phase_name)
+    if not phase_key:
+        return True, ""
+
+    if str(state.get("last_pushed_phase", "")) == phase_key:
+        return True, ""
+
+    if not phase_has_changes(repo_root):
+        state["last_pushed_phase"] = phase_key
+        return True, ""
+
+    ok, out = run_git(repo_root, ["add", "-A"])
+    if not ok:
+        return False, f"phase auto-commit 失败（git add）: {out}"
+
+    commit_message = (
+        f"Complete {phase_name}\n\n"
+        "Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+    )
+    ok, out = run_git(repo_root, ["commit", "-m", commit_message])
+    if not ok:
+        return False, f"phase auto-commit 失败（git commit）: {out}"
+
+    ok, out = run_git(repo_root, ["push"])
+    if not ok:
+        return False, f"phase auto-push 失败（git push）: {out}"
+
+    state["last_pushed_phase"] = phase_key
+    return True, ""
+
+
+def save_state(state_path: Path, state: dict[str, Any]) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     payload = load_input()
     if payload.get("stop_hook_active", False):
         return 0
 
     repo_root = repo_root_for(derive_cwd(payload))
-    state = load_state(repo_root)
+    state, state_path = load_state(repo_root)
     tasks_file = locate_tasks_file(repo_root, state)
     if tasks_file is None or not tasks_file.exists():
         return 0
 
     tasks = parse_tasks(tasks_file)
+    ok, err = auto_commit_push_phase(repo_root, state, tasks)
+    if not ok:
+        print(json.dumps({"decision": "block", "reason": err}, ensure_ascii=False))
+        return 0
+
+    try:
+        save_state(state_path, state)
+    except Exception as exc:
+        print(json.dumps({"decision": "block", "reason": f"写入 continuation-state 失败: {exc}"}, ensure_ascii=False))
+        return 0
+
     allow, reason = should_allow(state, tasks)
     if allow:
         return 0

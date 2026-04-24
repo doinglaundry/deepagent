@@ -11,7 +11,9 @@
       "Bash(npm run test *)",
       "Bash(git *)",
       "Bash(go test *)",
-      "Bash(go *)"
+      "Bash(go *)",
+      "Bash(grep -E --line-buffered \".*\\\\.\\(go|py|tsx|ts|js\\)$\")",
+      "Bash(grep -E --line-buffered \"/internal/\\(cli|orchestrator|session|workspace|tools\\)/.*\\\\.go$\")"
     ]
   },
   "enabledMcpjsonServers": [
