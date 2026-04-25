@@ -103,11 +103,24 @@ func (s *Service) SubmitStream(ctx context.Context, sess session.Session, route 
 				s.persist(sess, route, run)
 				return CommandAccepted{Command: command, Run: run}, nil
 			}
+			// Feed tool result back to the model so it can reason about the output.
+			if result.Success && result.Output != "" {
+				syntheticPrompt := fmt.Sprintf("[Tool result: %s]\n%s", route.CommandName, result.Output)
+				agentResult, agentErr := s.runtime.ExecuteStream(ctx, syntheticPrompt, onChunk)
+				if agentErr == nil && agentResult.Success {
+					run.Result = agentResult
+					command.Output = agentResult.Output
+				}
+			}
 			command.Status = session.CommandStatusCompleted
 			command.CompletedAt = now
-			command.Output = result.Output
+			if command.Output == "" {
+				command.Output = result.Output
+			}
 			run.Status = AgentRunStatusCompleted
-			run.Result = result
+			if !run.Result.Success {
+				run.Result = result
+			}
 			s.persist(sess, route, run)
 			return CommandAccepted{Command: command, Run: run}, nil
 		}
