@@ -186,7 +186,12 @@ func (r *REPL) Run(ctx context.Context) error {
 			continue
 		}
 
-		accepted, err := r.Orchestrator.Submit(ctx, r.Session, route)
+		streamed := false
+		onChunk := func(chunk string) {
+			fmt.Fprint(os.Stdout, chunk)
+			streamed = true
+		}
+		accepted, err := r.Orchestrator.SubmitStream(ctx, r.Session, route, onChunk)
 		if err != nil {
 			if renderErr := r.Renderer.RenderError(render.ErrorView{Code: "runtime_error", Message: err.Error()}); renderErr != nil {
 				return renderErr
@@ -257,8 +262,12 @@ func (r *REPL) Run(ctx context.Context) error {
 			continue
 		}
 
-		if err := r.Renderer.Render(render.Message{Kind: string(route.InputType), Content: accepted.Run.Result.Output}); err != nil {
-			return err
+		if streamed {
+			fmt.Fprintln(os.Stdout) // trailing newline after stream
+		} else if accepted.Run.Result.Success {
+			if err := r.Renderer.Render(render.Message{Kind: string(route.InputType), Content: accepted.Run.Result.Output}); err != nil {
+				return err
+			}
 		}
 	}
 }
