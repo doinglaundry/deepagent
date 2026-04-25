@@ -248,6 +248,20 @@ func (r *REPL) Run(ctx context.Context) error {
 				if err := r.Renderer.Render(render.Message{Kind: "tool", Content: toolResult.Output}); err != nil {
 					return err
 				}
+				// Feed shell result back to model for analysis.
+				if toolResult.Output != "" {
+					feedPrompt := fmt.Sprintf("[Shell result]\n%s", toolResult.Output)
+					feedOnChunk := func(chunk string) { fmt.Fprint(os.Stdout, chunk) }
+					feedRoute := router.Route{
+						RawInput:  feedPrompt,
+						InputType: router.InputTypeNaturalLanguage,
+						Target:    router.TargetAgent,
+					}
+					feedAccepted, feedErr := r.Orchestrator.SubmitStream(ctx, r.Session, feedRoute, feedOnChunk)
+					if feedErr == nil && feedAccepted.Run.Result.Success {
+						fmt.Fprintln(os.Stdout)
+					}
+				}
 				continue
 			}
 		}
