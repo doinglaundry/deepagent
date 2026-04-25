@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,22 +31,24 @@ type Runner interface {
 }
 
 type REPL struct {
-	Config          config.Config
-	Workspace       workspace.Manifest
-	Session         session.Session
-	Store           *session.Store
-	CheckpointStore *checkpoint.Store
-	Parser          *router.Parser
-	Renderer        render.Renderer
-	Orchestrator    *orchestrator.Service
-	Planner         *planner.Planner
-	Tracker         *tracker.Tracker
-	MemoryStore     *memorystore.Store
-	MemoryPolicy    *memorypolicy.Policy
-	Retriever       *memoryretrieval.Retriever
+	Config              config.Config
+	Workspace           workspace.Manifest
+	Session             session.Session
+	Store               *session.Store
+	CheckpointStore     *checkpoint.Store
+	Parser              *router.Parser
+	Renderer            render.Renderer
+	Orchestrator        *orchestrator.Service
+	Planner             *planner.Planner
+	Tracker             *tracker.Tracker
+	MemoryStore         *memorystore.Store
+	MemoryPolicy        *memorypolicy.Policy
+	Retriever           *memoryretrieval.Retriever
+	KnownCommands       map[string]struct{}
+	KnownCommandsPretty []string
 }
 
-func New(cfg config.Config, manifest workspace.Manifest, renderer render.Renderer, service *orchestrator.Service) *REPL {
+func New(cfg config.Config, manifest workspace.Manifest, renderer render.Renderer, service *orchestrator.Service, knownCommands []string) *REPL {
 	now := time.Now()
 	store := session.NewStore(cfg.SessionsDir)
 	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
@@ -58,20 +61,49 @@ func New(cfg config.Config, manifest workspace.Manifest, renderer render.Rendere
 	memoryStore := memorystore.NewStore(cfg.MemoryDir)
 	memoryPolicy := memorypolicy.New()
 	memoryRetriever := memoryretrieval.New(memoryStore)
+
+	known := map[string]struct{}{
+		"/help":   {},
+		"/status": {},
+		"/tasks":  {},
+		"/memory": {},
+		"/exit":   {},
+		"/read":   {},
+		"/ls":     {},
+		"/shell":  {},
+	}
+	for _, cmd := range knownCommands {
+		trimmed := strings.TrimSpace(cmd)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "/") {
+			trimmed = "/" + trimmed
+		}
+		known[trimmed] = struct{}{}
+	}
+	knownPretty := make([]string, 0, len(known))
+	for cmd := range known {
+		knownPretty = append(knownPretty, cmd)
+	}
+	sort.Strings(knownPretty)
+
 	return &REPL{
-		Config:          cfg,
-		Workspace:       manifest,
-		Session:         currentSession,
-		Store:           store,
-		CheckpointStore: checkpointStore,
-		Parser:          router.New(),
-		Renderer:        renderer,
-		Orchestrator:    service,
-		Planner:         plan,
-		Tracker:         tracked,
-		MemoryStore:     memoryStore,
-		MemoryPolicy:    memoryPolicy,
-		Retriever:       memoryRetriever,
+		Config:              cfg,
+		Workspace:           manifest,
+		Session:             currentSession,
+		Store:               store,
+		CheckpointStore:     checkpointStore,
+		Parser:              router.New(),
+		Renderer:            renderer,
+		Orchestrator:        service,
+		Planner:             plan,
+		Tracker:             tracked,
+		MemoryStore:         memoryStore,
+		MemoryPolicy:        memoryPolicy,
+		Retriever:           memoryRetriever,
+		KnownCommands:       known,
+		KnownCommandsPretty: knownPretty,
 	}
 }
 
@@ -119,6 +151,16 @@ func (r *REPL) Run(ctx context.Context) error {
 		}
 
 		route := r.Parser.Parse(input)
+		if route.InputType == router.InputTypeSlashCommand && !r.isKnownSlashCommand(route.CommandName) {
+			unknown := strings.TrimSpace(route.RawInput)
+			if unknown == "" {
+				unknown = "/"
+			}
+			if err := r.Renderer.RenderError(render.ErrorView{Code: eino.ErrorCodeTool, Message: fmt.Sprintf("unknown command: %s", unknown)}); err != nil {
+				return err
+			}
+			continue
+		}
 		if route.InputType == router.InputTypeNaturalLanguage {
 			planned := r.Planner.Plan(route.RawInput)
 			r.Tracker = tracker.New(planned)
@@ -228,7 +270,7 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 
 	switch route.CommandName {
 	case "help":
-		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "支持的命令: /help, /status, /tasks, /memory, /exit, /read <file>, /ls [dir], /shell <command>"})
+		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "支持的命令: " + strings.Join(r.KnownCommandsPretty, ", ")})
 	case "status":
 		return true, r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"})
 	case "tasks":
@@ -247,7 +289,49 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 			lines = append(lines, fmt.Sprintf("- %s", memory.Content))
 		}
 		return true, r.Renderer.Render(render.Message{Kind: "memory", Content: strings.Join(lines, "\n")})
+	case "bootstrap":
+		now := time.Now()
+		r.Session = session.New(fmt.Sprintf("session-%d", now.UnixNano()), r.Workspace.RootPath, now)
+		if err := r.Store.Save(r.Session); err != nil {
+			return true, err
+		}
+		r.Tracker = tracker.New(nil)
+		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "bootstrap completed: new session initialized"})
+	case "new":
+		now := time.Now()
+		r.Session = session.New(fmt.Sprintf("session-%d", now.UnixNano()), r.Workspace.RootPath, now)
+		if err := r.Store.Save(r.Session); err != nil {
+			return true, err
+		}
+		r.Tracker = tracker.New(nil)
+		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "started a new session"})
+	case "models":
+		cfg, err := config.Load("")
+		if err != nil {
+			return true, err
+		}
+		modelNames := make([]string, 0, len(cfg.Models))
+		for key := range cfg.Models {
+			modelNames = append(modelNames, key)
+		}
+		sort.Strings(modelNames)
+		lines := make([]string, 0, len(modelNames)+1)
+		lines = append(lines, fmt.Sprintf("default model: %s", cfg.DefaultModel))
+		for _, name := range modelNames {
+			mc := cfg.Models[name]
+			lines = append(lines, fmt.Sprintf("- %s (%s/%s)", name, mc.Provider, mc.Model))
+		}
+		return true, r.Renderer.Render(render.Message{Kind: "command", Content: strings.Join(lines, "\n")})
 	default:
 		return false, nil
 	}
+}
+
+func (r *REPL) isKnownSlashCommand(commandName string) bool {
+	name := strings.TrimSpace(commandName)
+	if name == "" {
+		return false
+	}
+	_, ok := r.KnownCommands["/"+name]
+	return ok
 }

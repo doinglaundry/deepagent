@@ -73,6 +73,10 @@ func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agent
 }
 
 func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, error) {
+	return r.ExecuteStream(ctx, prompt, nil)
+}
+
+func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk StreamChunkHandler) (Result, error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return Result{}, fmt.Errorf("prompt is required")
@@ -80,7 +84,7 @@ func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, 
 
 	checkpointID := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
 	iter := r.runner.Run(ctx, []adk.Message{schema.UserMessage(prompt)}, adk.WithCheckPointID(checkpointID))
-	summary, err := collectAgentEvents(iter)
+	summary, err := collectAgentEventsWithSink(iter, onChunk)
 	if err != nil {
 		return Result{}, err
 	}

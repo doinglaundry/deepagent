@@ -10,7 +10,7 @@
 - 启动时加载本地状态目录 `.eino-cli/`，包含 `sessions/`、`memory/`、`checkpoints/`
 - 仅支持在 Git 仓库内启动；非仓库目录会直接报错
 - REPL 支持自然语言输入与 slash command 路由
-- Runtime 仅支持本地 HTTP 服务调用，默认请求 `http://127.0.0.1:8080/v1/chat`
+- Runtime 通过内置 Deep Agent 执行模型调用，不依赖本地 HTTP mock 服务
 - 内置工具仅包含 `/read <file>`、`/ls [dir]`、`/shell <command>`
 - `/shell` 被标记为高风险操作，会进入 `awaiting_approval`，当前 MVP 只展示拒绝/待确认提示，不真正放行执行
 - REPL 内置命令支持 `/help`、`/status`、`/tasks`、`/memory`、`/exit`
@@ -21,11 +21,7 @@
 ## MVP Demo Script
 
 1. 可选：如果希望从干净状态开始演示，先删除工作区内已有的 `.eino-cli/` 状态目录；如果保留旧状态，CLI 首次启动时也可能先显示已有 session 的 resume 信息
-2. 先在一个终端启动本地 runtime 服务：
-   ```bash
-   go run ./cmd/eino-runtime
-   ```
-3. 在同一个 Git 仓库根目录的另一个终端执行：
+2. 在 Git 仓库根目录执行：
    ```bash
    go run .
    ```
@@ -34,7 +30,7 @@
    ```text
    介绍一下当前项目
    ```
-   预期看到本地 runtime 返回的响应，例如 `local service response from local-model: 介绍一下当前项目`
+   预期看到模型返回的文本响应
 6. 输入内置命令查看帮助：
    ```text
    /help
@@ -68,7 +64,7 @@
     /memory
     ```
     预期 `/tasks` 返回当前会话内的任务视图（在新会话里可能是 `tasks: none`），`/memory` 返回已保存的项目级 memory
-12. 如需验证失败路径，停止 `cmd/eino-runtime` 后再次启动 CLI 并提交自然语言请求，预期看到 `runtime_error`，且不会回退到任何 stub/noop 响应
+11. 如需验证失败路径，使用无权限模型或错误 API Key 再次提交自然语言请求，预期看到 `runtime_error`，且不会回退到任何 stub/noop 响应
 
 ## Contract-Driven Checks
 

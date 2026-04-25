@@ -13,6 +13,10 @@ type agentRunSummary struct {
 }
 
 func collectAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent]) (agentRunSummary, error) {
+	return collectAgentEventsWithSink(iter, nil)
+}
+
+func collectAgentEventsWithSink(iter *adk.AsyncIterator[*adk.AgentEvent], onChunk StreamChunkHandler) (agentRunSummary, error) {
 	var summary agentRunSummary
 	var outputs []string
 
@@ -47,6 +51,9 @@ func collectAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent]) (agentRunSumma
 			continue
 		}
 
+		if onChunk != nil && msg.Content != "" {
+			onChunk(msg.Content)
+		}
 		if trimmed := strings.TrimSpace(msg.Content); trimmed != "" {
 			outputs = append(outputs, trimmed)
 		}

@@ -24,7 +24,11 @@ type App struct {
 	runner repl.Runner
 }
 
-func New() (*App, error) {
+type Options struct {
+	KnownCommands []string
+}
+
+func New(opts Options) (*App, error) {
 	cfg, err := config.Load("")
 	if err != nil {
 		return nil, err
@@ -54,7 +58,7 @@ func New() (*App, error) {
 	service := orchestrator.NewService(runtime, registry.New(pluginGateway), execute.New(), policy.New()).WithPersistence(persistence)
 	renderer := render.NewConsoleRenderer(nil)
 
-	return &App{runner: repl.New(cfg, manifest, renderer, service)}, nil
+	return &App{runner: repl.New(cfg, manifest, renderer, service, opts.KnownCommands)}, nil
 }
 
 func (a *App) Run() error {

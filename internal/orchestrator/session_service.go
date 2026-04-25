@@ -63,6 +63,10 @@ func (s *Service) WithPersistence(persistence *Persistence) *Service {
 }
 
 func (s *Service) Submit(ctx context.Context, sess session.Session, route router.Route) (CommandAccepted, error) {
+	return s.SubmitStream(ctx, sess, route, nil)
+}
+
+func (s *Service) SubmitStream(ctx context.Context, sess session.Session, route router.Route, onChunk eino.StreamChunkHandler) (CommandAccepted, error) {
 	now := time.Now()
 	command := session.NewCommand(fmt.Sprintf("cmd-%d", now.UnixNano()), sess.ID, route.RawInput, session.CommandInputType(route.InputType), now)
 	command.Status = session.CommandStatusRunning
@@ -109,7 +113,7 @@ func (s *Service) Submit(ctx context.Context, sess session.Session, route router
 		}
 	}
 
-	result, err := s.runtime.Execute(ctx, route.RawInput)
+	result, err := s.runtime.ExecuteStream(ctx, route.RawInput, onChunk)
 	if err != nil {
 		command.Status = session.CommandStatusFailed
 		run.Status = AgentRunStatusFailed

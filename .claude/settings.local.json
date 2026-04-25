@@ -13,7 +13,11 @@
       "Bash(go test *)",
       "Bash(go *)",
       "Bash(grep -E --line-buffered \".*\\\\.\\(go|py|tsx|ts|js\\)$\")",
-      "Bash(grep -E --line-buffered \"/internal/\\(cli|orchestrator|session|workspace|tools\\)/.*\\\\.go$\")"
+      "Bash(grep -E --line-buffered \"/internal/\\(cli|orchestrator|session|workspace|tools\\)/.*\\\\.go$\")",
+      "Bash(grep -R \"func NewTool\\\\|func InferTool\" -n \"$\\(go env GOPATH\\)/pkg/mod/github.com/cloudwego/eino@v0.9.0-alpha.17\")",
+      "Bash(EINO_RUNTIME_LISTEN_ADDR=:18080 go run *)",
+      "Bash(curl *)",
+      "Bash(EINO_RUNTIME_MODEL=claude-haiku-4-5-20251001 go run .)"
     ]
   },
   "enabledMcpjsonServers": [
