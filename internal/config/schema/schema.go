@@ -10,9 +10,10 @@ type ModelConfig struct {
 }
 
 type AgentConfig struct {
-	Name         string `json:"name"`
-	Instruction  string `json:"instruction"`
-	MaxIteration int    `json:"max_iteration"`
+	Name            string `json:"name"`
+	Instruction     string `json:"instruction"`
+	MaxIteration    int    `json:"max_iteration"`
+	MaxHistoryTurns int    `yaml:"max_history_turns" json:"max_history_turns"`
 }
 
 type PluginGatewayConfig struct {

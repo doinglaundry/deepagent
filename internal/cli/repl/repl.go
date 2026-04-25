@@ -319,6 +319,7 @@ func (r *REPL) startNewSession(msg string) (bool, error) {
 		return true, err
 	}
 	r.Tracker = tracker.New(nil)
+	r.Orchestrator.Runtime().ClearHistory()
 	return true, r.Renderer.Render(render.Message{Kind: "command", Content: msg})
 }
 
