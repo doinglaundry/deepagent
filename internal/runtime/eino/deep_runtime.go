@@ -16,11 +16,12 @@ import (
 )
 
 type DeepAgentRuntime struct {
-	modelName string
-	runner    *adk.Runner
-
+	modelName           string
+	runner              *adk.Runner
 	mu                  sync.Mutex
 	pendingCheckpointID string
+	history             []*schema.Message
+	maxHistoryTurns     int
 }
 
 func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agentCfg config.AgentConfig, store adk.CheckPointStore) (Runtime, error) {
@@ -69,7 +70,11 @@ func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agent
 	if modelName == "" {
 		modelName = strings.TrimSpace(modelCfg.Model)
 	}
-	return &DeepAgentRuntime{modelName: modelName, runner: runner}, nil
+	maxTurns := agentCfg.MaxHistoryTurns
+	if maxTurns <= 0 {
+		maxTurns = 20
+	}
+	return &DeepAgentRuntime{modelName: modelName, runner: runner, maxHistoryTurns: maxTurns}, nil
 }
 
 func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, error) {
@@ -82,8 +87,17 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 		return Result{}, fmt.Errorf("prompt is required")
 	}
 
+	r.mu.Lock()
+	if len(r.history) > r.maxHistoryTurns*2 {
+		r.history = r.history[len(r.history)-r.maxHistoryTurns*2:]
+	}
+	msgs := make([]*schema.Message, len(r.history)+1)
+	copy(msgs, r.history)
+	msgs[len(msgs)-1] = schema.UserMessage(prompt)
+	r.mu.Unlock()
+
 	checkpointID := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
-	iter := r.runner.Run(ctx, []adk.Message{schema.UserMessage(prompt)}, adk.WithCheckPointID(checkpointID))
+	iter := r.runner.Run(ctx, msgs, adk.WithCheckPointID(checkpointID))
 	summary, err := collectAgentEventsWithSink(iter, onChunk)
 	if err != nil {
 		return Result{}, err
@@ -100,7 +114,17 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 		return Result{}, fmt.Errorf("deep runtime returned empty output")
 	}
 
+	r.mu.Lock()
+	r.history = append(r.history, schema.UserMessage(prompt), schema.AssistantMessage(summary.Output, nil))
+	r.mu.Unlock()
+
 	return SuccessResult(summary.Output), nil
+}
+
+func (r *DeepAgentRuntime) ClearHistory() {
+	r.mu.Lock()
+	r.history = nil
+	r.mu.Unlock()
 }
 
 func (r *DeepAgentRuntime) Name() string {

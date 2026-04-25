@@ -135,6 +135,10 @@ func (s *Service) SubmitStream(ctx context.Context, sess session.Session, route 
 	return CommandAccepted{Command: command, Run: run}, nil
 }
 
+func (s *Service) Runtime() eino.Runtime {
+	return s.runtime
+}
+
 func (s *Service) persist(sess session.Session, route router.Route, run AgentRun) {
 	if s.persistence == nil {
 		return
