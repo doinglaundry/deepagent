@@ -116,7 +116,7 @@ func buildBaseChatModel(ctx context.Context, cfg config.ModelConfig) (model.Base
 			baseURL = "https://api.moonshot.cn/v1"
 		}
 		modelName := strings.TrimSpace(cfg.Model)
-		if modelName == "" {
+		if !strings.HasPrefix(strings.ToLower(modelName), "moonshot") {
 			modelName = "moonshot-v1-8k"
 		}
 		kimiCfg := &openaimodel.ChatModelConfig{
