@@ -17,6 +17,7 @@ import (
 	memoryretrieval "eino-cli/internal/memory/retrieval"
 	memorystore "eino-cli/internal/memory/store"
 	"eino-cli/internal/orchestrator"
+	"eino-cli/internal/runtime/eino"
 	"eino-cli/internal/session"
 	"eino-cli/internal/session/checkpoint"
 	"eino-cli/internal/task/planner"
@@ -88,7 +89,7 @@ func (r *REPL) Run(ctx context.Context) error {
 		}
 	}
 
-	if err := r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle", Warning: "plugin gateway unavailable in current MVP"}); err != nil {
+	if err := r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"}); err != nil {
 		return err
 	}
 
@@ -168,10 +169,46 @@ func (r *REPL) Run(ctx context.Context) error {
 				if err := r.Renderer.Render(approvalMessage(invocation)); err != nil {
 					return err
 				}
+				if _, err := fmt.Fprint(os.Stdout, "approval> "); err != nil {
+					return err
+				}
+				if !scanner.Scan() {
+					if err := scanner.Err(); err != nil {
+						return err
+					}
+					return nil
+				}
+				decision := strings.ToLower(strings.TrimSpace(scanner.Text()))
+				approved := decision == "y" || decision == "yes"
+				resolvedInvocation, toolResult, err := r.Orchestrator.ContinueToolInvocation(ctx, r.Session.ID, invocation.ID, approved)
+				if err != nil {
+					if renderErr := r.Renderer.RenderError(render.ErrorView{Code: eino.ErrorCodeTool, Message: err.Error()}); renderErr != nil {
+						return renderErr
+					}
+					continue
+				}
+				if resolvedInvocation.ExecutionStatus == session.ExecutionStatusRejected {
+					if err := r.Renderer.Render(render.Message{Kind: "approval", Content: "已拒绝执行"}); err != nil {
+						return err
+					}
+				}
+				if !toolResult.Success {
+					if err := r.Renderer.RenderError(render.ErrorView{Code: toolResult.Code, Message: toolResult.Message}); err != nil {
+						return err
+					}
+					continue
+				}
+				if err := r.Renderer.Render(render.Message{Kind: "tool", Content: toolResult.Output}); err != nil {
+					return err
+				}
+				continue
 			}
 		}
 
 		if !accepted.Run.Result.Success {
+			if accepted.Run.Result.NeedsUser {
+				continue
+			}
 			if err := r.Renderer.RenderError(render.ErrorView{Code: accepted.Run.Result.Code, Message: accepted.Run.Result.Message}); err != nil {
 				return err
 			}

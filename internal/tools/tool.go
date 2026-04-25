@@ -23,6 +23,8 @@ type Tool struct {
 	Description      string    `json:"description"`
 	RiskLevel        RiskLevel `json:"risk_level"`
 	RequiresApproval bool      `json:"requires_approval"`
+	Source           string    `json:"source,omitempty"`
+	Capability       string    `json:"capability,omitempty"`
 }
 
 type Result struct {

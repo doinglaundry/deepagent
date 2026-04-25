@@ -35,9 +35,9 @@ func New() (*App, error) {
 		return nil, fmt.Errorf("load workspace: %w", err)
 	}
 
-	pluginGateway := gateway.New()
-	if err := pluginGateway.Check(); err != nil {
-		// MVP 阶段插件不可用不阻断主链路，保留显式检查作为 UX 提示边界。
+	pluginGateway := gateway.New(cfg.PluginGateway)
+	if err := pluginGateway.Check(context.Background()); err != nil {
+		// 插件网关异常不阻断主链路，降级为仅内置工具。
 	}
 
 	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
@@ -51,7 +51,7 @@ func New() (*App, error) {
 		memorystore.NewStore(cfg.MemoryDir),
 		memorypolicy.New(),
 	)
-	service := orchestrator.NewService(runtime, registry.New(), execute.New(), policy.New()).WithPersistence(persistence)
+	service := orchestrator.NewService(runtime, registry.New(pluginGateway), execute.New(), policy.New()).WithPersistence(persistence)
 	renderer := render.NewConsoleRenderer(nil)
 
 	return &App{runner: repl.New(cfg, manifest, renderer, service)}, nil

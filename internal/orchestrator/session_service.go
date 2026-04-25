@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"eino-cli/internal/cli/router"
@@ -10,6 +11,7 @@ import (
 	"eino-cli/internal/session"
 	"eino-cli/internal/session/checkpoint"
 	"eino-cli/internal/task"
+	"eino-cli/internal/tools"
 	"eino-cli/internal/tools/execute"
 	"eino-cli/internal/tools/policy"
 	"eino-cli/internal/tools/registry"
@@ -37,10 +39,22 @@ type Service struct {
 	executor    *execute.Executor
 	policy      *policy.Policy
 	persistence *Persistence
+
+	approvalMu      sync.Mutex
+	pendingApproval map[string]pendingToolExecution
+}
+
+type pendingToolExecution struct {
+	SessionID   string
+	Route       router.Route
+	Invocation  session.ToolInvocation
+	Tool        tools.Tool
+	WorkingDir  string
+	RequestedAt time.Time
 }
 
 func NewService(runtime eino.Runtime, registry *registry.Registry, executor *execute.Executor, policy *policy.Policy) *Service {
-	return &Service{runtime: runtime, registry: registry, executor: executor, policy: policy}
+	return &Service{runtime: runtime, registry: registry, executor: executor, policy: policy, pendingApproval: map[string]pendingToolExecution{}}
 }
 
 func (s *Service) WithPersistence(persistence *Persistence) *Service {
@@ -63,8 +77,18 @@ func (s *Service) Submit(ctx context.Context, sess session.Session, route router
 	}
 
 	if route.InputType == router.InputTypeSlashCommand {
-		if handled, invocation, result, err := s.tryToolInvocation(route, sess.WorkspaceRoot, now); handled {
+		if handled, invocation, result, err := s.tryToolInvocation(ctx, sess, route, now); handled {
 			run.Invocations = append(run.Invocations, invocation)
+			if result.NeedsUser {
+				command.Status = session.CommandStatusCompleted
+				command.CompletedAt = now
+				command.ErrorCode = string(result.Code)
+				command.ErrorMessage = result.Message
+				run.Status = AgentRunStatusCompleted
+				run.Result = result
+				s.persist(sess, route, run)
+				return CommandAccepted{Command: command, Run: run}, nil
+			}
 			if err != nil {
 				command.Status = session.CommandStatusFailed
 				command.CompletedAt = now

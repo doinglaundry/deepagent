@@ -9,6 +9,7 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
 	"eino-cli/internal/config"
@@ -41,12 +42,15 @@ func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agent
 		maxIteration = 6
 	}
 
+	runtimeTools := buildRuntimeTools()
 	agent, err := deep.New(ctx, &deep.Config{
-		Name:                   agentName,
-		Description:            "Deep Agent",
-		ChatModel:              chatModel,
-		Instruction:            instruction,
-		ToolsConfig:            adk.ToolsConfig{},
+		Name:        agentName,
+		Description: "Deep Agent",
+		ChatModel:   chatModel,
+		Instruction: instruction,
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{
+			Tools: runtimeTools,
+		}},
 		MaxIteration:           maxIteration,
 		WithoutGeneralSubAgent: true,
 		WithoutWriteTodos:      true,
