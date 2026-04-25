@@ -7,28 +7,59 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
+
+	"eino-cli/internal/config"
 )
 
-func TestNewDeepAgentRuntimeExecuteSuccess(t *testing.T) {
-	runtime, err := NewDeepAgentRuntime(context.Background(), "deep-model", nil)
-	if err != nil {
-		t.Fatalf("NewDeepAgentRuntime() error = %v", err)
+func TestGetModelConfig(t *testing.T) {
+	cfg := config.Config{
+		DefaultModel: "primary",
+		Models: map[string]config.ModelConfig{
+			"primary": {Name: "primary", Provider: "claude", Model: "claude-sonnet-4-6", APIKeyEnv: "ANTHROPIC_API_KEY", TimeoutSeconds: 30},
+		},
 	}
 
-	result, err := runtime.Execute(context.Background(), "hello")
+	modelCfg, err := getModelConfig(cfg, "")
 	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
+		t.Fatalf("getModelConfig() error = %v", err)
 	}
-	if !result.Success {
-		t.Fatalf("expected success result, got %+v", result)
+	if modelCfg.Name != "primary" {
+		t.Fatalf("unexpected model config: %+v", modelCfg)
 	}
-	if !strings.Contains(result.Output, "deep runtime response from deep-model") {
-		t.Fatalf("unexpected output: %q", result.Output)
+}
+
+func TestBuildRuntimeUnsupportedProvider(t *testing.T) {
+	runtime, err := BuildRuntime(context.Background(), config.Config{
+		DefaultModel: "primary",
+		DefaultAgent: "default",
+		Models: map[string]config.ModelConfig{
+			"primary": {Name: "primary", Provider: "unknown", Model: "foo", APIKeyEnv: "FOO_KEY", TimeoutSeconds: 30},
+		},
+		Agents: map[string]config.AgentConfig{
+			"default": {Name: "deep-agent", Instruction: "You are a helpful assistant.", MaxIteration: 6},
+		},
+	}, nil)
+	if err == nil {
+		t.Fatalf("expected error, got runtime=%v", runtime)
+	}
+	if !strings.Contains(err.Error(), "unsupported model provider") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
-	runtime, err := NewDeepAgentRuntime(context.Background(), "deep-model", nil)
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	runtime, err := NewDeepAgentRuntime(context.Background(), config.ModelConfig{
+		Name:           "primary",
+		Provider:       "claude",
+		Model:          "claude-sonnet-4-6",
+		APIKeyEnv:      "ANTHROPIC_API_KEY",
+		TimeoutSeconds: 30,
+	}, config.AgentConfig{
+		Name:         "deep-agent",
+		Instruction:  "You are a helpful assistant.",
+		MaxIteration: 6,
+	}, nil)
 	if err != nil {
 		t.Fatalf("NewDeepAgentRuntime() error = %v", err)
 	}

@@ -3,52 +3,114 @@ package eino
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"os"
 	"strings"
+	"time"
 
+	claudemodel "github.com/cloudwego/eino-ext/components/model/claude"
+	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
+
+	"eino-cli/internal/config"
 )
 
-type ModelConfig struct {
-	Name string
-}
-
-func getModelConfig(runtimeModel string) (ModelConfig, error) {
-	name := strings.TrimSpace(runtimeModel)
+func getModelConfig(cfg config.Config, modelName string) (config.ModelConfig, error) {
+	name := strings.TrimSpace(modelName)
 	if name == "" {
-		return ModelConfig{}, fmt.Errorf("runtime model is required")
+		name = strings.TrimSpace(cfg.DefaultModel)
 	}
-	return ModelConfig{Name: name}, nil
+	if name == "" {
+		return config.ModelConfig{}, fmt.Errorf("default model is required")
+	}
+
+	modelCfg, ok := cfg.Models[name]
+	if !ok {
+		return config.ModelConfig{}, fmt.Errorf("model %q not found", name)
+	}
+	if strings.TrimSpace(modelCfg.Name) == "" {
+		modelCfg.Name = name
+	}
+
+	return modelCfg, nil
 }
 
-func buildBaseChatModel(_ context.Context, cfg ModelConfig) (model.BaseChatModel, error) {
-	return stubChatModel{modelName: cfg.Name}, nil
+func getAgentConfig(cfg config.Config, agentName string) (config.AgentConfig, error) {
+	name := strings.TrimSpace(agentName)
+	if name == "" {
+		name = strings.TrimSpace(cfg.DefaultAgent)
+	}
+	if name == "" {
+		return config.AgentConfig{}, fmt.Errorf("default agent is required")
+	}
+
+	agentCfg, ok := cfg.Agents[name]
+	if !ok {
+		return config.AgentConfig{}, fmt.Errorf("agent %q not found", name)
+	}
+
+	return agentCfg, nil
 }
 
-type stubChatModel struct {
-	modelName string
-}
-
-func (s stubChatModel) Generate(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.Message, error) {
-	return schema.AssistantMessage("deep runtime response from "+s.modelName+": "+lastMessageContent(input), nil), nil
-}
-
-func (s stubChatModel) Stream(ctx context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	msg, err := s.Generate(ctx, input)
+func BuildRuntime(ctx context.Context, cfg config.Config, store adk.CheckPointStore) (Runtime, error) {
+	modelCfg, err := getModelConfig(cfg, cfg.DefaultModel)
 	if err != nil {
 		return nil, err
 	}
-	return schema.StreamReaderFromArray([]*schema.Message{msg}), nil
+	agentCfg, err := getAgentConfig(cfg, cfg.DefaultAgent)
+	if err != nil {
+		return nil, err
+	}
+
+	return CreateRuntimeFromModel(ctx, modelCfg, agentCfg, store)
 }
 
-func lastMessageContent(messages []*schema.Message) string {
-	if len(messages) == 0 {
-		return ""
+func CreateRuntimeFromModel(ctx context.Context, modelCfg config.ModelConfig, agentCfg config.AgentConfig, store adk.CheckPointStore) (Runtime, error) {
+	switch strings.ToLower(strings.TrimSpace(modelCfg.Provider)) {
+	case "claude", "anthropic", "openai":
+		return NewDeepAgentRuntime(ctx, modelCfg, agentCfg, store)
+	default:
+		return nil, fmt.Errorf("unsupported model provider %q", modelCfg.Provider)
 	}
-	for i := len(messages) - 1; i >= 0; i-- {
-		if msg := messages[i]; msg != nil && strings.TrimSpace(msg.Content) != "" {
-			return strings.TrimSpace(msg.Content)
+}
+
+func buildBaseChatModel(ctx context.Context, cfg config.ModelConfig) (model.BaseChatModel, error) {
+	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
+	apiKey := strings.TrimSpace(os.Getenv(strings.TrimSpace(cfg.APIKeyEnv)))
+	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+
+	switch provider {
+	case "claude", "anthropic":
+		claudeCfg := &claudemodel.Config{
+			Model:     strings.TrimSpace(cfg.Model),
+			MaxTokens: 2048,
+			APIKey:    apiKey,
 		}
+		if timeout > 0 {
+			claudeCfg.HTTPClient = &http.Client{Timeout: timeout}
+		}
+		if baseURL := strings.TrimSpace(cfg.BaseURL); baseURL != "" {
+			claudeCfg.BaseURL = &baseURL
+		}
+		chatModel, err := claudemodel.NewChatModel(ctx, claudeCfg)
+		if err != nil {
+			return nil, fmt.Errorf("build claude chat model: %w", err)
+		}
+		return chatModel, nil
+	case "openai":
+		openaiCfg := &openaimodel.ChatModelConfig{
+			APIKey:  apiKey,
+			Model:   strings.TrimSpace(cfg.Model),
+			BaseURL: strings.TrimSpace(cfg.BaseURL),
+			Timeout: timeout,
+		}
+		chatModel, err := openaimodel.NewChatModel(ctx, openaiCfg)
+		if err != nil {
+			return nil, fmt.Errorf("build openai chat model: %w", err)
+		}
+		return chatModel, nil
+	default:
+		return nil, fmt.Errorf("unsupported model provider %q", cfg.Provider)
 	}
-	return ""
 }

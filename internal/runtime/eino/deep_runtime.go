@@ -10,6 +10,8 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/schema"
+
+	"eino-cli/internal/config"
 )
 
 type DeepAgentRuntime struct {
@@ -20,24 +22,32 @@ type DeepAgentRuntime struct {
 	pendingCheckpointID string
 }
 
-func NewDeepAgentRuntime(ctx context.Context, runtimeModel string, store adk.CheckPointStore) (Runtime, error) {
-	modelCfg, err := getModelConfig(strings.TrimSpace(runtimeModel))
-	if err != nil {
-		return nil, err
-	}
-
+func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agentCfg config.AgentConfig, store adk.CheckPointStore) (Runtime, error) {
 	chatModel, err := buildBaseChatModel(ctx, modelCfg)
 	if err != nil {
 		return nil, fmt.Errorf("build chat model: %w", err)
 	}
 
+	agentName := strings.TrimSpace(agentCfg.Name)
+	if agentName == "" {
+		agentName = "deep-agent"
+	}
+	instruction := strings.TrimSpace(agentCfg.Instruction)
+	if instruction == "" {
+		instruction = "You are a helpful assistant."
+	}
+	maxIteration := agentCfg.MaxIteration
+	if maxIteration <= 0 {
+		maxIteration = 6
+	}
+
 	agent, err := deep.New(ctx, &deep.Config{
-		Name:                   "deep-agent",
+		Name:                   agentName,
 		Description:            "Deep Agent",
 		ChatModel:              chatModel,
-		Instruction:            "You are a helpful assistant.",
+		Instruction:            instruction,
 		ToolsConfig:            adk.ToolsConfig{},
-		MaxIteration:           6,
+		MaxIteration:           maxIteration,
 		WithoutGeneralSubAgent: true,
 		WithoutWriteTodos:      true,
 	})
@@ -51,7 +61,11 @@ func NewDeepAgentRuntime(ctx context.Context, runtimeModel string, store adk.Che
 		CheckPointStore: store,
 	})
 
-	return &DeepAgentRuntime{modelName: modelCfg.Name, runner: runner}, nil
+	modelName := strings.TrimSpace(modelCfg.Name)
+	if modelName == "" {
+		modelName = strings.TrimSpace(modelCfg.Model)
+	}
+	return &DeepAgentRuntime{modelName: modelName, runner: runner}, nil
 }
 
 func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, error) {
