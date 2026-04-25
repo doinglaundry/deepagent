@@ -235,6 +235,8 @@ func defaultAPIKeyEnv(provider string) string {
 		return "ANTHROPIC_API_KEY"
 	case "openai":
 		return "OPENAI_API_KEY"
+	case "kimi", "moonshot":
+		return "MOONSHOT_API_KEY"
 	default:
 		return "ANTHROPIC_API_KEY"
 	}

@@ -68,7 +68,7 @@ func BuildRuntime(ctx context.Context, cfg config.Config, store adk.CheckPointSt
 
 func CreateRuntimeFromModel(ctx context.Context, modelCfg config.ModelConfig, agentCfg config.AgentConfig, store adk.CheckPointStore) (Runtime, error) {
 	switch strings.ToLower(strings.TrimSpace(modelCfg.Provider)) {
-	case "claude", "anthropic", "openai":
+	case "claude", "anthropic", "openai", "kimi", "moonshot":
 		return NewDeepAgentRuntime(ctx, modelCfg, agentCfg, store)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", modelCfg.Provider)
@@ -108,6 +108,26 @@ func buildBaseChatModel(ctx context.Context, cfg config.ModelConfig) (model.Base
 		chatModel, err := openaimodel.NewChatModel(ctx, openaiCfg)
 		if err != nil {
 			return nil, fmt.Errorf("build openai chat model: %w", err)
+		}
+		return chatModel, nil
+	case "kimi", "moonshot":
+		baseURL := strings.TrimSpace(cfg.BaseURL)
+		if baseURL == "" {
+			baseURL = "https://api.moonshot.cn/v1"
+		}
+		modelName := strings.TrimSpace(cfg.Model)
+		if modelName == "" {
+			modelName = "moonshot-v1-8k"
+		}
+		kimiCfg := &openaimodel.ChatModelConfig{
+			APIKey:  apiKey,
+			Model:   modelName,
+			BaseURL: baseURL,
+			Timeout: timeout,
+		}
+		chatModel, err := openaimodel.NewChatModel(ctx, kimiCfg)
+		if err != nil {
+			return nil, fmt.Errorf("build kimi chat model: %w", err)
 		}
 		return chatModel, nil
 	default:
