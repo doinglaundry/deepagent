@@ -59,6 +59,6 @@ func collectAgentEventsWithSink(iter *adk.AsyncIterator[*adk.AgentEvent], onChun
 		}
 	}
 
-	summary.Output = strings.TrimSpace(strings.Join(outputs, "\n"))
+	summary.Output = strings.Join(outputs, "\n")
 	return summary, nil
 }

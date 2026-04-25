@@ -290,26 +290,11 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 		}
 		return true, r.Renderer.Render(render.Message{Kind: "memory", Content: strings.Join(lines, "\n")})
 	case "bootstrap":
-		now := time.Now()
-		r.Session = session.New(fmt.Sprintf("session-%d", now.UnixNano()), r.Workspace.RootPath, now)
-		if err := r.Store.Save(r.Session); err != nil {
-			return true, err
-		}
-		r.Tracker = tracker.New(nil)
-		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "bootstrap completed: new session initialized"})
+		return r.startNewSession("bootstrap completed: new session initialized")
 	case "new":
-		now := time.Now()
-		r.Session = session.New(fmt.Sprintf("session-%d", now.UnixNano()), r.Workspace.RootPath, now)
-		if err := r.Store.Save(r.Session); err != nil {
-			return true, err
-		}
-		r.Tracker = tracker.New(nil)
-		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "started a new session"})
+		return r.startNewSession("started a new session")
 	case "models":
-		cfg, err := config.Load("")
-		if err != nil {
-			return true, err
-		}
+		cfg := r.Config
 		modelNames := make([]string, 0, len(cfg.Models))
 		for key := range cfg.Models {
 			modelNames = append(modelNames, key)
@@ -325,6 +310,16 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 	default:
 		return false, nil
 	}
+}
+
+func (r *REPL) startNewSession(msg string) (bool, error) {
+	now := time.Now()
+	r.Session = session.New(fmt.Sprintf("session-%d", now.UnixNano()), r.Workspace.RootPath, now)
+	if err := r.Store.Save(r.Session); err != nil {
+		return true, err
+	}
+	r.Tracker = tracker.New(nil)
+	return true, r.Renderer.Render(render.Message{Kind: "command", Content: msg})
 }
 
 func (r *REPL) isKnownSlashCommand(commandName string) bool {
