@@ -1,9 +1,6 @@
 package orchestrator
 
 import (
-	"fmt"
-	"time"
-
 	memorypolicy "eino-cli/internal/memory/policy"
 	memorystore "eino-cli/internal/memory/store"
 	"eino-cli/internal/session"
@@ -41,18 +38,6 @@ func (p *Persistence) SaveCheckpoint(snapshot checkpoint.Snapshot) error {
 	return p.CheckpointStore.Save(snapshot)
 }
 
-func (p *Persistence) SaveTask(sess session.Session, current task.Task) error {
-	if p == nil || p.MemoryStore == nil || p.MemoryPolicy == nil {
-		return nil
-	}
-	memory := memorystore.Memory{
-		Key:       fmt.Sprintf("task-%s-%d", current.ID, time.Now().UnixNano()),
-		Content:   fmt.Sprintf("task %s [%s] %s", current.ID, current.Status, current.Title),
-		Scope:     sess.WorkspaceRoot,
-		UpdatedAt: time.Now(),
-	}
-	if !p.MemoryPolicy.Allow(memory) {
-		return nil
-	}
-	return p.MemoryStore.Save(memory)
+func (p *Persistence) SaveTask(_ session.Session, _ task.Task) error {
+	return nil
 }

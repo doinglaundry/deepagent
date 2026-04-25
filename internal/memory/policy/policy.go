@@ -1,6 +1,12 @@
 package policy
 
-import memorystore "eino-cli/internal/memory/store"
+import (
+	"strings"
+
+	memorystore "eino-cli/internal/memory/store"
+)
+
+const minContentLen = 8
 
 type Policy struct{}
 
@@ -9,5 +15,5 @@ func New() *Policy {
 }
 
 func (p *Policy) Allow(memory memorystore.Memory) bool {
-	return memory.Key != "" && memory.Content != ""
+	return memory.Key != "" && len([]rune(strings.TrimSpace(memory.Content))) >= minContentLen
 }

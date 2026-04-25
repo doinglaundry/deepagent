@@ -16,20 +16,28 @@ type Context struct {
 	ResumeRequired bool
 }
 
+const maxMemoryContext = 5
+
 func Build(sess session.Session, snapshot checkpoint.Snapshot, retriever *memoryretrieval.Retriever) (Context, error) {
 	memories, err := retriever.Find("")
 	if err != nil {
 		return Context{}, err
 	}
-	items := make([]string, 0, len(memories))
-	for _, memory := range memories {
-		items = append(items, memory.Content)
+	// Exclude task records; keep only the most recent maxMemoryContext user memories.
+	var userMemories []string
+	for _, m := range memories {
+		if !strings.HasPrefix(m.Content, "task ") {
+			userMemories = append(userMemories, m.Content)
+		}
+	}
+	if len(userMemories) > maxMemoryContext {
+		userMemories = userMemories[len(userMemories)-maxMemoryContext:]
 	}
 	return Context{
 		SessionID:      sess.ID,
 		WorkspaceRoot:  sess.WorkspaceRoot,
 		LastInput:      snapshot.LastInput,
-		Memory:         items,
+		Memory:         userMemories,
 		ResumeRequired: snapshot.AwaitingApproval || strings.TrimSpace(snapshot.LastInput) != "",
 	}, nil
 }
