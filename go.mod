@@ -1,6 +1,6 @@
 module eino-cli
 
-go 1.26.2
+go 1.23.0
 
 require github.com/cloudwego/eino v0.9.0-alpha.17
 

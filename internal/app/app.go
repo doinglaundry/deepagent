@@ -33,21 +33,19 @@ func New(opts Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("孙颖宝 config loaded", "model", cfg.DefaultModel, "workspace", cfg.RootDir)
+	slog.Info("孙颖宝 cfg: %v", "model", cfg)
 
 	manifest, err := workspace.Discover(cfg.RootDir)
 	if err != nil {
 		return nil, fmt.Errorf("load workspace: %w", err)
 	}
-	slog.Info("孙颖宝 workspace ready", "root", manifest.RootPath, "languages", manifest.LanguageStack)
 
 	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
-	slog.Info("孙颖宝 initializing runtime", "model", cfg.DefaultModel)
+
 	runtime, err := buildRuntime(cfg, checkpointStore)
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("孙颖宝 runtime ready", "name", runtime.Name())
 
 	persistence := orchestrator.NewPersistence(
 		session.NewStore(cfg.SessionsDir),

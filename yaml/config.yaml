@@ -4,14 +4,6 @@
 # default_model: which model the CLI uses (must match a name in models list)
 default_model: kimi
 
-models:
-  - name: kimi
-    provider: kimi
-    model: moonshot-v1-8k
-    api_base: https://api.moonshot.cn/v1
-    api_key: $MOONSHOT_API_KEY
-    timeout_seconds: 60
-
 # ============================================================================
 # Configuration for the DeerFlow application
 #
@@ -70,6 +62,12 @@ models:
   #     extra_body:
   #       thinking:
   #         type: disabled
+  - name: kimi
+    provider: kimi
+    model: moonshot-v1-8k
+    api_base: https://api.moonshot.cn/v1
+    api_key: $MOONSHOT_API_KEY
+    timeout_seconds: 60
 
   # Example: OpenAI model
   # - name: gpt-4

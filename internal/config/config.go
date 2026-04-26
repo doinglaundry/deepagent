@@ -78,7 +78,7 @@ func normalizeConfig(cfg Config) (Config, error) {
 		mc.Model = defaultModel
 	}
 	if strings.TrimSpace(mc.Provider) == "" {
-		mc.Provider = "claude"
+		mc.Provider = "kimi"
 	}
 	if mc.TimeoutSeconds <= 0 {
 		mc.TimeoutSeconds = cfg.RuntimeTimeout
