@@ -42,9 +42,9 @@ func New(opts Options) (*App, error) {
 
 	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
 
-	runtime, err := buildRuntime(cfg, checkpointStore)
+	runtime, err := eino.BuildRuntime(context.Background(), cfg, checkpointStore)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("init runtime: %w", err)
 	}
 
 	persistence := orchestrator.NewPersistence(
@@ -62,12 +62,4 @@ func New(opts Options) (*App, error) {
 
 func (a *App) Run() error {
 	return a.runner.Run(context.Background())
-}
-
-func buildRuntime(cfg config.Config, checkpointStore *checkpoint.Store) (eino.Runtime, error) {
-	runtime, err := eino.BuildRuntime(context.Background(), cfg, checkpointStore)
-	if err != nil {
-		return nil, fmt.Errorf("init deep runtime: %w", err)
-	}
-	return runtime, nil
 }

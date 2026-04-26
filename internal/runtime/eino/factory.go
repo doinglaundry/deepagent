@@ -16,62 +16,33 @@ import (
 	"eino-cli/internal/config"
 )
 
-func getModelConfig(cfg config.Config, modelName string) (config.ModelConfig, error) {
-	name := strings.TrimSpace(modelName)
-	if name == "" {
-		name = strings.TrimSpace(cfg.DefaultModel)
-	}
-	if name == "" {
-		return config.ModelConfig{}, fmt.Errorf("default model is required")
-	}
-
-	modelCfg, ok := cfg.Models[name]
-	if !ok {
-		return config.ModelConfig{}, fmt.Errorf("model %q not found", name)
-	}
-	if strings.TrimSpace(modelCfg.Name) == "" {
-		modelCfg.Name = name
-	}
-
-	return *modelCfg, nil
-}
-
-func getAgentConfig(cfg config.Config, agentName string) (config.AgentConfig, error) {
-	name := strings.TrimSpace(agentName)
-	if name == "" {
-		name = strings.TrimSpace(cfg.DefaultAgent)
-	}
-	if name == "" {
-		return config.AgentConfig{}, fmt.Errorf("default agent is required")
-	}
-
-	agentCfg, ok := cfg.Agents[name]
-	if !ok {
-		return config.AgentConfig{}, fmt.Errorf("agent %q not found", name)
-	}
-
-	return agentCfg, nil
-}
-
 func BuildRuntime(ctx context.Context, cfg config.Config, store adk.CheckPointStore) (Runtime, error) {
-	modelCfg, err := getModelConfig(cfg, cfg.DefaultModel)
-	if err != nil {
-		return nil, err
+	modelName := strings.TrimSpace(cfg.DefaultModel)
+	if modelName == "" {
+		return nil, fmt.Errorf("default model is required")
 	}
-	agentCfg, err := getAgentConfig(cfg, cfg.DefaultAgent)
-	if err != nil {
-		return nil, err
+	mc, ok := cfg.Models[modelName]
+	if !ok {
+		return nil, fmt.Errorf("model %q not found", modelName)
+	}
+	if strings.TrimSpace(mc.Name) == "" {
+		mc.Name = modelName
 	}
 
-	return CreateRuntimeFromModel(ctx, modelCfg, agentCfg, store)
-}
+	agentName := strings.TrimSpace(cfg.DefaultAgent)
+	if agentName == "" {
+		return nil, fmt.Errorf("default agent is required")
+	}
+	ac, ok := cfg.Agents[agentName]
+	if !ok {
+		return nil, fmt.Errorf("agent %q not found", agentName)
+	}
 
-func CreateRuntimeFromModel(ctx context.Context, modelCfg config.ModelConfig, agentCfg config.AgentConfig, store adk.CheckPointStore) (Runtime, error) {
-	switch strings.ToLower(strings.TrimSpace(modelCfg.Provider)) {
+	switch strings.ToLower(strings.TrimSpace(mc.Provider)) {
 	case "claude", "anthropic", "openai", "kimi", "moonshot":
-		return NewDeepAgentRuntime(ctx, modelCfg, agentCfg, store)
+		return NewDeepAgentRuntime(ctx, *mc, ac, store)
 	default:
-		return nil, fmt.Errorf("unsupported model provider %q", modelCfg.Provider)
+		return nil, fmt.Errorf("unsupported model provider %q", mc.Provider)
 	}
 }
 

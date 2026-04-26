@@ -11,23 +11,6 @@ import (
 	"eino-cli/internal/config"
 )
 
-func TestGetModelConfig(t *testing.T) {
-	cfg := config.Config{
-		DefaultModel: "primary",
-		Models: map[string]*config.ModelConfig{
-			"primary": {Name: "primary", Provider: "claude", Model: "claude-sonnet-4-6", APIKeyEnv: "ANTHROPIC_API_KEY", TimeoutSeconds: 30},
-		},
-	}
-
-	modelCfg, err := getModelConfig(cfg, "")
-	if err != nil {
-		t.Fatalf("getModelConfig() error = %v", err)
-	}
-	if modelCfg.Name != "primary" {
-		t.Fatalf("unexpected model config: %+v", modelCfg)
-	}
-}
-
 func TestBuildRuntimeUnsupportedProvider(t *testing.T) {
 	runtime, err := BuildRuntime(context.Background(), config.Config{
 		DefaultModel: "primary",
