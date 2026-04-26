@@ -32,14 +32,16 @@ func NewStore(dir string) *Store {
 }
 
 func (s *Store) Save(memory Memory) error {
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	err := os.MkdirAll(s.dir, 0o755)
+	if err != nil {
 		return fmt.Errorf("create memory directory: %w", err)
 	}
 	payload, err := json.MarshalIndent(memory, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal memory: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(s.dir, memory.Key+".json"), payload, 0o644); err != nil {
+	err = os.WriteFile(filepath.Join(s.dir, memory.Key+".json"), payload, 0o644)
+	if err != nil {
 		return fmt.Errorf("write memory: %w", err)
 	}
 	return nil
@@ -64,7 +66,8 @@ func (s *Store) LoadAll() ([]Memory, error) {
 			return nil, fmt.Errorf("read memory: %w", err)
 		}
 		var memory Memory
-		if err := json.Unmarshal(payload, &memory); err != nil {
+		err = json.Unmarshal(payload, &memory)
+		if err != nil {
 			return nil, fmt.Errorf("unmarshal memory: %w", err)
 		}
 		memories = append(memories, memory)

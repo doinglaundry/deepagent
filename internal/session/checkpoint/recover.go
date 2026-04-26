@@ -44,7 +44,8 @@ func RecoverLatest(dir string) (Snapshot, bool, error) {
 	}
 
 	var snapshot Snapshot
-	if err := json.Unmarshal(payload, &snapshot); err != nil {
+	err = json.Unmarshal(payload, &snapshot)
+	if err != nil {
 		return Snapshot{}, false, fmt.Errorf("unmarshal checkpoint: %w", err)
 	}
 

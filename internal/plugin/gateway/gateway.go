@@ -62,7 +62,8 @@ func (g *Gateway) ListTools(ctx context.Context) ([]tools.Tool, error) {
 	}
 
 	var wrapped response
-	if err := json.Unmarshal(body, &wrapped); err != nil {
+	err = json.Unmarshal(body, &wrapped)
+	if err != nil {
 		return nil, fmt.Errorf("decode tools response: %w", err)
 	}
 	return normalizeTools(wrapped.Tools), nil

@@ -26,7 +26,8 @@ func NewStore(dir string) *Store {
 }
 
 func (s *Store) Save(snapshot Snapshot) error {
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	err := os.MkdirAll(s.dir, 0o755)
+	if err != nil {
 		return fmt.Errorf("create checkpoints directory: %w", err)
 	}
 
@@ -35,7 +36,8 @@ func (s *Store) Save(snapshot Snapshot) error {
 		return fmt.Errorf("marshal checkpoint: %w", err)
 	}
 
-	if err := os.WriteFile(s.path(snapshot.SessionID), payload, 0o644); err != nil {
+	err = os.WriteFile(s.path(snapshot.SessionID), payload, 0o644)
+	if err != nil {
 		return fmt.Errorf("write checkpoint: %w", err)
 	}
 
@@ -55,10 +57,12 @@ func (s *Store) Get(_ context.Context, checkPointID string) ([]byte, bool, error
 }
 
 func (s *Store) Set(_ context.Context, checkPointID string, checkPoint []byte) error {
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	err := os.MkdirAll(s.dir, 0o755)
+	if err != nil {
 		return fmt.Errorf("create checkpoints directory: %w", err)
 	}
-	if err := os.WriteFile(s.path(checkPointID), checkPoint, 0o644); err != nil {
+	err = os.WriteFile(s.path(checkPointID), checkPoint, 0o644)
+	if err != nil {
 		return fmt.Errorf("write checkpoint: %w", err)
 	}
 	return nil

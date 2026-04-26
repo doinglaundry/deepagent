@@ -46,6 +46,7 @@ type REPL struct {
 	Retriever           *memoryretrieval.Retriever
 	KnownCommands       map[string]struct{}
 	KnownCommandsPretty []string
+	scanner             *bufio.Scanner
 }
 
 func New(cfg config.Config, manifest workspace.Manifest, renderer render.Renderer, service *orchestrator.Service, knownCommands []string) *REPL {
@@ -108,182 +109,255 @@ func New(cfg config.Config, manifest workspace.Manifest, renderer render.Rendere
 }
 
 func (r *REPL) Run(ctx context.Context) error {
-	if err := r.Store.Save(r.Session); err != nil {
+	if err := r.startup(); err != nil {
+		return err
+	}
+	r.scanner = bufio.NewScanner(os.Stdin)
+	for {
+		input, done, err := r.readInput()
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+		if input == "" {
+			continue
+		}
+		route, skip, err := r.prepareRoute(input)
+		if err != nil {
+			return err
+		}
+		if skip {
+			continue
+		}
+		if err := r.execute(ctx, route); err != nil {
+			return err
+		}
+	}
+}
+
+// startup 持久化 session、渲染 checkpoint 恢复消息、渲染初始状态栏。
+func (r *REPL) startup() error {
+	err := r.Store.Save(r.Session)
+	if err != nil {
 		return err
 	}
 	if snapshot, ok, err := checkpoint.RecoverLatest(r.Config.CheckpointDir); err == nil && ok && snapshot.SessionID == r.Session.ID {
+		// 根据 checkpoint 构造恢复消息
 		message, err := resumeMessage(r.Session, snapshot, r.Retriever)
 		if err != nil {
 			return err
 		}
-		if err := r.Renderer.Render(message); err != nil {
+		// 将恢复消息渲染给用户
+		err = r.Renderer.Render(message)
+		if err != nil {
 			return err
 		}
 	}
+	err = r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"})
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
-	if err := r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"}); err != nil {
+// readInput 打印提示符、读取一行输入、更新 session 活跃时间。
+// done=true 表示应退出循环（EOF 或 /exit）；input="" 表示空行，调用方应 continue。
+func (r *REPL) readInput() (input string, done bool, err error) {
+	_, err = fmt.Fprint(os.Stdout, "> ")
+	if err != nil {
+		return "", false, err
+	}
+	if !r.scanner.Scan() {
+		return "", true, r.scanner.Err()
+	}
+	input = strings.TrimSpace(r.scanner.Text())
+	if input == "/exit" {
+		return "", true, nil
+	}
+	if input == "" {
+		return "", false, nil
+	}
+	// 更新 session 的最后活跃时间并持久化
+	r.Session = r.Session.Touch(time.Now())
+	err = r.Store.Save(r.Session)
+	if err != nil {
+		return "", false, err
+	}
+	return input, false, nil
+}
+
+// prepareRoute 解析输入、处理未知斜杠命令、规划任务并写入 memory、分发内置命令。
+// skip=true 表示本轮已处理完毕，调用方应 continue，不需再调用 execute。
+func (r *REPL) prepareRoute(input string) (route router.Route, skip bool, err error) {
+	// 解析输入，判断是自然语言还是斜杠命令
+	route = r.Parser.Parse(input)
+	// 未知斜杠命令：渲染错误后跳过
+	if route.InputType == router.InputTypeSlashCommand && !r.isKnownSlashCommand(route.CommandName) {
+		unknown := strings.TrimSpace(route.RawInput)
+		if unknown == "" {
+			unknown = "/"
+		}
+		err = r.Renderer.RenderError(render.ErrorView{Code: eino.ErrorCodeTool, Message: fmt.Sprintf("unknown command: %s", unknown)})
+		return route, true, err
+	}
+	// 自然语言：规划任务并记录到 memory
+	if route.InputType == router.InputTypeNaturalLanguage {
+		planned := r.Planner.Plan(route.RawInput)
+		r.Tracker = tracker.New(planned)
+		if len(planned) > 0 {
+			r.Tracker.SetStatus(planned[0].ID, "in_progress")
+		}
+		memory := memorystore.Memory{
+			Key:       fmt.Sprintf("memory-%d", time.Now().UnixNano()),
+			Content:   route.RawInput,
+			Scope:     r.Workspace.RootPath,
+			UpdatedAt: time.Now(),
+		}
+		// 仅在 policy 允许时持久化 memory
+		if r.MemoryPolicy.Allow(memory) {
+			err = r.MemoryStore.Save(memory)
+			if err != nil {
+				return route, false, err
+			}
+		}
+	}
+	// 内置命令（/help、/tasks 等）由 handleBuiltin 处理
+	handled, err := r.handleBuiltin(route)
+	if err != nil {
+		return route, true, err
+	}
+	return route, handled, nil
+}
+
+// execute 向 orchestrator 提交请求、保存 checkpoint、处理工具审批、渲染最终结果。
+func (r *REPL) execute(ctx context.Context, route router.Route) error {
+	streamed := false
+	onChunk := func(chunk string) {
+		fmt.Fprint(os.Stdout, chunk)
+		streamed = true
+	}
+	// 提交流式请求并等待 orchestrator 返回接受结果
+	accepted, err := r.Orchestrator.SubmitStream(ctx, r.Session, route, onChunk)
+	if err != nil {
+		// 渲染运行时错误后继续等待下一条输入
+		if renderErr := r.Renderer.RenderError(render.ErrorView{Code: "runtime_error", Message: err.Error()}); renderErr != nil {
+			return renderErr
+		}
+		return nil
+	}
+
+	// 构造 checkpoint 快照，记录本次输入及是否等待审批
+	snapshot := checkpoint.Snapshot{
+		SessionID:        r.Session.ID,
+		WorkspaceRoot:    r.Workspace.RootPath,
+		LastInput:        route.RawInput,
+		AwaitingApproval: len(accepted.Run.Invocations) > 0 && accepted.Run.Invocations[0].ApprovalStatus == session.ApprovalStatusAwaitingApproval,
+		UpdatedAt:        time.Now(),
+	}
+	err = r.CheckpointStore.Save(snapshot)
+	if err != nil {
 		return err
 	}
 
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		if _, err := fmt.Fprint(os.Stdout, "> "); err != nil {
-			return err
-		}
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return err
-			}
-			return nil
-		}
-
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		if input == "/exit" {
-			return nil
-		}
-
-		r.Session = r.Session.Touch(time.Now())
-		if err := r.Store.Save(r.Session); err != nil {
-			return err
-		}
-
-		route := r.Parser.Parse(input)
-		if route.InputType == router.InputTypeSlashCommand && !r.isKnownSlashCommand(route.CommandName) {
-			unknown := strings.TrimSpace(route.RawInput)
-			if unknown == "" {
-				unknown = "/"
-			}
-			if err := r.Renderer.RenderError(render.ErrorView{Code: eino.ErrorCodeTool, Message: fmt.Sprintf("unknown command: %s", unknown)}); err != nil {
-				return err
-			}
-			continue
-		}
-		if route.InputType == router.InputTypeNaturalLanguage {
-			planned := r.Planner.Plan(route.RawInput)
-			r.Tracker = tracker.New(planned)
-			if len(planned) > 0 {
-				r.Tracker.SetStatus(planned[0].ID, "in_progress")
-			}
-			memory := memorystore.Memory{
-				Key:       fmt.Sprintf("memory-%d", time.Now().UnixNano()),
-				Content:   route.RawInput,
-				Scope:     r.Workspace.RootPath,
-				UpdatedAt: time.Now(),
-			}
-			if r.MemoryPolicy.Allow(memory) {
-				if err := r.MemoryStore.Save(memory); err != nil {
-					return err
-				}
-			}
-		}
-		if handled, err := r.handleBuiltin(route); handled || err != nil {
-			if err != nil {
-				return err
-			}
-			continue
-		}
-
-		streamed := false
-		onChunk := func(chunk string) {
-			fmt.Fprint(os.Stdout, chunk)
-			streamed = true
-		}
-		accepted, err := r.Orchestrator.SubmitStream(ctx, r.Session, route, onChunk)
-		if err != nil {
-			if renderErr := r.Renderer.RenderError(render.ErrorView{Code: "runtime_error", Message: err.Error()}); renderErr != nil {
-				return renderErr
-			}
-			continue
-		}
-
-		snapshot := checkpoint.Snapshot{
-			SessionID:        r.Session.ID,
-			WorkspaceRoot:    r.Workspace.RootPath,
-			LastInput:        route.RawInput,
-			AwaitingApproval: len(accepted.Run.Invocations) > 0 && accepted.Run.Invocations[0].ApprovalStatus == session.ApprovalStatusAwaitingApproval,
-			UpdatedAt:        time.Now(),
-		}
-		if err := r.CheckpointStore.Save(snapshot); err != nil {
-			return err
-		}
-
-		if len(accepted.Run.Invocations) > 0 {
-			invocation := accepted.Run.Invocations[0]
-			if invocation.ApprovalStatus == session.ApprovalStatusAwaitingApproval {
-				if err := r.Renderer.Render(render.Message{Kind: "approval", Content: fmt.Sprintf("命令 %q 需要确认，请输入 y/yes 批准，其他输入视为拒绝", invocation.ToolName)}); err != nil {
-					return err
-				}
-				if _, err := fmt.Fprint(os.Stdout, "approval> "); err != nil {
-					return err
-				}
-				if !scanner.Scan() {
-					if err := scanner.Err(); err != nil {
-						return err
-					}
-					return nil
-				}
-				decision := strings.ToLower(strings.TrimSpace(scanner.Text()))
-				approved := decision == "y" || decision == "yes"
-				resolvedInvocation, toolResult, err := r.Orchestrator.ContinueToolInvocation(ctx, r.Session.ID, invocation.ID, approved)
-				if err != nil {
-					if renderErr := r.Renderer.RenderError(render.ErrorView{Code: eino.ErrorCodeTool, Message: err.Error()}); renderErr != nil {
-						return renderErr
-					}
-					continue
-				}
-				if resolvedInvocation.ExecutionStatus == session.ExecutionStatusRejected {
-					if err := r.Renderer.Render(render.Message{Kind: "approval", Content: "已拒绝执行"}); err != nil {
-						return err
-					}
-				}
-				if !toolResult.Success {
-					if err := r.Renderer.RenderError(render.ErrorView{Code: toolResult.Code, Message: toolResult.Message}); err != nil {
-						return err
-					}
-					continue
-				}
-				if err := r.Renderer.Render(render.Message{Kind: "tool", Content: toolResult.Output}); err != nil {
-					return err
-				}
-				// Feed shell result back to model for analysis.
-				if toolResult.Output != "" {
-					feedPrompt := fmt.Sprintf("[Shell result]\n%s", toolResult.Output)
-					feedOnChunk := func(chunk string) { fmt.Fprint(os.Stdout, chunk) }
-					feedRoute := router.Route{
-						RawInput:  feedPrompt,
-						InputType: router.InputTypeNaturalLanguage,
-						Target:    router.TargetAgent,
-					}
-					feedAccepted, feedErr := r.Orchestrator.SubmitStream(ctx, r.Session, feedRoute, feedOnChunk)
-					if feedErr == nil && feedAccepted.Run.Result.Success {
-						fmt.Fprintln(os.Stdout)
-					}
-				}
-				continue
-			}
-		}
-
-		if !accepted.Run.Result.Success {
-			if accepted.Run.Result.NeedsUser {
-				continue
-			}
-			if err := r.Renderer.RenderError(render.ErrorView{Code: accepted.Run.Result.Code, Message: accepted.Run.Result.Message}); err != nil {
-				return err
-			}
-			continue
-		}
-
-		if streamed {
-			fmt.Fprintln(os.Stdout) // trailing newline after stream
-		} else if accepted.Run.Result.Success {
-			if err := r.Renderer.Render(render.Message{Kind: string(route.InputType), Content: accepted.Run.Result.Output}); err != nil {
-				return err
-			}
+	// 若本轮产生了工具调用，检查是否需要用户审批
+	if len(accepted.Run.Invocations) > 0 {
+		invocation := accepted.Run.Invocations[0]
+		if invocation.ApprovalStatus == session.ApprovalStatusAwaitingApproval {
+			return r.handleApproval(ctx, invocation)
 		}
 	}
+
+	// 本轮运行失败时的处理
+	if !accepted.Run.Result.Success {
+		// 若需要用户追加输入，则静默继续循环
+		if accepted.Run.Result.NeedsUser {
+			return nil
+		}
+		err = r.Renderer.RenderError(render.ErrorView{Code: accepted.Run.Result.Code, Message: accepted.Run.Result.Message})
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// 流式输出后补一个换行，保证终端格式整齐
+	if streamed {
+		fmt.Fprintln(os.Stdout) // trailing newline after stream
+		return nil
+	}
+	err = r.Renderer.Render(render.Message{Kind: string(route.InputType), Content: accepted.Run.Result.Output})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// handleApproval 处理工具调用的审批子流程：展示命令、等待用户确认、执行并渲染结果。
+func (r *REPL) handleApproval(ctx context.Context, invocation session.ToolInvocation) error {
+	// 渲染审批提示，告知用户待执行的命令名
+	err := r.Renderer.Render(render.Message{Kind: "approval", Content: fmt.Sprintf("命令 %q 需要确认，请输入 y/yes 批准，其他输入视为拒绝", invocation.ToolName)})
+	if err != nil {
+		return err
+	}
+	// 打印审批专用提示符并读取用户决策
+	if _, err = fmt.Fprint(os.Stdout, "approval> "); err != nil {
+		return err
+	}
+	if !r.scanner.Scan() {
+		return r.scanner.Err()
+	}
+	decision := strings.ToLower(strings.TrimSpace(r.scanner.Text()))
+	approved := decision == "y" || decision == "yes"
+
+	// 将审批结果传回 orchestrator，继续执行或拒绝工具调用
+	resolvedInvocation, toolResult, err := r.Orchestrator.ContinueToolInvocation(ctx, r.Session.ID, invocation.ID, approved)
+	if err != nil {
+		if renderErr := r.Renderer.RenderError(render.ErrorView{Code: eino.ErrorCodeTool, Message: err.Error()}); renderErr != nil {
+			return renderErr
+		}
+		return nil
+	}
+
+	// 用户拒绝执行，渲染拒绝提示
+	if resolvedInvocation.ExecutionStatus == session.ExecutionStatusRejected {
+		err = r.Renderer.Render(render.Message{Kind: "approval", Content: "已拒绝执行"})
+		if err != nil {
+			return err
+		}
+	}
+
+	// 工具执行失败，渲染错误信息
+	if !toolResult.Success {
+		err = r.Renderer.RenderError(render.ErrorView{Code: toolResult.Code, Message: toolResult.Message})
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// 渲染工具执行的输出结果
+	err = r.Renderer.Render(render.Message{Kind: "tool", Content: toolResult.Output})
+	if err != nil {
+		return err
+	}
+
+	// 将 shell 输出二次提交给模型进行分析
+	if toolResult.Output != "" {
+		feedPrompt := fmt.Sprintf("[Shell result]\n%s", toolResult.Output)
+		feedOnChunk := func(chunk string) { fmt.Fprint(os.Stdout, chunk) }
+		feedRoute := router.Route{
+			RawInput:  feedPrompt,
+			InputType: router.InputTypeNaturalLanguage,
+			Target:    router.TargetAgent,
+		}
+		feedAccepted, feedErr := r.Orchestrator.SubmitStream(ctx, r.Session, feedRoute, feedOnChunk)
+		if feedErr == nil && feedAccepted.Run.Result.Success {
+			fmt.Fprintln(os.Stdout)
+		}
+	}
+	return nil
 }
 
 func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
@@ -338,7 +412,8 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 func (r *REPL) startNewSession(msg string) (bool, error) {
 	now := time.Now()
 	r.Session = session.New(fmt.Sprintf("session-%d", now.UnixNano()), r.Workspace.RootPath, now)
-	if err := r.Store.Save(r.Session); err != nil {
+	err := r.Store.Save(r.Session)
+	if err != nil {
 		return true, err
 	}
 	r.Tracker = tracker.New(nil)

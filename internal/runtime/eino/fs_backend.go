@@ -155,7 +155,8 @@ func (b *localBackend) Write(ctx context.Context, req *filesystem.WriteRequest) 
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(b.root, p)
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+	err := os.MkdirAll(filepath.Dir(p), 0755)
+	if err != nil {
 		return err
 	}
 	return os.WriteFile(p, []byte(req.Content), 0644)

@@ -17,7 +17,8 @@ func NewStore(dir string) *Store {
 }
 
 func (s *Store) Save(sess Session) error {
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	err := os.MkdirAll(s.dir, 0o755)
+	if err != nil {
 		return fmt.Errorf("create sessions directory: %w", err)
 	}
 
@@ -26,7 +27,8 @@ func (s *Store) Save(sess Session) error {
 		return fmt.Errorf("marshal session: %w", err)
 	}
 
-	if err := os.WriteFile(s.path(sess.ID), payload, 0o644); err != nil {
+	err = os.WriteFile(s.path(sess.ID), payload, 0o644)
+	if err != nil {
 		return fmt.Errorf("write session: %w", err)
 	}
 
@@ -69,7 +71,8 @@ func (s *Store) LoadLatest() (Session, bool, error) {
 	}
 
 	var sess Session
-	if err := json.Unmarshal(payload, &sess); err != nil {
+	err = json.Unmarshal(payload, &sess)
+	if err != nil {
 		return Session{}, false, fmt.Errorf("unmarshal session: %w", err)
 	}
 

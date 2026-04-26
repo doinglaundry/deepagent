@@ -181,7 +181,8 @@ func defaultAPIKeyEnv(provider string) string {
 
 func ensureDirs(cfg Config) error {
 	for _, dir := range []string{cfg.StateDir, cfg.SessionsDir, cfg.MemoryDir, cfg.CheckpointDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		err := os.MkdirAll(dir, 0o755)
+		if err != nil {
 			return fmt.Errorf("create state directory %s: %w", dir, err)
 		}
 	}
