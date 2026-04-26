@@ -269,7 +269,9 @@ func (r *REPL) execute(ctx context.Context, route router.Route) error {
 		invocation := accepted.Run.Invocations[0]
 		if invocation.ApprovalStatus == session.ApprovalStatusAwaitingApproval {
 			t.AwaitingApproval = true
-			_ = r.TurnStore.Save(t)
+			if err = r.TurnStore.Save(t); err != nil {
+				return err
+			}
 			return r.handleApproval(ctx, invocation)
 		}
 	}
@@ -287,13 +289,14 @@ func (r *REPL) execute(ctx context.Context, route router.Route) error {
 		return nil
 	}
 
-	// 执行成功：将 Turn 标记为已完成并持久化
 	result := session.TurnResult{
 		Success: true,
 		Output:  accepted.Run.Result.Output,
 	}
 	t = t.Complete(result, time.Now())
-	_ = r.TurnStore.Save(t)
+	if err = r.TurnStore.Save(t); err != nil {
+		return err
+	}
 
 	// 流式输出后补一个换行，保证终端格式整齐
 	if streamed {

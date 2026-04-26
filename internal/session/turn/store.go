@@ -81,7 +81,6 @@ func (s *Store) LoadAll(sessionID string) ([]session.Turn, error) {
 }
 
 // RecoverLatestIncomplete returns the last turn that has not yet completed.
-// CompletedAt == nil is the crash-recovery anchor: it means the process died mid-turn.
 func (s *Store) RecoverLatestIncomplete(sessionID string) (session.Turn, bool, error) {
 	turns, err := s.LoadAll(sessionID)
 	if err != nil {
@@ -96,10 +95,21 @@ func (s *Store) RecoverLatestIncomplete(sessionID string) (session.Turn, bool, e
 }
 
 // NextIndex returns the index to assign to the next new turn.
+// Counts .json files in the turns directory without deserializing them.
 func (s *Store) NextIndex(sessionID string) (int, error) {
-	turns, err := s.LoadAll(sessionID)
+	dir := s.turnsDir(sessionID)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0, err
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("read turns directory: %w", err)
 	}
-	return len(turns), nil
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+			count++
+		}
+	}
+	return count, nil
 }
