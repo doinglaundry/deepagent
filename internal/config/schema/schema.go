@@ -16,18 +16,6 @@ type AgentConfig struct {
 	MaxHistoryTurns int    `yaml:"max_history_turns" json:"max_history_turns"`
 }
 
-type PluginGatewayConfig struct {
-	Enabled        bool   `json:"enabled"`
-	Endpoint       string `json:"endpoint,omitempty"`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
-}
-
-type ProtocolConfig struct {
-	Enabled bool   `json:"enabled"`
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
 type Config struct {
 	RootDir       string `json:"root_dir"`
 	StateDir      string `json:"state_dir"`
@@ -39,9 +27,6 @@ type Config struct {
 	Models       map[string]ModelConfig `json:"models"`
 	DefaultAgent string                 `json:"default_agent"`
 	Agents       map[string]AgentConfig `json:"agents"`
-
-	PluginGateway PluginGatewayConfig `json:"plugin_gateway"`
-	Protocol      ProtocolConfig      `json:"protocol"`
 
 	RuntimeBaseURL string `json:"runtime_base_url"`
 	RuntimeModel   string `json:"runtime_model"`

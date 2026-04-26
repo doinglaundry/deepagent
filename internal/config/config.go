@@ -15,8 +15,6 @@ type Config = schema.Config
 type ModelConfig = schema.ModelConfig
 type AgentConfig = schema.AgentConfig
 
-type PluginGatewayConfig = schema.PluginGatewayConfig
-type ProtocolConfig = schema.ProtocolConfig
 
 const (
 	defaultRuntimeModel     = "kimi"
@@ -62,16 +60,6 @@ func Load() (Config, error) {
 
 		Models: yamlModels,
 
-		PluginGateway: PluginGatewayConfig{
-			Enabled:        envOrDefaultBool("EINO_PLUGIN_GATEWAY_ENABLED", false),
-			Endpoint:       envOrDefault("EINO_PLUGIN_GATEWAY_ENDPOINT", ""),
-			TimeoutSeconds: envOrDefaultInt("EINO_PLUGIN_GATEWAY_TIMEOUT", defaultRuntimeTimeout),
-		},
-		Protocol: ProtocolConfig{
-			Enabled: envOrDefaultBool("EINO_PROTOCOL_ENABLED", false),
-			Name:    envOrDefault("EINO_PROTOCOL_NAME", "eino"),
-			Version: envOrDefault("EINO_PROTOCOL_VERSION", "v1"),
-		},
 	}
 
 	normalized, err := normalizeConfig(cfg)
@@ -172,16 +160,6 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 	cfg.Agents[defaultAgentKey] = defaultAgent
 
-	if cfg.PluginGateway.TimeoutSeconds <= 0 {
-		cfg.PluginGateway.TimeoutSeconds = cfg.RuntimeTimeout
-	}
-	if strings.TrimSpace(cfg.Protocol.Name) == "" {
-		cfg.Protocol.Name = "eino"
-	}
-	if strings.TrimSpace(cfg.Protocol.Version) == "" {
-		cfg.Protocol.Version = "v1"
-	}
-
 	if err := validateConfig(cfg); err != nil {
 		return Config{}, err
 	}
@@ -231,9 +209,6 @@ func validateConfig(cfg Config) error {
 
 	if cfg.RuntimeTimeout <= 0 {
 		return fmt.Errorf("runtime timeout must be positive")
-	}
-	if cfg.PluginGateway.TimeoutSeconds <= 0 {
-		return fmt.Errorf("plugin gateway timeout must be positive")
 	}
 
 	return nil

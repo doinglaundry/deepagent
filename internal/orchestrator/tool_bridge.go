@@ -87,10 +87,7 @@ func (s *Service) ContinueToolInvocation(ctx context.Context, sessionID, invocat
 	return invocation, eino.SuccessResult(result.Output), nil
 }
 
-func (s *Service) executeTool(ctx context.Context, tool tools.Tool, args []string, cwd string) (tools.Result, error) {
-	if tool.Source == "plugin" {
-		return s.registry.InvokePluginTool(ctx, tool.Name, args)
-	}
+func (s *Service) executeTool(_ context.Context, tool tools.Tool, args []string, cwd string) (tools.Result, error) {
 	return s.executor.Execute(tool, args, cwd)
 }
 

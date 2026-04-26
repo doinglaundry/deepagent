@@ -10,33 +10,30 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/internal/config"
 	"eino-cli/internal/tools"
 )
 
 type Gateway struct {
-	cfg    config.PluginGatewayConfig
-	client *http.Client
+	endpoint       string
+	timeoutSeconds int
+	client         *http.Client
 }
 
-func New(cfg config.PluginGatewayConfig) *Gateway {
-	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+func New(endpoint string, timeoutSeconds int) *Gateway {
+	timeout := time.Duration(timeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	return &Gateway{cfg: cfg, client: &http.Client{Timeout: timeout}}
+	return &Gateway{endpoint: endpoint, timeoutSeconds: timeoutSeconds, client: &http.Client{Timeout: timeout}}
 }
 
 func (g *Gateway) Enabled() bool {
-	return g != nil && g.cfg.Enabled
+	return g != nil && strings.TrimSpace(g.endpoint) != ""
 }
 
 func (g *Gateway) Check(ctx context.Context) error {
 	if !g.Enabled() {
-		return nil
-	}
-	if strings.TrimSpace(g.cfg.Endpoint) == "" {
-		return fmt.Errorf("plugin gateway endpoint is required when enabled")
+		return fmt.Errorf("plugin gateway endpoint not configured")
 	}
 	_, err := g.getJSON(ctx, []string{"/health", "/v1/health", ""})
 	if err != nil {
@@ -48,9 +45,6 @@ func (g *Gateway) Check(ctx context.Context) error {
 func (g *Gateway) ListTools(ctx context.Context) ([]tools.Tool, error) {
 	if !g.Enabled() {
 		return []tools.Tool{}, nil
-	}
-	if strings.TrimSpace(g.cfg.Endpoint) == "" {
-		return nil, fmt.Errorf("plugin gateway endpoint is required when enabled")
 	}
 
 	body, err := g.getJSON(ctx, []string{"/tools", "/v1/tools"})
@@ -78,9 +72,6 @@ func (g *Gateway) InvokeTool(ctx context.Context, name string, args []string) (t
 	if !g.Enabled() {
 		return tools.Result{}, fmt.Errorf("plugin gateway disabled")
 	}
-	if strings.TrimSpace(g.cfg.Endpoint) == "" {
-		return tools.Result{}, fmt.Errorf("plugin gateway endpoint is required when enabled")
-	}
 
 	payload, err := json.Marshal(map[string]any{"arguments": args})
 	if err != nil {
@@ -105,8 +96,8 @@ func (g *Gateway) InvokeTool(ctx context.Context, name string, args []string) (t
 	return tools.Result{}, fmt.Errorf("invoke plugin tool %q failed", name)
 }
 
-func (g *Gateway) endpoint(path string) string {
-	base := strings.TrimRight(strings.TrimSpace(g.cfg.Endpoint), "/")
+func (g *Gateway) endpointURL(path string) string {
+	base := strings.TrimRight(strings.TrimSpace(g.endpoint), "/")
 	if path == "" {
 		return base
 	}
@@ -116,7 +107,7 @@ func (g *Gateway) endpoint(path string) string {
 func (g *Gateway) getJSON(ctx context.Context, paths []string) ([]byte, error) {
 	var lastErr error
 	for _, path := range paths {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.endpoint(path), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.endpointURL(path), nil)
 		if err != nil {
 			lastErr = err
 			continue
@@ -144,7 +135,7 @@ func (g *Gateway) getJSON(ctx context.Context, paths []string) ([]byte, error) {
 }
 
 func (g *Gateway) postJSON(ctx context.Context, path string, payload []byte) ([]byte, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint(path), bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpointURL(path), bytes.NewReader(payload))
 	if err != nil {
 		return nil, 0, err
 	}

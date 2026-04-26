@@ -17,7 +17,19 @@
       "Bash(grep -R \"func NewTool\\\\|func InferTool\" -n \"$\\(go env GOPATH\\)/pkg/mod/github.com/cloudwego/eino@v0.9.0-alpha.17\")",
       "Bash(EINO_RUNTIME_LISTEN_ADDR=:18080 go run *)",
       "Bash(curl *)",
-      "Bash(EINO_RUNTIME_MODEL=claude-haiku-4-5-20251001 go run .)"
+      "Bash(EINO_RUNTIME_MODEL=claude-haiku-4-5-20251001 go run .)",
+      "Bash(GOFLAGS=-mod=mod go vet ./internal/cli/repl/...)",
+      "Bash(GOFLAGS=\"\" go build ./internal/runtime/eino/)",
+      "Bash(/usr/local/go/bin/go build *)",
+      "Read(//usr/local/go/**)",
+      "Read(//Users/bytedance/**)",
+      "Read(//Users/bytedance/go/**)",
+      "Bash(grep \"/bin/go$\")",
+      "Bash(GOFLAGS=\"\" go build ./...)",
+      "Bash(/opt/homebrew/Cellar/go/1.26.2/libexec/bin/go build *)",
+      "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")",
+      "Bash(GOFLAGS=\"-mod=mod\" go vet ./internal/runtime/eino/... ./internal/orchestrator/... ./internal/cli/repl/...)",
+      "Bash(/opt/homebrew/bin/go build *)"
     ]
   },
   "enabledMcpjsonServers": [

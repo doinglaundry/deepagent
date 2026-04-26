@@ -5,15 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"eino-cli/internal/config"
 )
 
 func TestGatewayDisabledNoop(t *testing.T) {
-	g := New(config.PluginGatewayConfig{Enabled: false})
-	if err := g.Check(context.Background()); err != nil {
-		t.Fatalf("Check() error = %v", err)
-	}
+	g := New("", 0)
 	items, err := g.ListTools(context.Background())
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
@@ -38,7 +33,7 @@ func TestGatewayListToolsAndInvoke(t *testing.T) {
 	}))
 	defer server.Close()
 
-	g := New(config.PluginGatewayConfig{Enabled: true, Endpoint: server.URL, TimeoutSeconds: 3})
+	g := New(server.URL, 3)
 	if err := g.Check(context.Background()); err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
@@ -52,9 +47,6 @@ func TestGatewayListToolsAndInvoke(t *testing.T) {
 	}
 	if items[0].Name != "remote_read" {
 		t.Fatalf("unexpected tool name: %q", items[0].Name)
-	}
-	if items[0].Source != "plugin" {
-		t.Fatalf("unexpected tool source: %q", items[0].Source)
 	}
 
 	result, err := g.InvokeTool(context.Background(), "remote_read", []string{"a"})

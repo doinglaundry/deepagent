@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"eino-cli/internal/cli/router"
-	"eino-cli/internal/config"
-	"eino-cli/internal/plugin/gateway"
 	"eino-cli/internal/session"
 	"eino-cli/internal/tools/execute"
 	"eino-cli/internal/tools/policy"
@@ -16,7 +14,7 @@ import (
 )
 
 func TestToolApprovalFlow(t *testing.T) {
-	svc := NewService(nil, registry.New(gateway.New(config.PluginGatewayConfig{Enabled: false})), execute.New(), policy.New())
+	svc := NewService(nil, registry.New(), execute.New(), policy.New())
 	sess := session.New("s1", ".", time.Now())
 	route := router.Route{RawInput: "/shell printf ok", InputType: router.InputTypeSlashCommand, CommandName: "shell", Args: []string{"printf", "ok"}}
 
@@ -47,7 +45,7 @@ func TestToolApprovalFlow(t *testing.T) {
 }
 
 func TestToolApprovalExecuteAfterApprove(t *testing.T) {
-	svc := NewService(nil, registry.New(gateway.New(config.PluginGatewayConfig{Enabled: false})), execute.New(), policy.New())
+	svc := NewService(nil, registry.New(), execute.New(), policy.New())
 	sess := session.New("s2", ".", time.Now())
 	route := router.Route{RawInput: "/shell printf ok", InputType: router.InputTypeSlashCommand, CommandName: "shell", Args: []string{"printf", "ok"}}
 

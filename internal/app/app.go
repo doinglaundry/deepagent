@@ -11,7 +11,6 @@ import (
 	memorypolicy "eino-cli/internal/memory/policy"
 	memorystore "eino-cli/internal/memory/store"
 	"eino-cli/internal/orchestrator"
-	"eino-cli/internal/plugin/gateway"
 	"eino-cli/internal/runtime/eino"
 	"eino-cli/internal/session"
 	"eino-cli/internal/session/checkpoint"
@@ -42,13 +41,6 @@ func New(opts Options) (*App, error) {
 	}
 	slog.Info("孙颖宝 workspace ready", "root", manifest.RootPath, "languages", manifest.LanguageStack)
 
-	pluginGateway := gateway.New(cfg.PluginGateway)
-	if err := pluginGateway.Check(context.Background()); err != nil {
-		slog.Warn("孙颖宝 plugin gateway unavailable, using built-in tools only", "err", err)
-	} else {
-		slog.Info("孙颖宝 plugin gateway connected", "endpoint", cfg.PluginGateway.Endpoint)
-	}
-
 	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
 	slog.Info("孙颖宝 initializing runtime", "model", cfg.DefaultModel)
 	runtime, err := buildRuntime(cfg, checkpointStore)
@@ -63,7 +55,7 @@ func New(opts Options) (*App, error) {
 		memorystore.NewStore(cfg.MemoryDir),
 		memorypolicy.New(),
 	)
-	service := orchestrator.NewService(runtime, registry.New(pluginGateway), execute.New(), policy.New()).WithPersistence(persistence)
+	service := orchestrator.NewService(runtime, registry.New(), execute.New(), policy.New()).WithPersistence(persistence)
 	renderer := render.NewConsoleRenderer(nil)
 
 	slog.Info("孙颖宝 app ready")
