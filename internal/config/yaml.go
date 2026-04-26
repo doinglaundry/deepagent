@@ -12,6 +12,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const defaultYAMLModel = "kimi"
+
 type yamlModelEntry struct {
 	Name           string  `yaml:"name"`
 	Provider       string  `yaml:"provider"`
@@ -43,15 +45,15 @@ func loadModelsFromYAML(path string) (map[string]*schema.ModelConfig, string, er
 	}
 	if len(fc.Models) == 0 {
 		return map[string]*schema.ModelConfig{
-			"kimi": {
-				Name:           "kimi",
+			defaultYAMLModel: {
+				Name:           defaultYAMLModel,
 				Provider:       "kimi",
 				Model:          "moonshot-v1-8k",
 				BaseURL:        "https://api.moonshot.cn/v1",
 				APIKeyEnv:      "MOONSHOT_API_KEY",
 				TimeoutSeconds: 60,
 			},
-		}, "kimi", nil
+		}, defaultYAMLModel, nil
 	}
 
 	models := make(map[string]*schema.ModelConfig, len(fc.Models))
@@ -81,7 +83,11 @@ func loadModelsFromYAML(path string) (map[string]*schema.ModelConfig, string, er
 		}
 		models[m.Name] = ToPtr(mc)
 	}
-	return models, fc.DefaultModel, nil
+	defaultModel := fc.DefaultModel
+	if strings.TrimSpace(defaultModel) == "" {
+		defaultModel = defaultYAMLModel
+	}
+	return models, defaultModel, nil
 }
 
 func inferProvider(baseURL, name string) string {
