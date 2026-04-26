@@ -19,7 +19,7 @@ type PluginGatewayConfig = schema.PluginGatewayConfig
 type ProtocolConfig = schema.ProtocolConfig
 
 const (
-	defaultRuntimeModel     = "claude-sonnet-4-6"
+	defaultRuntimeModel     = "kimi"
 	defaultRuntimeTimeout   = 30
 	defaultAgentKey         = "default"
 	defaultAgentName        = "deep-agent"
@@ -28,8 +28,8 @@ const (
 )
 
 func Load(root string) (Config, error) {
+	var err error
 	if root == "" {
-		var err error
 		root, err = os.Getwd()
 		if err != nil {
 			return Config{}, fmt.Errorf("get working directory: %w", err)
@@ -63,12 +63,23 @@ func Load(root string) (Config, error) {
 		},
 	}
 
+	yamlPath := envOrDefault("EINO_CONFIG_PATH", filepath.Join(root, "yaml", "config.yaml"))
+	if yamlModels, yamlDefault, yerr := loadModelsFromYAML(yamlPath); yerr != nil {
+		return Config{}, fmt.Errorf("load yaml config: %w", yerr)
+	} else if len(yamlModels) > 0 {
+		cfg.Models = yamlModels
+		if yamlDefault != "" {
+			cfg.DefaultModel = yamlDefault
+			cfg.RuntimeModel = yamlDefault
+		}
+	}
+
 	normalized, err := normalizeConfig(cfg)
 	if err != nil {
 		return Config{}, err
 	}
 
-	if err := ensureDirs(normalized); err != nil {
+	if err = ensureDirs(normalized); err != nil {
 		return Config{}, err
 	}
 
@@ -97,14 +108,14 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 
 	if cfg.Models == nil {
-		cfg.Models = map[string]ModelConfig{}
+		cfg.Models = make(map[string]ModelConfig)
 	}
 
-	defaultModelKey := strings.TrimSpace(cfg.DefaultModel)
-	defaultModel, ok := cfg.Models[defaultModelKey]
+	defaultModel := strings.TrimSpace(cfg.DefaultModel)
+	defaultModelCfg, ok := cfg.Models[defaultModel]
 	if !ok {
-		defaultModel = ModelConfig{
-			Name:           defaultModelKey,
+		defaultModelCfg = ModelConfig{
+			Name:           defaultModel,
 			Provider:       envOrDefault("EINO_MODEL_PROVIDER", "claude"),
 			Model:          strings.TrimSpace(cfg.RuntimeModel),
 			BaseURL:        strings.TrimSpace(cfg.RuntimeBaseURL),
@@ -113,26 +124,26 @@ func normalizeConfig(cfg Config) (Config, error) {
 		}
 	}
 
-	if strings.TrimSpace(defaultModel.Model) == "" {
-		defaultModel.Model = defaultModelKey
+	if strings.TrimSpace(defaultModelCfg.Model) == "" {
+		defaultModelCfg.Model = defaultModel
 	}
-	if strings.TrimSpace(defaultModel.Name) == "" {
-		defaultModel.Name = defaultModelKey
+	if strings.TrimSpace(defaultModelCfg.Name) == "" {
+		defaultModelCfg.Name = defaultModel
 	}
-	if strings.TrimSpace(defaultModel.Provider) == "" {
-		defaultModel.Provider = "claude"
+	if strings.TrimSpace(defaultModelCfg.Provider) == "" {
+		defaultModelCfg.Provider = "claude"
 	}
-	if defaultModel.TimeoutSeconds <= 0 {
-		defaultModel.TimeoutSeconds = cfg.RuntimeTimeout
+	if defaultModelCfg.TimeoutSeconds <= 0 {
+		defaultModelCfg.TimeoutSeconds = cfg.RuntimeTimeout
 	}
-	if strings.TrimSpace(defaultModel.APIKeyEnv) == "" {
-		defaultModel.APIKeyEnv = defaultAPIKeyEnv(defaultModel.Provider)
+	if strings.TrimSpace(defaultModelCfg.APIKeyEnv) == "" {
+		defaultModelCfg.APIKeyEnv = defaultAPIKeyEnv(defaultModelCfg.Provider)
 	}
 
-	cfg.Models[defaultModelKey] = defaultModel
-	cfg.RuntimeModel = defaultModelKey
+	cfg.Models[defaultModel] = defaultModelCfg
+	cfg.RuntimeModel = defaultModel
 	if strings.TrimSpace(cfg.RuntimeBaseURL) == "" {
-		cfg.RuntimeBaseURL = strings.TrimSpace(defaultModel.BaseURL)
+		cfg.RuntimeBaseURL = strings.TrimSpace(defaultModelCfg.BaseURL)
 	}
 
 	if strings.TrimSpace(cfg.DefaultAgent) == "" {
