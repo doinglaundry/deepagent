@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"eino-cli/internal/cli/render"
@@ -17,7 +16,6 @@ import (
 	"eino-cli/internal/tools/execute"
 	"eino-cli/internal/tools/policy"
 	"eino-cli/internal/tools/registry"
-	"eino-cli/internal/workspace"
 )
 
 type App struct {
@@ -35,16 +33,11 @@ func New(opts Options) (*App, error) {
 	}
 	slog.Info("孙颖宝 cfg: %v", "model", cfg)
 
-	manifest, err := workspace.Discover(cfg.RootDir)
-	if err != nil {
-		return nil, fmt.Errorf("load workspace: %w", err)
-	}
-
 	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
 
 	runtime, err := eino.BuildRuntime(context.Background(), cfg, checkpointStore)
 	if err != nil {
-		return nil, fmt.Errorf("init runtime: %w", err)
+		return nil, err
 	}
 
 	persistence := orchestrator.NewPersistence(
@@ -55,7 +48,7 @@ func New(opts Options) (*App, error) {
 	service := orchestrator.NewService(runtime, registry.New(), execute.New(), policy.New()).WithPersistence(persistence)
 	renderer := render.NewConsoleRenderer(nil)
 
-	return &App{runner: repl.New(cfg, manifest, renderer, service, opts.KnownCommands)}, nil
+	return &App{runner: repl.New(cfg, renderer, service, opts.KnownCommands)}, nil
 }
 
 func (a *App) Run() error {

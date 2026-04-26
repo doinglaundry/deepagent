@@ -23,7 +23,6 @@ import (
 	turnstore "eino-cli/internal/session/turn"
 	"eino-cli/internal/task/planner"
 	"eino-cli/internal/task/tracker"
-	"eino-cli/internal/workspace"
 )
 
 type Runner interface {
@@ -32,7 +31,6 @@ type Runner interface {
 
 type REPL struct {
 	Config              config.Config
-	Workspace           workspace.Manifest
 	Session             session.Session
 	Store               *session.Store
 	TurnStore           *turnstore.Store
@@ -50,12 +48,12 @@ type REPL struct {
 	scanner             *bufio.Scanner
 }
 
-func New(cfg config.Config, manifest workspace.Manifest, renderer render.Renderer, service *orchestrator.Service, knownCommands []string) *REPL {
+func New(cfg config.Config, renderer render.Renderer, service *orchestrator.Service, knownCommands []string) *REPL {
 	now := time.Now()
 	store := session.NewStore(cfg.SessionsDir)
 	turnStore := turnstore.NewStore(cfg.SessionsDir)
-	currentSession := session.New(fmt.Sprintf("session-%d", now.UnixNano()), manifest.RootPath, now)
-	if latest, ok, err := store.LoadLatest(); err == nil && ok && latest.WorkspaceRoot == manifest.RootPath {
+	currentSession := session.New(fmt.Sprintf("session-%d", now.UnixNano()), cfg.RootDir, now)
+	if latest, ok, err := store.LoadLatest(); err == nil && ok && latest.WorkspaceRoot == cfg.RootDir {
 		currentSession = latest.Touch(now)
 	}
 	plan := planner.New()
@@ -94,7 +92,6 @@ func New(cfg config.Config, manifest workspace.Manifest, renderer render.Rendere
 
 	return &REPL{
 		Config:              cfg,
-		Workspace:           manifest,
 		Session:             currentSession,
 		Store:               store,
 		TurnStore:           turnStore,
@@ -215,7 +212,7 @@ func (r *REPL) prepareRoute(input string) (route router.Route, skip bool, err er
 		memory := memorystore.Memory{
 			Key:       fmt.Sprintf("memory-%d", time.Now().UnixNano()),
 			Content:   route.RawInput,
-			Scope:     r.Workspace.RootPath,
+			Scope:     r.Config.RootDir,
 			SessionID: r.Session.ID,
 			TurnIndex: r.nextTurnIndex,
 			UpdatedAt: time.Now(),
@@ -241,9 +238,9 @@ func (r *REPL) prepareRoute(input string) (route router.Route, skip bool, err er
 func (r *REPL) execute(ctx context.Context, route router.Route) error {
 	// 在执行前持久化本轮 Turn（incomplete），作为崩溃恢复锚点
 	now := time.Now()
-	t := session.NewTurn(r.nextTurnIndex, r.Session.ID, route.RawInput, now)
+	turn := session.NewTurn(r.nextTurnIndex, r.Session.ID, route.RawInput, now)
 	r.nextTurnIndex++
-	if err := r.TurnStore.Save(t); err != nil {
+	if err := r.TurnStore.Save(turn); err != nil {
 		return err
 	}
 
@@ -266,8 +263,8 @@ func (r *REPL) execute(ctx context.Context, route router.Route) error {
 	if len(accepted.Run.Invocations) > 0 {
 		invocation := accepted.Run.Invocations[0]
 		if invocation.ApprovalStatus == session.ApprovalStatusAwaitingApproval {
-			t.AwaitingApproval = true
-			if err = r.TurnStore.Save(t); err != nil {
+			turn.AwaitingApproval = true
+			if err = r.TurnStore.Save(turn); err != nil {
 				return err
 			}
 			return r.handleApproval(ctx, invocation)
@@ -291,8 +288,8 @@ func (r *REPL) execute(ctx context.Context, route router.Route) error {
 		Success: true,
 		Output:  accepted.Run.Result.Output,
 	}
-	t = t.Complete(result, time.Now())
-	if err = r.TurnStore.Save(t); err != nil {
+	turn = turn.Complete(result, time.Now())
+	if err = r.TurnStore.Save(turn); err != nil {
 		return err
 	}
 
@@ -383,7 +380,7 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 	case "help":
 		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "支持的命令: " + strings.Join(r.KnownCommandsPretty, ", ")})
 	case "status":
-		snap := clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"}
+		snap := clistatus.Snapshot{Workspace: r.Config.RootDir, Mode: "single-agent", TaskState: "idle"}
 		return true, r.Renderer.Render(render.Message{Kind: "status", Content: snap.String()})
 	case "tasks":
 		return true, r.Renderer.Render(render.Message{Kind: "tasks", Content: taskview.FromTasks(r.Tracker.Tasks()).String()})
@@ -426,7 +423,7 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 
 func (r *REPL) startNewSession(msg string) (bool, error) {
 	now := time.Now()
-	r.Session = session.New(fmt.Sprintf("session-%d", now.UnixNano()), r.Workspace.RootPath, now)
+	r.Session = session.New(fmt.Sprintf("session-%d", now.UnixNano()), r.Config.RootDir, now)
 	err := r.Store.Save(r.Session)
 	if err != nil {
 		return true, err
