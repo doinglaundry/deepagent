@@ -2,6 +2,7 @@ package policy
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	memorystore "eino-cli/internal/memory/store"
 )
@@ -15,5 +16,5 @@ func New() *Policy {
 }
 
 func (p *Policy) Allow(memory memorystore.Memory) bool {
-	return memory.Key != "" && len([]rune(strings.TrimSpace(memory.Content))) >= minContentLen
+	return memory.Key != "" && utf8.RuneCountInString(strings.TrimSpace(memory.Content)) >= minContentLen
 }

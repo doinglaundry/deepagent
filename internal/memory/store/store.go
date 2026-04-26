@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// TaskMemoryPrefix is the content prefix used by task records written to the
+// memory store. Consumers can use this to exclude task entries from context.
+const TaskMemoryPrefix = "task "
+
 type Memory struct {
 	Key         string    `json:"key"`
 	Content     string    `json:"content"`

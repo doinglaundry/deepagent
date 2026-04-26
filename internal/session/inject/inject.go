@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	memoryretrieval "eino-cli/internal/memory/retrieval"
+	memorystore "eino-cli/internal/memory/store"
 	"eino-cli/internal/session"
 	"eino-cli/internal/session/checkpoint"
 )
@@ -23,10 +24,9 @@ func Build(sess session.Session, snapshot checkpoint.Snapshot, retriever *memory
 	if err != nil {
 		return Context{}, err
 	}
-	// Exclude task records; keep only the most recent maxMemoryContext user memories.
 	var userMemories []string
 	for _, m := range memories {
-		if !strings.HasPrefix(m.Content, "task ") {
+		if !strings.HasPrefix(m.Content, memorystore.TaskMemoryPrefix) {
 			userMemories = append(userMemories, m.Content)
 		}
 	}
