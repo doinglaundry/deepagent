@@ -160,10 +160,6 @@ func (r *REPL) startup() error {
 			return err
 		}
 	}
-	err = r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"})
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -385,7 +381,8 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 	case "help":
 		return true, r.Renderer.Render(render.Message{Kind: "command", Content: "支持的命令: " + strings.Join(r.KnownCommandsPretty, ", ")})
 	case "status":
-		return true, r.Renderer.RenderStatus(clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"})
+		snap := clistatus.Snapshot{Workspace: r.Workspace.RootPath, Mode: "single-agent", TaskState: "idle"}
+		return true, r.Renderer.Render(render.Message{Kind: "status", Content: snap.String()})
 	case "tasks":
 		return true, r.Renderer.Render(render.Message{Kind: "tasks", Content: taskview.FromTasks(r.Tracker.Tasks()).String()})
 	case "memory":

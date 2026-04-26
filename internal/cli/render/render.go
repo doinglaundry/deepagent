@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-
-	clistatus "eino-cli/internal/cli/status"
 )
 
 type ConsoleRenderer struct {
@@ -21,11 +19,6 @@ func NewConsoleRenderer(out io.Writer) *ConsoleRenderer {
 
 func (r *ConsoleRenderer) Render(message Message) error {
 	_, err := fmt.Fprintf(r.out, "%s\n", message.Content)
-	return err
-}
-
-func (r *ConsoleRenderer) RenderStatus(snapshot clistatus.Snapshot) error {
-	_, err := fmt.Fprintf(r.out, "[status] %s\n", snapshot.String())
 	return err
 }
 
