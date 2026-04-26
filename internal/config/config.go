@@ -32,15 +32,10 @@ func Load() (Config, error) {
 
 	stateDir := filepath.Join(root, ".eino-cli")
 
-	yamlPath := envOrDefault("EINO_CONFIG_PATH", filepath.Join(root, "yaml", "config.yaml"))
-	yamlModels, yamlDefault, err := loadModelsFromYAML(yamlPath)
+	yamlPath := filepath.Join(root, "yaml", "config.yaml")
+	yamlModels, err := loadModelsFromYAML(yamlPath)
 	if err != nil {
 		return Config{}, fmt.Errorf("load yaml config: %w", err)
-	}
-
-	defaultModel := envOrDefault("EINO_DEFAULT_MODEL", "")
-	if yamlDefault != "" {
-		defaultModel = yamlDefault
 	}
 
 	cfg := Config{
@@ -54,7 +49,7 @@ func Load() (Config, error) {
 		RuntimeModel:   envOrDefault("EINO_RUNTIME_MODEL", defaultRuntimeModel),
 		RuntimeTimeout: envOrDefaultInt("EINO_RUNTIME_TIMEOUT", defaultRuntimeTimeout),
 
-		DefaultModel: defaultModel,
+		DefaultModel: defaultYAMLModel,
 		DefaultAgent: envOrDefault("EINO_DEFAULT_AGENT", ""),
 
 		Models: yamlModels,

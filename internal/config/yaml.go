@@ -31,17 +31,17 @@ type yamlFileConfig struct {
 	Models       []yamlModelEntry `yaml:"models"`
 }
 
-func loadModelsFromYAML(path string) (map[string]*schema.ModelConfig, string, error) {
+func loadModelsFromYAML(path string) (map[string]*schema.ModelConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, "", nil
+			return nil, nil
 		}
-		return nil, "", fmt.Errorf("read yaml config: %w", err)
+		return nil, fmt.Errorf("read yaml config: %w", err)
 	}
 	var fc yamlFileConfig
 	if err = yaml.Unmarshal(data, &fc); err != nil {
-		return nil, "", fmt.Errorf("parse yaml config: %w", err)
+		return nil, fmt.Errorf("parse yaml config: %w", err)
 	}
 	if len(fc.Models) == 0 {
 		return map[string]*schema.ModelConfig{
@@ -53,7 +53,7 @@ func loadModelsFromYAML(path string) (map[string]*schema.ModelConfig, string, er
 				APIKeyEnv:      "MOONSHOT_API_KEY",
 				TimeoutSeconds: 60,
 			},
-		}, defaultYAMLModel, nil
+		}, nil
 	}
 
 	models := make(map[string]*schema.ModelConfig, len(fc.Models))
@@ -83,11 +83,8 @@ func loadModelsFromYAML(path string) (map[string]*schema.ModelConfig, string, er
 		}
 		models[m.Name] = ToPtr(mc)
 	}
-	defaultModel := fc.DefaultModel
-	if strings.TrimSpace(defaultModel) == "" {
-		defaultModel = defaultYAMLModel
-	}
-	return models, defaultModel, nil
+
+	return models, nil
 }
 
 func inferProvider(baseURL, name string) string {
