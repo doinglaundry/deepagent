@@ -19,7 +19,7 @@ import (
 	memorystore "eino-cli/internal/memory/store"
 	"eino-cli/internal/runtime/eino"
 	"eino-cli/internal/session"
-	turnstore "eino-cli/internal/session/turn/store"
+	turnstore "eino-cli/internal/session/turn"
 	"eino-cli/internal/task/planner"
 	"eino-cli/internal/task/tracker"
 	"eino-cli/internal/tools"
@@ -224,14 +224,14 @@ func (r *REPL) prepareRoute(input string) (route router.Route, skip bool, err er
 			TurnIndex: r.nextTurnIndex,
 		}
 		// 仅在 policy 允许时持久化 memory
-			trimmed := strings.TrimSpace(memory.Content)
-			minContentLen := 8
-			if len(trimmed) >= minContentLen && utf8.RuneCountInString(trimmed) >= minContentLen {
-				err = r.MemoryStore.Save(memory)
-				if err != nil {
-					return route, false, err
-				}
+		trimmed := strings.TrimSpace(memory.Content)
+		minContentLen := 8
+		if len(trimmed) >= minContentLen && utf8.RuneCountInString(trimmed) >= minContentLen {
+			err = r.MemoryStore.Save(memory)
+			if err != nil {
+				return route, false, err
 			}
+		}
 	}
 	// 内置命令（/help、/tasks 等）由 handleBuiltin 处理
 	handled, err := r.handleBuiltin(route)

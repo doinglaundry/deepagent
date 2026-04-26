@@ -7,9 +7,9 @@ import (
 	"eino-cli/internal/cli/render"
 	"eino-cli/internal/cli/repl"
 	"eino-cli/internal/config"
-	memorystore "eino-cli/internal/memory/store"
+
 	"eino-cli/internal/runtime/eino"
-	"eino-cli/internal/session"
+
 	"eino-cli/internal/session/checkpoint"
 	"eino-cli/internal/tools/registry"
 )
