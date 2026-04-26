@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"eino-cli/internal/config"
@@ -29,35 +29,35 @@ func New() *Registry {
 			Name:        "read",
 			Description: "Read a local file",
 			Source:      "builtin",
-			Capability: "filesystem",
+			Capability:  "filesystem",
 			Execute:     readFile,
 		},
 		{
 			Name:        "ls",
 			Description: "List a directory",
 			Source:      "builtin",
-			Capability: "filesystem",
+			Capability:  "filesystem",
 			Execute:     listDir,
 		},
 		{
 			Name:        "shell",
 			Description: "Run a shell command",
 			Source:      "builtin",
-			Capability: "shell",
+			Capability:  "shell",
 			Execute:     runShell,
 		},
 		{
 			Name:        "fetch",
 			Description: "Fetch content from a URL (HTTP GET)",
 			Source:      "builtin",
-			Capability: "web",
+			Capability:  "web",
 			Execute:     fetchURL,
 		},
 		{
 			Name:        "search",
 			Description: "Search the web via Tavily (requires TAVILY_API_KEY)",
 			Source:      "builtin",
-			Capability: "web",
+			Capability:  "web",
 			Execute:     searchWeb,
 		},
 	}

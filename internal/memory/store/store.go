@@ -23,10 +23,6 @@ type Store struct {
 	dir string
 }
 
-func New(content string) Memory {
-	return Memory{Content: content}
-}
-
 func NewStore(dir string) *Store {
 	return &Store{dir: dir}
 }
