@@ -68,88 +68,55 @@ func Load() (Config, error) {
 }
 
 func normalizeConfig(cfg Config) (Config, error) {
-	if cfg.RuntimeTimeout <= 0 {
-		cfg.RuntimeTimeout = defaultRuntimeTimeout
-	}
-
-	if strings.TrimSpace(cfg.DefaultModel) == "" {
-		cfg.DefaultModel = strings.TrimSpace(cfg.RuntimeModel)
-	}
-	if strings.TrimSpace(cfg.DefaultModel) == "" {
-		cfg.DefaultModel = defaultRuntimeModel
-	}
-
-	if cfg.Models == nil {
-		cfg.Models = make(map[string]*ModelConfig)
-	}
-
+	// Fill missing fields for the default model loaded from YAML.
 	defaultModel := strings.TrimSpace(cfg.DefaultModel)
-	defaultModelCfg, ok := cfg.Models[defaultModel]
-	if !ok {
-		defaultModelCfg = &ModelConfig{
-			Name:           defaultModel,
-			Provider:       envOrDefault("EINO_MODEL_PROVIDER", "claude"),
-			Model:          strings.TrimSpace(cfg.RuntimeModel),
-			BaseURL:        strings.TrimSpace(cfg.RuntimeBaseURL),
-			APIKeyEnv:      envOrDefault("EINO_MODEL_API_KEY_ENV", ""),
-			TimeoutSeconds: cfg.RuntimeTimeout,
-		}
+	mc := cfg.Models[defaultModel]
+	if strings.TrimSpace(mc.Name) == "" {
+		mc.Name = defaultModel
 	}
-
-	if strings.TrimSpace(defaultModelCfg.Model) == "" {
-		defaultModelCfg.Model = defaultModel
+	if strings.TrimSpace(mc.Model) == "" {
+		mc.Model = defaultModel
 	}
-	if strings.TrimSpace(defaultModelCfg.Name) == "" {
-		defaultModelCfg.Name = defaultModel
+	if strings.TrimSpace(mc.Provider) == "" {
+		mc.Provider = "claude"
 	}
-	if strings.TrimSpace(defaultModelCfg.Provider) == "" {
-		defaultModelCfg.Provider = "claude"
+	if mc.TimeoutSeconds <= 0 {
+		mc.TimeoutSeconds = cfg.RuntimeTimeout
 	}
-	if defaultModelCfg.TimeoutSeconds <= 0 {
-		defaultModelCfg.TimeoutSeconds = cfg.RuntimeTimeout
+	if strings.TrimSpace(mc.APIKeyEnv) == "" {
+		mc.APIKeyEnv = defaultAPIKeyEnv(mc.Provider)
 	}
-	if strings.TrimSpace(defaultModelCfg.APIKeyEnv) == "" {
-		defaultModelCfg.APIKeyEnv = defaultAPIKeyEnv(defaultModelCfg.Provider)
-	}
-
-	cfg.Models[defaultModel] = defaultModelCfg
+	cfg.Models[defaultModel] = mc
 	cfg.RuntimeModel = defaultModel
-	if strings.TrimSpace(cfg.RuntimeBaseURL) == "" {
-		cfg.RuntimeBaseURL = strings.TrimSpace(defaultModelCfg.BaseURL)
-	}
 
-	if strings.TrimSpace(cfg.DefaultAgent) == "" {
-		cfg.DefaultAgent = defaultAgentKey
-	}
+	// Build default agent config (agents are not loaded from YAML).
 	if cfg.Agents == nil {
 		cfg.Agents = map[string]AgentConfig{}
 	}
-
-	defaultAgentKey := strings.TrimSpace(cfg.DefaultAgent)
-	defaultAgent, ok := cfg.Agents[defaultAgentKey]
+	if strings.TrimSpace(cfg.DefaultAgent) == "" {
+		cfg.DefaultAgent = defaultAgentKey
+	}
+	agentKey := strings.TrimSpace(cfg.DefaultAgent)
+	agent, ok := cfg.Agents[agentKey]
 	if !ok {
-		defaultAgent = AgentConfig{
+		agent = AgentConfig{
 			Name:         envOrDefault("EINO_AGENT_NAME", defaultAgentName),
 			Instruction:  envOrDefault("EINO_AGENT_INSTRUCTION", defaultAgentInstruction),
 			MaxIteration: envOrDefaultInt("EINO_AGENT_MAX_ITERATION", defaultAgentIterations),
 		}
 	}
-	if strings.TrimSpace(defaultAgent.Name) == "" {
-		defaultAgent.Name = defaultAgentName
+	if strings.TrimSpace(agent.Name) == "" {
+		agent.Name = defaultAgentName
 	}
-	if strings.TrimSpace(defaultAgent.Instruction) == "" {
-		defaultAgent.Instruction = defaultAgentInstruction
+	if strings.TrimSpace(agent.Instruction) == "" {
+		agent.Instruction = defaultAgentInstruction
 	}
-	if defaultAgent.MaxIteration <= 0 {
-		defaultAgent.MaxIteration = defaultAgentIterations
+	if agent.MaxIteration <= 0 {
+		agent.MaxIteration = defaultAgentIterations
 	}
-	cfg.Agents[defaultAgentKey] = defaultAgent
+	cfg.Agents[agentKey] = agent
 
-	if err := validateConfig(cfg); err != nil {
-		return Config{}, err
-	}
-
-	return cfg, nil
+	return cfg, validateConfig(cfg)
 }
 
 func validateConfig(cfg Config) error {

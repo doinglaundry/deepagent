@@ -2,50 +2,6 @@ package config
 
 import "testing"
 
-func TestNormalizeConfigFromLegacyRuntimeFields(t *testing.T) {
-	cfg, err := normalizeConfig(Config{
-		RuntimeModel:   "claude-sonnet-4-6",
-		RuntimeBaseURL: "https://api.example.com",
-		RuntimeTimeout: 45,
-	})
-	if err != nil {
-		t.Fatalf("normalizeConfig() error = %v", err)
-	}
-
-	if cfg.DefaultModel != "claude-sonnet-4-6" {
-		t.Fatalf("unexpected default model: %q", cfg.DefaultModel)
-	}
-	modelCfg, ok := cfg.Models[cfg.DefaultModel]
-	if !ok {
-		t.Fatalf("default model config not found: %q", cfg.DefaultModel)
-	}
-	if modelCfg.Provider != "claude" {
-		t.Fatalf("unexpected provider: %q", modelCfg.Provider)
-	}
-	if modelCfg.Model != "claude-sonnet-4-6" {
-		t.Fatalf("unexpected model: %q", modelCfg.Model)
-	}
-	if modelCfg.APIKeyEnv != "ANTHROPIC_API_KEY" {
-		t.Fatalf("unexpected api key env: %q", modelCfg.APIKeyEnv)
-	}
-	if modelCfg.TimeoutSeconds != 45 {
-		t.Fatalf("unexpected timeout: %d", modelCfg.TimeoutSeconds)
-	}
-
-	if cfg.DefaultAgent != defaultAgentKey {
-		t.Fatalf("unexpected default agent: %q", cfg.DefaultAgent)
-	}
-	agentCfg, ok := cfg.Agents[cfg.DefaultAgent]
-	if !ok {
-		t.Fatalf("default agent config not found: %q", cfg.DefaultAgent)
-	}
-	if agentCfg.Name != defaultAgentName {
-		t.Fatalf("unexpected agent name: %q", agentCfg.Name)
-	}
-	if agentCfg.MaxIteration != defaultAgentIterations {
-		t.Fatalf("unexpected max iteration: %d", agentCfg.MaxIteration)
-	}
-}
 
 func TestNormalizeConfigKeepsExplicitNewFields(t *testing.T) {
 	cfg, err := normalizeConfig(Config{
