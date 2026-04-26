@@ -16,5 +16,11 @@ func New() *Policy {
 }
 
 func (p *Policy) Allow(memory memorystore.Memory) bool {
-	return memory.Key != "" && utf8.RuneCountInString(strings.TrimSpace(memory.Content)) >= minContentLen
+	if memory.Key == "" {
+		return false
+	}
+	trimmed := strings.TrimSpace(memory.Content)
+	// Byte length >= minContentLen is a sufficient check for ASCII (common case).
+	// Only count runes for multibyte content where byte count could overcount.
+	return len(trimmed) >= minContentLen && utf8.RuneCountInString(trimmed) >= minContentLen
 }

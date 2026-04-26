@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// TaskMemoryPrefix is the content prefix used by task records written to the
-// memory store. Consumers can use this to exclude task entries from context.
+// TaskMemoryPrefix is the content prefix of historical task records that may
+// exist on disk from earlier versions. Use this to exclude them from context.
 const TaskMemoryPrefix = "task "
 
 type Memory struct {
