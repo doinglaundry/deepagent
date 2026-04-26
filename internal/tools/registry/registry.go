@@ -111,7 +111,7 @@ func runShell(args []string, cwd string) (tools.Result, error) {
 	return tools.Result{Output: string(output)}, nil
 }
 
-func fetchURL(args []string) (tools.Result, error) {
+func fetchURL(args []string, cwd string) (tools.Result, error) {
 	if len(args) == 0 {
 		return tools.Result{}, fmt.Errorf("fetch: requires a URL argument")
 	}
@@ -135,7 +135,7 @@ func fetchURL(args []string) (tools.Result, error) {
 	return tools.Result{Output: string(body)}, nil
 }
 
-func searchWeb(args []string) (tools.Result, error) {
+func searchWeb(args []string, cwd string) (tools.Result, error) {
 	if len(args) == 0 {
 		return tools.Result{}, fmt.Errorf("search: requires a query argument")
 	}
