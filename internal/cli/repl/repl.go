@@ -20,7 +20,7 @@ import (
 	"eino-cli/internal/orchestrator"
 	"eino-cli/internal/runtime/eino"
 	"eino-cli/internal/session"
-	"eino-cli/internal/session/checkpoint"
+	turnstore "eino-cli/internal/session/turn"
 	"eino-cli/internal/task/planner"
 	"eino-cli/internal/task/tracker"
 	"eino-cli/internal/workspace"
@@ -35,7 +35,7 @@ type REPL struct {
 	Workspace           workspace.Manifest
 	Session             session.Session
 	Store               *session.Store
-	CheckpointStore     *checkpoint.Store
+	TurnStore           *turnstore.Store
 	Parser              *router.Parser
 	Renderer            render.Renderer
 	Orchestrator        *orchestrator.Service
@@ -46,13 +46,14 @@ type REPL struct {
 	Retriever           *memoryretrieval.Retriever
 	KnownCommands       map[string]struct{}
 	KnownCommandsPretty []string
+	nextTurnIndex       int
 	scanner             *bufio.Scanner
 }
 
 func New(cfg config.Config, manifest workspace.Manifest, renderer render.Renderer, service *orchestrator.Service, knownCommands []string) *REPL {
 	now := time.Now()
 	store := session.NewStore(cfg.SessionsDir)
-	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
+	turnStore := turnstore.NewStore(cfg.SessionsDir)
 	currentSession := session.New(fmt.Sprintf("session-%d", now.UnixNano()), manifest.RootPath, now)
 	if latest, ok, err := store.LoadLatest(); err == nil && ok && latest.WorkspaceRoot == manifest.RootPath {
 		currentSession = latest.Touch(now)
@@ -94,7 +95,7 @@ func New(cfg config.Config, manifest workspace.Manifest, renderer render.Rendere
 		Workspace:           manifest,
 		Session:             currentSession,
 		Store:               store,
-		CheckpointStore:     checkpointStore,
+		TurnStore:           turnStore,
 		Parser:              router.New(),
 		Renderer:            renderer,
 		Orchestrator:        service,
@@ -137,19 +138,23 @@ func (r *REPL) Run(ctx context.Context) error {
 	}
 }
 
-// startup 持久化 session、渲染 checkpoint 恢复消息、渲染初始状态栏。
+// startup 初始化 nextTurnIndex、渲染崩溃恢复消息、渲染初始状态栏。
 func (r *REPL) startup() error {
 	err := r.Store.Save(r.Session)
 	if err != nil {
 		return err
 	}
-	if snapshot, ok, err := checkpoint.RecoverLatest(r.Config.CheckpointDir); err == nil && ok && snapshot.SessionID == r.Session.ID {
-		// 根据 checkpoint 构造恢复消息
-		message, err := resumeMessage(r.Session, snapshot, r.Retriever)
+	nextIdx, err := r.TurnStore.NextIndex(r.Session.ID)
+	if err != nil {
+		return err
+	}
+	r.nextTurnIndex = nextIdx
+
+	if incompleteTurn, ok, err := r.TurnStore.RecoverLatestIncomplete(r.Session.ID); err == nil && ok {
+		message, err := resumeMessage(r.Session, incompleteTurn, r.Retriever)
 		if err != nil {
 			return err
 		}
-		// 将恢复消息渲染给用户
 		err = r.Renderer.Render(message)
 		if err != nil {
 			return err
@@ -213,6 +218,8 @@ func (r *REPL) prepareRoute(input string) (route router.Route, skip bool, err er
 			Key:       fmt.Sprintf("memory-%d", time.Now().UnixNano()),
 			Content:   route.RawInput,
 			Scope:     r.Workspace.RootPath,
+			SessionID: r.Session.ID,
+			TurnIndex: r.nextTurnIndex,
 			UpdatedAt: time.Now(),
 		}
 		// 仅在 policy 允许时持久化 memory
@@ -231,8 +238,17 @@ func (r *REPL) prepareRoute(input string) (route router.Route, skip bool, err er
 	return route, handled, nil
 }
 
-// execute 向 orchestrator 提交请求、保存 checkpoint、处理工具审批、渲染最终结果。
+// execute 创建 Turn、向 orchestrator 提交请求、处理工具审批、渲染最终结果。
+// 不完整的 Turn（CompletedAt == nil）留在磁盘作为崩溃恢复的锚点。
 func (r *REPL) execute(ctx context.Context, route router.Route) error {
+	// 在执行前持久化本轮 Turn（incomplete），作为崩溃恢复锚点
+	now := time.Now()
+	t := session.NewTurn(r.nextTurnIndex, r.Session.ID, route.RawInput, now)
+	r.nextTurnIndex++
+	if err := r.TurnStore.Save(t); err != nil {
+		return err
+	}
+
 	streamed := false
 	onChunk := func(chunk string) {
 		fmt.Fprint(os.Stdout, chunk)
@@ -241,30 +257,19 @@ func (r *REPL) execute(ctx context.Context, route router.Route) error {
 	// 提交流式请求并等待 orchestrator 返回接受结果
 	accepted, err := r.Orchestrator.SubmitStream(ctx, r.Session, route, onChunk)
 	if err != nil {
-		// 渲染运行时错误后继续等待下一条输入
+		// 渲染运行时错误后继续等待下一条输入（Turn 保持 incomplete 供崩溃恢复）
 		if renderErr := r.Renderer.RenderError(render.ErrorView{Code: "runtime_error", Message: err.Error()}); renderErr != nil {
 			return renderErr
 		}
 		return nil
 	}
 
-	// 构造 checkpoint 快照，记录本次输入及是否等待审批
-	snapshot := checkpoint.Snapshot{
-		SessionID:        r.Session.ID,
-		WorkspaceRoot:    r.Workspace.RootPath,
-		LastInput:        route.RawInput,
-		AwaitingApproval: len(accepted.Run.Invocations) > 0 && accepted.Run.Invocations[0].ApprovalStatus == session.ApprovalStatusAwaitingApproval,
-		UpdatedAt:        time.Now(),
-	}
-	err = r.CheckpointStore.Save(snapshot)
-	if err != nil {
-		return err
-	}
-
 	// 若本轮产生了工具调用，检查是否需要用户审批
 	if len(accepted.Run.Invocations) > 0 {
 		invocation := accepted.Run.Invocations[0]
 		if invocation.ApprovalStatus == session.ApprovalStatusAwaitingApproval {
+			t.AwaitingApproval = true
+			_ = r.TurnStore.Save(t)
 			return r.handleApproval(ctx, invocation)
 		}
 	}
@@ -281,6 +286,14 @@ func (r *REPL) execute(ctx context.Context, route router.Route) error {
 		}
 		return nil
 	}
+
+	// 执行成功：将 Turn 标记为已完成并持久化
+	result := session.TurnResult{
+		Success: true,
+		Output:  accepted.Run.Result.Output,
+	}
+	t = t.Complete(result, time.Now())
+	_ = r.TurnStore.Save(t)
 
 	// 流式输出后补一个换行，保证终端格式整齐
 	if streamed {
@@ -416,6 +429,7 @@ func (r *REPL) startNewSession(msg string) (bool, error) {
 	if err != nil {
 		return true, err
 	}
+	r.nextTurnIndex = 0
 	r.Tracker = tracker.New(nil)
 	r.Orchestrator.Runtime().ClearHistory()
 	return true, r.Renderer.Render(render.Message{Kind: "command", Content: msg})

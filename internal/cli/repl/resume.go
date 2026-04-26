@@ -7,12 +7,11 @@ import (
 	"eino-cli/internal/cli/render"
 	memoryretrieval "eino-cli/internal/memory/retrieval"
 	"eino-cli/internal/session"
-	"eino-cli/internal/session/checkpoint"
 	"eino-cli/internal/session/inject"
 )
 
-func resumeMessage(sess session.Session, snapshot checkpoint.Snapshot, retriever *memoryretrieval.Retriever) (render.Message, error) {
-	context, err := inject.Build(sess, snapshot, retriever)
+func resumeMessage(sess session.Session, turn session.Turn, retriever *memoryretrieval.Retriever) (render.Message, error) {
+	context, err := inject.Build(sess, turn, retriever)
 	if err != nil {
 		return render.Message{}, err
 	}

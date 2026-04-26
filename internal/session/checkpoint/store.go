@@ -2,20 +2,10 @@ package checkpoint
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
-
-type Snapshot struct {
-	SessionID      string    `json:"session_id"`
-	WorkspaceRoot  string    `json:"workspace_root"`
-	LastInput      string    `json:"last_input,omitempty"`
-	AwaitingApproval bool    `json:"awaiting_approval"`
-	UpdatedAt      time.Time `json:"updated_at"`
-}
 
 type Store struct {
 	dir string
@@ -23,25 +13,6 @@ type Store struct {
 
 func NewStore(dir string) *Store {
 	return &Store{dir: dir}
-}
-
-func (s *Store) Save(snapshot Snapshot) error {
-	err := os.MkdirAll(s.dir, 0o755)
-	if err != nil {
-		return fmt.Errorf("create checkpoints directory: %w", err)
-	}
-
-	payload, err := json.MarshalIndent(snapshot, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal checkpoint: %w", err)
-	}
-
-	err = os.WriteFile(s.path(snapshot.SessionID), payload, 0o644)
-	if err != nil {
-		return fmt.Errorf("write checkpoint: %w", err)
-	}
-
-	return nil
 }
 
 func (s *Store) Get(_ context.Context, checkPointID string) ([]byte, bool, error) {

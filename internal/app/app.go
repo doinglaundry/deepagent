@@ -49,7 +49,6 @@ func New(opts Options) (*App, error) {
 
 	persistence := orchestrator.NewPersistence(
 		session.NewStore(cfg.SessionsDir),
-		checkpointStore,
 		memorystore.NewStore(cfg.MemoryDir),
 		memorypolicy.New(),
 	)

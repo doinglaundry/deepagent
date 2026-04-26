@@ -9,7 +9,6 @@ import (
 	"eino-cli/internal/cli/router"
 	"eino-cli/internal/runtime/eino"
 	"eino-cli/internal/session"
-	"eino-cli/internal/session/checkpoint"
 	"eino-cli/internal/task"
 	"eino-cli/internal/tools"
 	"eino-cli/internal/tools/execute"
@@ -158,13 +157,6 @@ func (s *Service) persist(sess session.Session, route router.Route, run AgentRun
 	}
 	updatedSession := sess.Touch(time.Now())
 	_ = s.persistence.SaveSession(updatedSession)
-	_ = s.persistence.SaveCheckpoint(checkpoint.Snapshot{
-		SessionID:        sess.ID,
-		WorkspaceRoot:    sess.WorkspaceRoot,
-		LastInput:        route.RawInput,
-		AwaitingApproval: len(run.Invocations) > 0 && run.Invocations[0].ApprovalStatus == session.ApprovalStatusAwaitingApproval,
-		UpdatedAt:        time.Now(),
-	})
 	status := task.StatusCompleted
 	if !run.Result.Success {
 		status = task.StatusFailed

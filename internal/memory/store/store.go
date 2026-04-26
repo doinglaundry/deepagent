@@ -13,10 +13,12 @@ import (
 const TaskMemoryPrefix = "task "
 
 type Memory struct {
-	Key         string    `json:"key"`
-	Content     string    `json:"content"`
-	Scope       string    `json:"scope"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Key        string    `json:"key"`
+	Content    string    `json:"content"`
+	Scope      string    `json:"scope"`
+	SessionID  string    `json:"session_id,omitempty"`
+	TurnIndex  int       `json:"turn_index,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type Store struct {
