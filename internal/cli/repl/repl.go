@@ -19,7 +19,7 @@ import (
 	memorystore "eino-cli/internal/memory/store"
 	"eino-cli/internal/runtime/eino"
 	"eino-cli/internal/session"
-	"eino-cli/internal/session/turn"
+	turnstore "eino-cli/internal/session/turn/store"
 	"eino-cli/internal/task/planner"
 	"eino-cli/internal/task/tracker"
 	"eino-cli/internal/tools"
@@ -60,7 +60,7 @@ type REPL struct {
 	pendingApproval map[string]pendingToolExecution
 }
 
-func New(cfg config.Config, renderer render.Renderer, runtime eino.Runtime, registry *registry.Registry, executor *execute.Executor, knownCommands []string) *REPL {
+func New(cfg config.Config, renderer render.Renderer, runtime eino.Runtime, reg *registry.Registry, knownCommands []string) *REPL {
 	store := session.NewStore(cfg.SessionsDir)
 	turnStore := turnstore.NewStore(cfg.SessionsDir)
 	currentSession := session.New(fmt.Sprintf("session-%d", time.Now().UnixNano()), cfg.RootDir)
@@ -107,7 +107,7 @@ func New(cfg config.Config, renderer render.Renderer, runtime eino.Runtime, regi
 		Parser:              router.New(),
 		Renderer:            renderer,
 		Runtime:             runtime,
-		Registry:            registry.New(),
+		Registry:            reg,
 		Planner:             plan,
 		Tracker:             tracked,
 		MemoryStore:         memoryStore,
@@ -258,19 +258,17 @@ func (r *REPL) execute(ctx context.Context, route router.Route) error {
 	}
 
 	var result eino.Result
-	var invocation session.ToolInvocation
 
 	// 处理斜杠命令
 	if route.InputType == router.InputTypeSlashCommand {
-		handled, inv, toolResult, err := r.tryToolInvocation(ctx, r.Session, route, now)
+		handled, _, toolResult, err := r.tryToolInvocation(ctx, r.Session, route, now)
 		if handled {
-			invocation = inv
 			if toolResult.NeedsUser {
 				// 需要用户输入的情况，暂时不处理
-				return r.RenderError(toolResult.Code, toolResult.Message)
+				return r.RenderError(string(toolResult.Code), toolResult.Message)
 			}
 			if err != nil {
-				if renderErr := r.RenderError(toolResult.Code, toolResult.Message); renderErr != nil {
+				if renderErr := r.RenderError(string(toolResult.Code), toolResult.Message); renderErr != nil {
 					return renderErr
 				}
 				return nil
