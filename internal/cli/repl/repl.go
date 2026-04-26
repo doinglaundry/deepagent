@@ -7,26 +7,36 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"eino-cli/internal/cli/render"
 	"eino-cli/internal/cli/router"
 	clistatus "eino-cli/internal/cli/status"
 	"eino-cli/internal/cli/taskview"
 	"eino-cli/internal/config"
-	memorypolicy "eino-cli/internal/memory/policy"
-	memoryretrieval "eino-cli/internal/memory/retrieval"
 	memorystore "eino-cli/internal/memory/store"
-	"eino-cli/internal/orchestrator"
 	"eino-cli/internal/runtime/eino"
 	"eino-cli/internal/session"
-	turnstore "eino-cli/internal/session/turn"
+	"eino-cli/internal/session/turn"
 	"eino-cli/internal/task/planner"
 	"eino-cli/internal/task/tracker"
+	"eino-cli/internal/tools"
+	"eino-cli/internal/tools/registry"
 )
 
 type Runner interface {
 	Run(ctx context.Context) error
+}
+
+type pendingToolExecution struct {
+	SessionID   string
+	Route       router.Route
+	Invocation  session.ToolInvocation
+	Tool        tools.Tool
+	WorkingDir  string
+	RequestedAt time.Time
 }
 
 type REPL struct {
@@ -36,31 +46,30 @@ type REPL struct {
 	TurnStore           *turnstore.Store
 	Parser              *router.Parser
 	Renderer            render.Renderer
-	Orchestrator        *orchestrator.Service
+	Runtime             eino.Runtime
+	Registry            *registry.Registry
 	Planner             *planner.Planner
 	Tracker             *tracker.Tracker
 	MemoryStore         *memorystore.Store
-	MemoryPolicy        *memorypolicy.Policy
-	Retriever           *memoryretrieval.Retriever
 	KnownCommands       map[string]struct{}
 	KnownCommandsPretty []string
 	nextTurnIndex       int
 	scanner             *bufio.Scanner
+
+	approvalMu      sync.Mutex
+	pendingApproval map[string]pendingToolExecution
 }
 
-func New(cfg config.Config, renderer render.Renderer, service *orchestrator.Service, knownCommands []string) *REPL {
-	now := time.Now()
+func New(cfg config.Config, renderer render.Renderer, runtime eino.Runtime, registry *registry.Registry, executor *execute.Executor, knownCommands []string) *REPL {
 	store := session.NewStore(cfg.SessionsDir)
 	turnStore := turnstore.NewStore(cfg.SessionsDir)
-	currentSession := session.New(fmt.Sprintf("session-%d", now.UnixNano()), cfg.RootDir, now)
+	currentSession := session.New(fmt.Sprintf("session-%d", time.Now().UnixNano()), cfg.RootDir)
 	if latest, ok, err := store.LoadLatest(); err == nil && ok && latest.WorkspaceRoot == cfg.RootDir {
-		currentSession = latest.Touch(now)
+		currentSession = latest
 	}
 	plan := planner.New()
 	tracked := tracker.New(nil)
 	memoryStore := memorystore.NewStore(cfg.MemoryDir)
-	memoryPolicy := memorypolicy.New()
-	memoryRetriever := memoryretrieval.New(memoryStore)
 
 	known := map[string]struct{}{
 		"/help":   {},
@@ -97,14 +106,14 @@ func New(cfg config.Config, renderer render.Renderer, service *orchestrator.Serv
 		TurnStore:           turnStore,
 		Parser:              router.New(),
 		Renderer:            renderer,
-		Orchestrator:        service,
+		Runtime:             runtime,
+		Registry:            registry.New(),
 		Planner:             plan,
 		Tracker:             tracked,
 		MemoryStore:         memoryStore,
-		MemoryPolicy:        memoryPolicy,
-		Retriever:           memoryRetriever,
 		KnownCommands:       known,
 		KnownCommandsPretty: knownPretty,
+		pendingApproval:     map[string]pendingToolExecution{},
 	}
 }
 
@@ -150,7 +159,7 @@ func (r *REPL) startup() error {
 	r.nextTurnIndex = nextIdx
 
 	if incompleteTurn, ok, err := r.TurnStore.RecoverLatestIncomplete(r.Session.ID); err == nil && ok {
-		message, err := resumeMessage(r.Session, incompleteTurn, r.Retriever)
+		message, err := resumeMessage(r.Session, incompleteTurn, r.MemoryStore)
 		if err != nil {
 			return err
 		}
@@ -180,7 +189,6 @@ func (r *REPL) readInput() (input string, done bool, err error) {
 		return "", false, nil
 	}
 	// 更新 session 的最后活跃时间并持久化
-	r.Session = r.Session.Touch(time.Now())
 	err = r.Store.Save(r.Session)
 	if err != nil {
 		return "", false, err
@@ -212,18 +220,18 @@ func (r *REPL) prepareRoute(input string) (route router.Route, skip bool, err er
 		memory := memorystore.Memory{
 			Key:       fmt.Sprintf("memory-%d", time.Now().UnixNano()),
 			Content:   route.RawInput,
-			Scope:     r.Config.RootDir,
 			SessionID: r.Session.ID,
 			TurnIndex: r.nextTurnIndex,
-			UpdatedAt: time.Now(),
 		}
 		// 仅在 policy 允许时持久化 memory
-		if r.MemoryPolicy.Allow(memory) {
-			err = r.MemoryStore.Save(memory)
-			if err != nil {
-				return route, false, err
+			trimmed := strings.TrimSpace(memory.Content)
+			minContentLen := 8
+			if len(trimmed) >= minContentLen && utf8.RuneCountInString(trimmed) >= minContentLen {
+				err = r.MemoryStore.Save(memory)
+				if err != nil {
+					return route, false, err
+				}
 			}
-		}
 	}
 	// 内置命令（/help、/tasks 等）由 handleBuiltin 处理
 	handled, err := r.handleBuiltin(route)
@@ -233,10 +241,9 @@ func (r *REPL) prepareRoute(input string) (route router.Route, skip bool, err er
 	return route, handled, nil
 }
 
-// execute 创建 Turn、向 orchestrator 提交请求、处理工具审批、渲染最终结果。
+// execute 创建 Turn、执行请求、处理工具审批、渲染最终结果。
 // 不完整的 Turn（CompletedAt == nil）留在磁盘作为崩溃恢复的锚点。
 func (r *REPL) execute(ctx context.Context, route router.Route) error {
-	// 在执行前持久化本轮 Turn（incomplete），作为崩溃恢复锚点
 	now := time.Now()
 	turn := session.NewTurn(r.nextTurnIndex, r.Session.ID, route.RawInput, now)
 	r.nextTurnIndex++
@@ -249,60 +256,76 @@ func (r *REPL) execute(ctx context.Context, route router.Route) error {
 		fmt.Fprint(os.Stdout, chunk)
 		streamed = true
 	}
-	// 提交流式请求并等待 orchestrator 返回接受结果
-	accepted, err := r.Orchestrator.SubmitStream(ctx, r.Session, route, onChunk)
-	if err != nil {
-		// 渲染运行时错误后继续等待下一条输入（Turn 保持 incomplete 供崩溃恢复）
-		if renderErr := r.Renderer.RenderError(render.ErrorView{Code: "runtime_error", Message: err.Error()}); renderErr != nil {
-			return renderErr
-		}
-		return nil
-	}
 
-	// 若本轮产生了工具调用，检查是否需要用户审批
-	if len(accepted.Run.Invocations) > 0 {
-		invocation := accepted.Run.Invocations[0]
-		if invocation.ApprovalStatus == session.ApprovalStatusAwaitingApproval {
-			turn.AwaitingApproval = true
-			if err = r.TurnStore.Save(turn); err != nil {
-				return err
+	var result eino.Result
+	var invocation session.ToolInvocation
+
+	// 处理斜杠命令
+	if route.InputType == router.InputTypeSlashCommand {
+		handled, inv, toolResult, err := r.tryToolInvocation(ctx, r.Session, route, now)
+		if handled {
+			invocation = inv
+			if toolResult.NeedsUser {
+				// 需要用户输入的情况，暂时不处理
+				return r.RenderError(toolResult.Code, toolResult.Message)
 			}
-			return r.handleApproval(ctx, invocation)
+			if err != nil {
+				if renderErr := r.RenderError(toolResult.Code, toolResult.Message); renderErr != nil {
+					return renderErr
+				}
+				return nil
+			}
+			// 将工具结果反馈给模型
+			if toolResult.Success && toolResult.Output != "" {
+				syntheticPrompt := fmt.Sprintf("[Tool result: %s]\n%s", route.CommandName, toolResult.Output)
+				var agentErr error
+				result, agentErr = r.Runtime.ExecuteStream(ctx, syntheticPrompt, onChunk)
+				if agentErr != nil {
+					if renderErr := r.RenderError("runtime_error", agentErr.Error()); renderErr != nil {
+						return renderErr
+					}
+					return nil
+				}
+			} else {
+				result = toolResult
+			}
 		}
 	}
 
-	// 本轮运行失败时的处理
-	if !accepted.Run.Result.Success {
-		// 若需要用户追加输入，则静默继续循环
-		if accepted.Run.Result.NeedsUser {
+	// 在 LLM runtime 上执行
+	if result.Output == "" && result.Code == "" {
+		var err error
+		result, err = r.Runtime.ExecuteStream(ctx, route.RawInput, onChunk)
+		if err != nil {
+			if renderErr := r.Renderer.RenderError(render.ErrorView{Code: "runtime_error", Message: err.Error()}); renderErr != nil {
+				return renderErr
+			}
 			return nil
 		}
-		err = r.Renderer.RenderError(render.ErrorView{Code: accepted.Run.Result.Code, Message: accepted.Run.Result.Message})
+	}
+
+	// 保存 turn 结果
+	turnResult := session.TurnResult{Success: result.Success, Output: result.Output}
+	turn = turn.Complete(turnResult, time.Now())
+	if err := r.TurnStore.Save(turn); err != nil {
+		return err
+	}
+
+	// 渲染输出
+	if streamed {
+		fmt.Fprintln(os.Stdout)
+	} else {
+		err := r.Renderer.Render(render.Message{Kind: string(route.InputType), Content: result.Output})
 		if err != nil {
 			return err
 		}
-		return nil
 	}
 
-	result := session.TurnResult{
-		Success: true,
-		Output:  accepted.Run.Result.Output,
-	}
-	turn = turn.Complete(result, time.Now())
-	if err = r.TurnStore.Save(turn); err != nil {
-		return err
-	}
-
-	// 流式输出后补一个换行，保证终端格式整齐
-	if streamed {
-		fmt.Fprintln(os.Stdout) // trailing newline after stream
-		return nil
-	}
-	err = r.Renderer.Render(render.Message{Kind: string(route.InputType), Content: accepted.Run.Result.Output})
-	if err != nil {
-		return err
-	}
 	return nil
+}
+
+func (r *REPL) RenderError(code, message string) error {
+	return r.Renderer.RenderError(render.ErrorView{Code: eino.ErrorCode(code), Message: message})
 }
 
 // handleApproval 处理工具调用的审批子流程：展示命令、等待用户确认、执行并渲染结果。
@@ -323,7 +346,7 @@ func (r *REPL) handleApproval(ctx context.Context, invocation session.ToolInvoca
 	approved := decision == "y" || decision == "yes"
 
 	// 将审批结果传回 orchestrator，继续执行或拒绝工具调用
-	resolvedInvocation, toolResult, err := r.Orchestrator.ContinueToolInvocation(ctx, r.Session.ID, invocation.ID, approved)
+	resolvedInvocation, toolResult, err := r.ContinueToolInvocation(ctx, r.Session.ID, invocation.ID, approved)
 	if err != nil {
 		if renderErr := r.Renderer.RenderError(render.ErrorView{Code: eino.ErrorCodeTool, Message: err.Error()}); renderErr != nil {
 			return renderErr
@@ -358,13 +381,8 @@ func (r *REPL) handleApproval(ctx context.Context, invocation session.ToolInvoca
 	if toolResult.Output != "" {
 		feedPrompt := fmt.Sprintf("[Shell result]\n%s", toolResult.Output)
 		feedOnChunk := func(chunk string) { fmt.Fprint(os.Stdout, chunk) }
-		feedRoute := router.Route{
-			RawInput:  feedPrompt,
-			InputType: router.InputTypeNaturalLanguage,
-			Target:    router.TargetAgent,
-		}
-		feedAccepted, feedErr := r.Orchestrator.SubmitStream(ctx, r.Session, feedRoute, feedOnChunk)
-		if feedErr == nil && feedAccepted.Run.Result.Success {
+		feedResult, feedErr := r.Runtime.ExecuteStream(ctx, feedPrompt, feedOnChunk)
+		if feedErr == nil && feedResult.Success {
 			fmt.Fprintln(os.Stdout)
 		}
 	}
@@ -385,7 +403,7 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 	case "tasks":
 		return true, r.Renderer.Render(render.Message{Kind: "tasks", Content: taskview.FromTasks(r.Tracker.Tasks()).String()})
 	case "memory":
-		memories, err := r.Retriever.Find("")
+		memories, err := r.MemoryStore.Find("")
 		if err != nil {
 			return true, err
 		}
@@ -422,15 +440,14 @@ func (r *REPL) handleBuiltin(route router.Route) (bool, error) {
 }
 
 func (r *REPL) startNewSession(msg string) (bool, error) {
-	now := time.Now()
-	r.Session = session.New(fmt.Sprintf("session-%d", now.UnixNano()), r.Config.RootDir, now)
+	r.Session = session.New(fmt.Sprintf("session-%d", time.Now().UnixNano()), r.Config.RootDir)
 	err := r.Store.Save(r.Session)
 	if err != nil {
 		return true, err
 	}
 	r.nextTurnIndex = 0
 	r.Tracker = tracker.New(nil)
-	r.Orchestrator.Runtime().ClearHistory()
+	r.Runtime.ClearHistory()
 	return true, r.Renderer.Render(render.Message{Kind: "command", Content: msg})
 }
 
@@ -441,4 +458,87 @@ func (r *REPL) isKnownSlashCommand(commandName string) bool {
 	}
 	_, ok := r.KnownCommands["/"+name]
 	return ok
+}
+
+func (r *REPL) tryToolInvocation(ctx context.Context, sess session.Session, route router.Route, now time.Time) (bool, session.ToolInvocation, eino.Result, error) {
+	if route.CommandName == "" {
+		return false, session.ToolInvocation{}, eino.Result{}, nil
+	}
+
+	tool, err := r.Registry.Get(route.CommandName)
+	if err != nil {
+		return false, session.ToolInvocation{}, eino.Result{}, nil
+	}
+
+	invocation := session.ToolInvocation{
+		ID:              fmt.Sprintf("tool-%d", now.UnixNano()),
+		ToolName:        tool.Name,
+		Arguments:       route.Args,
+		ApprovalStatus:  session.ApprovalStatusNotRequired,
+		ExecutionStatus: session.ExecutionStatusRequested,
+		CreatedAt:       now,
+	}
+
+	invocation.ExecutionStatus = session.ExecutionStatusExecuting
+	result, err := tool.Execute(route.Args, sess.WorkspaceRoot)
+	if err != nil {
+		invocation.ExecutionStatus = session.ExecutionStatusFailed
+		invocation.ErrorMessage = err.Error()
+		invocation.Output = result.Output
+		return true, invocation, eino.FailureResult(eino.ErrorCodeTool, err.Error()), err
+	}
+
+	invocation.ExecutionStatus = session.ExecutionStatusSucceeded
+	invocation.Output = result.Output
+	return true, invocation, eino.SuccessResult(result.Output), nil
+}
+
+func (r *REPL) ContinueToolInvocation(ctx context.Context, sessionID, invocationID string, approved bool) (session.ToolInvocation, eino.Result, error) {
+	pending, ok := r.resolvePendingApproval(sessionID, invocationID)
+	if !ok {
+		return session.ToolInvocation{}, eino.Result{}, fmt.Errorf("pending tool invocation %q not found", invocationID)
+	}
+
+	invocation := pending.Invocation
+	if !approved {
+		invocation.ApprovalStatus = session.ApprovalStatusRejected
+		invocation.ExecutionStatus = session.ExecutionStatusRejected
+		invocation.ErrorMessage = "tool execution rejected by user"
+		return invocation, eino.FailureResult(eino.ErrorCodeTool, invocation.ErrorMessage), nil
+	}
+
+	invocation.ApprovalStatus = session.ApprovalStatusApproved
+	invocation.ExecutionStatus = session.ExecutionStatusExecuting
+
+	result, err := pending.Tool.Execute(invocation.Arguments, pending.WorkingDir)
+	if err != nil {
+		invocation.ExecutionStatus = session.ExecutionStatusFailed
+		invocation.ErrorMessage = err.Error()
+		invocation.Output = result.Output
+		return invocation, eino.FailureResult(eino.ErrorCodeTool, err.Error()), err
+	}
+
+	invocation.ExecutionStatus = session.ExecutionStatusSucceeded
+	invocation.Output = result.Output
+	return invocation, eino.SuccessResult(result.Output), nil
+}
+
+func (r *REPL) queuePendingApproval(invocationID string, pending pendingToolExecution) {
+	r.approvalMu.Lock()
+	defer r.approvalMu.Unlock()
+	r.pendingApproval[invocationID] = pending
+}
+
+func (r *REPL) resolvePendingApproval(sessionID, invocationID string) (pendingToolExecution, bool) {
+	r.approvalMu.Lock()
+	defer r.approvalMu.Unlock()
+	pending, ok := r.pendingApproval[invocationID]
+	if !ok {
+		return pendingToolExecution{}, false
+	}
+	if pending.SessionID != sessionID {
+		return pendingToolExecution{}, false
+	}
+	delete(r.pendingApproval, invocationID)
+	return pending, true
 }

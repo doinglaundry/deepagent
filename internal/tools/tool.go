@@ -1,14 +1,8 @@
 package tools
 
-type RiskLevel string
-
 type InvocationStatus string
 
 const (
-	RiskLevelLow    RiskLevel = "low"
-	RiskLevelMedium RiskLevel = "medium"
-	RiskLevelHigh   RiskLevel = "high"
-
 	InvocationStatusRequested        InvocationStatus = "requested"
 	InvocationStatusAwaitingApproval InvocationStatus = "awaiting_approval"
 	InvocationStatusExecuting        InvocationStatus = "executing"
@@ -19,14 +13,13 @@ const (
 )
 
 type Tool struct {
-	Name             string    `json:"name"`
-	Description      string    `json:"description"`
-	RiskLevel        RiskLevel `json:"risk_level"`
-	RequiresApproval bool      `json:"requires_approval"`
-	Source           string    `json:"source,omitempty"`
-	Capability       string    `json:"capability,omitempty"`
+	Name        string
+	Description string
+	Source      string
+	Capability  string
+	Execute     func(args []string, cwd string) (Result, error)
 }
 
 type Result struct {
-	Output string `json:"output"`
+	Output string
 }

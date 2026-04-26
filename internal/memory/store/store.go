@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
 )
 
 // TaskMemoryPrefix is the content prefix of historical task records that may
@@ -13,12 +13,10 @@ import (
 const TaskMemoryPrefix = "task "
 
 type Memory struct {
-	Key        string    `json:"key"`
-	Content    string    `json:"content"`
-	Scope      string    `json:"scope"`
-	SessionID  string    `json:"session_id,omitempty"`
-	TurnIndex  int       `json:"turn_index,omitempty"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	Key       string `json:"key"`
+	Content   string `json:"content"`
+	SessionID string `json:"session_id,omitempty"`
+	TurnIndex int    `json:"turn_index,omitempty"`
 }
 
 type Store struct {
@@ -75,4 +73,23 @@ func (s *Store) LoadAll() ([]Memory, error) {
 		memories = append(memories, memory)
 	}
 	return memories, nil
+}
+
+func (s *Store) Find(query string) ([]Memory, error) {
+	memories, err := s.LoadAll()
+	if err != nil {
+		return nil, err
+	}
+	if query == "" {
+		return memories, nil
+	}
+	matched := make([]Memory, 0, len(memories))
+	needle := strings.ToLower(query)
+	for _, memory := range memories {
+		if strings.Contains(strings.ToLower(memory.Key), needle) ||
+			strings.Contains(strings.ToLower(memory.Content), needle) {
+			matched = append(matched, memory)
+		}
+	}
+	return matched, nil
 }

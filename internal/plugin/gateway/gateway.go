@@ -168,11 +168,6 @@ func normalizeTools(in []tools.Tool) []tools.Tool {
 		if strings.TrimSpace(item.Source) == "" {
 			item.Source = "plugin"
 		}
-		switch item.RiskLevel {
-		case tools.RiskLevelLow, tools.RiskLevelMedium, tools.RiskLevelHigh:
-		default:
-			item.RiskLevel = tools.RiskLevelLow
-		}
 		out = append(out, item)
 	}
 	return out

@@ -10,10 +10,9 @@ type ModelConfig struct {
 }
 
 type AgentConfig struct {
-	Name            string `json:"name"`
-	Instruction     string `json:"instruction"`
-	MaxIteration    int    `json:"max_iteration"`
-	MaxHistoryTurns int    `yaml:"max_history_turns" json:"max_history_turns"`
+	Name         string `json:"name"`
+	Instruction  string `json:"instruction"`
+	MaxIteration int    `json:"max_iteration"`
 }
 
 type Config struct {
@@ -28,7 +27,6 @@ type Config struct {
 	DefaultAgent string                 `json:"default_agent"`
 	Agents       map[string]AgentConfig `json:"agents"`
 
-	RuntimeBaseURL string `json:"runtime_base_url"`
 	RuntimeModel   string `json:"runtime_model"`
 	RuntimeTimeout int    `json:"runtime_timeout"`
 }

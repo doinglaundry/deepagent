@@ -5,13 +5,12 @@ import (
 	"strings"
 
 	"eino-cli/internal/cli/render"
-	memoryretrieval "eino-cli/internal/memory/retrieval"
+	memorystore "eino-cli/internal/memory/store"
 	"eino-cli/internal/session"
-	"eino-cli/internal/session/inject"
 )
 
-func resumeMessage(sess session.Session, turn session.Turn, retriever *memoryretrieval.Retriever) (render.Message, error) {
-	context, err := inject.Build(sess, turn, retriever)
+func resumeMessage(sess session.Session, turn session.Turn, store *memorystore.Store) (render.Message, error) {
+	context, err := BuildContext(sess, turn, store)
 	if err != nil {
 		return render.Message{}, err
 	}
@@ -32,4 +31,35 @@ func resumeMessage(sess session.Session, turn session.Turn, retriever *memoryret
 		}
 	}
 	return render.Message{Kind: "resume", Content: strings.Join(lines, "\n")}, nil
+}
+
+func BuildContext(sess session.Session, turn session.Turn, store *memorystore.Store) (ResumeContext, error) {
+	memories, err := store.Find("")
+	if err != nil {
+		return ResumeContext{}, err
+	}
+	var userMemories []string
+	for _, m := range memories {
+		if !strings.HasPrefix(m.Content, "task ") {
+			userMemories = append(userMemories, m.Content)
+		}
+	}
+	if len(userMemories) > 5 {
+		userMemories = userMemories[len(userMemories)-5:]
+	}
+	return ResumeContext{
+		SessionID:      sess.ID,
+		WorkspaceRoot:  sess.WorkspaceRoot,
+		LastInput:      turn.Input,
+		Memory:         userMemories,
+		ResumeRequired: turn.AwaitingApproval || strings.TrimSpace(turn.Input) != "",
+	}, nil
+}
+
+type ResumeContext struct {
+	SessionID      string
+	WorkspaceRoot  string
+	LastInput      string
+	Memory         []string
+	ResumeRequired bool
 }

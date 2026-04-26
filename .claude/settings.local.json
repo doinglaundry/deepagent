@@ -29,7 +29,14 @@
       "Bash(/opt/homebrew/Cellar/go/1.26.2/libexec/bin/go build *)",
       "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")",
       "Bash(GOFLAGS=\"-mod=mod\" go vet ./internal/runtime/eino/... ./internal/orchestrator/... ./internal/cli/repl/...)",
-      "Bash(/opt/homebrew/bin/go build *)"
+      "Bash(/opt/homebrew/bin/go build *)",
+      "Bash(cat)",
+      "Bash(sed -i '' '214,219d' /Users/bytedance/GolandProjects/LLM/internal/cli/repl/repl.go)",
+      "Bash(sed -i '' '213r /tmp/memory_check.go' /Users/bytedance/GolandProjects/LLM/internal/cli/repl/repl.go)",
+      "Bash(rm /tmp/memory_check.go)",
+      "Bash(gofmt -l .)",
+      "Bash(gofmt *)",
+      "Bash(GOVERSION=1.23 go version *)"
     ]
   },
   "enabledMcpjsonServers": [

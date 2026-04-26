@@ -73,11 +73,7 @@ func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agent
 	if modelName == "" {
 		modelName = strings.TrimSpace(modelCfg.Model)
 	}
-	maxTurns := agentCfg.MaxHistoryTurns
-	if maxTurns <= 0 {
-		maxTurns = 20
-	}
-	return &DeepAgentRuntime{modelName: modelName, runner: runner, maxHistoryTurns: maxTurns}, nil
+	return &DeepAgentRuntime{modelName: modelName, runner: runner, maxHistoryTurns: 20}, nil
 }
 
 func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, error) {

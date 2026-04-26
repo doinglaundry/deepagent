@@ -45,7 +45,6 @@ func Load() (Config, error) {
 		MemoryDir:     filepath.Join(stateDir, "memory"),
 		CheckpointDir: filepath.Join(stateDir, "checkpoints"),
 
-		RuntimeBaseURL: envOrDefault("EINO_RUNTIME_BASE_URL", ""),
 		RuntimeModel:   envOrDefault("EINO_RUNTIME_MODEL", defaultRuntimeModel),
 		RuntimeTimeout: envOrDefaultInt("EINO_RUNTIME_TIMEOUT", defaultRuntimeTimeout),
 

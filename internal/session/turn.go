@@ -5,8 +5,6 @@ import "time"
 type TurnResult struct {
 	Success bool   `json:"success"`
 	Output  string `json:"output,omitempty"`
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
 }
 
 // Turn 代表 session 内的一次完整对话轮次（用户输入 → 模型/工具响应）。
