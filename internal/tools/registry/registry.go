@@ -19,6 +19,8 @@ func New() *Registry {
 		{Name: "read", Description: "Read a local file", RiskLevel: tools.RiskLevelLow, Source: "builtin", Capability: "filesystem"},
 		{Name: "ls", Description: "List a directory", RiskLevel: tools.RiskLevelLow, Source: "builtin", Capability: "filesystem"},
 		{Name: "shell", Description: "Run a shell command", RiskLevel: tools.RiskLevelHigh, RequiresApproval: true, Source: "builtin", Capability: "shell"},
+		{Name: "fetch", Description: "Fetch content from a URL (HTTP GET)", RiskLevel: tools.RiskLevelLow, Source: "builtin", Capability: "web"},
+		{Name: "search", Description: "Search the web via Tavily (requires TAVILY_API_KEY)", RiskLevel: tools.RiskLevelLow, Source: "builtin", Capability: "web"},
 	}
 
 	builtins := make(map[string]tools.Tool, len(items))

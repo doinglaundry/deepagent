@@ -73,6 +73,8 @@ func New(cfg config.Config, manifest workspace.Manifest, renderer render.Rendere
 		"/read":   {},
 		"/ls":     {},
 		"/shell":  {},
+		"/fetch":  {},
+		"/search": {},
 	}
 	for _, cmd := range knownCommands {
 		trimmed := strings.TrimSpace(cmd)

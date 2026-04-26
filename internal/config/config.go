@@ -20,7 +20,7 @@ const (
 	defaultRuntimeTimeout   = 30
 	defaultAgentKey         = "default"
 	defaultAgentName        = "deep-agent"
-	defaultAgentInstruction = "You are a helpful assistant."
+	defaultAgentInstruction = "You are a helpful assistant. You have access to filesystem tools (read files, list directories, search file contents, write and edit files) and a shell for running commands. Use these tools proactively to answer questions and complete tasks. For internet access, use the shell tool to run curl commands."
 	defaultAgentIterations  = 6
 )
 
