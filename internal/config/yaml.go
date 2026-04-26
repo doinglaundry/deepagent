@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -26,12 +28,10 @@ type yamlFileConfig struct {
 	Models       []yamlModelEntry `yaml:"models"`
 }
 
-// loadModelsFromYAML parses model entries from a YAML config file.
-// Returns nil maps (not an error) when the file doesn't exist or has no models.
 func loadModelsFromYAML(path string) (map[string]schema.ModelConfig, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, "", nil
 		}
 		return nil, "", fmt.Errorf("read yaml config: %w", err)
@@ -58,8 +58,8 @@ func loadModelsFromYAML(path string) (map[string]schema.ModelConfig, string, err
 		}
 		if m.APIKeyEnv != "" {
 			mc.APIKeyEnv = m.APIKeyEnv
-		} else if strings.HasPrefix(m.APIKey, "$") {
-			mc.APIKeyEnv = strings.TrimPrefix(m.APIKey, "$")
+		} else if v, ok := strings.CutPrefix(m.APIKey, "$"); ok {
+			mc.APIKeyEnv = v
 		}
 		if m.TimeoutSeconds > 0 {
 			mc.TimeoutSeconds = m.TimeoutSeconds

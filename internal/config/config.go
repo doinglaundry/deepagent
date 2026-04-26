@@ -64,9 +64,11 @@ func Load(root string) (Config, error) {
 	}
 
 	yamlPath := envOrDefault("EINO_CONFIG_PATH", filepath.Join(root, "yaml", "config.yaml"))
-	if yamlModels, yamlDefault, yerr := loadModelsFromYAML(yamlPath); yerr != nil {
-		return Config{}, fmt.Errorf("load yaml config: %w", yerr)
-	} else if len(yamlModels) > 0 {
+	yamlModels, yamlDefault, err := loadModelsFromYAML(yamlPath)
+	if err != nil {
+		return Config{}, fmt.Errorf("load yaml config: %w", err)
+	}
+	if len(yamlModels) > 0 {
 		cfg.Models = yamlModels
 		if yamlDefault != "" {
 			cfg.DefaultModel = yamlDefault
