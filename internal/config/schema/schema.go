@@ -23,8 +23,8 @@ type Config struct {
 	MemoryDir     string `json:"memory_dir"`
 	CheckpointDir string `json:"checkpoint_dir"`
 
-	DefaultModel string                 `json:"default_model"`
-	Models       map[string]ModelConfig `json:"models"`
+	DefaultModel string                  `json:"default_model"`
+	Models       map[string]*ModelConfig `json:"models"`
 	DefaultAgent string                 `json:"default_agent"`
 	Agents       map[string]AgentConfig `json:"agents"`
 

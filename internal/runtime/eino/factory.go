@@ -33,7 +33,7 @@ func getModelConfig(cfg config.Config, modelName string) (config.ModelConfig, er
 		modelCfg.Name = name
 	}
 
-	return modelCfg, nil
+	return *modelCfg, nil
 }
 
 func getAgentConfig(cfg config.Config, agentName string) (config.AgentConfig, error) {

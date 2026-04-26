@@ -15,7 +15,6 @@ type Config = schema.Config
 type ModelConfig = schema.ModelConfig
 type AgentConfig = schema.AgentConfig
 
-
 const (
 	defaultRuntimeModel     = "kimi"
 	defaultRuntimeTimeout   = 30
@@ -59,7 +58,6 @@ func Load() (Config, error) {
 		DefaultAgent: envOrDefault("EINO_DEFAULT_AGENT", ""),
 
 		Models: yamlModels,
-
 	}
 
 	normalized, err := normalizeConfig(cfg)
@@ -72,14 +70,6 @@ func Load() (Config, error) {
 	}
 
 	return normalized, nil
-}
-
-func Default() Config {
-	cfg, err := Load()
-	if err != nil {
-		return Config{}
-	}
-	return cfg
 }
 
 func normalizeConfig(cfg Config) (Config, error) {
@@ -95,13 +85,13 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 
 	if cfg.Models == nil {
-		cfg.Models = make(map[string]ModelConfig)
+		cfg.Models = make(map[string]*ModelConfig)
 	}
 
 	defaultModel := strings.TrimSpace(cfg.DefaultModel)
 	defaultModelCfg, ok := cfg.Models[defaultModel]
 	if !ok {
-		defaultModelCfg = ModelConfig{
+		defaultModelCfg = &ModelConfig{
 			Name:           defaultModel,
 			Provider:       envOrDefault("EINO_MODEL_PROVIDER", "claude"),
 			Model:          strings.TrimSpace(cfg.RuntimeModel),
@@ -255,19 +245,4 @@ func envOrDefaultInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
-}
-
-func envOrDefaultBool(key string, fallback bool) bool {
-	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	if value == "" {
-		return fallback
-	}
-	switch value {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return fallback
-	}
 }

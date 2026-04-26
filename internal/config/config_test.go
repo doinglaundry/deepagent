@@ -50,7 +50,7 @@ func TestNormalizeConfigFromLegacyRuntimeFields(t *testing.T) {
 func TestNormalizeConfigKeepsExplicitNewFields(t *testing.T) {
 	cfg, err := normalizeConfig(Config{
 		DefaultModel: "primary",
-		Models: map[string]ModelConfig{
+		Models: map[string]*ModelConfig{
 			"primary": {
 				Name:           "primary",
 				Provider:       "openai",

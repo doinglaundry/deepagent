@@ -14,7 +14,7 @@ import (
 func TestGetModelConfig(t *testing.T) {
 	cfg := config.Config{
 		DefaultModel: "primary",
-		Models: map[string]config.ModelConfig{
+		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "claude", Model: "claude-sonnet-4-6", APIKeyEnv: "ANTHROPIC_API_KEY", TimeoutSeconds: 30},
 		},
 	}
@@ -32,7 +32,7 @@ func TestBuildRuntimeUnsupportedProvider(t *testing.T) {
 	runtime, err := BuildRuntime(context.Background(), config.Config{
 		DefaultModel: "primary",
 		DefaultAgent: "default",
-		Models: map[string]config.ModelConfig{
+		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "unknown", Model: "foo", APIKeyEnv: "FOO_KEY", TimeoutSeconds: 30},
 		},
 		Agents: map[string]config.AgentConfig{

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"eino-cli/internal/config/schema"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,7 +29,7 @@ type yamlFileConfig struct {
 	Models       []yamlModelEntry `yaml:"models"`
 }
 
-func loadModelsFromYAML(path string) (map[string]schema.ModelConfig, string, error) {
+func loadModelsFromYAML(path string) (map[string]*schema.ModelConfig, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -37,14 +38,23 @@ func loadModelsFromYAML(path string) (map[string]schema.ModelConfig, string, err
 		return nil, "", fmt.Errorf("read yaml config: %w", err)
 	}
 	var fc yamlFileConfig
-	if err := yaml.Unmarshal(data, &fc); err != nil {
+	if err = yaml.Unmarshal(data, &fc); err != nil {
 		return nil, "", fmt.Errorf("parse yaml config: %w", err)
 	}
 	if len(fc.Models) == 0 {
-		return nil, "", nil
+		return map[string]*schema.ModelConfig{
+			"kimi": {
+				Name:           "kimi",
+				Provider:       "kimi",
+				Model:          "moonshot-v1-8k",
+				BaseURL:        "https://api.moonshot.cn/v1",
+				APIKeyEnv:      "MOONSHOT_API_KEY",
+				TimeoutSeconds: 60,
+			},
+		}, "kimi", nil
 	}
 
-	models := make(map[string]schema.ModelConfig, len(fc.Models))
+	models := make(map[string]*schema.ModelConfig, len(fc.Models))
 	for _, m := range fc.Models {
 		mc := schema.ModelConfig{
 			Name:     m.Name,
@@ -69,7 +79,7 @@ func loadModelsFromYAML(path string) (map[string]schema.ModelConfig, string, err
 		if mc.Provider == "" {
 			mc.Provider = inferProvider(mc.BaseURL, m.Name)
 		}
-		models[m.Name] = mc
+		models[m.Name] = ToPtr(mc)
 	}
 	return models, fc.DefaultModel, nil
 }
@@ -86,4 +96,9 @@ func inferProvider(baseURL, name string) string {
 	default:
 		return "openai"
 	}
+}
+
+// ToPtr returns a pointer to v.
+func ToPtr[T any](v T) *T {
+	return &v
 }
