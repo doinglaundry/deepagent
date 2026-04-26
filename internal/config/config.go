@@ -27,13 +27,10 @@ const (
 	defaultAgentIterations  = 6
 )
 
-func Load(root string) (Config, error) {
-	var err error
-	if root == "" {
-		root, err = os.Getwd()
-		if err != nil {
-			return Config{}, fmt.Errorf("get working directory: %w", err)
-		}
+func Load() (Config, error) {
+	root, err := os.Getwd()
+	if err != nil {
+		return Config{}, fmt.Errorf("get working directory: %w", err)
 	}
 
 	stateDir := filepath.Join(root, ".eino-cli")
@@ -72,7 +69,6 @@ func Load(root string) (Config, error) {
 		cfg.Models = yamlModels
 		if yamlDefault != "" {
 			cfg.DefaultModel = yamlDefault
-			cfg.RuntimeModel = yamlDefault
 		}
 	}
 
@@ -89,11 +85,10 @@ func Load(root string) (Config, error) {
 }
 
 func Default() Config {
-	cfg, err := Load("")
+	cfg, err := Load()
 	if err != nil {
 		return Config{}
 	}
-
 	return cfg
 }
 

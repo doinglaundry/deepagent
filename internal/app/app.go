@@ -30,32 +30,32 @@ type Options struct {
 }
 
 func New(opts Options) (*App, error) {
-	cfg, err := config.Load("")
+	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("config loaded", "model", cfg.DefaultModel, "workspace", cfg.RootDir)
+	slog.Info("孙颖宝 config loaded", "model", cfg.DefaultModel, "workspace", cfg.RootDir)
 
 	manifest, err := workspace.Discover(cfg.RootDir)
 	if err != nil {
 		return nil, fmt.Errorf("load workspace: %w", err)
 	}
-	slog.Info("workspace ready", "root", manifest.RootPath, "languages", manifest.LanguageStack)
+	slog.Info("孙颖宝 workspace ready", "root", manifest.RootPath, "languages", manifest.LanguageStack)
 
 	pluginGateway := gateway.New(cfg.PluginGateway)
 	if err := pluginGateway.Check(context.Background()); err != nil {
-		slog.Warn("plugin gateway unavailable, using built-in tools only", "err", err)
+		slog.Warn("孙颖宝 plugin gateway unavailable, using built-in tools only", "err", err)
 	} else {
-		slog.Info("plugin gateway connected", "endpoint", cfg.PluginGateway.Endpoint)
+		slog.Info("孙颖宝 plugin gateway connected", "endpoint", cfg.PluginGateway.Endpoint)
 	}
 
 	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
-	slog.Info("initializing runtime", "model", cfg.DefaultModel)
+	slog.Info("孙颖宝 initializing runtime", "model", cfg.DefaultModel)
 	runtime, err := buildRuntime(cfg, checkpointStore)
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("runtime ready", "name", runtime.Name())
+	slog.Info("孙颖宝 runtime ready", "name", runtime.Name())
 
 	persistence := orchestrator.NewPersistence(
 		session.NewStore(cfg.SessionsDir),
@@ -66,7 +66,7 @@ func New(opts Options) (*App, error) {
 	service := orchestrator.NewService(runtime, registry.New(pluginGateway), execute.New(), policy.New()).WithPersistence(persistence)
 	renderer := render.NewConsoleRenderer(nil)
 
-	slog.Info("app ready")
+	slog.Info("孙颖宝 app ready")
 	return &App{runner: repl.New(cfg, manifest, renderer, service, opts.KnownCommands)}, nil
 }
 
