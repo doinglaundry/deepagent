@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"eino-cli/internal/cli/render"
 	"eino-cli/internal/cli/repl"
@@ -33,22 +34,29 @@ func New(opts Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	slog.Info("config loaded", "model", cfg.DefaultModel, "workspace", cfg.RootDir)
 
 	manifest, err := workspace.Discover(cfg.RootDir)
 	if err != nil {
 		return nil, fmt.Errorf("load workspace: %w", err)
 	}
+	slog.Info("workspace ready", "root", manifest.RootPath, "languages", manifest.LanguageStack)
 
 	pluginGateway := gateway.New(cfg.PluginGateway)
 	if err := pluginGateway.Check(context.Background()); err != nil {
-		// 插件网关异常不阻断主链路，降级为仅内置工具。
+		slog.Warn("plugin gateway unavailable, using built-in tools only", "err", err)
+	} else {
+		slog.Info("plugin gateway connected", "endpoint", cfg.PluginGateway.Endpoint)
 	}
 
 	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
+	slog.Info("initializing runtime", "model", cfg.DefaultModel)
 	runtime, err := buildRuntime(cfg, checkpointStore)
 	if err != nil {
 		return nil, err
 	}
+	slog.Info("runtime ready", "name", runtime.Name())
+
 	persistence := orchestrator.NewPersistence(
 		session.NewStore(cfg.SessionsDir),
 		checkpointStore,
@@ -58,6 +66,7 @@ func New(opts Options) (*App, error) {
 	service := orchestrator.NewService(runtime, registry.New(pluginGateway), execute.New(), policy.New()).WithPersistence(persistence)
 	renderer := render.NewConsoleRenderer(nil)
 
+	slog.Info("app ready")
 	return &App{runner: repl.New(cfg, manifest, renderer, service, opts.KnownCommands)}, nil
 }
 
