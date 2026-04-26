@@ -12,10 +12,6 @@ type agentRunSummary struct {
 	Interrupted bool
 }
 
-func collectAgentEvents(iter *adk.AsyncIterator[*adk.AgentEvent]) (agentRunSummary, error) {
-	return collectAgentEventsWithSink(iter, nil)
-}
-
 func collectAgentEventsWithSink(iter *adk.AsyncIterator[*adk.AgentEvent], onChunk StreamChunkHandler) (agentRunSummary, error) {
 	var summary agentRunSummary
 	var outputs []string

@@ -62,7 +62,7 @@ func TestCollectAgentEventsAggregatesOutput(t *testing.T) {
 	gen.Send(&adk.AgentEvent{Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: schema.AssistantMessage("second", nil)}}})
 	gen.Close()
 
-	summary, err := collectAgentEvents(iter)
+	summary, err := collectAgentEventsWithSink(iter, nil)
 	if err != nil {
 		t.Fatalf("collectAgentEvents() error = %v", err)
 	}
@@ -79,7 +79,7 @@ func TestCollectAgentEventsInterrupted(t *testing.T) {
 	gen.Send(&adk.AgentEvent{Action: &adk.AgentAction{Interrupted: &adk.InterruptInfo{Data: "need approval"}}})
 	gen.Close()
 
-	summary, err := collectAgentEvents(iter)
+	summary, err := collectAgentEventsWithSink(iter, nil)
 	if err != nil {
 		t.Fatalf("collectAgentEvents() error = %v", err)
 	}

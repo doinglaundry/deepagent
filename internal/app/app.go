@@ -56,7 +56,6 @@ func New(opts Options) (*App, error) {
 	service := orchestrator.NewService(runtime, registry.New(), execute.New(), policy.New()).WithPersistence(persistence)
 	renderer := render.NewConsoleRenderer(nil)
 
-	slog.Info("孙颖宝 app ready")
 	return &App{runner: repl.New(cfg, manifest, renderer, service, opts.KnownCommands)}, nil
 }
 

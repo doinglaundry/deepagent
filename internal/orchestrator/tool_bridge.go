@@ -8,7 +8,6 @@ import (
 	"eino-cli/internal/cli/router"
 	"eino-cli/internal/runtime/eino"
 	"eino-cli/internal/session"
-	"eino-cli/internal/tools"
 )
 
 func (s *Service) tryToolInvocation(ctx context.Context, sess session.Session, route router.Route, now time.Time) (bool, session.ToolInvocation, eino.Result, error) {
@@ -44,7 +43,7 @@ func (s *Service) tryToolInvocation(ctx context.Context, sess session.Session, r
 	}
 
 	invocation.ExecutionStatus = session.ExecutionStatusExecuting
-	result, err := s.executeTool(ctx, tool, route.Args, sess.WorkspaceRoot)
+	result, err := s.executor.Execute(tool, route.Args, sess.WorkspaceRoot)
 	if err != nil {
 		invocation.ExecutionStatus = session.ExecutionStatusFailed
 		invocation.ErrorMessage = err.Error()
@@ -74,7 +73,7 @@ func (s *Service) ContinueToolInvocation(ctx context.Context, sessionID, invocat
 	invocation.ApprovalStatus = session.ApprovalStatusApproved
 	invocation.ExecutionStatus = session.ExecutionStatusExecuting
 
-	result, err := s.executeTool(ctx, pending.Tool, invocation.Arguments, pending.WorkingDir)
+	result, err := s.executor.Execute(pending.Tool, invocation.Arguments, pending.WorkingDir)
 	if err != nil {
 		invocation.ExecutionStatus = session.ExecutionStatusFailed
 		invocation.ErrorMessage = err.Error()
@@ -85,10 +84,6 @@ func (s *Service) ContinueToolInvocation(ctx context.Context, sessionID, invocat
 	invocation.ExecutionStatus = session.ExecutionStatusSucceeded
 	invocation.Output = result.Output
 	return invocation, eino.SuccessResult(result.Output), nil
-}
-
-func (s *Service) executeTool(_ context.Context, tool tools.Tool, args []string, cwd string) (tools.Result, error) {
-	return s.executor.Execute(tool, args, cwd)
 }
 
 func (s *Service) queuePendingApproval(invocationID string, pending pendingToolExecution) {

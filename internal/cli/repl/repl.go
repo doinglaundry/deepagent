@@ -213,7 +213,7 @@ func (r *REPL) Run(ctx context.Context) error {
 		if len(accepted.Run.Invocations) > 0 {
 			invocation := accepted.Run.Invocations[0]
 			if invocation.ApprovalStatus == session.ApprovalStatusAwaitingApproval {
-				if err := r.Renderer.Render(approvalMessage(invocation)); err != nil {
+				if err := r.Renderer.Render(render.Message{Kind: "approval", Content: fmt.Sprintf("命令 %q 需要确认，请输入 y/yes 批准，其他输入视为拒绝", invocation.ToolName)}); err != nil {
 					return err
 				}
 				if _, err := fmt.Fprint(os.Stdout, "approval> "); err != nil {
