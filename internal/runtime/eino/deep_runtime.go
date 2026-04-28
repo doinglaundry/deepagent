@@ -13,6 +13,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"eino-cli/internal/config"
+	"eino-cli/internal/session/checkpoint"
 )
 
 type DeepAgentRuntime struct {
@@ -24,7 +25,7 @@ type DeepAgentRuntime struct {
 	maxHistoryTurns     int
 }
 
-func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agentCfg config.AgentConfig, store adk.CheckPointStore) (Runtime, error) {
+func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agentCfg config.AgentConfig, checkpointDir string) (Runtime, error) {
 	chatModel, err := buildBaseChatModel(ctx, modelCfg)
 	if err != nil {
 		return nil, fmt.Errorf("build chat model: %w", err)
@@ -63,6 +64,7 @@ func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agent
 		return nil, fmt.Errorf("build deep agent: %w", err)
 	}
 
+	store := checkpoint.NewStore(checkpointDir)
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{
 		Agent:           agent,
 		EnableStreaming: true,

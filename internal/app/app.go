@@ -10,7 +10,6 @@ import (
 
 	"eino-cli/internal/runtime/eino"
 
-	"eino-cli/internal/session/checkpoint"
 	"eino-cli/internal/tools/registry"
 )
 
@@ -29,9 +28,7 @@ func New(opts Options) (*App, error) {
 	}
 	slog.Info("孙颖宝 cfg: %v", "model", cfg)
 
-	checkpointStore := checkpoint.NewStore(cfg.CheckpointDir)
-
-	runtime, err := eino.BuildRuntime(context.Background(), cfg, checkpointStore)
+	runtime, err := eino.BuildRuntime(context.Background(), cfg)
 	if err != nil {
 		return nil, err
 	}

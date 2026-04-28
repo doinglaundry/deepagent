@@ -10,13 +10,12 @@ import (
 
 	claudemodel "github.com/cloudwego/eino-ext/components/model/claude"
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
-	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 
 	"eino-cli/internal/config"
 )
 
-func BuildRuntime(ctx context.Context, cfg config.Config, store adk.CheckPointStore) (Runtime, error) {
+func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 	modelName := strings.TrimSpace(cfg.DefaultModel)
 	if modelName == "" {
 		return nil, fmt.Errorf("default model is required")
@@ -40,7 +39,7 @@ func BuildRuntime(ctx context.Context, cfg config.Config, store adk.CheckPointSt
 
 	switch strings.ToLower(strings.TrimSpace(mc.Provider)) {
 	case "claude", "anthropic", "openai", "kimi", "moonshot":
-		return NewDeepAgentRuntime(ctx, *mc, ac, store)
+		return NewDeepAgentRuntime(ctx, *mc, ac, cfg.CheckpointDir)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", mc.Provider)
 	}
