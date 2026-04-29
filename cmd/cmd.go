@@ -1,6 +1,6 @@
 package cmd
 
-import "eino-cli/internal/app"
+import "eino-cli/backend/app"
 
 var knownCLICommands = []string{
 	"/bootstrap",
