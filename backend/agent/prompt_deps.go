@@ -19,7 +19,10 @@ type PromptDepsOptions struct {
 	// Defaults to "" (== Python's empty user_id default).
 	EffectiveUserID func() string
 
-	// Memory hooks — wired only when AppConfig.Memory.Enabled is also true.
+	// GetMemoryData / FormatMemoryForInjection are the prompt-side
+	// memory accessors the lead agent's <memory> section consults.
+	// Wire from MemoryAccessor.GetMemoryData / .FormatMemoryForInjection
+	// (or supply your own to swap the data source entirely).
 	GetMemoryData            func(agentName, userID string) any
 	FormatMemoryForInjection func(data any, maxTokens int) string
 
@@ -75,9 +78,18 @@ func BuildPromptDeps(cfg config.Config, opts PromptDepsOptions) *PromptDeps {
 // the Python deerflow runtime applies through code (rather than YAML) are
 // reproduced here so the prompt section gating stays consistent across the
 // two implementations.
+//
+// Memory defaults to enabled so the <memory> prompt section + the Memory
+// middleware can both attach. Both are no-ops without an accessor / hooks
+// supplied, so leaving them on costs nothing when memory isn't wired.
 func BuildAppConfig(cfg config.Config) *AppConfig {
 	app := &AppConfig{
 		ToolSearch: ToolSearchConfig{Enabled: cfg.ToolSearch.Enabled},
+		Memory: MemoryConfig{
+			Enabled:            true,
+			InjectionEnabled:   true,
+			MaxInjectionTokens: 1024,
+		},
 	}
 	return app
 }

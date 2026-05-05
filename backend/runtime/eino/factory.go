@@ -14,6 +14,7 @@ import (
 
 	"eino-cli/backend/agent"
 	"eino-cli/backend/config"
+	memorystore "eino-cli/backend/memory/store"
 )
 
 func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
@@ -41,15 +42,23 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 	switch strings.ToLower(strings.TrimSpace(mc.Provider)) {
 	case "claude", "anthropic", "openai", "kimi", "moonshot":
 		// Phase 5+: build the prompt-side data sources (skills / deferred
-		// / ACP) and the AppConfig view from the loaded YAML, then thread
-		// them into NewDeepAgentRuntime alongside the runtime extras
-		// (HITL approval, deferred-tool name resolver) wired from cfg.
-		promptDeps := agent.BuildPromptDeps(cfg, agent.PromptDepsOptions{})
+		// / ACP / memory) and the AppConfig view from the loaded YAML,
+		// then thread them into NewDeepAgentRuntime alongside the runtime
+		// extras (HITL approval, deferred-tool name resolver, memory
+		// hooks).
+		memoryStore := memorystore.NewStore(cfg.MemoryDir)
+		memoryAcc := agent.NewMemoryAccessor(memoryStore)
+
+		promptDeps := agent.BuildPromptDeps(cfg, agent.PromptDepsOptions{
+			GetMemoryData:            memoryAcc.GetMemoryData,
+			FormatMemoryForInjection: memoryAcc.FormatMemoryForInjection,
+		})
 		appCfg := agent.BuildAppConfig(cfg)
 		extras := agent.RuntimeExtras{
 			DeferredToolNames: agent.DeferredToolNamesFromConfig(cfg),
 			HITLApproval:      defaultHITLApproval,
 			HITLTools:         nil, // wired by REPL when /approve flow exists
+			MemoryHooks:       memoryAcc.Hooks(),
 		}
 		return NewDeepAgentRuntime(ctx, *mc, ac, cfg.CheckpointDir, promptDeps, appCfg, extras)
 	default:
