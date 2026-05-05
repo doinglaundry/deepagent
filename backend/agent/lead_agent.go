@@ -201,9 +201,14 @@ func MakeLeadAgent(
 		Shell:                  sandbox.Shell(),
 		MaxIteration:           maxIter,
 		WithoutGeneralSubAgent: true,
-		WithoutWriteTodos:      !rt.IsPlanMode,
-		Middlewares:            chain.Agent,
-		Handlers:               chain.ChatModel,
+		// Phase 8: write_todos is now always available so the agent can
+		// self-elect to track multi-step work even outside plan mode —
+		// matching the way Cursor / Claude Code expose the same tool.
+		// The plan-mode-only "use this tool" rallying-cry still lives in
+		// the Todo middleware (chain.Agent), gated on rt.IsPlanMode.
+		WithoutWriteTodos: false,
+		Middlewares:       chain.Agent,
+		Handlers:          chain.ChatModel,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build deep agent: %w", err)
