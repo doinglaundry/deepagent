@@ -40,12 +40,18 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 
 	switch strings.ToLower(strings.TrimSpace(mc.Provider)) {
 	case "claude", "anthropic", "openai", "kimi", "moonshot":
-		// Phase 5: build the prompt-side data sources (skills / deferred /
-		// ACP) and the AppConfig view from the loaded YAML, then thread
-		// them into NewDeepAgentRuntime.
+		// Phase 5+: build the prompt-side data sources (skills / deferred
+		// / ACP) and the AppConfig view from the loaded YAML, then thread
+		// them into NewDeepAgentRuntime alongside the runtime extras
+		// (HITL approval, deferred-tool name resolver) wired from cfg.
 		promptDeps := agent.BuildPromptDeps(cfg, agent.PromptDepsOptions{})
 		appCfg := agent.BuildAppConfig(cfg)
-		return NewDeepAgentRuntime(ctx, *mc, ac, cfg.CheckpointDir, promptDeps, appCfg)
+		extras := agent.RuntimeExtras{
+			DeferredToolNames: agent.DeferredToolNamesFromConfig(cfg),
+			HITLApproval:      defaultHITLApproval,
+			HITLTools:         nil, // wired by REPL when /approve flow exists
+		}
+		return NewDeepAgentRuntime(ctx, *mc, ac, cfg.CheckpointDir, promptDeps, appCfg, extras)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", mc.Provider)
 	}

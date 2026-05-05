@@ -51,6 +51,12 @@ type ChainOptions struct {
 
 	// HITLTools are the tool names that require approval (e.g. shell.execute).
 	HITLTools []string
+
+	// OnClarification (optional) is called whenever the Clarification
+	// middleware rewrites an ask_clarification tool call. The host can
+	// use this for telemetry / custom rendering — the rewrite happens
+	// regardless.
+	OnClarification func(ctx context.Context, question string)
 }
 
 // BuildChain mirrors Python _build_middlewares. The slot order matches the
@@ -115,7 +121,9 @@ func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
 	}
 
 	// Clarification stays last — same invariant as Python.
-	chatModel = append(chatModel, middlewares.NewClarification())
+	clar := middlewares.NewClarification()
+	clar.OnQuestion = opts.OnClarification
+	chatModel = append(chatModel, clar)
 
 	var agentMWs []adk.AgentMiddleware
 	if opts.Runtime.IsPlanMode {

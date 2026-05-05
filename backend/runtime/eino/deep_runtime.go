@@ -44,6 +44,7 @@ func NewDeepAgentRuntime(
 	checkpointDir string,
 	promptDeps *agent.PromptDeps,
 	appCfg *agent.AppConfig,
+	extras ...agent.RuntimeExtras,
 ) (Runtime, error) {
 	modelName := strings.TrimSpace(modelCfg.Name)
 	if modelName == "" {
@@ -89,6 +90,13 @@ func NewDeepAgentRuntime(
 		// existing behaviour.
 		PromptDeps: promptDeps,
 		AppConfig:  appCfg,
+	}
+	// Phase 6: layer in any host-supplied runtime extras (HITL approval,
+	// deferred-tool resolver, memory hooks, ...). Only the first
+	// RuntimeExtras is honoured — variadic is a back-compat seam, not a
+	// merging spec.
+	if len(extras) > 0 {
+		deps = extras[0].ApplyTo(deps)
 	}
 
 	leadAgent, err := agent.MakeLeadAgent(ctx, rt, cfgView, deps)

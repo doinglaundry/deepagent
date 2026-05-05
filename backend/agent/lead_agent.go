@@ -15,6 +15,7 @@ import (
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/components/model"
 
+	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
 )
 
@@ -35,6 +36,30 @@ type AgentDeps struct {
 
 	// WorkingDir is consulted only when Sandbox is nil; ignored otherwise.
 	WorkingDir string
+
+	// HITLTools and HITLApproval drive the human-in-the-loop middleware.
+	// HITLTools is the set of tool names that require approval; empty
+	// means no gating. HITLApproval is the callback that prompts the user
+	// — it receives the tool name + raw JSON args and returns approve/deny.
+	// nil callback treats every gated call as approved (Phase 1 behavior).
+	HITLTools    []string
+	HITLApproval func(ctx context.Context, toolName, args string) bool
+
+	// OnClarification, if non-nil, is invoked when the model emits an
+	// ask_clarification tool call. The middleware always rewrites the
+	// assistant message to surface the question; this callback gives the
+	// host a hook for telemetry / custom rendering.
+	OnClarification func(ctx context.Context, question string)
+
+	// DeferredToolNames is the live list of tool names the
+	// DeferredTools middleware should filter out of the active set when
+	// AppConfig.ToolSearch.Enabled is true. Without this the middleware
+	// is not attached.
+	DeferredToolNames func() []string
+
+	// MemoryHooks drives the Memory middleware's inject / extract data
+	// plane. Wire only when AppConfig.Memory.Enabled is true.
+	MemoryHooks middlewares.MemoryHooks
 }
 
 // MakeLeadAgent mirrors deerflow.agents.lead_agent.agent.make_lead_agent.
@@ -136,13 +161,18 @@ func MakeLeadAgent(
 	})
 
 	chain, err := BuildChain(ctx, ChainOptions{
-		Runtime:      rt,
-		ModelName:    modelName,
-		AgentName:    agentName,
-		ModelConfig:  modelCfg,
-		Config:       cfg,
-		AppConfig:    appCfg,
-		SummaryModel: chatModel,
+		Runtime:           rt,
+		ModelName:         modelName,
+		AgentName:         agentName,
+		ModelConfig:       modelCfg,
+		Config:            cfg,
+		AppConfig:         appCfg,
+		SummaryModel:      chatModel,
+		HITLTools:         deps.HITLTools,
+		HITLApproval:      deps.HITLApproval,
+		OnClarification:   deps.OnClarification,
+		DeferredToolNames: deps.DeferredToolNames,
+		MemoryHooks:       deps.MemoryHooks,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build middleware chain: %w", err)

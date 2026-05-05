@@ -1,0 +1,99 @@
+package middlewares
+
+import (
+	"context"
+	"testing"
+
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
+)
+
+// TestClarification_RewritesAssistantMessage verifies the Phase-6 control
+// flow: when the model emits ask_clarification(question="..."), the
+// middleware clears ToolCalls and replaces Content with the question so
+// the deep-agent loop terminates the turn naturally.
+func TestClarification_RewritesAssistantMessage(t *testing.T) {
+	mw := NewClarification()
+	var capturedQ string
+	mw.OnQuestion = func(_ context.Context, q string) { capturedQ = q }
+
+	state := &adk.ChatModelAgentState{
+		Messages: []*schema.Message{
+			schema.UserMessage("hi"),
+			{
+				Role:    schema.Assistant,
+				Content: "",
+				ToolCalls: []schema.ToolCall{
+					{
+						ID: "c1",
+						Function: schema.FunctionCall{
+							Name:      AskClarificationToolName,
+							Arguments: `{"question":"What's your timezone?"}`,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, out, err := mw.AfterModelRewriteState(context.Background(), state, nil)
+	if err != nil {
+		t.Fatalf("AfterModelRewriteState: %v", err)
+	}
+
+	last := out.Messages[len(out.Messages)-1]
+	if len(last.ToolCalls) != 0 {
+		t.Fatalf("expected ToolCalls to be cleared, got %d", len(last.ToolCalls))
+	}
+	if last.Content != "What's your timezone?" {
+		t.Fatalf("unexpected Content: %q", last.Content)
+	}
+	if capturedQ != "What's your timezone?" {
+		t.Fatalf("OnQuestion not invoked, got %q", capturedQ)
+	}
+}
+
+// TestClarification_NoOpForOtherTools confirms the middleware leaves
+// non-clarification tool calls alone (zero false positives).
+func TestClarification_NoOpForOtherTools(t *testing.T) {
+	mw := NewClarification()
+	state := &adk.ChatModelAgentState{
+		Messages: []*schema.Message{{
+			Role: schema.Assistant,
+			ToolCalls: []schema.ToolCall{
+				{ID: "x", Function: schema.FunctionCall{Name: "filesystem.read", Arguments: "{}"}},
+			},
+		}},
+	}
+	_, out, err := mw.AfterModelRewriteState(context.Background(), state, nil)
+	if err != nil {
+		t.Fatalf("AfterModelRewriteState: %v", err)
+	}
+	if len(out.Messages[0].ToolCalls) != 1 {
+		t.Fatalf("expected ToolCalls preserved, got %d", len(out.Messages[0].ToolCalls))
+	}
+	if out.Messages[0].Content != "" {
+		t.Fatalf("Content should not have been touched: %q", out.Messages[0].Content)
+	}
+}
+
+// TestClarification_FallbackForUnparsedArgs ensures the user always sees
+// something even when JSON parsing fails or the question key is missing.
+func TestClarification_FallbackForUnparsedArgs(t *testing.T) {
+	mw := NewClarification()
+	state := &adk.ChatModelAgentState{
+		Messages: []*schema.Message{{
+			Role: schema.Assistant,
+			ToolCalls: []schema.ToolCall{
+				{ID: "c1", Function: schema.FunctionCall{Name: AskClarificationToolName, Arguments: `not json`}},
+			},
+		}},
+	}
+	_, out, err := mw.AfterModelRewriteState(context.Background(), state, nil)
+	if err != nil {
+		t.Fatalf("AfterModelRewriteState: %v", err)
+	}
+	if out.Messages[0].Content == "" {
+		t.Fatalf("expected fallback Content, got empty")
+	}
+}
