@@ -30,9 +30,21 @@ type DeepAgentRuntime struct {
 // deerflow lead-agent assembly (prompt template, middleware chain,
 // model resolution).
 //
+// promptDeps + appCfg are optional. When non-nil they populate the
+// dynamic prompt sections (skills, deferred tools, ACP, memory hooks);
+// when nil the prompt degrades to the same "no extras" output Phase 2
+// shipped with.
+//
 // We keep the runtime's history/checkpoint/streaming responsibilities here
 // because they belong to the eino-cli REPL, not to the agent itself.
-func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agentCfg config.AgentConfig, checkpointDir string) (Runtime, error) {
+func NewDeepAgentRuntime(
+	ctx context.Context,
+	modelCfg config.ModelConfig,
+	agentCfg config.AgentConfig,
+	checkpointDir string,
+	promptDeps *agent.PromptDeps,
+	appCfg *agent.AppConfig,
+) (Runtime, error) {
 	modelName := strings.TrimSpace(modelCfg.Name)
 	if modelName == "" {
 		modelName = strings.TrimSpace(modelCfg.Model)
@@ -72,8 +84,11 @@ func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agent
 		// runtime/eino-owned newLocalBackend/newLocalShell helpers.
 		Sandbox:    agent.NewLocalSandbox(cwd),
 		WorkingDir: cwd,
-		// AppConfig + PromptDeps stay nil for now — every dynamic prompt
-		// section degrades to "" exactly like Python's try/except branches.
+		// Phase 5: nil values fall back to Python's "no extras" branches,
+		// so callers that don't configure skills/deferred/ACP keep the
+		// existing behaviour.
+		PromptDeps: promptDeps,
+		AppConfig:  appCfg,
 	}
 
 	leadAgent, err := agent.MakeLeadAgent(ctx, rt, cfgView, deps)

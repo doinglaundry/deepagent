@@ -26,23 +26,78 @@ type yamlModelEntry struct {
 	TimeoutSeconds int     `yaml:"timeout_seconds"`
 }
 
-type yamlFileConfig struct {
-	DefaultModel string           `yaml:"default_model"`
-	Models       []yamlModelEntry `yaml:"models"`
+type yamlSkillsEntry struct {
+	Paths []string `yaml:"paths"`
 }
 
-func loadModelsFromYAML(path string) (map[string]*schema.ModelConfig, error) {
+type yamlDeferredToolEntry struct {
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+}
+
+type yamlToolSearchEntry struct {
+	Enabled  bool                    `yaml:"enabled"`
+	Deferred []yamlDeferredToolEntry `yaml:"deferred"`
+}
+
+type yamlACPAgentEntry struct {
+	Description string `yaml:"description"`
+}
+
+type yamlACPEntry struct {
+	Agents map[string]yamlACPAgentEntry `yaml:"agents"`
+}
+
+type yamlFileConfig struct {
+	DefaultModel string               `yaml:"default_model"`
+	Models       []yamlModelEntry     `yaml:"models"`
+	Skills       yamlSkillsEntry      `yaml:"skills"`
+	ToolSearch   yamlToolSearchEntry  `yaml:"tool_search"`
+	ACP          yamlACPEntry         `yaml:"acp"`
+}
+
+// yamlExtras bundles the non-model sections so the caller can fold them into
+// schema.Config alongside the models map.
+type yamlExtras struct {
+	Skills     schema.SkillsConfig
+	ToolSearch schema.ToolSearchConfig
+	ACP        schema.ACPConfig
+}
+
+func loadFromYAML(path string) (map[string]*schema.ModelConfig, yamlExtras, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
+			return nil, yamlExtras{}, nil
 		}
-		return nil, fmt.Errorf("read yaml config: %w", err)
+		return nil, yamlExtras{}, fmt.Errorf("read yaml config: %w", err)
 	}
 	var fc yamlFileConfig
 	if err = yaml.Unmarshal(data, &fc); err != nil {
-		return nil, fmt.Errorf("parse yaml config: %w", err)
+		return nil, yamlExtras{}, fmt.Errorf("parse yaml config: %w", err)
 	}
+
+	extras := yamlExtras{
+		Skills: schema.SkillsConfig{Paths: append([]string(nil), fc.Skills.Paths...)},
+		ToolSearch: schema.ToolSearchConfig{
+			Enabled: fc.ToolSearch.Enabled,
+		},
+		ACP: schema.ACPConfig{},
+	}
+	for _, d := range fc.ToolSearch.Deferred {
+		if strings.TrimSpace(d.Name) == "" {
+			continue
+		}
+		extras.ToolSearch.Deferred = append(extras.ToolSearch.Deferred,
+			schema.DeferredToolEntry{Name: d.Name, Description: d.Description})
+	}
+	if len(fc.ACP.Agents) > 0 {
+		extras.ACP.Agents = make(map[string]schema.ACPAgentEntry, len(fc.ACP.Agents))
+		for name, a := range fc.ACP.Agents {
+			extras.ACP.Agents[name] = schema.ACPAgentEntry{Description: a.Description}
+		}
+	}
+
 	if len(fc.Models) == 0 {
 		return map[string]*schema.ModelConfig{
 			defaultYAMLModel: {
@@ -53,7 +108,7 @@ func loadModelsFromYAML(path string) (map[string]*schema.ModelConfig, error) {
 				APIKeyEnv:      "MOONSHOT_API_KEY",
 				TimeoutSeconds: 60,
 			},
-		}, nil
+		}, extras, nil
 	}
 
 	models := make(map[string]*schema.ModelConfig, len(fc.Models))
@@ -84,7 +139,7 @@ func loadModelsFromYAML(path string) (map[string]*schema.ModelConfig, error) {
 		models[m.Name] = ToPtr(mc)
 	}
 
-	return models, nil
+	return models, extras, nil
 }
 
 func inferProvider(baseURL, name string) string {

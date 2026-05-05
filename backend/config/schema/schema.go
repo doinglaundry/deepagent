@@ -26,6 +26,40 @@ type AgentConfig struct {
 	MaxIteration int    `json:"max_iteration"`
 }
 
+// SkillsConfig drives the SKILL.md scanner used to populate the
+// <available_skills> prompt section. Each path is expanded with ~ and
+// scanned one level deep for "<name>/SKILL.md".
+type SkillsConfig struct {
+	Paths []string `json:"paths,omitempty"`
+}
+
+// DeferredToolEntry describes a tool that is registered but not loaded by
+// default — the agent has to opt in through the deferred-tool prompt section.
+type DeferredToolEntry struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// ToolSearchConfig gates the deferred-tool prompt section + the
+// DeferredTools middleware that filters those tools out of the active set.
+type ToolSearchConfig struct {
+	Enabled  bool                `json:"enabled"`
+	Deferred []DeferredToolEntry `json:"deferred,omitempty"`
+}
+
+// ACPAgentEntry captures the prompt-side metadata for an external ACP
+// agent (codex, claude_code, ...). The Description is what the LLM sees
+// when deciding whether to invoke the agent.
+type ACPAgentEntry struct {
+	Description string `json:"description,omitempty"`
+}
+
+// ACPConfig holds the registered ACP agents whose mere presence flips on
+// the ACP prompt subsection.
+type ACPConfig struct {
+	Agents map[string]ACPAgentEntry `json:"agents,omitempty"`
+}
+
 type Config struct {
 	RootDir       string `json:"root_dir"`
 	StateDir      string `json:"state_dir"`
@@ -40,4 +74,10 @@ type Config struct {
 
 	RuntimeModel   string `json:"runtime_model"`
 	RuntimeTimeout int    `json:"runtime_timeout"`
+
+	// Phase 5 (data sources): wire these from yaml/config.yaml so the
+	// PromptDeps builder can populate the corresponding prompt sections.
+	Skills     SkillsConfig     `json:"skills,omitempty"`
+	ToolSearch ToolSearchConfig `json:"tool_search,omitempty"`
+	ACP        ACPConfig        `json:"acp,omitempty"`
 }

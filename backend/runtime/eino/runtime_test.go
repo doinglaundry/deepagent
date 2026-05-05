@@ -42,7 +42,7 @@ func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
 		Name:         "deep-agent",
 		Instruction:  "You are a helpful assistant.",
 		MaxIteration: 6,
-	}, "")
+	}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewDeepAgentRuntime() error = %v", err)
 	}

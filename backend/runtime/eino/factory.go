@@ -12,6 +12,7 @@ import (
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 
+	"eino-cli/backend/agent"
 	"eino-cli/backend/config"
 )
 
@@ -39,7 +40,12 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 
 	switch strings.ToLower(strings.TrimSpace(mc.Provider)) {
 	case "claude", "anthropic", "openai", "kimi", "moonshot":
-		return NewDeepAgentRuntime(ctx, *mc, ac, cfg.CheckpointDir)
+		// Phase 5: build the prompt-side data sources (skills / deferred /
+		// ACP) and the AppConfig view from the loaded YAML, then thread
+		// them into NewDeepAgentRuntime.
+		promptDeps := agent.BuildPromptDeps(cfg, agent.PromptDepsOptions{})
+		appCfg := agent.BuildAppConfig(cfg)
+		return NewDeepAgentRuntime(ctx, *mc, ac, cfg.CheckpointDir, promptDeps, appCfg)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", mc.Provider)
 	}

@@ -33,7 +33,7 @@ func Load() (Config, error) {
 	stateDir := filepath.Join(root, ".eino-cli")
 
 	yamlPath := filepath.Join(root, "yaml", "config.yaml")
-	yamlModels, err := loadModelsFromYAML(yamlPath)
+	yamlModels, yamlExtras, err := loadFromYAML(yamlPath)
 	if err != nil {
 		return Config{}, fmt.Errorf("load yaml config: %w", err)
 	}
@@ -52,6 +52,10 @@ func Load() (Config, error) {
 		DefaultAgent: envOrDefault("EINO_DEFAULT_AGENT", ""),
 
 		Models: yamlModels,
+
+		Skills:     yamlExtras.Skills,
+		ToolSearch: yamlExtras.ToolSearch,
+		ACP:        yamlExtras.ACP,
 	}
 
 	normalized, err := normalizeConfig(cfg)
