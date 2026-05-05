@@ -35,6 +35,12 @@ type ChainOptions struct {
 	AppConfig    *AppConfig // may be nil; behaves as zero-value
 	SummaryModel model.BaseChatModel
 
+	// MemoryFlushHook is the callback the summarization middleware
+	// invokes once a summary has been finalised — see
+	// middlewares.NewSummarization for the exact timing. Optional; nil
+	// means "no flush hook" (the middleware behaves as before).
+	MemoryFlushHook middlewares.SummarizationMemoryFlushHook
+
 	// MemoryHooks plugs the host-side memory data plane into the Memory
 	// middleware. Optional; without hooks the middleware is a no-op even
 	// when the gate flag is on.
@@ -117,6 +123,7 @@ func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
 			app.Summarization.ContextMessages,
 			app.Summarization.UserInstruction,
 			opts.SummaryModel,
+			opts.MemoryFlushHook,
 		)
 		if err != nil {
 			return Chain{}, fmt.Errorf("build summarization mw: %w", err)

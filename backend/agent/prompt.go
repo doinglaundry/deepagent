@@ -62,11 +62,18 @@ type SandboxConfig struct {
 // SummarizationConfig captures the deerflow summarization knobs.
 // Phase 2 wires this into the always-on middleware chain via
 // middlewares.NewSummarization.
+//
+// Model (Phase 11) names a model from cfg.Models that the summarization
+// middleware should use *instead* of the lead-agent's own chat model.
+// Mirrors deerflow's app_config.SUMMARIZATION_MODEL: a smaller/cheaper
+// model can compact context without burning the lead-agent's premium
+// budget. Empty string falls back to the lead model.
 type SummarizationConfig struct {
 	Enabled         bool
 	ContextTokens   int
 	ContextMessages int
 	UserInstruction string
+	Model           string
 }
 
 // TokenUsageConfig is the gate flag for the token-usage middleware (Phase 3).

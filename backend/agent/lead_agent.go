@@ -60,6 +60,12 @@ type AgentDeps struct {
 	// MemoryHooks drives the Memory middleware's inject / extract data
 	// plane. Wire only when AppConfig.Memory.Enabled is true.
 	MemoryHooks middlewares.MemoryHooks
+
+	// MemoryFlushHook is plugged into the summarization middleware so
+	// the host can persist memorable bits before/around summarization.
+	// Optional; nil means "no flush hook" — the middleware skips the
+	// callback entirely.
+	MemoryFlushHook middlewares.SummarizationMemoryFlushHook
 }
 
 // MakeLeadAgent mirrors deerflow.agents.lead_agent.agent.make_lead_agent.
@@ -135,6 +141,36 @@ func MakeLeadAgent(
 		return nil, err
 	}
 
+	// Phase 11: when AppConfig.Summarization.Model names a different
+	// model, build it on the side so summarization runs against a
+	// cheaper / shorter-context model rather than burning the lead's
+	// premium budget. Summarization never wants thinking nor reasoning
+	// effort — both add latency for no quality gain on a compaction
+	// task — so we pass false / "" explicitly.
+	summaryModel := chatModel
+	if deps.AppConfig != nil && strings.TrimSpace(deps.AppConfig.Summarization.Model) != "" {
+		smName := strings.TrimSpace(deps.AppConfig.Summarization.Model)
+		if smCfg := cfg.Models[smName]; smCfg != nil {
+			sm, smErr := buildChatModel(ctx, *smCfg, false, "")
+			if smErr != nil {
+				slog.Warn(
+					"summarization model build failed; falling back to lead chat model",
+					"summary_model", smName,
+					"err", smErr,
+				)
+			} else {
+				summaryModel = sm
+				slog.Info("summarization will use a separate chat model",
+					"summary_model", smName)
+			}
+		} else {
+			slog.Warn(
+				"summarization model not found in cfg.Models; falling back to lead chat model",
+				"summary_model", smName,
+			)
+		}
+	}
+
 	sandbox := deps.Sandbox
 	if sandbox == nil {
 		sandbox = NewLocalSandbox(deps.WorkingDir)
@@ -178,12 +214,13 @@ func MakeLeadAgent(
 		ModelConfig:       modelCfg,
 		Config:            cfg,
 		AppConfig:         appCfg,
-		SummaryModel:      chatModel,
+		SummaryModel:      summaryModel,
 		HITLTools:         deps.HITLTools,
 		HITLApproval:      deps.HITLApproval,
 		OnClarification:   deps.OnClarification,
 		DeferredToolNames: deps.DeferredToolNames,
 		MemoryHooks:       deps.MemoryHooks,
+		MemoryFlushHook:   deps.MemoryFlushHook,
 		ImageFetcher:      imageFetcher,
 	})
 	if err != nil {

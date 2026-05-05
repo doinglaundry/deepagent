@@ -39,6 +39,11 @@ type RuntimeExtras struct {
 	// MemoryHooks drives the Memory middleware's inject / extract data
 	// plane. Wire only when AppConfig.Memory.Enabled is true.
 	MemoryHooks middlewares.MemoryHooks
+
+	// MemoryFlushHook is the deerflow-style memory_flush_hook plugged
+	// into the summarization middleware. Optional; nil means "no
+	// flush hook".
+	MemoryFlushHook middlewares.SummarizationMemoryFlushHook
 }
 
 // ApplyTo overlays the non-nil / non-empty fields of r onto deps and
@@ -66,6 +71,9 @@ func (r RuntimeExtras) ApplyTo(deps AgentDeps) AgentDeps {
 	}
 	if r.MemoryHooks.Inject != nil || r.MemoryHooks.Extract != nil {
 		deps.MemoryHooks = r.MemoryHooks
+	}
+	if r.MemoryFlushHook != nil {
+		deps.MemoryFlushHook = r.MemoryFlushHook
 	}
 	return deps
 }

@@ -52,6 +52,7 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 			HITLApproval:      defaultHITLApproval,
 			HITLTools:         nil, // wired by REPL when /approve flow exists
 			MemoryHooks:       memoryAcc.Hooks(),
+			MemoryFlushHook:   memoryAcc.FlushBeforeSummarization,
 		}
 		return NewDeepAgentRuntime(ctx, *mc, ac, cfg.CheckpointDir, promptDeps, appCfg, extras)
 	default:

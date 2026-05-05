@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
 	"eino-cli/backend/agent/middlewares"
@@ -152,6 +153,48 @@ func (a *MemoryAccessor) extract(_ context.Context, _ []*schema.Message) {
 	// REPL-side writes already cover user inputs. Once a richer
 	// "remember(key, value)" tool exists this is where the
 	// extraction logic would land.
+}
+
+// FlushBeforeSummarization implements the deerflow-style
+// `memory_flush_hook`: it is invoked by the summarization middleware
+// after a summary has been finalised (see middlewares.NewSummarization
+// — eino's Callback fires "after Finalize, before exiting the
+// middleware", so technically the hook runs *just after* the
+// summarization pivot rather than before).
+//
+// Today this is a logged stub: we don't have an LLM-driven memory
+// extraction step yet, so there's nothing concrete to persist. The
+// hook is plumbed end-to-end so a follow-up commit can drop in the
+// extraction logic (scan `before.Messages` for facts / decisions, save
+// them to the store) without re-touching the middleware chain.
+//
+// Errors from this hook are logged-and-swallowed by the wrapper in
+// middlewares.NewSummarization — failing memory flush must never
+// block summarization itself.
+func (a *MemoryAccessor) FlushBeforeSummarization(
+	ctx context.Context,
+	before, after adk.ChatModelAgentState,
+) error {
+	if a == nil || a.store == nil {
+		return nil
+	}
+	beforeCount := len(before.Messages)
+	afterCount := len(after.Messages)
+	dropped := beforeCount - afterCount
+	if dropped < 0 {
+		dropped = 0
+	}
+	promptLogger.Info(
+		"memory flush hook fired",
+		"before_messages", beforeCount,
+		"after_messages", afterCount,
+		"dropped", dropped,
+	)
+	// Future work: walk before.Messages and call a.store.Save on
+	// any decision-grade items the agent surfaced. Keeping this a
+	// stub keeps the plumbing visible to grep without speculating
+	// on the extraction policy.
+	return nil
 }
 
 // filter applies MinContentLen, dedupes by content, sorts by TurnIndex,

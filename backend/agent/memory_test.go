@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
 	memorystore "eino-cli/backend/memory/store"
@@ -110,6 +111,40 @@ func TestMemoryAccessor_NilStoreIsNoOp(t *testing.T) {
 	if got := acc.Hooks().Inject(context.Background(), in); len(got) != 1 {
 		t.Errorf("expected pass-through for nil store, got %d msgs", len(got))
 	}
+}
+
+// TestMemoryAccessor_FlushBeforeSummarization is a smoke test for the
+// memory_flush_hook plumbing — the call must succeed without error
+// even when the store is nil, and must return nil for a real store too.
+// The actual extraction policy is intentionally a stub today; this
+// test just guards the contract so a future commit landing the
+// extraction logic doesn't accidentally start returning errors.
+func TestMemoryAccessor_FlushBeforeSummarization(t *testing.T) {
+	t.Run("nil store", func(t *testing.T) {
+		acc := NewMemoryAccessor(nil)
+		err := acc.FlushBeforeSummarization(context.Background(),
+			adk.ChatModelAgentState{}, adk.ChatModelAgentState{})
+		if err != nil {
+			t.Errorf("nil store should be a no-op, got err=%v", err)
+		}
+	})
+	t.Run("real store, empty state", func(t *testing.T) {
+		acc := NewMemoryAccessor(newSeededStore(t))
+		before := adk.ChatModelAgentState{
+			Messages: []*schema.Message{
+				schema.UserMessage("foo"),
+				schema.AssistantMessage("bar", nil),
+			},
+		}
+		after := adk.ChatModelAgentState{
+			Messages: []*schema.Message{
+				schema.SystemMessage("(summary)"),
+			},
+		}
+		if err := acc.FlushBeforeSummarization(context.Background(), before, after); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
 }
 
 // TestMemoryAccessor_FormatRespectsTokenBudget verifies the soft token
