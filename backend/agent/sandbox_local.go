@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +53,74 @@ func (p *LocalSandboxProvider) Backend() filesystem.Backend { return &localBacke
 func (p *LocalSandboxProvider) Shell() filesystem.Shell     { return &localShell{cwd: p.root} }
 func (p *LocalSandboxProvider) Mounts() []Mount             { return p.mounts }
 func (p *LocalSandboxProvider) WorkingDir() string          { return p.root }
+
+// ReadImage satisfies ImageReader. It resolves path against the sandbox
+// root, refuses non-regular files, infers the MIME type via the standard
+// library's content sniffer (with an extension fallback), and returns the
+// raw bytes ready for base64 encoding into a multimodal message.
+func (p *LocalSandboxProvider) ReadImage(ctx context.Context, path string) ([]byte, string, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, "", fmt.Errorf("read image: path is empty")
+	}
+	abs := path
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(p.root, abs)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return nil, "", fmt.Errorf("read image: stat %s: %w", abs, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, "", fmt.Errorf("read image: %s is not a regular file", abs)
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, "", fmt.Errorf("read image: %s: %w", abs, err)
+	}
+	if len(data) == 0 {
+		return nil, "", fmt.Errorf("read image: %s is empty", abs)
+	}
+
+	mime := http.DetectContentType(data)
+	if !strings.HasPrefix(mime, "image/") {
+		// Fall back to the file extension when DetectContentType returned
+		// "application/octet-stream" or similar — some tiny SVG / WebP
+		// inputs trip the sniffer.
+		if extMime := mimeFromExt(abs); extMime != "" {
+			mime = extMime
+		}
+	}
+	if !strings.HasPrefix(mime, "image/") {
+		return nil, "", fmt.Errorf("read image: %s is not an image (mime=%s)", abs, mime)
+	}
+	return data, mime, nil
+}
+
+// mimeFromExt returns a best-effort image MIME type for known file
+// extensions. Returns "" when the extension isn't a known image format
+// so callers know to keep the sniffer's verdict.
+func mimeFromExt(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".bmp":
+		return "image/bmp"
+	case ".svg":
+		return "image/svg+xml"
+	case ".heic":
+		return "image/heic"
+	case ".heif":
+		return "image/heif"
+	default:
+		return ""
+	}
+}
 
 // -----------------------------------------------------------------------------
 // localBackend / localShell — migrated from runtime/eino/fs_backend.go.

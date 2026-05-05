@@ -163,6 +163,14 @@ func MakeLeadAgent(
 		Deps:                   deps.PromptDeps,
 	})
 
+	// If the sandbox can read images, expose it as the ViewImage
+	// middleware's fetcher. Sandboxes without that capability silently
+	// degrade — the middleware logs and skips when no fetcher is wired.
+	var imageFetcher middlewares.ImageFetcher
+	if r, ok := sandbox.(ImageReader); ok {
+		imageFetcher = imageFetcherFunc(r.ReadImage)
+	}
+
 	chain, err := BuildChain(ctx, ChainOptions{
 		Runtime:           rt,
 		ModelName:         modelName,
@@ -176,6 +184,7 @@ func MakeLeadAgent(
 		OnClarification:   deps.OnClarification,
 		DeferredToolNames: deps.DeferredToolNames,
 		MemoryHooks:       deps.MemoryHooks,
+		ImageFetcher:      imageFetcher,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build middleware chain: %w", err)
@@ -225,6 +234,15 @@ func defaultIterationLimit(p *AgentProfile) int {
 	// existing DeepAgentRuntime default so REPL behaviour is unchanged.
 	_ = p
 	return 6
+}
+
+// imageFetcherFunc adapts a plain ReadImage method into the
+// middlewares.ImageFetcher interface so MakeLeadAgent doesn't have to
+// declare a dedicated wrapper type per provider.
+type imageFetcherFunc func(ctx context.Context, path string) ([]byte, string, error)
+
+func (f imageFetcherFunc) ReadImage(ctx context.Context, path string) ([]byte, string, error) {
+	return f(ctx, path)
 }
 
 // buildChatModel is the lead-agent local copy of the existing

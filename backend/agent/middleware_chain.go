@@ -57,6 +57,12 @@ type ChainOptions struct {
 	// use this for telemetry / custom rendering — the rewrite happens
 	// regardless.
 	OnClarification func(ctx context.Context, question string)
+
+	// ImageFetcher provides the binary image bytes the ViewImage
+	// middleware needs to construct multimodal user messages. Without
+	// it the middleware degrades to logging skeleton even when the
+	// active model SupportsVision.
+	ImageFetcher middlewares.ImageFetcher
 }
 
 // BuildChain mirrors Python _build_middlewares. The slot order matches the
@@ -88,7 +94,7 @@ func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
 	}
 
 	if opts.ModelConfig != nil && opts.ModelConfig.SupportsVision {
-		chatModel = append(chatModel, middlewares.NewViewImage())
+		chatModel = append(chatModel, middlewares.NewViewImage(opts.ImageFetcher))
 	}
 
 	if app != nil && app.ToolSearch.Enabled && opts.DeferredToolNames != nil {

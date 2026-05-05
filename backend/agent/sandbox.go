@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+
 	"github.com/cloudwego/eino/adk/filesystem"
 )
 
@@ -29,4 +31,19 @@ type SandboxProvider interface {
 	// WorkingDir returns the agent's logical CWD for tools that resolve
 	// relative paths. May be empty when the provider doesn't expose one.
 	WorkingDir() string
+}
+
+// ImageReader is an optional capability a SandboxProvider may also satisfy
+// to expose binary image bytes for the ViewImage middleware. Kept on a
+// separate interface so providers without image support don't have to
+// fake it — the middleware does a runtime type-assertion.
+//
+// The returned MIMEType should be a valid IANA media type (e.g.
+// "image/png"). Implementations should return a wrapped error when the
+// path doesn't exist, isn't a regular file, or doesn't look like an image.
+type ImageReader interface {
+	// ReadImage resolves path under the sandbox root and returns the
+	// raw bytes plus the inferred MIME type. The path may be absolute or
+	// relative to WorkingDir().
+	ReadImage(ctx context.Context, path string) (data []byte, mime string, err error)
 }
