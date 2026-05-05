@@ -39,15 +39,16 @@ func ValidateAgentName(name string) (string, error) {
 	return trimmed, nil
 }
 
-// LoadAgentConfig mirrors deerflow.config.agents_config.load_agent_config.
-// Phase 1 stubs the on-disk loader: returns nil for any name (the Python
-// equivalent of "no custom agent configured"). Phase 3 will swap this with a
-// real YAML loader once the agents/<name>/config.yaml schema is settled.
+// LoadAgentConfig is the Phase-1 stub kept around for tests that exercise
+// the "no custom profile" branch without plumbing a config.Config. New
+// call sites should use LoadAgentProfile(cfg, name) which actually reads
+// the inline agents block + on-disk agents/<name>/config.yaml.
+//
+// Deprecated: use LoadAgentProfile(cfg, name).
 func LoadAgentConfig(name string) *AgentProfile {
 	if strings.TrimSpace(name) == "" {
 		return nil
 	}
-	// TODO(phase3): read backend/agents/<name>/config.yaml
 	return nil
 }
 

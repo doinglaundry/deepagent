@@ -48,20 +48,39 @@ type yamlACPEntry struct {
 	Agents map[string]yamlACPAgentEntry `yaml:"agents"`
 }
 
+// yamlAgentEntry mirrors schema.AgentConfig + the deerflow agent yaml
+// schema. Both inline (top-level `agents:` block) and per-directory
+// (`<agents_dir>/<name>/config.yaml`) loaders share this shape.
+type yamlAgentEntry struct {
+	Name         string   `yaml:"name"`
+	Description  string   `yaml:"description"`
+	Instruction  string   `yaml:"instruction"`
+	MaxIteration int      `yaml:"max_iteration"`
+	Model        string   `yaml:"model"`
+	ToolGroups   []string `yaml:"tool_groups"`
+	Skills       []string `yaml:"skills"`
+}
+
 type yamlFileConfig struct {
-	DefaultModel string               `yaml:"default_model"`
-	Models       []yamlModelEntry     `yaml:"models"`
-	Skills       yamlSkillsEntry      `yaml:"skills"`
-	ToolSearch   yamlToolSearchEntry  `yaml:"tool_search"`
-	ACP          yamlACPEntry         `yaml:"acp"`
+	DefaultModel string                    `yaml:"default_model"`
+	DefaultAgent string                    `yaml:"default_agent"`
+	AgentsDir    string                    `yaml:"agents_dir"`
+	Models       []yamlModelEntry          `yaml:"models"`
+	Agents       map[string]yamlAgentEntry `yaml:"agents"`
+	Skills       yamlSkillsEntry           `yaml:"skills"`
+	ToolSearch   yamlToolSearchEntry       `yaml:"tool_search"`
+	ACP          yamlACPEntry              `yaml:"acp"`
 }
 
 // yamlExtras bundles the non-model sections so the caller can fold them into
 // schema.Config alongside the models map.
 type yamlExtras struct {
-	Skills     schema.SkillsConfig
-	ToolSearch schema.ToolSearchConfig
-	ACP        schema.ACPConfig
+	DefaultAgent string
+	AgentsDir    string
+	Agents       map[string]schema.AgentConfig
+	Skills       schema.SkillsConfig
+	ToolSearch   schema.ToolSearchConfig
+	ACP          schema.ACPConfig
 }
 
 func loadFromYAML(path string) (map[string]*schema.ModelConfig, yamlExtras, error) {
@@ -78,11 +97,31 @@ func loadFromYAML(path string) (map[string]*schema.ModelConfig, yamlExtras, erro
 	}
 
 	extras := yamlExtras{
-		Skills: schema.SkillsConfig{Paths: append([]string(nil), fc.Skills.Paths...)},
+		DefaultAgent: strings.TrimSpace(fc.DefaultAgent),
+		AgentsDir:    strings.TrimSpace(fc.AgentsDir),
+		Skills:       schema.SkillsConfig{Paths: append([]string(nil), fc.Skills.Paths...)},
 		ToolSearch: schema.ToolSearchConfig{
 			Enabled: fc.ToolSearch.Enabled,
 		},
 		ACP: schema.ACPConfig{},
+	}
+	if len(fc.Agents) > 0 {
+		extras.Agents = make(map[string]schema.AgentConfig, len(fc.Agents))
+		for key, a := range fc.Agents {
+			name := strings.TrimSpace(a.Name)
+			if name == "" {
+				name = key
+			}
+			extras.Agents[key] = schema.AgentConfig{
+				Name:         name,
+				Description:  a.Description,
+				Instruction:  a.Instruction,
+				MaxIteration: a.MaxIteration,
+				Model:        strings.TrimSpace(a.Model),
+				ToolGroups:   append([]string(nil), a.ToolGroups...),
+				Skills:       cloneSkills(a.Skills),
+			}
+		}
 	}
 	for _, d := range fc.ToolSearch.Deferred {
 		if strings.TrimSpace(d.Name) == "" {
@@ -159,4 +198,17 @@ func inferProvider(baseURL, name string) string {
 // ToPtr returns a pointer to v.
 func ToPtr[T any](v T) *T {
 	return &v
+}
+
+// cloneSkills preserves the nil-vs-empty-slice distinction the agent
+// profile semantics depend on (nil = inherit, [] = strict empty subset).
+// A naive append([]string(nil), src...) would erase that distinction by
+// always returning nil for empty inputs.
+func cloneSkills(src []string) []string {
+	if src == nil {
+		return nil
+	}
+	out := make([]string, len(src))
+	copy(out, src)
+	return out
 }

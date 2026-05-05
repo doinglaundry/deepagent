@@ -38,20 +38,35 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("load yaml config: %w", err)
 	}
 
+	defaultAgentFromEnv := envOrDefault("EINO_DEFAULT_AGENT", "")
+	defaultAgent := defaultAgentFromEnv
+	if defaultAgent == "" {
+		defaultAgent = yamlExtras.DefaultAgent
+	}
+
+	agentsDir := strings.TrimSpace(yamlExtras.AgentsDir)
+	if agentsDir == "" {
+		agentsDir = filepath.Join(root, "agents")
+	} else if !filepath.IsAbs(agentsDir) {
+		agentsDir = filepath.Join(root, agentsDir)
+	}
+
 	cfg := Config{
 		RootDir:       root,
 		StateDir:      stateDir,
 		SessionsDir:   filepath.Join(stateDir, "sessions"),
 		MemoryDir:     filepath.Join(stateDir, "memory"),
 		CheckpointDir: filepath.Join(stateDir, "checkpoints"),
+		AgentsDir:     agentsDir,
 
 		RuntimeModel:   envOrDefault("EINO_RUNTIME_MODEL", defaultRuntimeModel),
 		RuntimeTimeout: envOrDefaultInt("EINO_RUNTIME_TIMEOUT", defaultRuntimeTimeout),
 
 		DefaultModel: defaultYAMLModel,
-		DefaultAgent: envOrDefault("EINO_DEFAULT_AGENT", ""),
+		DefaultAgent: defaultAgent,
 
 		Models: yamlModels,
+		Agents: yamlExtras.Agents,
 
 		Skills:     yamlExtras.Skills,
 		ToolSearch: yamlExtras.ToolSearch,

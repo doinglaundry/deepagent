@@ -20,10 +20,28 @@ type ModelConfig struct {
 	SupportsVision bool `json:"supports_vision,omitempty"`
 }
 
+// AgentConfig describes a custom agent. Mirrors deerflow's
+// AgentConfig dataclass: a top-level YAML record under either
+// `agents:` (inline map) or `<root>/agents/<name>/config.yaml`
+// (per-agent directory).
 type AgentConfig struct {
 	Name         string `json:"name"`
-	Instruction  string `json:"instruction"`
-	MaxIteration int    `json:"max_iteration"`
+	Description  string `json:"description,omitempty"`
+	Instruction  string `json:"instruction,omitempty"`
+	MaxIteration int    `json:"max_iteration,omitempty"`
+
+	// Model overrides the global default model when non-empty.
+	Model string `json:"model,omitempty"`
+
+	// ToolGroups restricts the active tool surface for this agent.
+	// nil means "inherit the lead-agent default"; an explicit empty
+	// slice means "no tools" (advanced use case).
+	ToolGroups []string `json:"tool_groups,omitempty"`
+
+	// Skills behaves like ToolGroups: nil = inherit, [] = strict empty,
+	// non-empty = subset selection. Mirrors Python deerflow semantics
+	// for the prompt's <available_skills> section.
+	Skills []string `json:"skills,omitempty"`
 }
 
 // SkillsConfig drives the SKILL.md scanner used to populate the
@@ -66,6 +84,12 @@ type Config struct {
 	SessionsDir   string `json:"sessions_dir"`
 	MemoryDir     string `json:"memory_dir"`
 	CheckpointDir string `json:"checkpoint_dir"`
+
+	// AgentsDir is the base directory containing per-agent
+	// subdirectories ("<AgentsDir>/<name>/config.yaml"). Phase 6
+	// uses it as the on-disk source for LoadAgentConfigFromDir.
+	// Defaults to "<RootDir>/agents" when empty.
+	AgentsDir string `json:"agents_dir,omitempty"`
 
 	DefaultModel string                  `json:"default_model"`
 	Models       map[string]*ModelConfig `json:"models"`
