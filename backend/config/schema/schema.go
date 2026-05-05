@@ -7,6 +7,12 @@ type ModelConfig struct {
 	BaseURL        string `json:"base_url,omitempty"`
 	APIKeyEnv      string `json:"api_key_env,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+
+	// SupportsThinking declares whether the provider/model accepts the
+	// extended-thinking toggle. Mirrors the deerflow ModelConfig field of the
+	// same name; lead_agent.MakeLeadAgent uses it to decide whether to honor
+	// RuntimeContext.ThinkingEnabled or silently downgrade.
+	SupportsThinking bool `json:"supports_thinking,omitempty"`
 }
 
 type AgentConfig struct {
