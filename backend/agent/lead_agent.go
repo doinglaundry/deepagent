@@ -113,7 +113,17 @@ func MakeLeadAgent(
 		Deps:                   deps.PromptDeps,
 	})
 
-	chain := BuildChain(rt, modelName, agentName, cfg)
+	chain, err := BuildChain(ctx, ChainOptions{
+		Runtime:      rt,
+		ModelName:    modelName,
+		AgentName:    agentName,
+		Config:       cfg,
+		AppConfig:    deps.AppConfig,
+		SummaryModel: chatModel,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build middleware chain: %w", err)
+	}
 
 	backend := deps.Backend
 	shell := deps.Shell

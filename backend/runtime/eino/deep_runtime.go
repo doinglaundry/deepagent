@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/schema"
 
+	"eino-cli/backend/agent"
 	"eino-cli/backend/config"
 	"eino-cli/backend/session/checkpoint"
 )
@@ -25,57 +25,78 @@ type DeepAgentRuntime struct {
 	maxHistoryTurns     int
 }
 
+// NewDeepAgentRuntime delegates the actual agent construction to
+// agent.MakeLeadAgent — that's the entry point that runs the ported
+// deerflow lead-agent assembly (prompt template, middleware chain,
+// model resolution).
+//
+// We keep the runtime's history/checkpoint/streaming responsibilities here
+// because they belong to the eino-cli REPL, not to the agent itself.
 func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agentCfg config.AgentConfig, checkpointDir string) (Runtime, error) {
-	chatModel, err := buildBaseChatModel(ctx, modelCfg)
-	if err != nil {
-		return nil, fmt.Errorf("build chat model: %w", err)
+	modelName := strings.TrimSpace(modelCfg.Name)
+	if modelName == "" {
+		modelName = strings.TrimSpace(modelCfg.Model)
+	}
+	if modelName == "" {
+		return nil, fmt.Errorf("model name is required")
 	}
 
 	agentName := strings.TrimSpace(agentCfg.Name)
 	if agentName == "" {
 		agentName = "deep-agent"
 	}
-	instruction := strings.TrimSpace(agentCfg.Instruction)
-	if instruction == "" {
-		instruction = "You are a helpful assistant."
+
+	// Build a single-entry config view for MakeLeadAgent. The REPL only
+	// runs one agent + one model at a time, so this is a faithful
+	// projection of the surrounding config.Config.
+	cfgView := config.Config{
+		DefaultModel: modelName,
+		DefaultAgent: agentName,
+		Models:       map[string]*config.ModelConfig{modelName: cloneModelCfg(modelCfg, modelName)},
+		Agents:       map[string]config.AgentConfig{agentName: agentCfg},
 	}
-	maxIteration := agentCfg.MaxIteration
-	if maxIteration <= 0 {
-		maxIteration = 6
-	}
+
+	rt := agent.NewRuntimeContext()
+	rt.AgentName = ""        // empty → "default" branch in MakeLeadAgent
+	rt.ModelName = modelName // resolve to the only model in cfgView
+	rt.SubagentEnabled = false
+	rt.IsPlanMode = false
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
 	}
 
-	agent, err := deep.New(ctx, &deep.Config{
-		Name:        agentName,
-		Description: "Deep Agent",
-		ChatModel:   chatModel,
-		Instruction: instruction,
-		Backend:     newLocalBackend(cwd),
-		Shell:       newLocalShell(cwd),
-		MaxIteration:           maxIteration,
-		WithoutGeneralSubAgent: true,
-		WithoutWriteTodos:      true,
-	})
+	deps := agent.AgentDeps{
+		Backend:    newLocalBackend(cwd),
+		Shell:      newLocalShell(cwd),
+		WorkingDir: cwd,
+		// Phase 2: AppConfig + PromptDeps stay nil — every dynamic prompt
+		// section degrades to "" exactly like Python's try/except branches.
+		// Phase 3 will start populating them.
+	}
+
+	leadAgent, err := agent.MakeLeadAgent(ctx, rt, cfgView, deps)
 	if err != nil {
-		return nil, fmt.Errorf("build deep agent: %w", err)
+		return nil, fmt.Errorf("build lead agent: %w", err)
 	}
 
 	store := checkpoint.NewStore(checkpointDir)
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{
-		Agent:           agent,
+		Agent:           leadAgent,
 		EnableStreaming: true,
 		CheckPointStore: store,
 	})
 
-	modelName := strings.TrimSpace(modelCfg.Name)
-	if modelName == "" {
-		modelName = strings.TrimSpace(modelCfg.Model)
-	}
 	return &DeepAgentRuntime{modelName: modelName, runner: runner, maxHistoryTurns: 20}, nil
+}
+
+func cloneModelCfg(in config.ModelConfig, defaultName string) *config.ModelConfig {
+	out := in
+	if strings.TrimSpace(out.Name) == "" {
+		out.Name = defaultName
+	}
+	return &out
 }
 
 func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, error) {

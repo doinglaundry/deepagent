@@ -1,7 +1,11 @@
 package agent
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
@@ -19,30 +23,62 @@ type Chain struct {
 	ChatModel []adk.ChatModelAgentMiddleware
 }
 
-// BuildChain mirrors _build_middlewares with the Python's "always-on"
-// minimum subset for Phase 1: ToolErrorHandling, LoopDetection, and
-// Clarification (last). Phase 2 will graft the rest on top.
+// ChainOptions bundles everything BuildChain needs to assemble the
+// middleware slices. Keeping it as a struct (instead of a long parameter
+// list) lets future phases add knobs without touching every call site.
+type ChainOptions struct {
+	Runtime      RuntimeContext
+	ModelName    string
+	AgentName    string
+	Config       config.Config
+	AppConfig    *AppConfig // may be nil; behaves as zero-value
+	SummaryModel model.BaseChatModel
+}
+
+// BuildChain mirrors Python _build_middlewares. The slot order matches the
+// deerflow code in spirit:
 //
-// The arguments mirror the Python signature one-to-one so that wiring up
-// the remaining middlewares in later phases is mechanical:
+//  1. AgentState  — always-on counters, must be early so others observe.
+//  2. Title       — always-on first-user-message hook.
+//  3. ToolError   — always-on tool-exception trap.
+//  4. LoopDetect  — always-on duplicate tool-call detector.
+//  5. Summarize   — gated by AppConfig.Summarization.Enabled.
+//  6. Clarify     — always-LAST per the Python "should always be last" rule.
 //
-//   - rt:        the merged RuntimeContext (was: RunnableConfig)
-//   - modelName: the resolved model name (was: model_name kwarg)
-//   - agentName: the resolved agent name (was: agent_name kwarg)
-//   - cfg:       the loaded application config (was: app_config)
-func BuildChain(rt RuntimeContext, modelName, agentName string, cfg config.Config) Chain {
-	_ = rt
-	_ = modelName
-	_ = agentName
-	_ = cfg
+// Phase 3 will splice the gated middlewares (TokenUsage, ViewImage,
+// DeferredTools, SubagentLimit, Todo, Memory, HITL) into slots 4.5 and 5.5.
+func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
+	app := opts.AppConfig
+
+	chatModel := []adk.ChatModelAgentMiddleware{
+		middlewares.NewAgentState(),
+		middlewares.NewTitle(),
+		middlewares.NewToolErrorHandling(),
+		middlewares.NewLoopDetection(),
+	}
+
+	if app != nil && app.Summarization.Enabled {
+		summaryMW, err := middlewares.NewSummarization(
+			ctx,
+			app.Summarization.Enabled,
+			app.Summarization.ContextTokens,
+			app.Summarization.ContextMessages,
+			app.Summarization.UserInstruction,
+			opts.SummaryModel,
+		)
+		if err != nil {
+			return Chain{}, fmt.Errorf("build summarization mw: %w", err)
+		}
+		if summaryMW != nil {
+			chatModel = append(chatModel, summaryMW)
+		}
+	}
+
+	// Clarification stays last — same invariant as Python.
+	chatModel = append(chatModel, middlewares.NewClarification())
 
 	return Chain{
-		Agent: nil,
-		ChatModel: []adk.ChatModelAgentMiddleware{
-			middlewares.NewToolErrorHandling(),
-			middlewares.NewLoopDetection(),
-			// Clarification stays last — same invariant as Python.
-			middlewares.NewClarification(),
-		},
-	}
+		Agent:     nil,
+		ChatModel: chatModel,
+	}, nil
 }

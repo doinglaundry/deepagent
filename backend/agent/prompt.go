@@ -59,13 +59,36 @@ type SandboxConfig struct {
 	Mounts []Mount
 }
 
+// SummarizationConfig captures the deerflow summarization knobs.
+// Phase 2 wires this into the always-on middleware chain via
+// middlewares.NewSummarization.
+type SummarizationConfig struct {
+	Enabled         bool
+	ContextTokens   int
+	ContextMessages int
+	UserInstruction string
+}
+
+// TokenUsageConfig is the gate flag for the token-usage middleware (Phase 3).
+type TokenUsageConfig struct {
+	Enabled bool
+}
+
+// HumanInTheLoopConfig is the gate flag for the HITL middleware (Phase 3).
+type HumanInTheLoopConfig struct {
+	Enabled bool
+}
+
 // AppConfig mirrors deerflow.config.app_config.AppConfig
-// (only the fields touched by the prompt assembler).
+// (only the fields touched by the prompt assembler and middleware chain).
 type AppConfig struct {
 	Memory         MemoryConfig
 	SkillEvolution SkillEvolutionConfig
 	ToolSearch     ToolSearchConfig
 	Sandbox        SandboxConfig
+	Summarization  SummarizationConfig
+	TokenUsage     TokenUsageConfig
+	HumanInTheLoop HumanInTheLoopConfig
 }
 
 // DeferredEntry represents a tool_search deferred-tool registry entry.
