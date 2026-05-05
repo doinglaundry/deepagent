@@ -21,7 +21,7 @@ func TestBuildRuntimeUnsupportedProvider(t *testing.T) {
 		Agents: map[string]config.AgentConfig{
 			"default": {Name: "deep-agent", Instruction: "You are a helpful assistant.", MaxIteration: 6},
 		},
-	}, nil)
+	})
 	if err == nil {
 		t.Fatalf("expected error, got runtime=%v", runtime)
 	}
@@ -42,7 +42,7 @@ func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
 		Name:         "deep-agent",
 		Instruction:  "You are a helpful assistant.",
 		MaxIteration: 6,
-	}, nil)
+	}, "")
 	if err != nil {
 		t.Fatalf("NewDeepAgentRuntime() error = %v", err)
 	}
