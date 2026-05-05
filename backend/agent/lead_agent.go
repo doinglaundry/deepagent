@@ -192,13 +192,42 @@ func MakeLeadAgent(
 
 	maxIter := defaultIterationLimit(profile)
 
+	// Phase 10: resolve real subagents. Disabled when:
+	//   - rt.SubagentEnabled is false (host opt-out), OR
+	//   - the recursion guard is set (we're already building a
+	//     subagent — don't allow subagents-of-subagents).
+	// Otherwise build any named subagents recursively and let
+	// deep.New attach the built-in `task()` tool.
+	withGeneral := false
+	var subAgents []adk.Agent
+	if rt.SubagentEnabled && !isSubagentBuild(ctx) {
+		var subCfg SubagentsConfig
+		if appCfg != nil {
+			subCfg = appCfg.Subagents
+		}
+		// Default: when the host enabled subagent dispatch but didn't
+		// provide a SubagentsConfig, light up the general-purpose one
+		// so the model gets a working task() tool.
+		withGeneral = subCfg.GeneralEnabled || (len(subCfg.Names) == 0 && isZeroSubagentsConfig(subCfg))
+
+		built, err := buildNamedSubagents(ctx, rt, cfg, deps, subCfg.Names)
+		if err != nil {
+			return nil, fmt.Errorf("build subagents: %w", err)
+		}
+		subAgents = built
+	}
+
 	deepCfg := &deep.Config{
-		Name:                   fallback(agentName, "deep-agent"),
-		Description:            "Deep Agent",
-		ChatModel:              chatModel,
-		Instruction:            prompt,
-		MaxIteration:           maxIter,
-		WithoutGeneralSubAgent: true,
+		Name:         fallback(agentName, "deep-agent"),
+		Description:  "Deep Agent",
+		ChatModel:    chatModel,
+		Instruction:  prompt,
+		MaxIteration: maxIter,
+		// Phase 10: previously hardcoded to true (= no task() tool).
+		// Now driven by rt.SubagentEnabled + AppConfig.Subagents so
+		// callers that wired sub-agent dispatch actually get one.
+		WithoutGeneralSubAgent: !withGeneral,
+		SubAgents:              subAgents,
 		// Phase 8: write_todos is now always available so the agent can
 		// self-elect to track multi-step work even outside plan mode —
 		// matching the way Cursor / Claude Code expose the same tool.
@@ -219,6 +248,76 @@ func MakeLeadAgent(
 		return nil, fmt.Errorf("build deep agent: %w", err)
 	}
 	return agentImpl, nil
+}
+
+// isZeroSubagentsConfig reports whether all SubagentsConfig fields are
+// at their zero value. We can't use `==` because the struct contains a
+// slice; this helper preserves the "user didn't configure anything"
+// detection used to opt into the general-purpose subagent default.
+func isZeroSubagentsConfig(c SubagentsConfig) bool {
+	return !c.GeneralEnabled && len(c.Names) == 0 && c.MaxConcurrent == 0 && c.MaxPerTurn == 0
+}
+
+// subagentBuildKey is a context-only sentinel used to short-circuit
+// recursive MakeLeadAgent calls — the second-level call won't try to
+// build subagents itself, capping recursion at depth 1. Mirrors
+// deerflow's behaviour where subagents are leaves.
+type subagentBuildKey struct{}
+
+func withSubagentBuild(ctx context.Context) context.Context {
+	return context.WithValue(ctx, subagentBuildKey{}, true)
+}
+
+func isSubagentBuild(ctx context.Context) bool {
+	v, _ := ctx.Value(subagentBuildKey{}).(bool)
+	return v
+}
+
+// buildNamedSubagents resolves each name in `names` to an AgentProfile
+// and recursively constructs a deep agent for it. The recursive call
+// receives a context flagged via withSubagentBuild() so it short-
+// circuits its own subagent expansion (depth-1 cap).
+//
+// A subagent that fails to build is logged-and-skipped rather than
+// failing the whole turn — partial subagent availability is preferable
+// to a hard error when a sibling agent is misconfigured.
+func buildNamedSubagents(
+	ctx context.Context,
+	rt RuntimeContext,
+	cfg config.Config,
+	deps AgentDeps,
+	names []string,
+) ([]adk.Agent, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	out := make([]adk.Agent, 0, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		// Per-subagent runtime: same defaults as the lead, but force
+		// SubagentEnabled=false so the recursive deep.New call doesn't
+		// also try to wire its own subagents (defence in depth — the
+		// context flag does the actual cap).
+		subRT := rt
+		subRT.AgentName = name
+		subRT.SubagentEnabled = false
+		subRT.MaxConcurrentSubagents = 0
+
+		sub, err := MakeLeadAgent(withSubagentBuild(ctx), subRT, cfg, deps)
+		if err != nil {
+			slog.Warn(
+				"failed to build subagent; skipping",
+				"agent", name,
+				"err", err,
+			)
+			continue
+		}
+		out = append(out, sub)
+	}
+	return out, nil
 }
 
 // -----------------------------------------------------------------------------

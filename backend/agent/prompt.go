@@ -79,6 +79,26 @@ type HumanInTheLoopConfig struct {
 	Enabled bool
 }
 
+// SubagentsConfig controls deep agent's `task()` dispatch surface.
+//
+// Mirrors deerflow's `subagents:` block:
+//   - GeneralEnabled: whether to expose the built-in "general-purpose"
+//     subagent (a clone of the lead with a generic instruction). When
+//     true and Names is empty, deep.New still gets a `task()` tool.
+//     Defaults to true on a non-zero AppConfig.
+//   - Names: extra named subagents to wire from cfg.Agents /
+//     cfg.AgentsDir. Each name is resolved through LoadAgentProfile
+//     and instantiated via a recursive MakeAgent call (with
+//     recursion-depth = 1 cap to prevent loops).
+//   - MaxConcurrent / MaxPerTurn: surfaced into the prompt and used by
+//     the SubagentLimit middleware once the cap is enforced upstream.
+type SubagentsConfig struct {
+	GeneralEnabled bool
+	Names          []string
+	MaxConcurrent  int
+	MaxPerTurn     int
+}
+
 // AppConfig mirrors deerflow.config.app_config.AppConfig
 // (only the fields touched by the prompt assembler and middleware chain).
 type AppConfig struct {
@@ -89,6 +109,7 @@ type AppConfig struct {
 	Summarization  SummarizationConfig
 	TokenUsage     TokenUsageConfig
 	HumanInTheLoop HumanInTheLoopConfig
+	Subagents      SubagentsConfig
 }
 
 // DeferredEntry represents a tool_search deferred-tool registry entry.
