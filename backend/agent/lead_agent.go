@@ -12,7 +12,6 @@ import (
 	claudemodel "github.com/cloudwego/eino-ext/components/model/claude"
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/adk/filesystem"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/components/model"
 
@@ -20,18 +19,22 @@ import (
 )
 
 // AgentDeps bundles the host-supplied capabilities that don't live in
-// config: filesystem access, shell execution, and a per-call PromptDeps
-// (the same one ApplyPromptTemplate consumes).
+// config: a sandbox (filesystem + shell + mounts) and the per-call
+// PromptDeps (the same one ApplyPromptTemplate consumes).
 //
 // The split mirrors deerflow's distinction between "config" (declarative)
-// and "runtime" (host implementations). Phase 4 will introduce a
-// SandboxProvider abstraction that owns Backend+Shell together.
+// and "runtime" (host implementations).
 type AgentDeps struct {
-	Backend     filesystem.Backend
-	Shell       filesystem.Shell
-	PromptDeps  *PromptDeps
-	AppConfig   *AppConfig
-	WorkingDir  string // used when Backend / Shell are nil so we can fall back
+	// Sandbox owns Backend / Shell / Mounts. If nil, MakeLeadAgent falls
+	// back to NewLocalSandbox(WorkingDir) — the same behaviour eino-cli
+	// shipped with before Phase 4.
+	Sandbox SandboxProvider
+
+	PromptDeps *PromptDeps
+	AppConfig  *AppConfig
+
+	// WorkingDir is consulted only when Sandbox is nil; ignored otherwise.
+	WorkingDir string
 }
 
 // MakeLeadAgent mirrors deerflow.agents.lead_agent.agent.make_lead_agent.
@@ -104,12 +107,31 @@ func MakeLeadAgent(
 		return nil, err
 	}
 
+	sandbox := deps.Sandbox
+	if sandbox == nil {
+		sandbox = NewLocalSandbox(deps.WorkingDir)
+	}
+
+	// Surface sandbox mounts into the prompt's "Custom Mounted Directories"
+	// section. We layer them on top of any AppConfig.Sandbox.Mounts the host
+	// configured statically — matching deerflow's behaviour where the
+	// runtime-provided list takes precedence.
+	appCfg := deps.AppConfig
+	if mounts := sandbox.Mounts(); len(mounts) > 0 {
+		appCopy := AppConfig{}
+		if appCfg != nil {
+			appCopy = *appCfg
+		}
+		appCopy.Sandbox.Mounts = append(append([]Mount(nil), appCopy.Sandbox.Mounts...), mounts...)
+		appCfg = &appCopy
+	}
+
 	prompt := ApplyPromptTemplate(PromptOptions{
 		SubagentEnabled:        rt.SubagentEnabled,
 		MaxConcurrentSubagents: rt.MaxConcurrentSubagents,
 		AgentName:              agentName,
 		AvailableSkills:        skillsFromProfile(profile),
-		AppConfig:              deps.AppConfig,
+		AppConfig:              appCfg,
 		Deps:                   deps.PromptDeps,
 	})
 
@@ -119,30 +141,11 @@ func MakeLeadAgent(
 		AgentName:    agentName,
 		ModelConfig:  modelCfg,
 		Config:       cfg,
-		AppConfig:    deps.AppConfig,
+		AppConfig:    appCfg,
 		SummaryModel: chatModel,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build middleware chain: %w", err)
-	}
-
-	backend := deps.Backend
-	shell := deps.Shell
-	if backend == nil || shell == nil {
-		cwd := strings.TrimSpace(deps.WorkingDir)
-		if cwd == "" {
-			cwd, _ = os.Getwd()
-		}
-		if cwd == "" {
-			cwd = "."
-		}
-		if backend == nil {
-			backend = nopBackend{root: cwd}
-		}
-		if shell == nil {
-			shell = nopShell{}
-		}
-		_ = cwd
 	}
 
 	maxIter := defaultIterationLimit(profile)
@@ -152,8 +155,8 @@ func MakeLeadAgent(
 		Description:            "Deep Agent",
 		ChatModel:              chatModel,
 		Instruction:            prompt,
-		Backend:                backend,
-		Shell:                  shell,
+		Backend:                sandbox.Backend(),
+		Shell:                  sandbox.Shell(),
 		MaxIteration:           maxIter,
 		WithoutGeneralSubAgent: true,
 		WithoutWriteTodos:      !rt.IsPlanMode,
@@ -242,36 +245,3 @@ func buildChatModel(ctx context.Context, cfg config.ModelConfig) (model.BaseChat
 	}
 }
 
-// -----------------------------------------------------------------------------
-// Fallback no-op Backend / Shell so unit tests can call MakeLeadAgent without
-// pulling in runtime/eino's localBackend/localShell. These are intentionally
-// skeletal and never executed in a real REPL session — the runtime layer
-// always supplies real implementations.
-// -----------------------------------------------------------------------------
-
-type nopBackend struct{ root string }
-
-func (nopBackend) LsInfo(context.Context, *filesystem.LsInfoRequest) ([]filesystem.FileInfo, error) {
-	return nil, fmt.Errorf("nop backend: not implemented")
-}
-func (nopBackend) Read(context.Context, *filesystem.ReadRequest) (*filesystem.FileContent, error) {
-	return nil, fmt.Errorf("nop backend: not implemented")
-}
-func (nopBackend) GrepRaw(context.Context, *filesystem.GrepRequest) ([]filesystem.GrepMatch, error) {
-	return nil, fmt.Errorf("nop backend: not implemented")
-}
-func (nopBackend) GlobInfo(context.Context, *filesystem.GlobInfoRequest) ([]filesystem.FileInfo, error) {
-	return nil, fmt.Errorf("nop backend: not implemented")
-}
-func (nopBackend) Write(context.Context, *filesystem.WriteRequest) error {
-	return fmt.Errorf("nop backend: not implemented")
-}
-func (nopBackend) Edit(context.Context, *filesystem.EditRequest) error {
-	return fmt.Errorf("nop backend: not implemented")
-}
-
-type nopShell struct{}
-
-func (nopShell) Execute(context.Context, *filesystem.ExecuteRequest) (*filesystem.ExecuteResponse, error) {
-	return nil, fmt.Errorf("nop shell: not implemented")
-}

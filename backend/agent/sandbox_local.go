@@ -1,5 +1,5 @@
 // ignore_security_alert_file RCE
-package eino
+package agent
 
 import (
 	"context"
@@ -15,14 +15,49 @@ import (
 	"github.com/cloudwego/eino/adk/filesystem"
 )
 
-type localBackend struct{ root string }
+// LocalSandboxProvider is the on-host SandboxProvider — it exposes the real
+// filesystem rooted at a given working directory and runs shell commands
+// directly via /bin/bash. It is the default sandbox the eino-cli REPL uses
+// when no other provider is wired in.
+//
+// The Backend / Shell implementations are migrated wholesale from the
+// previous runtime/eino/fs_backend.go so the runtime layer no longer owns
+// any filesystem details.
+type LocalSandboxProvider struct {
+	root   string
+	mounts []Mount
+}
 
-func newLocalBackend(root string) filesystem.Backend {
-	if root == "" {
+// NewLocalSandbox returns a LocalSandboxProvider rooted at the given
+// working directory. Empty falls back to os.Getwd().
+func NewLocalSandbox(root string) *LocalSandboxProvider {
+	if strings.TrimSpace(root) == "" {
 		root, _ = os.Getwd()
 	}
-	return &localBackend{root: root}
+	if root == "" {
+		root = "."
+	}
+	return &LocalSandboxProvider{root: root}
 }
+
+// WithMounts returns a copy of the provider with the given mounts attached.
+// Use this to inject custom paths the prompt should advertise to the LLM.
+func (p *LocalSandboxProvider) WithMounts(mounts []Mount) *LocalSandboxProvider {
+	cp := *p
+	cp.mounts = append([]Mount(nil), mounts...)
+	return &cp
+}
+
+func (p *LocalSandboxProvider) Backend() filesystem.Backend { return &localBackend{root: p.root} }
+func (p *LocalSandboxProvider) Shell() filesystem.Shell     { return &localShell{cwd: p.root} }
+func (p *LocalSandboxProvider) Mounts() []Mount             { return p.mounts }
+func (p *LocalSandboxProvider) WorkingDir() string          { return p.root }
+
+// -----------------------------------------------------------------------------
+// localBackend / localShell — migrated from runtime/eino/fs_backend.go.
+// -----------------------------------------------------------------------------
+
+type localBackend struct{ root string }
 
 func (b *localBackend) LsInfo(ctx context.Context, req *filesystem.LsInfoRequest) ([]filesystem.FileInfo, error) {
 	dir := req.Path
@@ -156,8 +191,7 @@ func (b *localBackend) Write(ctx context.Context, req *filesystem.WriteRequest) 
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(b.root, p)
 	}
-	err := os.MkdirAll(filepath.Dir(p), 0755)
-	if err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return err
 	}
 	return os.WriteFile(p, []byte(req.Content), 0644)
@@ -193,16 +227,7 @@ func (b *localBackend) Edit(ctx context.Context, req *filesystem.EditRequest) er
 	return os.WriteFile(p, []byte(newContent), 0644)
 }
 
-// localShell implements filesystem.Shell
-
 type localShell struct{ cwd string }
-
-func newLocalShell(cwd string) filesystem.Shell {
-	if cwd == "" {
-		cwd, _ = os.Getwd()
-	}
-	return &localShell{cwd: cwd}
-}
 
 func (s *localShell) Execute(ctx context.Context, input *filesystem.ExecuteRequest) (*filesystem.ExecuteResponse, error) {
 	cmd := exec.CommandContext(ctx, "bash", "-lc", input.Command)

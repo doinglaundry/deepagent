@@ -68,12 +68,12 @@ func NewDeepAgentRuntime(ctx context.Context, modelCfg config.ModelConfig, agent
 	}
 
 	deps := agent.AgentDeps{
-		Backend:    newLocalBackend(cwd),
-		Shell:      newLocalShell(cwd),
+		// Phase 4: the local sandbox provider replaces the previous
+		// runtime/eino-owned newLocalBackend/newLocalShell helpers.
+		Sandbox:    agent.NewLocalSandbox(cwd),
 		WorkingDir: cwd,
-		// Phase 2: AppConfig + PromptDeps stay nil — every dynamic prompt
+		// AppConfig + PromptDeps stay nil for now — every dynamic prompt
 		// section degrades to "" exactly like Python's try/except branches.
-		// Phase 3 will start populating them.
 	}
 
 	leadAgent, err := agent.MakeLeadAgent(ctx, rt, cfgView, deps)
