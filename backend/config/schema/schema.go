@@ -14,6 +14,11 @@ type ModelConfig struct {
 	// RuntimeContext.ThinkingEnabled or silently downgrade.
 	SupportsThinking bool `json:"supports_thinking,omitempty"`
 
+	// ThinkingBudgetTokens sets the per-request "extended thinking" budget
+	// for providers that honour it (Claude). When 0 and thinking is
+	// enabled, the chat model factory uses a sensible default (4096).
+	ThinkingBudgetTokens int `json:"thinking_budget_tokens,omitempty"`
+
 	// SupportsVision declares whether the model can ingest image content.
 	// The agent.middlewares.ViewImage middleware uses this to decide whether
 	// to enable the vision routing path. Mirrors deerflow's same-named flag.

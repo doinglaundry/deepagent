@@ -130,7 +130,7 @@ func MakeLeadAgent(
 		rt.Metadata["available_skills"] = profile.Skills
 	}
 
-	chatModel, err := buildChatModel(ctx, *modelCfg)
+	chatModel, err := buildChatModel(ctx, *modelCfg, thinkingEnabled, rt.ReasoningEffort)
 	if err != nil {
 		return nil, err
 	}
@@ -245,12 +245,24 @@ func (f imageFetcherFunc) ReadImage(ctx context.Context, path string) ([]byte, s
 	return f(ctx, path)
 }
 
-// buildChatModel is the lead-agent local copy of the existing
-// runtime/eino factory.buildBaseChatModel. We duplicate it intentionally to
-// keep the agent package buildable without importing runtime/eino (which
-// would create a cycle once runtime/eino starts depending on agent in
-// later phases).
-func buildChatModel(ctx context.Context, cfg config.ModelConfig) (model.BaseChatModel, error) {
+// buildChatModel is the agent-package chat model factory.
+//
+// Mirrors deerflow's create_chat_model(name, thinking_enabled, reasoning_effort):
+// the lead-agent assembly resolves both flags from the RuntimeContext and
+// hands them in here so the actual API client is constructed with the
+// right knobs. Earlier phases shipped a flag-blind version that lost
+// these settings before the request ever left the process.
+//
+// thinkingEnabled is honoured by Claude (extended-thinking; budget comes
+// from cfg.ThinkingBudgetTokens or a 4096 default). reasoningEffort is
+// honoured by OpenAI (low/medium/high → openai.ReasoningEffortLevel).
+// Kimi/Moonshot ignore both — neither is in the upstream API surface.
+func buildChatModel(
+	ctx context.Context,
+	cfg config.ModelConfig,
+	thinkingEnabled bool,
+	reasoningEffort string,
+) (model.BaseChatModel, error) {
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
 	apiKey := strings.TrimSpace(os.Getenv(strings.TrimSpace(cfg.APIKeyEnv)))
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
@@ -268,13 +280,28 @@ func buildChatModel(ctx context.Context, cfg config.ModelConfig) (model.BaseChat
 		if baseURL := strings.TrimSpace(cfg.BaseURL); baseURL != "" {
 			claudeCfg.BaseURL = &baseURL
 		}
+		if thinkingEnabled {
+			budget := cfg.ThinkingBudgetTokens
+			if budget <= 0 {
+				budget = 4096
+			}
+			// Claude requires MaxTokens > BudgetTokens; bump if too small.
+			if claudeCfg.MaxTokens <= budget {
+				claudeCfg.MaxTokens = budget + 1024
+			}
+			claudeCfg.Thinking = &claudemodel.Thinking{
+				Enable:       true,
+				BudgetTokens: budget,
+			}
+		}
 		return claudemodel.NewChatModel(ctx, claudeCfg)
 	case "openai":
 		return openaimodel.NewChatModel(ctx, &openaimodel.ChatModelConfig{
-			APIKey:  apiKey,
-			Model:   strings.TrimSpace(cfg.Model),
-			BaseURL: strings.TrimSpace(cfg.BaseURL),
-			Timeout: timeout,
+			APIKey:          apiKey,
+			Model:           strings.TrimSpace(cfg.Model),
+			BaseURL:         strings.TrimSpace(cfg.BaseURL),
+			Timeout:         timeout,
+			ReasoningEffort: parseReasoningEffort(reasoningEffort),
 		})
 	case "kimi", "moonshot":
 		baseURL := strings.TrimSpace(cfg.BaseURL)
@@ -293,6 +320,24 @@ func buildChatModel(ctx context.Context, cfg config.ModelConfig) (model.BaseChat
 		})
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", cfg.Provider)
+	}
+}
+
+// parseReasoningEffort maps the textual effort knob coming from
+// RuntimeContext / RunnableConfig onto the typed enum the OpenAI client
+// expects. An empty / unknown value falls through as the zero value
+// (== "no override"), matching Python's behaviour where a missing
+// reasoning_effort lets the upstream default apply.
+func parseReasoningEffort(s string) openaimodel.ReasoningEffortLevel {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "low":
+		return openaimodel.ReasoningEffortLevelLow
+	case "medium":
+		return openaimodel.ReasoningEffortLevelMedium
+	case "high":
+		return openaimodel.ReasoningEffortLevelHigh
+	default:
+		return ""
 	}
 }
 
