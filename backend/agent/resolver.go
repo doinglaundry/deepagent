@@ -19,6 +19,10 @@ type AgentProfile struct {
 	ToolGroups  []string // restricts available tools when set
 	Skills      []string // nil → inherit; non-nil (even empty) → strict subset
 	Instruction string
+	// MaxIteration mirrors deerflow's AgentConfig.max_iteration: the
+	// per-turn cap on agent loop steps. 0 means "use the runtime default"
+	// (defaultIterationLimit returns 6 in that case).
+	MaxIteration int
 }
 
 // agentNamePattern mirrors the validation rule used by the Python

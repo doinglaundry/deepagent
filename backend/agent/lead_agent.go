@@ -239,11 +239,23 @@ func skillsFromProfile(p *AgentProfile) *AvailableSkills {
 	return SkillSet(p.Skills...)
 }
 
+// defaultIterationLimit picks the per-turn cap on the agent loop.
+//
+// Resolution order mirrors deerflow's lead_agent.make_lead_agent:
+//   - profile.MaxIteration (when > 0) — per-agent override from
+//     config.yaml or agents/<name>/config.yaml.
+//   - runtimeMaxIterDefault (6) — inherited from the original
+//     DeepAgentRuntime default; matches Python's hardcoded fallback.
+//
+// Negative values are clamped to the default to avoid a configuration
+// typo turning into "agent never runs". 0 explicitly means "inherit
+// the default" (matches the YAML zero value).
 func defaultIterationLimit(p *AgentProfile) int {
-	// Phase 3 will surface MaxIteration on AgentProfile; for now use the
-	// existing DeepAgentRuntime default so REPL behaviour is unchanged.
-	_ = p
-	return 6
+	const runtimeMaxIterDefault = 6
+	if p == nil || p.MaxIteration <= 0 {
+		return runtimeMaxIterDefault
+	}
+	return p.MaxIteration
 }
 
 // applyToolGroups is the Go counterpart of deerflow's

@@ -78,11 +78,12 @@ func LoadAgentConfigFromDir(baseDir, name string) (*AgentProfile, error) {
 		resolvedName = name
 	}
 	return &AgentProfile{
-		Name:        resolvedName,
-		Model:       strings.TrimSpace(f.Model),
-		ToolGroups:  cloneStringSlicePreservingNil(f.ToolGroups),
-		Skills:      cloneStringSlicePreservingNil(f.Skills),
-		Instruction: f.Instruction,
+		Name:         resolvedName,
+		Model:        strings.TrimSpace(f.Model),
+		ToolGroups:   cloneStringSlicePreservingNil(f.ToolGroups),
+		Skills:       cloneStringSlicePreservingNil(f.Skills),
+		Instruction:  f.Instruction,
+		MaxIteration: f.MaxIteration,
 	}, nil
 }
 
@@ -111,11 +112,12 @@ func LoadAgentConfigFromConfig(cfg config.Config, name string) (*AgentProfile, e
 		return nil, nil
 	}
 	return &AgentProfile{
-		Name:        firstNonEmpty(ac.Name, name),
-		Model:       strings.TrimSpace(ac.Model),
-		ToolGroups:  cloneStringSlicePreservingNil(ac.ToolGroups),
-		Skills:      cloneStringSlicePreservingNil(ac.Skills),
-		Instruction: ac.Instruction,
+		Name:         firstNonEmpty(ac.Name, name),
+		Model:        strings.TrimSpace(ac.Model),
+		ToolGroups:   cloneStringSlicePreservingNil(ac.ToolGroups),
+		Skills:       cloneStringSlicePreservingNil(ac.Skills),
+		Instruction:  ac.Instruction,
+		MaxIteration: ac.MaxIteration,
 	}, nil
 }
 
