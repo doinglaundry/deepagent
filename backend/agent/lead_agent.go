@@ -192,13 +192,11 @@ func MakeLeadAgent(
 
 	maxIter := defaultIterationLimit(profile)
 
-	agentImpl, err := deep.New(ctx, &deep.Config{
+	deepCfg := &deep.Config{
 		Name:                   fallback(agentName, "deep-agent"),
 		Description:            "Deep Agent",
 		ChatModel:              chatModel,
 		Instruction:            prompt,
-		Backend:                sandbox.Backend(),
-		Shell:                  sandbox.Shell(),
 		MaxIteration:           maxIter,
 		WithoutGeneralSubAgent: true,
 		// Phase 8: write_todos is now always available so the agent can
@@ -209,7 +207,14 @@ func MakeLeadAgent(
 		WithoutWriteTodos: false,
 		Middlewares:       chain.Agent,
 		Handlers:          chain.ChatModel,
-	})
+	}
+	// Phase 9: honour profile.ToolGroups (mirrors deerflow's
+	// get_available_tools(groups=...) filter). nil ToolGroups means
+	// "inherit all" — Backend + Shell stay wired. Explicit slices opt
+	// into specific groups only.
+	applyToolGroups(deepCfg, profile, sandbox)
+
+	agentImpl, err := deep.New(ctx, deepCfg)
 	if err != nil {
 		return nil, fmt.Errorf("build deep agent: %w", err)
 	}
@@ -239,6 +244,53 @@ func defaultIterationLimit(p *AgentProfile) int {
 	// existing DeepAgentRuntime default so REPL behaviour is unchanged.
 	_ = p
 	return 6
+}
+
+// applyToolGroups is the Go counterpart of deerflow's
+// get_available_tools(groups=profile.tool_groups) filter. The deep.New
+// surface is coarser than Python's per-tool registry — Backend!=nil
+// triggers ALL filesystem tools as a unit, Shell!=nil triggers the
+// execute tool — so we collapse Python's fine-grained group list to
+// the two switches eino exposes.
+//
+// nil ToolGroups (Python's None) means "no filter, inherit all": both
+// Backend and Shell are wired from the sandbox provider. An explicit
+// slice opts into specific groups; unknown groups are logged-and-ignored
+// rather than failing, so a config that mentions web_search / mcp /
+// other groups not yet wired up in Go still loads (with reduced
+// capability instead of an error). An empty slice means "no built-in
+// tools at all".
+func applyToolGroups(cfg *deep.Config, profile *AgentProfile, sandbox SandboxProvider) {
+	if profile == nil || profile.ToolGroups == nil {
+		// None / nil → inherit all built-in groups.
+		cfg.Backend = sandbox.Backend()
+		cfg.Shell = sandbox.Shell()
+		return
+	}
+	enabledFS := false
+	enabledShell := false
+	for _, g := range profile.ToolGroups {
+		switch strings.ToLower(strings.TrimSpace(g)) {
+		case "":
+			continue
+		case "filesystem", "files", "file":
+			enabledFS = true
+		case "shell", "bash", "execute":
+			enabledShell = true
+		default:
+			slog.Info(
+				"agent profile tool_group is not wired in Go runtime; ignoring",
+				"agent", profile.Name,
+				"group", g,
+			)
+		}
+	}
+	if enabledFS {
+		cfg.Backend = sandbox.Backend()
+	}
+	if enabledShell {
+		cfg.Shell = sandbox.Shell()
+	}
 }
 
 // imageFetcherFunc adapts a plain ReadImage method into the
