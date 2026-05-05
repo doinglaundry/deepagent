@@ -30,23 +30,39 @@ type ChainOptions struct {
 	Runtime      RuntimeContext
 	ModelName    string
 	AgentName    string
+	ModelConfig  *config.ModelConfig
 	Config       config.Config
 	AppConfig    *AppConfig // may be nil; behaves as zero-value
 	SummaryModel model.BaseChatModel
+
+	// MemoryHooks plugs the host-side memory data plane into the Memory
+	// middleware. Optional; without hooks the middleware is a no-op even
+	// when the gate flag is on.
+	MemoryHooks middlewares.MemoryHooks
+
+	// DeferredToolNames provides the live deferred-tool name list that the
+	// DeferredTools middleware filters out of the active tool set. Wire
+	// this from the same source as PromptDeps.GetDeferredRegistry.
+	DeferredToolNames func() []string
+
+	// HITLApproval is consulted for each gated tool call when HITL is
+	// enabled. Nil treats every call as approved.
+	HITLApproval func(ctx context.Context, toolName, args string) bool
+
+	// HITLTools are the tool names that require approval (e.g. shell.execute).
+	HITLTools []string
 }
 
 // BuildChain mirrors Python _build_middlewares. The slot order matches the
 // deerflow code in spirit:
 //
-//  1. AgentState  — always-on counters, must be early so others observe.
-//  2. Title       — always-on first-user-message hook.
-//  3. ToolError   — always-on tool-exception trap.
-//  4. LoopDetect  — always-on duplicate tool-call detector.
-//  5. Summarize   — gated by AppConfig.Summarization.Enabled.
-//  6. Clarify     — always-LAST per the Python "should always be last" rule.
+//	always-on   → AgentState, Title, ToolError, LoopDetect
+//	gated       → TokenUsage, ViewImage, DeferredTools, SubagentLimit,
+//	              Memory, HITL, Summarize  (each behind its config flag)
+//	always-last → Clarification (Python invariant)
 //
-// Phase 3 will splice the gated middlewares (TokenUsage, ViewImage,
-// DeferredTools, SubagentLimit, Todo, Memory, HITL) into slots 4.5 and 5.5.
+// Plus the AgentMiddleware (struct-based) slot for plan-mode Todo, since
+// AgentMiddleware is the natural fit for static instruction additions.
 func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
 	app := opts.AppConfig
 
@@ -55,6 +71,30 @@ func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
 		middlewares.NewTitle(),
 		middlewares.NewToolErrorHandling(),
 		middlewares.NewLoopDetection(),
+	}
+
+	if app != nil && app.Memory.Enabled {
+		chatModel = append(chatModel, middlewares.NewMemory(opts.MemoryHooks))
+	}
+
+	if app != nil && app.TokenUsage.Enabled {
+		chatModel = append(chatModel, middlewares.NewTokenUsage())
+	}
+
+	if opts.ModelConfig != nil && opts.ModelConfig.SupportsVision {
+		chatModel = append(chatModel, middlewares.NewViewImage())
+	}
+
+	if app != nil && app.ToolSearch.Enabled && opts.DeferredToolNames != nil {
+		chatModel = append(chatModel, middlewares.NewDeferredTools(opts.DeferredToolNames))
+	}
+
+	if opts.Runtime.SubagentEnabled {
+		chatModel = append(chatModel, middlewares.NewSubagentLimit(opts.Runtime.MaxConcurrentSubagents))
+	}
+
+	if app != nil && app.HumanInTheLoop.Enabled && len(opts.HITLTools) > 0 {
+		chatModel = append(chatModel, middlewares.NewHITL(opts.HITLTools, opts.HITLApproval))
 	}
 
 	if app != nil && app.Summarization.Enabled {
@@ -77,8 +117,13 @@ func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
 	// Clarification stays last — same invariant as Python.
 	chatModel = append(chatModel, middlewares.NewClarification())
 
+	var agentMWs []adk.AgentMiddleware
+	if opts.Runtime.IsPlanMode {
+		agentMWs = append(agentMWs, middlewares.NewTodo())
+	}
+
 	return Chain{
-		Agent:     nil,
+		Agent:     agentMWs,
 		ChatModel: chatModel,
 	}, nil
 }

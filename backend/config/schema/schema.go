@@ -13,6 +13,11 @@ type ModelConfig struct {
 	// same name; lead_agent.MakeLeadAgent uses it to decide whether to honor
 	// RuntimeContext.ThinkingEnabled or silently downgrade.
 	SupportsThinking bool `json:"supports_thinking,omitempty"`
+
+	// SupportsVision declares whether the model can ingest image content.
+	// The agent.middlewares.ViewImage middleware uses this to decide whether
+	// to enable the vision routing path. Mirrors deerflow's same-named flag.
+	SupportsVision bool `json:"supports_vision,omitempty"`
 }
 
 type AgentConfig struct {

@@ -117,6 +117,7 @@ func MakeLeadAgent(
 		Runtime:      rt,
 		ModelName:    modelName,
 		AgentName:    agentName,
+		ModelConfig:  modelCfg,
 		Config:       cfg,
 		AppConfig:    deps.AppConfig,
 		SummaryModel: chatModel,
