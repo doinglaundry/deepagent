@@ -70,7 +70,7 @@ func TestGetModelName(t *testing.T) {
 	}
 }
 
-func TestGetModelForAgent_PreferProfile(t *testing.T) {
+func TestGetModelConfig_PreferAgentConfig(t *testing.T) {
 	cfg := config.Config{
 		DefaultModel: "kimi",
 		Models: map[string]*config.ModelConfig{
@@ -78,9 +78,9 @@ func TestGetModelForAgent_PreferProfile(t *testing.T) {
 			"claude": {Name: "claude", Provider: "claude", Model: "claude-sonnet-4-6"},
 		},
 	}
-	profile := &config.AgentConfig{Model: "claude"}
+	agentConfig := &config.AgentConfig{Model: "claude"}
 
-	name, mc, err := GetModelForAgent("", profile, cfg)
+	name, mc, err := GetModelConfig("", agentConfig, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,8 +88,8 @@ func TestGetModelForAgent_PreferProfile(t *testing.T) {
 		t.Fatalf("got name=%q mc=%v, want claude", name, mc)
 	}
 
-	// Explicit request beats profile.
-	name, _, err = GetModelForAgent("kimi", profile, cfg)
+	// Explicit request beats agent config.
+	name, _, err = GetModelConfig("kimi", agentConfig, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,8 +101,8 @@ func TestGetModelForAgent_PreferProfile(t *testing.T) {
 func TestMergeRuntime(t *testing.T) {
 	rt := NewRuntimeContext()
 	merged := rt.MergeRuntime(map[string]any{
-		"model_name":              "claude",
-		"thinking_enabled":        false,
+		"model_name":               "claude",
+		"thinking_enabled":         false,
 		"max_concurrent_subagents": 5,
 	}, map[string]any{
 		"agent_name":       "researcher",

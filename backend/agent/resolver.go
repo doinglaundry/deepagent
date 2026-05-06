@@ -62,15 +62,11 @@ func GetModelName(requested string, cfg config.Config) (string, error) {
 	return defaultName, nil
 }
 
-// GetModelForAgent picks the effective model name following the Python
-// chain `request → agent_config.model → global default` and returns the
-// resolved ModelConfig pointer alongside it.
-func GetModelForAgent(requested string, profile *config.AgentConfig, cfg config.Config) (string, *config.ModelConfig, error) {
-	candidate := requested
-	if candidate == "" && profile != nil {
-		candidate = profile.Model
+func GetModelConfig(modelName string, agentConfig *config.AgentConfig, cfg config.Config) (string, *config.ModelConfig, error) {
+	if modelName == "" && agentConfig != nil {
+		modelName = agentConfig.Model
 	}
-	name, err := GetModelName(candidate, cfg)
+	name, err := GetModelName(modelName, cfg)
 	if err != nil {
 		return "", nil, err
 	}

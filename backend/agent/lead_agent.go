@@ -93,7 +93,7 @@ func MakeLeadAgent(
 		return nil, fmt.Errorf("load agent profile %q: %w", agentName, err)
 	}
 
-	modelName, modelCfg, err := GetModelForAgent(rt.ModelName, agentConfig, cfg)
+	modelName, modelCfg, err := GetModelConfig(rt.ModelName, agentConfig, cfg)
 	if err != nil {
 		return nil, err
 	}
