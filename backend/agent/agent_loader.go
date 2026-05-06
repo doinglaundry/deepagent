@@ -154,20 +154,3 @@ func LoadAgentProfile(cfg config.Config, name string) (*config.AgentConfig, erro
 	return profile, nil
 }
 
-func cloneStringSlicePreservingNil(src []string) []string {
-	if src == nil {
-		return nil
-	}
-	out := make([]string, len(src))
-	copy(out, src)
-	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if t := strings.TrimSpace(v); t != "" {
-			return t
-		}
-	}
-	return ""
-}
