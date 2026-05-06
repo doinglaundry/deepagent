@@ -70,9 +70,6 @@ func GetModelConfig(modelName string, agentConfig *config.AgentConfig, cfg confi
 	if err != nil {
 		return "", nil, err
 	}
-	mc := cfg.Models[name]
-	if mc == nil {
-		return "", nil, fmt.Errorf("no chat model could be resolved: model %q missing from cfg.Models", name)
-	}
-	return name, mc, nil
+	// GetModelName guarantees `name` is present in cfg.Models.
+	return name, cfg.Models[name], nil
 }
