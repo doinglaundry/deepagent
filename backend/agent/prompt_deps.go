@@ -2,6 +2,7 @@ package agent
 
 import (
 	"log/slog"
+	"strings"
 	"sync"
 
 	"eino-cli/backend/agent/skills"
@@ -56,6 +57,21 @@ func BuildPromptDeps(cfg config.Config, opts PromptDepsOptions) *PromptDeps {
 
 	if names := DeferredToolNamesFromConfig(cfg); names != nil {
 		deps.GetDeferredRegistry = names
+	}
+
+	// Subagent description lookup: surface AgentConfig.Description so
+	// the prompt's <available-subagents> section gets a one-liner per
+	// configured agent. Without this hook the section silently skips
+	// every entry that isn't built-in (the previous behaviour).
+	if len(cfg.Agents) > 0 {
+		agents := cfg.Agents
+		deps.GetSubagentConfig = func(name string) *SubagentConfig {
+			a, ok := agents[name]
+			if !ok || strings.TrimSpace(a.Description) == "" {
+				return nil
+			}
+			return &SubagentConfig{Description: a.Description}
+		}
 	}
 
 	if len(cfg.ACP.Agents) > 0 {

@@ -83,17 +83,6 @@ func LoadAgentConfigFromConfig(cfg config.Config, name string) (*config.AgentCon
 	}
 	ac, ok := cfg.Agents[name]
 	if !ok {
-		// Try the agent's own Name field as a secondary key — useful when
-		// the inline YAML uses arbitrary map keys.
-		for _, candidate := range cfg.Agents {
-			if strings.EqualFold(strings.TrimSpace(candidate.Name), name) {
-				ac = candidate
-				ok = true
-				break
-			}
-		}
-	}
-	if !ok {
 		return nil, nil
 	}
 	// Map lookup already returns a value-copy of the AgentConfig
@@ -153,4 +142,3 @@ func LoadAgentProfile(cfg config.Config, name string) (*config.AgentConfig, erro
 	}
 	return profile, nil
 }
-

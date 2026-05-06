@@ -76,6 +76,32 @@ func TestBuildPromptDeps_DeferredAndACPWired(t *testing.T) {
 	}
 }
 
+func TestBuildPromptDeps_SubagentConfigSurfacedFromAgents(t *testing.T) {
+	cfg := config.Config{
+		Agents: map[string]config.AgentConfig{
+			"researcher": {
+				Name:        "researcher",
+				Description: "Deep research specialist.",
+			},
+			"empty": {Name: "empty"},
+		},
+	}
+	deps := BuildPromptDeps(cfg, PromptDepsOptions{})
+	if deps.GetSubagentConfig == nil {
+		t.Fatal("GetSubagentConfig should be wired when cfg.Agents is non-empty")
+	}
+	if got := deps.GetSubagentConfig("researcher"); got == nil ||
+		!strings.Contains(got.Description, "research specialist") {
+		t.Fatalf("researcher lookup mismatch: %+v", got)
+	}
+	if got := deps.GetSubagentConfig("empty"); got != nil {
+		t.Fatalf("empty description must yield nil, got %+v", got)
+	}
+	if got := deps.GetSubagentConfig("missing"); got != nil {
+		t.Fatalf("missing key must yield nil, got %+v", got)
+	}
+}
+
 func TestBuildPromptDeps_EmptyConfigDegradesGracefully(t *testing.T) {
 	deps := BuildPromptDeps(config.Config{}, PromptDepsOptions{})
 	if deps.LoadSkills == nil {
