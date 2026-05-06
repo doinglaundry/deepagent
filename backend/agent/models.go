@@ -16,11 +16,11 @@ import (
 	"eino-cli/backend/config"
 )
 
-// resolveThinkingEnabled honours rt.ThinkingEnabled but downgrades to
+// getThinkingEnabled honours rt.ThinkingEnabled but downgrades to
 // false (with a warn log) when the resolved model declares it doesn't
 // support extended thinking. Mirrors deerflow's silent-downgrade with
 // an explicit log signal.
-func resolveThinkingEnabled(requested bool, modelCfg *config.ModelConfig, modelName string) bool {
+func getThinkingEnabled(requested bool, modelCfg *config.ModelConfig, modelName string) bool {
 	if !requested {
 		return false
 	}

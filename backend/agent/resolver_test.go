@@ -38,7 +38,7 @@ func TestValidateAgentName(t *testing.T) {
 	}
 }
 
-func TestResolveModelName(t *testing.T) {
+func TestGetModelName(t *testing.T) {
 	cfg := config.Config{
 		DefaultModel: "kimi",
 		Models: map[string]*config.ModelConfig{
@@ -47,30 +47,30 @@ func TestResolveModelName(t *testing.T) {
 		},
 	}
 
-	got, err := ResolveModelName("claude", cfg)
+	got, err := GetModelName("claude", cfg)
 	if err != nil || got != "claude" {
 		t.Fatalf("explicit model: got %q err=%v, want %q nil", got, err, "claude")
 	}
 
 	// Unknown name → fall back to default with warning, not error.
-	got, err = ResolveModelName("unknown", cfg)
+	got, err = GetModelName("unknown", cfg)
 	if err != nil || got != "kimi" {
 		t.Fatalf("fallback: got %q err=%v, want %q nil", got, err, "kimi")
 	}
 
 	// Empty name → default.
-	got, err = ResolveModelName("", cfg)
+	got, err = GetModelName("", cfg)
 	if err != nil || got != "kimi" {
 		t.Fatalf("empty: got %q err=%v, want %q nil", got, err, "kimi")
 	}
 
 	// Empty config → error.
-	if _, err := ResolveModelName("kimi", config.Config{}); err == nil {
+	if _, err := GetModelName("kimi", config.Config{}); err == nil {
 		t.Fatalf("expected error on empty config")
 	}
 }
 
-func TestResolveModelForAgent_PreferProfile(t *testing.T) {
+func TestGetModelForAgent_PreferProfile(t *testing.T) {
 	cfg := config.Config{
 		DefaultModel: "kimi",
 		Models: map[string]*config.ModelConfig{
@@ -80,7 +80,7 @@ func TestResolveModelForAgent_PreferProfile(t *testing.T) {
 	}
 	profile := &AgentProfile{Model: "claude"}
 
-	name, mc, err := ResolveModelForAgent("", profile, cfg)
+	name, mc, err := GetModelForAgent("", profile, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestResolveModelForAgent_PreferProfile(t *testing.T) {
 	}
 
 	// Explicit request beats profile.
-	name, _, err = ResolveModelForAgent("kimi", profile, cfg)
+	name, _, err = GetModelForAgent("kimi", profile, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

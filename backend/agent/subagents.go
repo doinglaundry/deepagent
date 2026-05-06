@@ -10,7 +10,7 @@ import (
 	"eino-cli/backend/config"
 )
 
-// resolveSubAgents builds the SubAgents slice and the "include
+// getSubAgents builds the SubAgents slice and the "include
 // general-purpose subagent" flag passed to deep.Config.
 //
 // Subagent dispatch is disabled (returns nil, false, nil) when:
@@ -25,7 +25,7 @@ import (
 //   - subAgents are built recursively from AppConfig.Subagents.Names;
 //     individual build failures are logged-and-skipped inside
 //     buildNamedSubagents.
-func resolveSubAgents(
+func getSubAgents(
 	ctx context.Context,
 	rt RuntimeContext,
 	cfg config.Config,

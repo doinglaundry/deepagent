@@ -56,7 +56,7 @@ func LoadAgentConfig(name string) *AgentProfile {
 	return nil
 }
 
-// ResolveModelName mirrors deerflow.agents.lead_agent.agent._resolve_model_name.
+// GetModelName mirrors deerflow.agents.lead_agent.agent._resolve_model_name.
 //
 // Resolution order:
 //  1. requested name, if it exists in cfg.Models
@@ -64,7 +64,7 @@ func LoadAgentConfig(name string) *AgentProfile {
 //
 // Falls back with a slog.Warn when the requested name is non-empty but
 // missing — matching Python's logger.warning behaviour.
-func ResolveModelName(requested string, cfg config.Config) (string, error) {
+func GetModelName(requested string, cfg config.Config) (string, error) {
 	defaultName := strings.TrimSpace(cfg.DefaultModel)
 	if defaultName == "" || cfg.Models[defaultName] == nil {
 		return "", fmt.Errorf("no chat models are configured: please configure at least one model in config.yaml")
@@ -81,15 +81,15 @@ func ResolveModelName(requested string, cfg config.Config) (string, error) {
 	return defaultName, nil
 }
 
-// ResolveModelForAgent picks the effective model name following the Python
+// GetModelForAgent picks the effective model name following the Python
 // chain `request → agent_config.model → global default` and returns the
 // resolved ModelConfig pointer alongside it.
-func ResolveModelForAgent(requested string, profile *AgentProfile, cfg config.Config) (string, *config.ModelConfig, error) {
+func GetModelForAgent(requested string, profile *AgentProfile, cfg config.Config) (string, *config.ModelConfig, error) {
 	candidate := requested
 	if candidate == "" && profile != nil {
 		candidate = profile.Model
 	}
-	name, err := ResolveModelName(candidate, cfg)
+	name, err := GetModelName(candidate, cfg)
 	if err != nil {
 		return "", nil, err
 	}

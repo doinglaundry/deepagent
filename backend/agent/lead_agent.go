@@ -93,12 +93,12 @@ func MakeLeadAgent(
 		return nil, fmt.Errorf("load agent profile %q: %w", agentName, err)
 	}
 
-	modelName, modelCfg, err := ResolveModelForAgent(rt.ModelName, profile, cfg)
+	modelName, modelCfg, err := GetModelForAgent(rt.ModelName, profile, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	thinkingEnabled := resolveThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
+	thinkingEnabled := getThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
 	populateRuntimeMetadata(&rt, agentName, modelName, thinkingEnabled, profile)
 
 	chatModel, err := buildChatModel(ctx, *modelCfg, thinkingEnabled, rt.ReasoningEffort)
@@ -142,7 +142,7 @@ func MakeLeadAgent(
 		return nil, fmt.Errorf("build middleware chain: %w", err)
 	}
 
-	subAgents, withGeneral, err := resolveSubAgents(ctx, rt, cfg, deps, appCfg)
+	subAgents, withGeneral, err := getSubAgents(ctx, rt, cfg, deps, appCfg)
 	if err != nil {
 		return nil, fmt.Errorf("build subagents: %w", err)
 	}
