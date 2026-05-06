@@ -26,50 +26,21 @@ type yamlModelEntry struct {
 	TimeoutSeconds int     `yaml:"timeout_seconds"`
 }
 
-type yamlSkillsEntry struct {
-	Paths []string `yaml:"paths"`
-}
-
-type yamlDeferredToolEntry struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-}
-
-type yamlToolSearchEntry struct {
-	Enabled  bool                    `yaml:"enabled"`
-	Deferred []yamlDeferredToolEntry `yaml:"deferred"`
-}
-
-type yamlACPAgentEntry struct {
-	Description string `yaml:"description"`
-}
-
-type yamlACPEntry struct {
-	Agents map[string]yamlACPAgentEntry `yaml:"agents"`
-}
-
-// yamlAgentEntry mirrors schema.AgentConfig + the deerflow agent yaml
-// schema. Both inline (top-level `agents:` block) and per-directory
-// (`<agents_dir>/<name>/config.yaml`) loaders share this shape.
-type yamlAgentEntry struct {
-	Name         string   `yaml:"name"`
-	Description  string   `yaml:"description"`
-	Instruction  string   `yaml:"instruction"`
-	MaxIteration int      `yaml:"max_iteration"`
-	Model        string   `yaml:"model"`
-	ToolGroups   []string `yaml:"tool_groups"`
-	Skills       []string `yaml:"skills"`
-}
-
+// yamlFileConfig is the wire shape we unmarshal config.yaml into.
+// Every field except Models targets a schema type directly — that's
+// possible because schema.* types now carry both json and yaml tags.
+// Models keeps its own private mirror because it carries legacy
+// aliases (api_base, api_key=$ENV, timeout float→int) that need
+// post-unmarshal normalisation in this loader.
 type yamlFileConfig struct {
-	DefaultModel string                    `yaml:"default_model"`
-	DefaultAgent string                    `yaml:"default_agent"`
-	AgentsDir    string                    `yaml:"agents_dir"`
-	Models       []yamlModelEntry          `yaml:"models"`
-	Agents       map[string]yamlAgentEntry `yaml:"agents"`
-	Skills       yamlSkillsEntry           `yaml:"skills"`
-	ToolSearch   yamlToolSearchEntry       `yaml:"tool_search"`
-	ACP          yamlACPEntry              `yaml:"acp"`
+	DefaultModel string                        `yaml:"default_model"`
+	DefaultAgent string                        `yaml:"default_agent"`
+	AgentsDir    string                        `yaml:"agents_dir"`
+	Models       []yamlModelEntry              `yaml:"models"`
+	Agents       map[string]schema.AgentConfig `yaml:"agents"`
+	Skills       schema.SkillsConfig           `yaml:"skills"`
+	ToolSearch   schema.ToolSearchConfig       `yaml:"tool_search"`
+	ACP          schema.ACPConfig              `yaml:"acp"`
 }
 
 // yamlExtras bundles the non-model sections so the caller can fold them into
@@ -96,45 +67,35 @@ func loadFromYAML(path string) (map[string]*schema.ModelConfig, yamlExtras, erro
 		return nil, yamlExtras{}, fmt.Errorf("parse yaml config: %w", err)
 	}
 
+	// fc.Skills / fc.ToolSearch / fc.ACP / fc.Agents are already the
+	// right schema types — yaml.Unmarshal populated them in place.
+	// We only own per-field normalisations that the YAML decoder
+	// can't express: Name fallback to map key, whitespace trim on
+	// Model, dropping deferred entries with blank names.
 	extras := yamlExtras{
 		DefaultAgent: strings.TrimSpace(fc.DefaultAgent),
 		AgentsDir:    strings.TrimSpace(fc.AgentsDir),
-		Skills:       schema.SkillsConfig{Paths: append([]string(nil), fc.Skills.Paths...)},
-		ToolSearch: schema.ToolSearchConfig{
-			Enabled: fc.ToolSearch.Enabled,
-		},
-		ACP: schema.ACPConfig{},
+		Skills:       fc.Skills,
+		ToolSearch:   fc.ToolSearch,
+		ACP:          fc.ACP,
+		Agents:       fc.Agents,
 	}
-	if len(fc.Agents) > 0 {
-		extras.Agents = make(map[string]schema.AgentConfig, len(fc.Agents))
-		for key, a := range fc.Agents {
-			name := strings.TrimSpace(a.Name)
-			if name == "" {
-				name = key
+	for key, a := range extras.Agents {
+		if strings.TrimSpace(a.Name) == "" {
+			a.Name = key
+		}
+		a.Model = strings.TrimSpace(a.Model)
+		extras.Agents[key] = a
+	}
+	if len(extras.ToolSearch.Deferred) > 0 {
+		filtered := extras.ToolSearch.Deferred[:0]
+		for _, d := range extras.ToolSearch.Deferred {
+			if strings.TrimSpace(d.Name) == "" {
+				continue
 			}
-			extras.Agents[key] = schema.AgentConfig{
-				Name:         name,
-				Description:  a.Description,
-				Instruction:  a.Instruction,
-				MaxIteration: a.MaxIteration,
-				Model:        strings.TrimSpace(a.Model),
-				ToolGroups:   append([]string(nil), a.ToolGroups...),
-				Skills:       cloneSkills(a.Skills),
-			}
+			filtered = append(filtered, d)
 		}
-	}
-	for _, d := range fc.ToolSearch.Deferred {
-		if strings.TrimSpace(d.Name) == "" {
-			continue
-		}
-		extras.ToolSearch.Deferred = append(extras.ToolSearch.Deferred,
-			schema.DeferredToolEntry{Name: d.Name, Description: d.Description})
-	}
-	if len(fc.ACP.Agents) > 0 {
-		extras.ACP.Agents = make(map[string]schema.ACPAgentEntry, len(fc.ACP.Agents))
-		for name, a := range fc.ACP.Agents {
-			extras.ACP.Agents[name] = schema.ACPAgentEntry{Description: a.Description}
-		}
+		extras.ToolSearch.Deferred = filtered
 	}
 
 	if len(fc.Models) == 0 {
@@ -198,17 +159,4 @@ func inferProvider(baseURL, name string) string {
 // ToPtr returns a pointer to v.
 func ToPtr[T any](v T) *T {
 	return &v
-}
-
-// cloneSkills preserves the nil-vs-empty-slice distinction the agent
-// profile semantics depend on (nil = inherit, [] = strict empty subset).
-// A naive append([]string(nil), src...) would erase that distinction by
-// always returning nil for empty inputs.
-func cloneSkills(src []string) []string {
-	if src == nil {
-		return nil
-	}
-	out := make([]string, len(src))
-	copy(out, src)
-	return out
 }
