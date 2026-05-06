@@ -88,18 +88,18 @@ func MakeLeadAgent(
 		return nil, err
 	}
 
-	profile, err := LoadAgentProfile(cfg, agentName)
+	agentConfig, err := GetAgentConfig(cfg, agentName)
 	if err != nil {
 		return nil, fmt.Errorf("load agent profile %q: %w", agentName, err)
 	}
 
-	modelName, modelCfg, err := GetModelForAgent(rt.ModelName, profile, cfg)
+	modelName, modelCfg, err := GetModelForAgent(rt.ModelName, agentConfig, cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	thinkingEnabled := getThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
-	populateRuntimeMetadata(&rt, agentName, modelName, thinkingEnabled, profile)
+	populateRuntimeMetadata(&rt, agentName, modelName, thinkingEnabled, agentConfig)
 
 	chatModel, err := buildChatModel(ctx, *modelCfg, thinkingEnabled, rt.ReasoningEffort)
 	if err != nil {
@@ -117,7 +117,7 @@ func MakeLeadAgent(
 		SubagentEnabled:        rt.SubagentEnabled,
 		MaxConcurrentSubagents: rt.MaxConcurrentSubagents,
 		AgentName:              agentName,
-		AvailableSkills:        skillsFromProfile(profile),
+		AvailableSkills:        skillsFromProfile(agentConfig),
 		AppConfig:              appCfg,
 		Deps:                   deps.PromptDeps,
 	})
@@ -152,7 +152,7 @@ func MakeLeadAgent(
 		Description:  "Deep Agent",
 		ChatModel:    chatModel,
 		Instruction:  prompt,
-		MaxIteration: defaultIterationLimit(profile),
+		MaxIteration: defaultIterationLimit(agentConfig),
 		// Phase 10: driven by rt.SubagentEnabled + AppConfig.Subagents
 		// so callers that wired sub-agent dispatch actually get a
 		// task() tool.
@@ -170,7 +170,7 @@ func MakeLeadAgent(
 	// Phase 9: honour profile.ToolGroups (deerflow's
 	// get_available_tools(groups=...) filter). nil ToolGroups → inherit
 	// all (Backend + Shell stay wired); explicit slice → opt-in only.
-	applyToolGroups(deepCfg, profile, sandbox)
+	applyToolGroups(deepCfg, agentConfig, sandbox)
 
 	agentImpl, err := deep.New(ctx, deepCfg)
 	if err != nil {

@@ -94,7 +94,7 @@ type HumanInTheLoopConfig struct {
 //     true and Names is empty, deep.New still gets a `task()` tool.
 //     Defaults to true on a non-zero AppConfig.
 //   - Names: extra named subagents to wire from cfg.Agents /
-//     cfg.AgentsDir. Each name is resolved through LoadAgentProfile
+//     cfg.AgentsDir. Each name is resolved through GetAgentConfig
 //     and instantiated via a recursive MakeAgent call (with
 //     recursion-depth = 1 cap to prevent loops).
 //   - MaxConcurrent / MaxPerTurn: surfaced into the prompt and used by

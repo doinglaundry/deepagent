@@ -118,9 +118,9 @@ func TestLoadAgentConfigFromConfig_PrefersInlineEntry(t *testing.T) {
 	}
 }
 
-// TestLoadAgentProfile_FallsThroughToDisk validates the high-level
+// TestGetAgentConfig_FallsThroughToDisk validates the high-level
 // resolver: inline miss → disk lookup → success.
-func TestLoadAgentProfile_FallsThroughToDisk(t *testing.T) {
+func TestGetAgentConfig_FallsThroughToDisk(t *testing.T) {
 	tmp := t.TempDir()
 	dir := filepath.Join(tmp, "researcher")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -134,34 +134,34 @@ func TestLoadAgentProfile_FallsThroughToDisk(t *testing.T) {
 		AgentsDir: tmp,
 		Agents:    map[string]config.AgentConfig{},
 	}
-	profile, err := LoadAgentProfile(cfg, "researcher")
-	if err != nil || profile == nil {
-		t.Fatalf("expected disk fallback to succeed: profile=%+v err=%v", profile, err)
+	agentConfig, err := GetAgentConfig(cfg, "researcher")
+	if err != nil || agentConfig == nil {
+		t.Fatalf("expected disk fallback to succeed: profile=%+v err=%v", agentConfig, err)
 	}
-	if profile.Model != "claude-3.5" {
-		t.Errorf("Model = %q", profile.Model)
+	if agentConfig.Model != "claude-3.5" {
+		t.Errorf("Model = %q", agentConfig.Model)
 	}
 }
 
-// TestLoadAgentProfile_NoCustomProfileIsSoftMiss confirms the loader
+// TestGetAgentConfig_NoCustomProfileIsSoftMiss confirms the loader
 // returns (nil, nil) instead of an error when neither inline nor disk
 // has the agent. This matches Python's "default_agent" fallback path.
-func TestLoadAgentProfile_NoCustomProfileIsSoftMiss(t *testing.T) {
+func TestGetAgentConfig_NoCustomProfileIsSoftMiss(t *testing.T) {
 	cfg := config.Config{AgentsDir: t.TempDir()}
-	profile, err := LoadAgentProfile(cfg, "ghost")
+	agentConfig, err := GetAgentConfig(cfg, "ghost")
 	if err != nil {
 		t.Fatalf("expected soft miss, got err: %v", err)
 	}
-	if profile != nil {
-		t.Errorf("expected nil profile, got %+v", profile)
+	if agentConfig != nil {
+		t.Errorf("expected nil profile, got %+v", agentConfig)
 	}
 }
 
-// TestLoadAgentProfile_RejectsInvalidName ensures the validation hook
+// TestGetAgentConfig_RejectsInvalidName ensures the validation hook
 // runs before any disk access. Mirrors Python ValueError on bad chars.
-func TestLoadAgentProfile_RejectsInvalidName(t *testing.T) {
+func TestGetAgentConfig_RejectsInvalidName(t *testing.T) {
 	cfg := config.Config{AgentsDir: t.TempDir()}
-	_, err := LoadAgentProfile(cfg, "../etc/passwd")
+	_, err := GetAgentConfig(cfg, "../etc/passwd")
 	if err == nil {
 		t.Fatal("expected error for invalid agent name")
 	}
