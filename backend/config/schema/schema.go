@@ -96,12 +96,6 @@ type Config struct {
 	MemoryDir     string `json:"memory_dir"`
 	CheckpointDir string `json:"checkpoint_dir"`
 
-	// AgentsDir is the base directory containing per-agent
-	// subdirectories ("<AgentsDir>/<name>/config.yaml"). Phase 6
-	// uses it as the on-disk source for LoadAgentConfigFromDir.
-	// Defaults to "<RootDir>/agents" when empty.
-	AgentsDir string `json:"agents_dir,omitempty"`
-
 	DefaultModel string                  `json:"default_model"`
 	Models       map[string]*ModelConfig `json:"models"`
 	DefaultAgent string                 `json:"default_agent"`

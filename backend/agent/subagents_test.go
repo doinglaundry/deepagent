@@ -8,9 +8,9 @@ import (
 )
 
 // dummyConfig is a minimal config.Config used by subagent build tests
-// — empty Models map and AgentsDir so any model resolution would fail,
-// which is exactly what we want to keep these tests from accidentally
-// exercising the deep.New path.
+// — empty Models and Agents maps, so any real model/agent resolution
+// would fail, which is exactly what we want to keep these tests from
+// accidentally exercising the deep.New path.
 func dummyConfig() config.Config { return config.Config{} }
 
 // TestIsZeroSubagentsConfig covers the "did the host configure

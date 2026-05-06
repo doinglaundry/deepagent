@@ -35,7 +35,6 @@ type yamlModelEntry struct {
 type yamlFileConfig struct {
 	DefaultModel string                        `yaml:"default_model"`
 	DefaultAgent string                        `yaml:"default_agent"`
-	AgentsDir    string                        `yaml:"agents_dir"`
 	Models       []yamlModelEntry              `yaml:"models"`
 	Agents       map[string]schema.AgentConfig `yaml:"agents"`
 	Skills       schema.SkillsConfig           `yaml:"skills"`
@@ -47,7 +46,6 @@ type yamlFileConfig struct {
 // schema.Config alongside the models map.
 type yamlExtras struct {
 	DefaultAgent string
-	AgentsDir    string
 	Agents       map[string]schema.AgentConfig
 	Skills       schema.SkillsConfig
 	ToolSearch   schema.ToolSearchConfig
@@ -74,7 +72,6 @@ func loadFromYAML(path string) (map[string]*schema.ModelConfig, yamlExtras, erro
 	// Model, dropping deferred entries with blank names.
 	extras := yamlExtras{
 		DefaultAgent: strings.TrimSpace(fc.DefaultAgent),
-		AgentsDir:    strings.TrimSpace(fc.AgentsDir),
 		Skills:       fc.Skills,
 		ToolSearch:   fc.ToolSearch,
 		ACP:          fc.ACP,
