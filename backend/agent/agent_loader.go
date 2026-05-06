@@ -13,20 +13,6 @@ import (
 	"eino-cli/backend/config"
 )
 
-// agentYAMLFile mirrors the on-disk layout of
-// "<agents_dir>/<name>/config.yaml". It mirrors the deerflow Python
-// AgentConfig pydantic model so existing deer-flow agent directories can
-// be reused as-is.
-type agentYAMLFile struct {
-	Name         string   `yaml:"name"`
-	Description  string   `yaml:"description"`
-	Instruction  string   `yaml:"instruction"`
-	MaxIteration int      `yaml:"max_iteration"`
-	Model        string   `yaml:"model"`
-	ToolGroups   []string `yaml:"tool_groups"`
-	Skills       []string `yaml:"skills"`
-}
-
 // LoadAgentConfigFromDir reads "<baseDir>/<name>/config.yaml" and
 // returns it as a *config.AgentConfig. It mirrors the deerflow
 // load_agent_config(name) "FileNotFoundError" semantics:
@@ -68,24 +54,22 @@ func LoadAgentConfigFromDir(baseDir, name string) (*config.AgentConfig, error) {
 		return nil, fmt.Errorf("read agent config %s: %w", configFile, err)
 	}
 
-	var f agentYAMLFile
-	if err = yaml.Unmarshal(data, &f); err != nil {
+	var ac config.AgentConfig
+	if err = yaml.Unmarshal(data, &ac); err != nil {
 		return nil, fmt.Errorf("parse agent config %s: %w", configFile, err)
 	}
 
-	resolvedName := strings.TrimSpace(f.Name)
-	if resolvedName == "" {
-		resolvedName = name
+	// YAML may omit the name (file path is the de-facto identifier);
+	// fall back to the lookup key. Trim Model so accidental
+	// trailing whitespace from the YAML literal doesn't shadow a
+	// real model name in the resolver.
+	if strings.TrimSpace(ac.Name) == "" {
+		ac.Name = name
+	} else {
+		ac.Name = strings.TrimSpace(ac.Name)
 	}
-	return &config.AgentConfig{
-		Name:         resolvedName,
-		Description:  f.Description,
-		Model:        strings.TrimSpace(f.Model),
-		ToolGroups:   cloneStringSlicePreservingNil(f.ToolGroups),
-		Skills:       cloneStringSlicePreservingNil(f.Skills),
-		Instruction:  f.Instruction,
-		MaxIteration: f.MaxIteration,
-	}, nil
+	ac.Model = strings.TrimSpace(ac.Model)
+	return &ac, nil
 }
 
 // LoadAgentConfigFromConfig looks up a custom agent inside an already
@@ -112,15 +96,17 @@ func LoadAgentConfigFromConfig(cfg config.Config, name string) (*config.AgentCon
 	if !ok {
 		return nil, nil
 	}
-	return &config.AgentConfig{
-		Name:         firstNonEmpty(ac.Name, name),
-		Description:  ac.Description,
-		Model:        strings.TrimSpace(ac.Model),
-		ToolGroups:   cloneStringSlicePreservingNil(ac.ToolGroups),
-		Skills:       cloneStringSlicePreservingNil(ac.Skills),
-		Instruction:  ac.Instruction,
-		MaxIteration: ac.MaxIteration,
-	}, nil
+	// Map lookup already returns a value-copy of the AgentConfig
+	// struct (slice fields still share underlying arrays with
+	// cfg.Agents — fine because nothing in the agent path mutates
+	// them). Just normalise Name + Model in place.
+	if strings.TrimSpace(ac.Name) == "" {
+		ac.Name = name
+	} else {
+		ac.Name = strings.TrimSpace(ac.Name)
+	}
+	ac.Model = strings.TrimSpace(ac.Model)
+	return &ac, nil
 }
 
 // LoadAgentProfile is the high-level resolver used by MakeLeadAgent.
