@@ -54,12 +54,8 @@ func BuildPromptDeps(cfg config.Config, opts PromptDepsOptions) *PromptDeps {
 	}
 	deps.LoadSkills = loader
 
-	if len(cfg.ToolSearch.Deferred) > 0 {
-		registry := make([]DeferredEntry, 0, len(cfg.ToolSearch.Deferred))
-		for _, e := range cfg.ToolSearch.Deferred {
-			registry = append(registry, DeferredEntry{Name: e.Name})
-		}
-		deps.GetDeferredRegistry = func() []DeferredEntry { return registry }
+	if names := DeferredToolNamesFromConfig(cfg); names != nil {
+		deps.GetDeferredRegistry = names
 	}
 
 	if len(cfg.ACP.Agents) > 0 {

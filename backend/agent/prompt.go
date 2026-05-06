@@ -119,11 +119,6 @@ type AppConfig struct {
 	Subagents      SubagentsConfig
 }
 
-// DeferredEntry represents a tool_search deferred-tool registry entry.
-type DeferredEntry struct {
-	Name string
-}
-
 // PromptDeps abstracts every external runtime call the Python module makes.
 // A nil function maps to Python's try/except branch (return ""), keeping the
 // final prompt deterministic even when the surrounding runtime is missing.
@@ -135,8 +130,13 @@ type PromptDeps struct {
 	GetEffectiveUserID       func() string
 	GetMemoryData            func(agentName, userID string) any
 	FormatMemoryForInjection func(data any, maxTokens int) string
-	GetDeferredRegistry      func() []DeferredEntry
-	GetACPAgents             func() map[string]any
+	// GetDeferredRegistry returns the names of deferred tools that should
+	// be advertised to the model in <available-deferred-tools>. The
+	// runtime middleware (DeferredTools) filters those same names out of
+	// the active tool set; both consumers should pull from the same
+	// source so the prompt and the toolbelt stay in sync.
+	GetDeferredRegistry func() []string
+	GetACPAgents        func() map[string]any
 }
 
 // AvailableSkills represents Python's `available_skills: set[str] | None`.
@@ -536,13 +536,9 @@ func GetDeferredToolsPromptSection(deps PromptDeps, app *AppConfig) string {
 	if deps.GetDeferredRegistry == nil {
 		return ""
 	}
-	entries := deps.GetDeferredRegistry()
-	if len(entries) == 0 {
+	names := deps.GetDeferredRegistry()
+	if len(names) == 0 {
 		return ""
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name)
 	}
 	return "<available-deferred-tools>\n" + strings.Join(names, "\n") + "\n</available-deferred-tools>"
 }

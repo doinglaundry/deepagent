@@ -63,7 +63,7 @@ func TestBuildPromptDeps_DeferredAndACPWired(t *testing.T) {
 		t.Fatal("GetDeferredRegistry should be wired")
 	}
 	reg := deps.GetDeferredRegistry()
-	if len(reg) != 2 || reg[0].Name != "web_search" {
+	if len(reg) != 2 || reg[0] != "web_search" {
 		t.Fatalf("registry mismatch: %+v", reg)
 	}
 
