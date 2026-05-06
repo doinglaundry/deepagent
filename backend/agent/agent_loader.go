@@ -131,11 +131,12 @@ func LoadAgentConfigFromConfig(cfg config.Config, name string) (*AgentProfile, e
 //  2. cfg.AgentsDir/<name>/config.yaml (directory)
 //  3. nil + nil  (no custom profile — fall back to defaults)
 func LoadAgentProfile(cfg config.Config, name string) (*AgentProfile, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, nil
-	}
-	if _, err := ValidateAgentName(name); err != nil {
+	// ValidateAgentName trims, accepts empty as the "use defaults"
+	// sentinel ("", nil), and rejects bad characters with an error.
+	// LoadAgentConfigFrom{Config,Dir} both early-return nil for empty
+	// names too, so we don't need our own short-circuit.
+	name, err := ValidateAgentName(name)
+	if err != nil {
 		return nil, err
 	}
 	if profile, err := LoadAgentConfigFromConfig(cfg, name); err != nil {
