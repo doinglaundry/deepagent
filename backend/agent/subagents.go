@@ -70,7 +70,7 @@ func isSubagentBuild(ctx context.Context) bool {
 	return v
 }
 
-// buildNamedSubagents resolves each name in `names` to an AgentProfile
+// buildNamedSubagents resolves each name in `names` to a config.AgentConfig
 // and recursively constructs a deep agent for it. The recursive call
 // receives a context flagged via withSubagentBuild() so it short-
 // circuits its own subagent expansion (depth-1 cap).

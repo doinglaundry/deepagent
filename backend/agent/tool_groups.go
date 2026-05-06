@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
+
+	"eino-cli/backend/config"
 )
 
 // applyToolGroups is the Go counterpart of deerflow's
@@ -21,7 +23,7 @@ import (
 // web_search / mcp / other groups not yet wired up in Go still loads
 // (with reduced capability instead of an error). An empty slice means
 // "no built-in tools at all".
-func applyToolGroups(cfg *deep.Config, profile *AgentProfile, sandbox SandboxProvider) {
+func applyToolGroups(cfg *deep.Config, profile *config.AgentConfig, sandbox SandboxProvider) {
 	if profile == nil || profile.ToolGroups == nil {
 		// None / nil → inherit all built-in groups.
 		cfg.Backend = sandbox.Backend()

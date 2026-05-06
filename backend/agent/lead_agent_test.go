@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
+
+	"eino-cli/backend/config"
 )
 
 // TestDefaultIterationLimit covers the precedence rules: nil profile
@@ -12,14 +14,14 @@ import (
 func TestDefaultIterationLimit(t *testing.T) {
 	cases := []struct {
 		name    string
-		profile *AgentProfile
+		profile *config.AgentConfig
 		want    int
 	}{
 		{"nil profile", nil, 6},
-		{"zero falls back", &AgentProfile{MaxIteration: 0}, 6},
-		{"negative falls back", &AgentProfile{MaxIteration: -1}, 6},
-		{"explicit override", &AgentProfile{MaxIteration: 12}, 12},
-		{"large override", &AgentProfile{MaxIteration: 100}, 100},
+		{"zero falls back", &config.AgentConfig{MaxIteration: 0}, 6},
+		{"negative falls back", &config.AgentConfig{MaxIteration: -1}, 6},
+		{"explicit override", &config.AgentConfig{MaxIteration: 12}, 12},
+		{"large override", &config.AgentConfig{MaxIteration: 100}, 100},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

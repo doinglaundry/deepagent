@@ -78,7 +78,7 @@ func TestGetModelForAgent_PreferProfile(t *testing.T) {
 			"claude": {Name: "claude", Provider: "claude", Model: "claude-sonnet-4-6"},
 		},
 	}
-	profile := &AgentProfile{Model: "claude"}
+	profile := &config.AgentConfig{Model: "claude"}
 
 	name, mc, err := GetModelForAgent("", profile, cfg)
 	if err != nil {

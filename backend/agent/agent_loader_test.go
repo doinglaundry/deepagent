@@ -23,7 +23,7 @@ max_iteration: 12
 
 // TestLoadAgentConfigFromDir_HappyPath writes a minimal
 // agents/<name>/config.yaml fixture and asserts every field round-trips
-// onto AgentProfile in the order Python's load_agent_config defines.
+// onto config.AgentConfig in the order Python's load_agent_config defines.
 func TestLoadAgentConfigFromDir_HappyPath(t *testing.T) {
 	tmp := t.TempDir()
 	dir := filepath.Join(tmp, "researcher")

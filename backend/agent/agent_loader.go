@@ -28,18 +28,18 @@ type agentYAMLFile struct {
 }
 
 // LoadAgentConfigFromDir reads "<baseDir>/<name>/config.yaml" and
-// projects it onto an AgentProfile. It mirrors the
-// deerflow load_agent_config(name) "FileNotFoundError" semantics:
+// returns it as a *config.AgentConfig. It mirrors the deerflow
+// load_agent_config(name) "FileNotFoundError" semantics:
 //
 //   - name == ""              → returns nil, nil  (default agent path)
 //   - directory missing       → returns nil, error (Python parity)
 //   - config.yaml missing     → returns nil, error
 //   - parse error             → returns nil, error
-//   - success                 → returns *AgentProfile, nil
+//   - success                 → returns *config.AgentConfig, nil
 //
 // The caller is expected to have already run ValidateAgentName on the
 // input.
-func LoadAgentConfigFromDir(baseDir, name string) (*AgentProfile, error) {
+func LoadAgentConfigFromDir(baseDir, name string) (*config.AgentConfig, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, nil
@@ -77,8 +77,9 @@ func LoadAgentConfigFromDir(baseDir, name string) (*AgentProfile, error) {
 	if resolvedName == "" {
 		resolvedName = name
 	}
-	return &AgentProfile{
+	return &config.AgentConfig{
 		Name:         resolvedName,
+		Description:  f.Description,
 		Model:        strings.TrimSpace(f.Model),
 		ToolGroups:   cloneStringSlicePreservingNil(f.ToolGroups),
 		Skills:       cloneStringSlicePreservingNil(f.Skills),
@@ -91,7 +92,7 @@ func LoadAgentConfigFromDir(baseDir, name string) (*AgentProfile, error) {
 // loaded config.Config (i.e. the inline "agents:" YAML block). Returns
 // nil + nil for "no such inline entry" so callers can fall back to
 // LoadAgentConfigFromDir.
-func LoadAgentConfigFromConfig(cfg config.Config, name string) (*AgentProfile, error) {
+func LoadAgentConfigFromConfig(cfg config.Config, name string) (*config.AgentConfig, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, nil
@@ -111,8 +112,9 @@ func LoadAgentConfigFromConfig(cfg config.Config, name string) (*AgentProfile, e
 	if !ok {
 		return nil, nil
 	}
-	return &AgentProfile{
+	return &config.AgentConfig{
 		Name:         firstNonEmpty(ac.Name, name),
+		Description:  ac.Description,
 		Model:        strings.TrimSpace(ac.Model),
 		ToolGroups:   cloneStringSlicePreservingNil(ac.ToolGroups),
 		Skills:       cloneStringSlicePreservingNil(ac.Skills),
@@ -130,7 +132,7 @@ func LoadAgentConfigFromConfig(cfg config.Config, name string) (*AgentProfile, e
 //  1. cfg.Agents[name] (inline)
 //  2. cfg.AgentsDir/<name>/config.yaml (directory)
 //  3. nil + nil  (no custom profile — fall back to defaults)
-func LoadAgentProfile(cfg config.Config, name string) (*AgentProfile, error) {
+func LoadAgentProfile(cfg config.Config, name string) (*config.AgentConfig, error) {
 	// ValidateAgentName trims, accepts empty as the "use defaults"
 	// sentinel ("", nil), and rejects bad characters with an error.
 	// LoadAgentConfigFrom{Config,Dir} both early-return nil for empty

@@ -188,7 +188,7 @@ func MakeLeadAgent(
 // rt.Metadata with the same fields so downstream middleware /
 // renderers can inspect them. rt.Metadata is mutated in place (maps
 // are reference types).
-func populateRuntimeMetadata(rt *RuntimeContext, agentName, modelName string, thinkingEnabled bool, profile *AgentProfile) {
+func populateRuntimeMetadata(rt *RuntimeContext, agentName, modelName string, thinkingEnabled bool, profile *config.AgentConfig) {
 	resolvedName := fallback(agentName, "default")
 	resolvedModel := fallback(modelName, "default")
 
@@ -270,11 +270,11 @@ func fallback(value, def string) string {
 	return value
 }
 
-// skillsFromProfile maps an AgentProfile.Skills declaration onto the
+// skillsFromProfile maps an AgentConfig.Skills declaration onto the
 // AvailableSkills value the prompt template understands. nil profile
 // or nil Skills slice → "load all enabled" (Python: None); a non-nil
 // slice (even empty) → strict subset.
-func skillsFromProfile(p *AgentProfile) *AvailableSkills {
+func skillsFromProfile(p *config.AgentConfig) *AvailableSkills {
 	if p == nil || p.Skills == nil {
 		return AllSkills()
 	}
@@ -292,7 +292,7 @@ func skillsFromProfile(p *AgentProfile) *AvailableSkills {
 // Negative values are clamped to the default to avoid a configuration
 // typo turning into "agent never runs". 0 explicitly means "inherit
 // the default" (matches the YAML zero value).
-func defaultIterationLimit(p *AgentProfile) int {
+func defaultIterationLimit(p *config.AgentConfig) int {
 	const runtimeMaxIterDefault = 6
 	if p == nil || p.MaxIteration <= 0 {
 		return runtimeMaxIterDefault
