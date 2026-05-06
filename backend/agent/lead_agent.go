@@ -103,92 +103,20 @@ func MakeLeadAgent(
 		return nil, err
 	}
 
-	thinkingEnabled := rt.ThinkingEnabled
-	if thinkingEnabled && !modelCfg.SupportsThinking {
-		slog.Warn("thinking enabled but model does not support it; downgrading",
-			"model", modelName)
-		thinkingEnabled = false
-	}
-
-	slog.Info("Create Agent",
-		"agent_name", fallback(agentName, "default"),
-		"thinking_enabled", thinkingEnabled,
-		"reasoning_effort", rt.ReasoningEffort,
-		"model_name", modelName,
-		"is_plan_mode", rt.IsPlanMode,
-		"subagent_enabled", rt.SubagentEnabled,
-		"max_concurrent_subagents", rt.MaxConcurrentSubagents,
-	)
-
-	if rt.Metadata == nil {
-		rt.Metadata = map[string]any{}
-	}
-	rt.Metadata["agent_name"] = fallback(agentName, "default")
-	rt.Metadata["model_name"] = fallback(modelName, "default")
-	rt.Metadata["thinking_enabled"] = thinkingEnabled
-	rt.Metadata["reasoning_effort"] = rt.ReasoningEffort
-	rt.Metadata["is_plan_mode"] = rt.IsPlanMode
-	rt.Metadata["subagent_enabled"] = rt.SubagentEnabled
-	if profile != nil {
-		rt.Metadata["tool_groups"] = profile.ToolGroups
-	}
-	if profile != nil && profile.Skills != nil {
-		rt.Metadata["available_skills"] = profile.Skills
-	}
+	thinkingEnabled := resolveThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
+	populateRuntimeMetadata(&rt, agentName, modelName, thinkingEnabled, profile)
 
 	chatModel, err := buildChatModel(ctx, *modelCfg, thinkingEnabled, rt.ReasoningEffort)
 	if err != nil {
 		return nil, err
 	}
-
-	// Phase 11: when AppConfig.Summarization.Model names a different
-	// model, build it on the side so summarization runs against a
-	// cheaper / shorter-context model rather than burning the lead's
-	// premium budget. Summarization never wants thinking nor reasoning
-	// effort — both add latency for no quality gain on a compaction
-	// task — so we pass false / "" explicitly.
-	summaryModel := chatModel
-	if deps.AppConfig != nil && strings.TrimSpace(deps.AppConfig.Summarization.Model) != "" {
-		smName := strings.TrimSpace(deps.AppConfig.Summarization.Model)
-		if smCfg := cfg.Models[smName]; smCfg != nil {
-			sm, smErr := buildChatModel(ctx, *smCfg, false, "")
-			if smErr != nil {
-				slog.Warn(
-					"summarization model build failed; falling back to lead chat model",
-					"summary_model", smName,
-					"err", smErr,
-				)
-			} else {
-				summaryModel = sm
-				slog.Info("summarization will use a separate chat model",
-					"summary_model", smName)
-			}
-		} else {
-			slog.Warn(
-				"summarization model not found in cfg.Models; falling back to lead chat model",
-				"summary_model", smName,
-			)
-		}
-	}
+	summaryModel := buildSummaryChatModel(ctx, cfg, deps.AppConfig, chatModel)
 
 	sandbox := deps.Sandbox
 	if sandbox == nil {
 		sandbox = NewLocalSandbox(deps.WorkingDir)
 	}
-
-	// Surface sandbox mounts into the prompt's "Custom Mounted Directories"
-	// section. We layer them on top of any AppConfig.Sandbox.Mounts the host
-	// configured statically — matching deerflow's behaviour where the
-	// runtime-provided list takes precedence.
-	appCfg := deps.AppConfig
-	if mounts := sandbox.Mounts(); len(mounts) > 0 {
-		appCopy := AppConfig{}
-		if appCfg != nil {
-			appCopy = *appCfg
-		}
-		appCopy.Sandbox.Mounts = append(append([]Mount(nil), appCopy.Sandbox.Mounts...), mounts...)
-		appCfg = &appCopy
-	}
+	appCfg := mergeSandboxMounts(deps.AppConfig, sandbox.Mounts())
 
 	prompt := ApplyPromptTemplate(PromptOptions{
 		SubagentEnabled:        rt.SubagentEnabled,
@@ -198,14 +126,6 @@ func MakeLeadAgent(
 		AppConfig:              appCfg,
 		Deps:                   deps.PromptDeps,
 	})
-
-	// If the sandbox can read images, expose it as the ViewImage
-	// middleware's fetcher. Sandboxes without that capability silently
-	// degrade — the middleware logs and skips when no fetcher is wired.
-	var imageFetcher middlewares.ImageFetcher
-	if r, ok := sandbox.(ImageReader); ok {
-		imageFetcher = imageFetcherFunc(r.ReadImage)
-	}
 
 	chain, err := BuildChain(ctx, ChainOptions{
 		Runtime:           rt,
@@ -221,37 +141,15 @@ func MakeLeadAgent(
 		DeferredToolNames: deps.DeferredToolNames,
 		MemoryHooks:       deps.MemoryHooks,
 		MemoryFlushHook:   deps.MemoryFlushHook,
-		ImageFetcher:      imageFetcher,
+		ImageFetcher:      discoverImageFetcher(sandbox),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build middleware chain: %w", err)
 	}
 
-	maxIter := defaultIterationLimit(profile)
-
-	// Phase 10: resolve real subagents. Disabled when:
-	//   - rt.SubagentEnabled is false (host opt-out), OR
-	//   - the recursion guard is set (we're already building a
-	//     subagent — don't allow subagents-of-subagents).
-	// Otherwise build any named subagents recursively and let
-	// deep.New attach the built-in `task()` tool.
-	withGeneral := false
-	var subAgents []adk.Agent
-	if rt.SubagentEnabled && !isSubagentBuild(ctx) {
-		var subCfg SubagentsConfig
-		if appCfg != nil {
-			subCfg = appCfg.Subagents
-		}
-		// Default: when the host enabled subagent dispatch but didn't
-		// provide a SubagentsConfig, light up the general-purpose one
-		// so the model gets a working task() tool.
-		withGeneral = subCfg.GeneralEnabled || (len(subCfg.Names) == 0 && isZeroSubagentsConfig(subCfg))
-
-		built, err := buildNamedSubagents(ctx, rt, cfg, deps, subCfg.Names)
-		if err != nil {
-			return nil, fmt.Errorf("build subagents: %w", err)
-		}
-		subAgents = built
+	subAgents, withGeneral, err := resolveSubAgents(ctx, rt, cfg, deps, appCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build subagents: %w", err)
 	}
 
 	deepCfg := &deep.Config{
@@ -259,25 +157,24 @@ func MakeLeadAgent(
 		Description:  "Deep Agent",
 		ChatModel:    chatModel,
 		Instruction:  prompt,
-		MaxIteration: maxIter,
-		// Phase 10: previously hardcoded to true (= no task() tool).
-		// Now driven by rt.SubagentEnabled + AppConfig.Subagents so
-		// callers that wired sub-agent dispatch actually get one.
+		MaxIteration: defaultIterationLimit(profile),
+		// Phase 10: driven by rt.SubagentEnabled + AppConfig.Subagents
+		// so callers that wired sub-agent dispatch actually get a
+		// task() tool.
 		WithoutGeneralSubAgent: !withGeneral,
 		SubAgents:              subAgents,
-		// Phase 8: write_todos is now always available so the agent can
+		// Phase 8: write_todos is always available so the agent can
 		// self-elect to track multi-step work even outside plan mode —
-		// matching the way Cursor / Claude Code expose the same tool.
-		// The plan-mode-only "use this tool" rallying-cry still lives in
-		// the Todo middleware (chain.Agent), gated on rt.IsPlanMode.
+		// matching Cursor / Claude Code. The plan-mode-only nudge
+		// still lives in the Todo middleware (chain.Agent), gated on
+		// rt.IsPlanMode.
 		WithoutWriteTodos: false,
 		Middlewares:       chain.Agent,
 		Handlers:          chain.ChatModel,
 	}
-	// Phase 9: honour profile.ToolGroups (mirrors deerflow's
-	// get_available_tools(groups=...) filter). nil ToolGroups means
-	// "inherit all" — Backend + Shell stay wired. Explicit slices opt
-	// into specific groups only.
+	// Phase 9: honour profile.ToolGroups (deerflow's
+	// get_available_tools(groups=...) filter). nil ToolGroups → inherit
+	// all (Backend + Shell stay wired); explicit slice → opt-in only.
 	applyToolGroups(deepCfg, profile, sandbox)
 
 	agentImpl, err := deep.New(ctx, deepCfg)
@@ -285,6 +182,162 @@ func MakeLeadAgent(
 		return nil, fmt.Errorf("build deep agent: %w", err)
 	}
 	return agentImpl, nil
+}
+
+// resolveThinkingEnabled honours rt.ThinkingEnabled but downgrades to
+// false (with a warn log) when the resolved model declares it doesn't
+// support extended thinking. Mirrors deerflow's silent-downgrade with
+// an explicit log signal.
+func resolveThinkingEnabled(requested bool, modelCfg *config.ModelConfig, modelName string) bool {
+	if !requested {
+		return false
+	}
+	if modelCfg != nil && modelCfg.SupportsThinking {
+		return true
+	}
+	slog.Warn("thinking enabled but model does not support it; downgrading",
+		"model", modelName)
+	return false
+}
+
+// populateRuntimeMetadata logs the "Create Agent" line and seeds
+// rt.Metadata with the same fields so downstream middleware /
+// renderers can inspect them. Fold-in of two previously-duplicated
+// blocks; rt.Metadata is mutated in place (maps are reference types).
+func populateRuntimeMetadata(rt *RuntimeContext, agentName, modelName string, thinkingEnabled bool, profile *AgentProfile) {
+	resolvedName := fallback(agentName, "default")
+	resolvedModel := fallback(modelName, "default")
+
+	slog.Info("Create Agent",
+		"agent_name", resolvedName,
+		"thinking_enabled", thinkingEnabled,
+		"reasoning_effort", rt.ReasoningEffort,
+		"model_name", resolvedModel,
+		"is_plan_mode", rt.IsPlanMode,
+		"subagent_enabled", rt.SubagentEnabled,
+		"max_concurrent_subagents", rt.MaxConcurrentSubagents,
+	)
+
+	if rt.Metadata == nil {
+		rt.Metadata = map[string]any{}
+	}
+	rt.Metadata["agent_name"] = resolvedName
+	rt.Metadata["model_name"] = resolvedModel
+	rt.Metadata["thinking_enabled"] = thinkingEnabled
+	rt.Metadata["reasoning_effort"] = rt.ReasoningEffort
+	rt.Metadata["is_plan_mode"] = rt.IsPlanMode
+	rt.Metadata["subagent_enabled"] = rt.SubagentEnabled
+	if profile != nil {
+		rt.Metadata["tool_groups"] = profile.ToolGroups
+		if profile.Skills != nil {
+			rt.Metadata["available_skills"] = profile.Skills
+		}
+	}
+}
+
+// buildSummaryChatModel returns the chat model the summarization
+// middleware should use. When AppConfig.Summarization.Model names a
+// model different from the lead agent's, build it on the side so
+// summarization runs against a cheaper / shorter-context client.
+// Summarization never wants thinking nor reasoning_effort — both add
+// latency for no quality gain on a compaction task — so we pass
+// false / "" explicitly. Any failure (missing config, build error)
+// falls back to fallbackModel with a warn log; a misconfigured
+// summary model must never block the lead agent.
+func buildSummaryChatModel(ctx context.Context, cfg config.Config, appCfg *AppConfig, fallbackModel model.BaseChatModel) model.BaseChatModel {
+	if appCfg == nil {
+		return fallbackModel
+	}
+	smName := strings.TrimSpace(appCfg.Summarization.Model)
+	if smName == "" {
+		return fallbackModel
+	}
+	smCfg := cfg.Models[smName]
+	if smCfg == nil {
+		slog.Warn(
+			"summarization model not found in cfg.Models; falling back to lead chat model",
+			"summary_model", smName,
+		)
+		return fallbackModel
+	}
+	sm, err := buildChatModel(ctx, *smCfg, false, "")
+	if err != nil {
+		slog.Warn(
+			"summarization model build failed; falling back to lead chat model",
+			"summary_model", smName,
+			"err", err,
+		)
+		return fallbackModel
+	}
+	slog.Info("summarization will use a separate chat model", "summary_model", smName)
+	return sm
+}
+
+// mergeSandboxMounts layers runtime-provided sandbox mounts on top of
+// any statically-configured AppConfig.Sandbox.Mounts. The base config
+// is treated as immutable: a defensive copy is returned only when
+// there's actually something to merge in. nil base + empty mounts ⇒
+// nil out (no allocation).
+func mergeSandboxMounts(appCfg *AppConfig, mounts []Mount) *AppConfig {
+	if len(mounts) == 0 {
+		return appCfg
+	}
+	out := AppConfig{}
+	if appCfg != nil {
+		out = *appCfg
+	}
+	out.Sandbox.Mounts = append(append([]Mount(nil), out.Sandbox.Mounts...), mounts...)
+	return &out
+}
+
+// discoverImageFetcher checks whether the sandbox provider can read
+// image bytes (optional ImageReader capability) and returns the
+// fetcher the ViewImage middleware expects. Returns nil when the
+// sandbox doesn't expose ReadImage; the middleware silently skips
+// in that case.
+func discoverImageFetcher(sandbox SandboxProvider) middlewares.ImageFetcher {
+	r, ok := sandbox.(ImageReader)
+	if !ok {
+		return nil
+	}
+	return imageFetcherFunc(r.ReadImage)
+}
+
+// resolveSubAgents builds the SubAgents slice and the "include
+// general-purpose subagent" flag passed to deep.Config.
+//
+// Subagent dispatch is disabled (returns nil, false, nil) when:
+//   - rt.SubagentEnabled is false (host opt-out), OR
+//   - the recursion guard is set (we're already building a subagent
+//     — depth-1 cap so subagents can't dispatch their own subagents).
+//
+// Otherwise:
+//   - withGeneral = true when the host explicitly enabled it OR didn't
+//     configure SubagentsConfig at all (so the model still gets a
+//     working task() target by default).
+//   - subAgents are built recursively from AppConfig.Subagents.Names;
+//     individual build failures are logged-and-skipped inside
+//     buildNamedSubagents.
+func resolveSubAgents(
+	ctx context.Context,
+	rt RuntimeContext,
+	cfg config.Config,
+	deps AgentDeps,
+	appCfg *AppConfig,
+) ([]adk.Agent, bool, error) {
+	if !rt.SubagentEnabled || isSubagentBuild(ctx) {
+		return nil, false, nil
+	}
+	var subCfg SubagentsConfig
+	if appCfg != nil {
+		subCfg = appCfg.Subagents
+	}
+	withGeneral := subCfg.GeneralEnabled || isZeroSubagentsConfig(subCfg)
+	built, err := buildNamedSubagents(ctx, rt, cfg, deps, subCfg.Names)
+	if err != nil {
+		return nil, false, err
+	}
+	return built, withGeneral, nil
 }
 
 // isZeroSubagentsConfig reports whether all SubagentsConfig fields are
