@@ -29,24 +29,30 @@ type ModelConfig struct {
 // AgentConfig dataclass: a top-level YAML record under either
 // `agents:` (inline map) or `<root>/agents/<name>/config.yaml`
 // (per-agent directory).
+//
+// Tags are dual: json for the inline cfg.Agents map (parsed via the
+// outer Config's json round-trip in tests) and yaml for the per-agent
+// "<agents_dir>/<name>/config.yaml" loader. This lets one type carry
+// both wire formats so the agent package can drop its private
+// agentYAMLFile mirror.
 type AgentConfig struct {
-	Name         string `json:"name"`
-	Description  string `json:"description,omitempty"`
-	Instruction  string `json:"instruction,omitempty"`
-	MaxIteration int    `json:"max_iteration,omitempty"`
+	Name         string `json:"name"                    yaml:"name"`
+	Description  string `json:"description,omitempty"   yaml:"description,omitempty"`
+	Instruction  string `json:"instruction,omitempty"   yaml:"instruction,omitempty"`
+	MaxIteration int    `json:"max_iteration,omitempty" yaml:"max_iteration,omitempty"`
 
 	// Model overrides the global default model when non-empty.
-	Model string `json:"model,omitempty"`
+	Model string `json:"model,omitempty" yaml:"model,omitempty"`
 
 	// ToolGroups restricts the active tool surface for this agent.
 	// nil means "inherit the lead-agent default"; an explicit empty
 	// slice means "no tools" (advanced use case).
-	ToolGroups []string `json:"tool_groups,omitempty"`
+	ToolGroups []string `json:"tool_groups,omitempty" yaml:"tool_groups,omitempty"`
 
 	// Skills behaves like ToolGroups: nil = inherit, [] = strict empty,
 	// non-empty = subset selection. Mirrors Python deerflow semantics
 	// for the prompt's <available_skills> section.
-	Skills []string `json:"skills,omitempty"`
+	Skills []string `json:"skills,omitempty" yaml:"skills,omitempty"`
 }
 
 // SkillsConfig drives the SKILL.md scanner used to populate the
