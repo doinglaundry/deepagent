@@ -63,11 +63,7 @@ func LoadAgentConfigFromDir(baseDir, name string) (*config.AgentConfig, error) {
 	// fall back to the lookup key. Trim Model so accidental
 	// trailing whitespace from the YAML literal doesn't shadow a
 	// real model name in the resolver.
-	if strings.TrimSpace(ac.Name) == "" {
-		ac.Name = name
-	} else {
-		ac.Name = strings.TrimSpace(ac.Name)
-	}
+	ac.Name = nameOrFallback(ac.Name, name)
 	ac.Model = strings.TrimSpace(ac.Model)
 	return &ac, nil
 }
@@ -85,17 +81,24 @@ func LoadAgentConfigFromConfig(cfg config.Config, name string) (*config.AgentCon
 	if !ok {
 		return nil, nil
 	}
-	// Map lookup already returns a value-copy of the AgentConfig
-	// struct (slice fields still share underlying arrays with
-	// cfg.Agents — fine because nothing in the agent path mutates
-	// them). Just normalise Name + Model in place.
-	if strings.TrimSpace(ac.Name) == "" {
-		ac.Name = name
-	} else {
-		ac.Name = strings.TrimSpace(ac.Name)
-	}
+	ac.Name = nameOrFallback(ac.Name, name)
 	ac.Model = strings.TrimSpace(ac.Model)
 	return &ac, nil
+}
+
+// nameOrFallback trims the candidate and returns it, falling back to
+// the supplied default when the trimmed result is empty. Pulled out
+// because both loaders need the exact same "use the YAML name if it
+// has one, otherwise use the lookup key" rule and writing the rule
+// twice was load-bearing for two readability bugs (a redundant second
+// TrimSpace call and a two-branch assignment that re-wrote ac.Name in
+// both arms).
+func nameOrFallback(candidate, fallback string) string {
+	trimmed := strings.TrimSpace(candidate)
+	if trimmed == "" {
+		return fallback
+	}
+	return trimmed
 }
 
 // LoadAgentProfile is the high-level resolver used by MakeLeadAgent.
