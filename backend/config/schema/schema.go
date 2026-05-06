@@ -59,34 +59,34 @@ type AgentConfig struct {
 // <available_skills> prompt section. Each path is expanded with ~ and
 // scanned one level deep for "<name>/SKILL.md".
 type SkillsConfig struct {
-	Paths []string `json:"paths,omitempty"`
+	Paths []string `json:"paths,omitempty" yaml:"paths,omitempty"`
 }
 
 // DeferredToolEntry describes a tool that is registered but not loaded by
 // default — the agent has to opt in through the deferred-tool prompt section.
 type DeferredToolEntry struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
+	Name        string `json:"name"                  yaml:"name"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 }
 
 // ToolSearchConfig gates the deferred-tool prompt section + the
 // DeferredTools middleware that filters those tools out of the active set.
 type ToolSearchConfig struct {
-	Enabled  bool                `json:"enabled"`
-	Deferred []DeferredToolEntry `json:"deferred,omitempty"`
+	Enabled  bool                `json:"enabled"            yaml:"enabled"`
+	Deferred []DeferredToolEntry `json:"deferred,omitempty" yaml:"deferred,omitempty"`
 }
 
 // ACPAgentEntry captures the prompt-side metadata for an external ACP
 // agent (codex, claude_code, ...). The Description is what the LLM sees
 // when deciding whether to invoke the agent.
 type ACPAgentEntry struct {
-	Description string `json:"description,omitempty"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 }
 
 // ACPConfig holds the registered ACP agents whose mere presence flips on
 // the ACP prompt subsection.
 type ACPConfig struct {
-	Agents map[string]ACPAgentEntry `json:"agents,omitempty"`
+	Agents map[string]ACPAgentEntry `json:"agents,omitempty" yaml:"agents,omitempty"`
 }
 
 type Config struct {
