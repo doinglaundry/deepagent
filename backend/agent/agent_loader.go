@@ -91,13 +91,6 @@ func GetAgentConfig(cfg config.Config, name string) (*config.AgentConfig, error)
 
 	profile, err := LoadAgentConfigFromDir(cfg.AgentsDir, name)
 	if err != nil {
-		var pathErr *os.PathError
-		if errors.As(err, &pathErr) && errors.Is(pathErr.Err, fs.ErrNotExist) {
-			return nil, nil
-		}
-		if strings.Contains(err.Error(), "not found") {
-			return nil, nil
-		}
 		return nil, err
 	}
 	return profile, nil

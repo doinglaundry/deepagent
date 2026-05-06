@@ -143,17 +143,20 @@ func TestGetAgentConfig_FallsThroughToDisk(t *testing.T) {
 	}
 }
 
-// TestGetAgentConfig_NoCustomProfileIsSoftMiss confirms the loader
-// returns (nil, nil) instead of an error when neither inline nor disk
-// has the agent. This matches Python's "default_agent" fallback path.
-func TestGetAgentConfig_NoCustomProfileIsSoftMiss(t *testing.T) {
+// TestGetAgentConfig_RaisesOnMissingAgentDir locks in the strict
+// behaviour: when neither cfg.Agents nor the on-disk AgentsDir
+// contain the requested name, the resolver propagates the loader
+// error rather than silently degrading to a default profile. A soft
+// miss would let typos flow through to a wrong-but-plausible default
+// agent without any signal.
+func TestGetAgentConfig_RaisesOnMissingAgentDir(t *testing.T) {
 	cfg := config.Config{AgentsDir: t.TempDir()}
 	agentConfig, err := GetAgentConfig(cfg, "ghost")
-	if err != nil {
-		t.Fatalf("expected soft miss, got err: %v", err)
+	if err == nil {
+		t.Fatalf("expected error for missing agent dir, got profile=%+v", agentConfig)
 	}
 	if agentConfig != nil {
-		t.Errorf("expected nil profile, got %+v", agentConfig)
+		t.Errorf("expected nil profile alongside error, got %+v", agentConfig)
 	}
 }
 
