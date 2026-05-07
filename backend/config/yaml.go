@@ -26,27 +26,140 @@ type yamlModelEntry struct {
 	TimeoutSeconds int     `yaml:"timeout_seconds"`
 }
 
+// The block below mirrors every top-level section of
+// yaml/config.yaml. Most types are private to this package —
+// they're shapes we want to be able to parse cleanly even when
+// the loader doesn't yet wire the values through to schema.Config.
+// Once a section gains a real consumer, lift its type into the
+// schema package and route it through Load() / yamlExtras.
+
+type yamlTokenUsage struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+type yamlToolGroup struct {
+	Name string `yaml:"name"`
+}
+
+// yamlTool captures the heterogeneous `tools:` entries. Three
+// fields are universal (name/group/use); everything else (max_
+// results, timeout, api_key, search_type, ...) varies per tool
+// so we collect it into Extra via yaml's inline map convention.
+type yamlTool struct {
+	Name  string         `yaml:"name"`
+	Group string         `yaml:"group"`
+	Use   string         `yaml:"use"`
+	Extra map[string]any `yaml:",inline"`
+}
+
+type yamlUploads struct {
+	AutoConvertDocuments bool   `yaml:"auto_convert_documents"`
+	PDFConverter         string `yaml:"pdf_converter"`
+}
+
+type yamlSandboxMount struct {
+	HostPath      string `yaml:"host_path"`
+	ContainerPath string `yaml:"container_path"`
+	ReadOnly      bool   `yaml:"read_only"`
+}
+
+type yamlSandbox struct {
+	Use           string             `yaml:"use"`
+	AllowHostBash bool               `yaml:"allow_host_bash"`
+	Mounts        []yamlSandboxMount `yaml:"mounts"`
+}
+
+type yamlTitle struct {
+	Enabled   bool   `yaml:"enabled"`
+	MaxWords  int    `yaml:"max_words"`
+	MaxChars  int    `yaml:"max_chars"`
+	ModelName string `yaml:"model_name"`
+}
+
+// yamlSummarizationThreshold backs both `trigger:` (a list) and
+// `keep:` (a single record). Value is float64 because legitimate
+// configs mix integer counts (tokens/messages) with fractional
+// ratios (`type: fraction, value: 0.8`).
+type yamlSummarizationThreshold struct {
+	Type  string  `yaml:"type"`
+	Value float64 `yaml:"value"`
+}
+
+type yamlSummarization struct {
+	Enabled                           bool                         `yaml:"enabled"`
+	ModelName                         string                       `yaml:"model_name"`
+	Trigger                           []yamlSummarizationThreshold `yaml:"trigger"`
+	Keep                              yamlSummarizationThreshold   `yaml:"keep"`
+	TrimTokensToSummarize             int                          `yaml:"trim_tokens_to_summarize"`
+	SummaryPrompt                     string                       `yaml:"summary_prompt"`
+	PreserveRecentSkillCount          int                          `yaml:"preserve_recent_skill_count"`
+	PreserveRecentSkillTokens         int                          `yaml:"preserve_recent_skill_tokens"`
+	PreserveRecentSkillTokensPerSkill int                          `yaml:"preserve_recent_skill_tokens_per_skill"`
+	SkillFileReadToolNames            []string                     `yaml:"skill_file_read_tool_names"`
+}
+
+type yamlMemory struct {
+	Enabled                 bool    `yaml:"enabled"`
+	StoragePath             string  `yaml:"storage_path"`
+	DebounceSeconds         int     `yaml:"debounce_seconds"`
+	ModelName               string  `yaml:"model_name"`
+	MaxFacts                int     `yaml:"max_facts"`
+	FactConfidenceThreshold float64 `yaml:"fact_confidence_threshold"`
+	InjectionEnabled        bool    `yaml:"injection_enabled"`
+	MaxInjectionTokens      int     `yaml:"max_injection_tokens"`
+}
+
+type yamlAgentsAPI struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+type yamlSkillEvolution struct {
+	Enabled             bool   `yaml:"enabled"`
+	ModerationModelName string `yaml:"moderation_model_name"`
+}
+
+type yamlCheckpointer struct {
+	Type             string `yaml:"type"`
+	ConnectionString string `yaml:"connection_string"`
+}
+
 // yamlFileConfig is the wire shape we unmarshal config.yaml into.
-// Field set is deliberately a strict subset of yaml/config.yaml's
-// top-level sections — only the keys that actually appear in the
-// file are declared here. Sections we don't (yet) consume
-// (config_version, log_level, token_usage, tool_groups, tools,
-// uploads, sandbox, title, summarization, memory, agents_api,
-// skill_evolution, checkpointer) are intentionally omitted; add a
-// field here once a code path needs to read them.
+// Field set mirrors yaml/config.yaml's top-level sections one-for-
+// one, in the order they appear in the file. Sections that don't
+// yet have a downstream consumer are still parsed so that:
+//   - the struct documents the file's full shape;
+//   - typo'd or unknown top-level keys won't be silently swallowed
+//     — yaml.v3 still won't error on them by default, but at
+//     least the canonical names live here as a reference;
+//   - adding a consumer later is just "expose this field via
+//     yamlExtras / schema.Config", no schema spelunking required.
 //
-// Default-agent / agent / ACP configuration does NOT live in YAML
-// — it's resolved entirely from environment variables and built-in
-// defaults inside config.normalizeConfig.
+// Default-agent / agent / ACP configuration intentionally has no
+// field here — those are resolved entirely from env vars + built-
+// in defaults inside config.normalizeConfig, and the YAML doesn't
+// declare them.
 //
-// Models keeps its own private mirror because it carries legacy
-// aliases (api_base, api_key=$ENV, timeout float→int) that need
-// post-unmarshal normalisation in this loader.
+// Models / yamlTool keep their own private mirrors because they
+// carry legacy aliases or heterogeneous extras that the YAML
+// decoder can't express directly.
 type yamlFileConfig struct {
-	DefaultModel string                  `yaml:"default_model"`
-	Models       []yamlModelEntry        `yaml:"models"`
-	ToolSearch   schema.ToolSearchConfig `yaml:"tool_search"`
-	Skills       schema.SkillsConfig     `yaml:"skills"`
+	DefaultModel   string                  `yaml:"default_model"`
+	ConfigVersion  int                     `yaml:"config_version"`
+	LogLevel       string                  `yaml:"log_level"`
+	TokenUsage     yamlTokenUsage          `yaml:"token_usage"`
+	Models         []yamlModelEntry        `yaml:"models"`
+	ToolGroups     []yamlToolGroup         `yaml:"tool_groups"`
+	Tools          []yamlTool              `yaml:"tools"`
+	ToolSearch     schema.ToolSearchConfig `yaml:"tool_search"`
+	Uploads        yamlUploads             `yaml:"uploads"`
+	Sandbox        yamlSandbox             `yaml:"sandbox"`
+	Skills         schema.SkillsConfig     `yaml:"skills"`
+	Title          yamlTitle               `yaml:"title"`
+	Summarization  yamlSummarization       `yaml:"summarization"`
+	Memory         yamlMemory              `yaml:"memory"`
+	AgentsAPI      yamlAgentsAPI           `yaml:"agents_api"`
+	SkillEvolution yamlSkillEvolution      `yaml:"skill_evolution"`
+	Checkpointer   yamlCheckpointer        `yaml:"checkpointer"`
 }
 
 // yamlExtras bundles the non-model sections so the caller can fold them into
