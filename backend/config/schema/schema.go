@@ -100,16 +100,16 @@ type ACPConfig struct {
 }
 
 type Config struct {
-	RootDir       string `json:"root_dir"`
-	StateDir      string `json:"state_dir"`
-	SessionsDir   string `json:"sessions_dir"`
-	MemoryDir     string `json:"memory_dir"`
-	CheckpointDir string `json:"checkpoint_dir"`
+	RootDir        string `json:"root_dir"`
+	PersistenceDir string `json:"persistence_dir"`
+	SessionsDir    string `json:"sessions_dir"`
+	MemoryDir      string `json:"memory_dir"`
+	CheckpointDir  string `json:"checkpoint_dir"`
 
 	DefaultModel string                  `json:"default_model"`
 	Models       map[string]*ModelConfig `json:"models"`
-	DefaultAgent string                 `json:"default_agent"`
-	Agents       map[string]AgentConfig `json:"agents"`
+	DefaultAgent string                  `json:"default_agent"`
+	Agents       map[string]AgentConfig  `json:"agents"`
 
 	RuntimeModel   string `json:"runtime_model"`
 	RuntimeTimeout int    `json:"runtime_timeout"`

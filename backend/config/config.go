@@ -29,7 +29,7 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("get working directory: %w", err)
 	}
 
-	stateDir := filepath.Join(root, ".eino-cli")
+	persistenceDir := filepath.Join(root, ".eino-cli")
 
 	yamlPath := filepath.Join(root, "yaml", "config.yaml")
 	yamlModels, yamlExtras, err := loadFromYAML(yamlPath)
@@ -44,11 +44,11 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		RootDir:       root,
-		StateDir:      stateDir,
-		SessionsDir:   filepath.Join(stateDir, "sessions"),
-		MemoryDir:     filepath.Join(stateDir, "memory"),
-		CheckpointDir: filepath.Join(stateDir, "checkpoints"),
+		RootDir:        root,
+		PersistenceDir: persistenceDir,
+		SessionsDir:    filepath.Join(persistenceDir, "sessions"),
+		MemoryDir:      filepath.Join(persistenceDir, "memory"),
+		CheckpointDir:  filepath.Join(persistenceDir, "checkpoints"),
 
 		RuntimeModel:   envOrDefault("EINO_RUNTIME_MODEL", defaultRuntimeModel),
 		RuntimeTimeout: envOrDefaultInt("EINO_RUNTIME_TIMEOUT", defaultRuntimeTimeout),
@@ -196,10 +196,10 @@ func defaultAPIKeyEnv(provider string) string {
 }
 
 func ensureDirs(cfg Config) error {
-	for _, dir := range []string{cfg.StateDir, cfg.SessionsDir, cfg.MemoryDir, cfg.CheckpointDir} {
+	for _, dir := range []string{cfg.PersistenceDir, cfg.SessionsDir, cfg.MemoryDir, cfg.CheckpointDir} {
 		err := os.MkdirAll(dir, 0o755)
 		if err != nil {
-			return fmt.Errorf("create state directory %s: %w", dir, err)
+			return fmt.Errorf("create persistence directory %s: %w", dir, err)
 		}
 	}
 
