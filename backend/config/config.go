@@ -121,7 +121,38 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 	cfg.Agents[agentKey] = agent
 
+	cfg.Skills = appendDefaultSkillsPath(cfg.RootDir, cfg.Skills)
+
 	return cfg, validateConfig(cfg)
+}
+
+// appendDefaultSkillsPath wires up the vendored skill catalog at
+// $RootDir/backend/skills as a default scan target. Mirrors deerflow's
+// "skills root sits next to backend/" convention without hard-coding
+// the absolute path: if the directory exists at runtime we add it,
+// otherwise we silently skip so deployments without the vendored
+// catalog (lighter container images, CI smoke configs) keep working.
+//
+// The path is appended (not prepended) so any user-configured paths
+// in config.yaml retain priority for same-name overrides — matches
+// loader.LoadFromPaths' "first occurrence wins for flat layouts"
+// dedup rule.
+func appendDefaultSkillsPath(rootDir string, sc SkillsConfig) SkillsConfig {
+	if rootDir == "" {
+		return sc
+	}
+	candidate := filepath.Join(rootDir, "backend", "skills")
+	info, err := os.Stat(candidate)
+	if err != nil || !info.IsDir() {
+		return sc
+	}
+	for _, existing := range sc.Paths {
+		if existing == candidate {
+			return sc
+		}
+	}
+	sc.Paths = append(sc.Paths, candidate)
+	return sc
 }
 
 func validateConfig(cfg Config) error {

@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 
 func TestNormalizeConfigKeepsExplicitNewFields(t *testing.T) {
@@ -96,6 +100,44 @@ func TestValidateConfigRequiresAPIKeyOrEnv(t *testing.T) {
 	if err := validateConfig(withLiteral); err != nil {
 		t.Fatalf("validateConfig should accept literal api key: %v", err)
 	}
+}
+
+func TestAppendDefaultSkillsPath(t *testing.T) {
+	root := t.TempDir()
+	want := filepath.Join(root, "backend", "skills")
+
+	t.Run("missing dir is a no-op", func(t *testing.T) {
+		got := appendDefaultSkillsPath(root, SkillsConfig{})
+		if len(got.Paths) != 0 {
+			t.Fatalf("expected no paths when backend/skills is missing, got %v", got.Paths)
+		}
+	})
+
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	t.Run("appends when present", func(t *testing.T) {
+		got := appendDefaultSkillsPath(root, SkillsConfig{})
+		if len(got.Paths) != 1 || got.Paths[0] != want {
+			t.Fatalf("paths: got %v, want [%q]", got.Paths, want)
+		}
+	})
+
+	t.Run("idempotent when already configured", func(t *testing.T) {
+		sc := SkillsConfig{Paths: []string{want, "/other/path"}}
+		got := appendDefaultSkillsPath(root, sc)
+		if len(got.Paths) != 2 {
+			t.Fatalf("expected 2 paths preserved, got %v", got.Paths)
+		}
+	})
+
+	t.Run("empty root short-circuits", func(t *testing.T) {
+		got := appendDefaultSkillsPath("", SkillsConfig{Paths: []string{"/x"}})
+		if len(got.Paths) != 1 || got.Paths[0] != "/x" {
+			t.Fatalf("empty root must not mutate input: got %v", got.Paths)
+		}
+	})
 }
 
 func TestDefaultAPIKeyEnv(t *testing.T) {

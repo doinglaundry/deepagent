@@ -99,6 +99,84 @@ func TestLoadFromPaths_MissingPathSilentlySkipped(t *testing.T) {
 	}
 }
 
+func TestLoadFromPaths_PublicCustomCategoryRoot(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "public", "shared", "SKILL.md"),
+		"---\nname: shared\ndescription: Built-in copy.\n---\n")
+	mustWrite(t, filepath.Join(root, "public", "only-public", "SKILL.md"),
+		"---\nname: only-public\ndescription: Public skill.\n---\n")
+	mustWrite(t, filepath.Join(root, "custom", "shared", "SKILL.md"),
+		"---\nname: shared\ndescription: Custom override.\n---\n")
+	mustWrite(t, filepath.Join(root, "custom", "only-custom", "SKILL.md"),
+		"---\nname: only-custom\ndescription: Custom skill.\n---\n")
+
+	got, err := LoadFromPaths([]string{root})
+	if err != nil {
+		t.Fatalf("LoadFromPaths: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 skills (shared deduped), got %d: %+v", len(got), got)
+	}
+
+	by := map[string]Skill{}
+	for _, s := range got {
+		by[s.Name] = s
+	}
+
+	shared, ok := by["shared"]
+	if !ok {
+		t.Fatalf("shared not loaded")
+	}
+	if shared.Category != "custom" || shared.Description != "Custom override." {
+		t.Fatalf("custom must override public for 'shared': %+v", shared)
+	}
+
+	pub, ok := by["only-public"]
+	if !ok || pub.Category != "public" {
+		t.Fatalf("only-public must be public-categorised: %+v", pub)
+	}
+
+	cus, ok := by["only-custom"]
+	if !ok || cus.Category != "custom" {
+		t.Fatalf("only-custom must be custom-categorised: %+v", cus)
+	}
+}
+
+func TestLoadFromPaths_NewFieldsPopulated(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "skill-x", "SKILL.md"),
+		`---
+name: skill-x
+description: Has a license field.
+license: MIT
+---
+
+Body.
+`)
+
+	got, err := LoadFromPaths([]string{root})
+	if err != nil {
+		t.Fatalf("LoadFromPaths: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d skills, want 1", len(got))
+	}
+	s := got[0]
+	if s.License != "MIT" {
+		t.Fatalf("License: got %q, want MIT", s.License)
+	}
+	if s.RelativePath != "skill-x" {
+		t.Fatalf("RelativePath: got %q, want skill-x", s.RelativePath)
+	}
+	wantDir := filepath.Join(root, "skill-x")
+	if s.SkillDir != wantDir {
+		t.Fatalf("SkillDir: got %q, want %q", s.SkillDir, wantDir)
+	}
+	if !s.Enabled {
+		t.Fatalf("Enabled should default to true at load time")
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

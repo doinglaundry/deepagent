@@ -87,10 +87,19 @@ type AgentConfig struct {
 }
 
 // SkillsConfig drives the SKILL.md scanner used to populate the
-// <available_skills> prompt section. Each path is expanded with ~ and
-// scanned one level deep for "<name>/SKILL.md".
+// <available_skills> prompt section. Each path is expanded with ~
+// and either scanned one level deep ("<name>/SKILL.md", legacy
+// flat layout) or two levels deep ("public|custom/<name>/SKILL.md",
+// deerflow layout — picked automatically when the directory has a
+// public/ or custom/ subdir).
+//
+// Enabled maps skill name -> on/off. Mirrors deerflow's
+// extensions_config.json `skills` map but is co-located here so
+// LLM can stay single-file-config. Unlisted skills default to
+// enabled, matching deerflow's "public/custom default true" rule.
 type SkillsConfig struct {
-	Paths []string `json:"paths,omitempty" yaml:"paths,omitempty"`
+	Paths   []string        `json:"paths,omitempty"   yaml:"paths,omitempty"`
+	Enabled map[string]bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 }
 
 // DeferredToolEntry describes a tool that is registered but not loaded by

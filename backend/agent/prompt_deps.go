@@ -51,7 +51,7 @@ func BuildPromptDeps(cfg config.Config, opts PromptDepsOptions) *PromptDeps {
 	loader := opts.SkillLoader
 	if loader == nil {
 		paths := append([]string(nil), cfg.Skills.Paths...)
-		loader = makeCachedSkillLoader(paths)
+		loader = makeCachedSkillLoader(paths, cfg.Skills.Enabled)
 	}
 	deps.LoadSkills = loader
 
@@ -122,11 +122,14 @@ func DeferredToolNamesFromConfig(cfg config.Config) func() []string {
 	return func() []string { return names }
 }
 
-// makeCachedSkillLoader returns a closure that scans the given paths once
-// and caches the result for the lifetime of the closure. Wrap this in a
-// mutex-guarded sync.Once so concurrent first-touch from multiple REPL
-// turns doesn't double-scan.
-func makeCachedSkillLoader(paths []string) func() []Skill {
+// makeCachedSkillLoader returns a closure that scans the given paths
+// once and caches the result for the lifetime of the closure.
+// sync.Once guards concurrent first-touch (multiple agent invocations
+// from the TUI / smoke runs share one process). The enabled map is
+// applied at scan time so disabled skills never reach the prompt; an
+// empty map means "use deerflow defaults" (every public/custom skill
+// enabled).
+func makeCachedSkillLoader(paths []string, enabled map[string]bool) func() []Skill {
 	if len(paths) == 0 {
 		return func() []Skill { return nil }
 	}
@@ -145,6 +148,9 @@ func makeCachedSkillLoader(paths []string) func() []Skill {
 			}
 			cached = make([]Skill, 0, len(loaded))
 			for _, s := range loaded {
+				if !skills.IsEnabled(s.Name, s.Category, enabled) {
+					continue
+				}
 				cached = append(cached, Skill{
 					Name:        s.Name,
 					Description: s.Description,
