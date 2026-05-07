@@ -44,12 +44,6 @@ func Load() (Config, error) {
 	cfg.RuntimeTimeout = envOrDefaultInt("EINO_RUNTIME_TIMEOUT", defaultRuntimeTimeout)
 	cfg.DefaultAgent = envOrDefault("EINO_DEFAULT_AGENT", "")
 
-	// DefaultModel still comes from the built-in fallback. The YAML
-	// `default_model:` field is parsed into cfg.DefaultModel by the
-	// decoder, but we deliberately overwrite it until that switch
-	// is wired through. Drop this line to honour the YAML value.
-	cfg.DefaultModel = defaultYAMLModel
-
 	normalized, err := normalizeConfig(*cfg)
 	if err != nil {
 		return Config{}, err
@@ -65,7 +59,15 @@ func Load() (Config, error) {
 func normalizeConfig(cfg Config) (Config, error) {
 	// Fill missing fields for the default model loaded from YAML.
 	defaultModel := strings.TrimSpace(cfg.DefaultModel)
-	mc := cfg.Models[defaultModel]
+	mc, ok := cfg.Models[defaultModel]
+	if !ok || mc == nil {
+		// validateConfig owns the canonical "default_model required"
+		// and "default_model not in models map" error messages; bail
+		// out to it before the field-fill block below dereferences
+		// mc, otherwise an empty/missing yaml `default_model:` would
+		// nil-panic instead of erroring cleanly.
+		return cfg, validateConfig(cfg)
+	}
 	if strings.TrimSpace(mc.Name) == "" {
 		mc.Name = defaultModel
 	}
