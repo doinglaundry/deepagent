@@ -27,29 +27,33 @@ type yamlModelEntry struct {
 }
 
 // yamlFileConfig is the wire shape we unmarshal config.yaml into.
-// Every field except Models targets a schema type directly — that's
-// possible because schema.* types now carry both json and yaml tags.
+// Field set is deliberately a strict subset of yaml/config.yaml's
+// top-level sections — only the keys that actually appear in the
+// file are declared here. Sections we don't (yet) consume
+// (config_version, log_level, token_usage, tool_groups, tools,
+// uploads, sandbox, title, summarization, memory, agents_api,
+// skill_evolution, checkpointer) are intentionally omitted; add a
+// field here once a code path needs to read them.
+//
+// Default-agent / agent / ACP configuration does NOT live in YAML
+// — it's resolved entirely from environment variables and built-in
+// defaults inside config.normalizeConfig.
+//
 // Models keeps its own private mirror because it carries legacy
 // aliases (api_base, api_key=$ENV, timeout float→int) that need
 // post-unmarshal normalisation in this loader.
 type yamlFileConfig struct {
-	DefaultModel string                        `yaml:"default_model"`
-	DefaultAgent string                        `yaml:"default_agent"`
-	Models       []yamlModelEntry              `yaml:"models"`
-	Agents       map[string]schema.AgentConfig `yaml:"agents"`
-	Skills       schema.SkillsConfig           `yaml:"skills"`
-	ToolSearch   schema.ToolSearchConfig       `yaml:"tool_search"`
-	ACP          schema.ACPConfig              `yaml:"acp"`
+	DefaultModel string                  `yaml:"default_model"`
+	Models       []yamlModelEntry        `yaml:"models"`
+	ToolSearch   schema.ToolSearchConfig `yaml:"tool_search"`
+	Skills       schema.SkillsConfig     `yaml:"skills"`
 }
 
 // yamlExtras bundles the non-model sections so the caller can fold them into
 // schema.Config alongside the models map.
 type yamlExtras struct {
-	DefaultAgent string
-	Agents       map[string]schema.AgentConfig
-	Skills       schema.SkillsConfig
-	ToolSearch   schema.ToolSearchConfig
-	ACP          schema.ACPConfig
+	Skills     schema.SkillsConfig
+	ToolSearch schema.ToolSearchConfig
 }
 
 func loadFromYAML(path string) (map[string]*schema.ModelConfig, yamlExtras, error) {
@@ -65,24 +69,13 @@ func loadFromYAML(path string) (map[string]*schema.ModelConfig, yamlExtras, erro
 		return nil, yamlExtras{}, fmt.Errorf("parse yaml config: %w", err)
 	}
 
-	// fc.Skills / fc.ToolSearch / fc.ACP / fc.Agents are already the
-	// right schema types — yaml.Unmarshal populated them in place.
-	// We only own per-field normalisations that the YAML decoder
-	// can't express: Name fallback to map key, whitespace trim on
-	// Model, dropping deferred entries with blank names.
+	// fc.Skills and fc.ToolSearch are already the right schema
+	// types — yaml.Unmarshal populated them in place. We only own
+	// per-field normalisations that the YAML decoder can't
+	// express: dropping deferred entries with blank names.
 	extras := yamlExtras{
-		DefaultAgent: strings.TrimSpace(fc.DefaultAgent),
-		Skills:       fc.Skills,
-		ToolSearch:   fc.ToolSearch,
-		ACP:          fc.ACP,
-		Agents:       fc.Agents,
-	}
-	for key, a := range extras.Agents {
-		if strings.TrimSpace(a.Name) == "" {
-			a.Name = key
-		}
-		a.Model = strings.TrimSpace(a.Model)
-		extras.Agents[key] = a
+		Skills:     fc.Skills,
+		ToolSearch: fc.ToolSearch,
 	}
 	if len(extras.ToolSearch.Deferred) > 0 {
 		filtered := extras.ToolSearch.Deferred[:0]

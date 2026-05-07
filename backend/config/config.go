@@ -31,16 +31,10 @@ func Load() (Config, error) {
 
 	persistenceDir := filepath.Join(root, ".eino-cli")
 
-	yamlPath := filepath.Join(root, "yaml", "config.yaml")
-	yamlModels, yamlExtras, err := loadFromYAML(yamlPath)
+	configPath := filepath.Join(root, "yaml", "config.yaml")
+	yamlModels, yamlExtras, err := loadFromYAML(configPath)
 	if err != nil {
 		return Config{}, fmt.Errorf("load yaml config: %w", err)
-	}
-
-	defaultAgentFromEnv := envOrDefault("EINO_DEFAULT_AGENT", "")
-	defaultAgent := defaultAgentFromEnv
-	if defaultAgent == "" {
-		defaultAgent = yamlExtras.DefaultAgent
 	}
 
 	cfg := Config{
@@ -53,15 +47,19 @@ func Load() (Config, error) {
 		RuntimeModel:   envOrDefault("EINO_RUNTIME_MODEL", defaultRuntimeModel),
 		RuntimeTimeout: envOrDefaultInt("EINO_RUNTIME_TIMEOUT", defaultRuntimeTimeout),
 
+		// DefaultModel comes from the built-in fallback for now;
+		// yamlFileConfig.DefaultModel exists to mirror the YAML
+		// schema but is not wired through (default is hardcoded
+		// to "kimi" in defaultYAMLModel).
 		DefaultModel: defaultYAMLModel,
-		DefaultAgent: defaultAgent,
+		// DefaultAgent has no YAML source — env override or
+		// built-in default ("default") chosen in normalizeConfig.
+		DefaultAgent: envOrDefault("EINO_DEFAULT_AGENT", ""),
 
 		Models: yamlModels,
-		Agents: yamlExtras.Agents,
 
 		Skills:     yamlExtras.Skills,
 		ToolSearch: yamlExtras.ToolSearch,
-		ACP:        yamlExtras.ACP,
 	}
 
 	normalized, err := normalizeConfig(cfg)
