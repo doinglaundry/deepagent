@@ -129,21 +129,29 @@ type ACPConfig struct {
 	Agents map[string]ACPAgentEntry `json:"agents,omitempty" yaml:"agents,omitempty"`
 }
 
-// Config is the application's single source of truth, carrying both
-// runtime-derived fields (from os.Getwd / env vars / defaults) and
-// YAML-sourced fields (from yaml/config.yaml) in one struct. Runtime
-// fields are tagged yaml:"-" so the decoder leaves them alone;
-// YAML-sourced fields use Config.UnmarshalYAML (see yaml.go), which
-// also handles the wire-shape translation for `models:`.
+// Config is the application's single source of truth. It carries
+// two layers in one struct:
 //
-// Only the sections currently consumed downstream live here. YAML
-// keys not declared on this struct are silently ignored by yaml.v3,
-// which is fine for documentation-only sections in the file
-// (config_version, log_level, token_usage, tool_groups, tools,
-// uploads, sandbox, title, summarization, memory, agents_api,
-// skill_evolution, checkpointer). Wiring any of them up means
-// adding the field here AND routing it through the relevant
-// builder (BuildAppConfig, BuildPromptDeps, ...).
+//   - Runtime fields populated by Load() from os.Getwd / env vars /
+//     built-in defaults. Tagged yaml:"-" so yaml.Unmarshal skips
+//     them and they survive a YAML decode.
+//
+//   - YAML fields populated by Config.UnmarshalYAML (defined in
+//     yaml.go) directly from yaml/config.yaml. Tags mirror the
+//     file's top-level keys one-for-one, so a typo on either side
+//     is immediately visible against the canonical declarations
+//     here.
+//
+// This replaces an older "Config + FileConfig" split. The split
+// existed because YAML's `models:` is a list while runtime needs
+// map[string]*ModelConfig. UnmarshalYAML now performs that
+// translation in-place via the alias trick (see yaml.go), so
+// downstream packages see exactly one config type.
+//
+// New top-level YAML sections only need to be declared here once
+// — UnmarshalYAML's alias handles them automatically. Sections
+// without a runtime consumer carry json:"-" so they don't leak
+// into JSON dumps.
 type Config struct {
 	RootDir        string `json:"root_dir"        yaml:"-"`
 	PersistenceDir string `json:"persistence_dir" yaml:"-"`
@@ -151,14 +159,32 @@ type Config struct {
 	MemoryDir      string `json:"memory_dir"      yaml:"-"`
 	CheckpointDir  string `json:"checkpoint_dir"  yaml:"-"`
 
-	RuntimeTimeout int `json:"runtime_timeout" yaml:"-"`
+	RuntimeModel   string `json:"runtime_model"   yaml:"-"`
+	RuntimeTimeout int    `json:"runtime_timeout" yaml:"-"`
 
-	DefaultAgent string                 `json:"default_agent" yaml:"-"`
-	Agents       map[string]AgentConfig `json:"agents"        yaml:"-"`
-	ACP          ACPConfig              `json:"acp,omitempty" yaml:"-"`
+	DefaultAgent string                 `json:"default_agent"   yaml:"-"`
+	Agents       map[string]AgentConfig `json:"agents"          yaml:"-"`
+	ACP          ACPConfig              `json:"acp,omitempty"   yaml:"-"`
 
-	DefaultModel string                  `json:"default_model"         yaml:"default_model"`
-	Models       map[string]*ModelConfig `json:"models"                yaml:"-"` // built from the YAML list via UnmarshalYAML + normalizeModels
-	ToolSearch   ToolSearchConfig        `json:"tool_search,omitempty" yaml:"tool_search"`
-	Skills       SkillsConfig            `json:"skills,omitempty"      yaml:"skills"`
+	// Fields below this line are sourced from yaml/config.yaml. The
+	// order matches the file's top-level sections so a side-by-side
+	// read remains easy.
+
+	DefaultModel   string                  `json:"default_model"           yaml:"default_model"`
+	ConfigVersion  int                     `json:"-"                       yaml:"config_version"`
+	LogLevel       string                  `json:"-"                       yaml:"log_level"`
+	TokenUsage     TokenUsage              `json:"-"                       yaml:"token_usage"`
+	Models         map[string]*ModelConfig `json:"models"                  yaml:"-"` // built from the YAML list via UnmarshalYAML + normalizeModels
+	ToolGroups     []ToolGroup             `json:"-"                       yaml:"tool_groups"`
+	Tools          []Tool                  `json:"-"                       yaml:"tools"`
+	ToolSearch     ToolSearchConfig        `json:"tool_search,omitempty"   yaml:"tool_search"`
+	Uploads        Uploads                 `json:"-"                       yaml:"uploads"`
+	Sandbox        Sandbox                 `json:"-"                       yaml:"sandbox"`
+	Skills         SkillsConfig            `json:"skills,omitempty"        yaml:"skills"`
+	Title          Title                   `json:"-"                       yaml:"title"`
+	Summarization  Summarization           `json:"-"                       yaml:"summarization"`
+	Memory         Memory                  `json:"-"                       yaml:"memory"`
+	AgentsAPI      AgentsAPI               `json:"-"                       yaml:"agents_api"`
+	SkillEvolution SkillEvolution          `json:"-"                       yaml:"skill_evolution"`
+	Checkpointer   Checkpointer            `json:"-"                       yaml:"checkpointer"`
 }

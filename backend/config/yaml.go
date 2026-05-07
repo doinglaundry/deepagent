@@ -26,6 +26,107 @@ type ModelEntry struct {
 	TimeoutSeconds int     `yaml:"timeout_seconds"`
 }
 
+// The block below mirrors every top-level section of
+// yaml/config.yaml. Types are exported and live in this package
+// so the YAML structure has a single authoritative declaration —
+// no more `schema.*` vs `yaml*` parallel definitions. Sections
+// without a runtime consumer are still parsed so that:
+//   - the struct documents the file's full shape;
+//   - typo'd or unknown top-level keys are easy to track down
+//     against the canonical names declared here.
+// Once a section gains a real consumer, expose it through Load()
+// or the loader's return value.
+
+type TokenUsage struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+type ToolGroup struct {
+	Name string `yaml:"name"`
+}
+
+// Tool captures the heterogeneous `tools:` entries. Three fields
+// are universal (name/group/use); everything else (max_results,
+// timeout, api_key, search_type, ...) varies per tool so we
+// collect it into Extra via yaml's inline map convention.
+type Tool struct {
+	Name  string         `yaml:"name"`
+	Group string         `yaml:"group"`
+	Use   string         `yaml:"use"`
+	Extra map[string]any `yaml:",inline"`
+}
+
+type Uploads struct {
+	AutoConvertDocuments bool   `yaml:"auto_convert_documents"`
+	PDFConverter         string `yaml:"pdf_converter"`
+}
+
+type SandboxMount struct {
+	HostPath      string `yaml:"host_path"`
+	ContainerPath string `yaml:"container_path"`
+	ReadOnly      bool   `yaml:"read_only"`
+}
+
+type Sandbox struct {
+	Use           string         `yaml:"use"`
+	AllowHostBash bool           `yaml:"allow_host_bash"`
+	Mounts        []SandboxMount `yaml:"mounts"`
+}
+
+type Title struct {
+	Enabled   bool   `yaml:"enabled"`
+	MaxWords  int    `yaml:"max_words"`
+	MaxChars  int    `yaml:"max_chars"`
+	ModelName string `yaml:"model_name"`
+}
+
+// SummarizationThreshold backs both `trigger:` (a list) and
+// `keep:` (a single record). Value is float64 because legitimate
+// configs mix integer counts (tokens/messages) with fractional
+// ratios (`type: fraction, value: 0.8`).
+type SummarizationThreshold struct {
+	Type  string  `yaml:"type"`
+	Value float64 `yaml:"value"`
+}
+
+type Summarization struct {
+	Enabled                           bool                     `yaml:"enabled"`
+	ModelName                         string                   `yaml:"model_name"`
+	Trigger                           []SummarizationThreshold `yaml:"trigger"`
+	Keep                              SummarizationThreshold   `yaml:"keep"`
+	TrimTokensToSummarize             int                      `yaml:"trim_tokens_to_summarize"`
+	SummaryPrompt                     string                   `yaml:"summary_prompt"`
+	PreserveRecentSkillCount          int                      `yaml:"preserve_recent_skill_count"`
+	PreserveRecentSkillTokens         int                      `yaml:"preserve_recent_skill_tokens"`
+	PreserveRecentSkillTokensPerSkill int                      `yaml:"preserve_recent_skill_tokens_per_skill"`
+	SkillFileReadToolNames            []string                 `yaml:"skill_file_read_tool_names"`
+}
+
+type Memory struct {
+	Enabled                 bool    `yaml:"enabled"`
+	StoragePath             string  `yaml:"storage_path"`
+	DebounceSeconds         int     `yaml:"debounce_seconds"`
+	ModelName               string  `yaml:"model_name"`
+	MaxFacts                int     `yaml:"max_facts"`
+	FactConfidenceThreshold float64 `yaml:"fact_confidence_threshold"`
+	InjectionEnabled        bool    `yaml:"injection_enabled"`
+	MaxInjectionTokens      int     `yaml:"max_injection_tokens"`
+}
+
+type AgentsAPI struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+type SkillEvolution struct {
+	Enabled             bool   `yaml:"enabled"`
+	ModerationModelName string `yaml:"moderation_model_name"`
+}
+
+type Checkpointer struct {
+	Type             string `yaml:"type"`
+	ConnectionString string `yaml:"connection_string"`
+}
+
 // UnmarshalYAML bridges the one wire/runtime mismatch that prevents
 // Config from being a plain yaml.Unmarshal target: yaml's `models:`
 // is a list of ModelEntry (with legacy aliases like api_base /
