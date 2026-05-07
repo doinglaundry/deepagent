@@ -164,11 +164,12 @@ type FileConfig struct {
 	Checkpointer   Checkpointer     `yaml:"checkpointer"`
 }
 
-// loadFromYAML reads, parses, and lightly cleans the YAML file. It
-// owns only the normalisations the YAML decoder can't express
-// directly (e.g. dropping deferred entries with blank names); wire-
-// shape → runtime-shape transformation lives in normalizeModels and
-// the rest of the caller's pipeline.
+// loadFromYAML reads and parses the YAML file. Wire-shape →
+// runtime-shape transformation lives in normalizeModels and the
+// rest of the caller's pipeline; this function deliberately does
+// no semantic normalisation, so a malformed entry (e.g. a
+// deferred-tool record with a blank name) surfaces downstream as
+// a validation error rather than getting silently dropped here.
 //
 // Returns the populated FileConfig directly. The caller picks the
 // fields it needs (fc.Skills / fc.ToolSearch / ...) — there's no
@@ -183,17 +184,6 @@ func loadFromYAML(path string) (*FileConfig, error) {
 	var fc FileConfig
 	if err = yaml.Unmarshal(data, &fc); err != nil {
 		return nil, fmt.Errorf("parse yaml config: %w", err)
-	}
-
-	if len(fc.ToolSearch.Deferred) > 0 {
-		filtered := fc.ToolSearch.Deferred[:0]
-		for _, d := range fc.ToolSearch.Deferred {
-			if strings.TrimSpace(d.Name) == "" {
-				continue
-			}
-			filtered = append(filtered, d)
-		}
-		fc.ToolSearch.Deferred = filtered
 	}
 
 	return &fc, nil
