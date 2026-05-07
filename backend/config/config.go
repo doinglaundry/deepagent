@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	defaultRuntimeModel     = "kimi"
 	defaultRuntimeTimeout   = 30
 	defaultAgentKey         = "default"
 	defaultAgentName        = "deep-agent"
@@ -40,7 +39,6 @@ func Load() (Config, error) {
 	cfg.SessionsDir = filepath.Join(persistenceDir, "sessions")
 	cfg.MemoryDir = filepath.Join(persistenceDir, "memory")
 	cfg.CheckpointDir = filepath.Join(persistenceDir, "checkpoints")
-	cfg.RuntimeModel = envOrDefault("EINO_RUNTIME_MODEL", defaultRuntimeModel)
 	cfg.RuntimeTimeout = envOrDefaultInt("EINO_RUNTIME_TIMEOUT", defaultRuntimeTimeout)
 	cfg.DefaultAgent = envOrDefault("EINO_DEFAULT_AGENT", "")
 
@@ -88,7 +86,6 @@ func normalizeConfig(cfg Config) (Config, error) {
 		mc.APIKeyEnv = defaultAPIKeyEnv(mc.Provider)
 	}
 	cfg.Models[defaultModel] = mc
-	cfg.RuntimeModel = defaultModel
 
 	// Build default agent config (agents are not loaded from YAML).
 	if cfg.Agents == nil {
