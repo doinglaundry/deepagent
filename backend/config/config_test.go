@@ -94,3 +94,34 @@ func TestDefaultAPIKeyEnv(t *testing.T) {
 		t.Fatalf("unexpected claude key env: %q", got)
 	}
 }
+
+// When yaml supplies neither api_key nor api_key_env, normalizeConfig
+// falls back to the provider's canonical env via defaultAPIKeyEnv.
+// The yaml loader resolves env-var indirection at decode time, so by
+// the time normalizeConfig runs, an empty mc.APIKey means "nobody
+// supplied a key anywhere" and the provider default takes over.
+func TestNormalizeConfigFallsBackToProviderEnv(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-from-env")
+
+	cfg, err := normalizeConfig(Config{
+		DefaultModel: "primary",
+		Models: map[string]*ModelConfig{
+			"primary": {
+				Name:           "primary",
+				Provider:       "openai",
+				Model:          "gpt-4o",
+				TimeoutSeconds: 20,
+			},
+		},
+		DefaultAgent: "planner",
+		Agents: map[string]AgentConfig{
+			"planner": {Name: "planner-agent", Instruction: "Plan first", MaxIteration: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalizeConfig() error = %v", err)
+	}
+	if got := cfg.Models["primary"].APIKey; got != "sk-from-env" {
+		t.Fatalf("expected APIKey to be filled from OPENAI_API_KEY, got %q", got)
+	}
+}
