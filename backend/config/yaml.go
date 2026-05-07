@@ -1,9 +1,7 @@
 package config
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"strings"
 
@@ -179,9 +177,6 @@ type FileConfig struct {
 func loadFromYAML(path string) (*FileConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return &FileConfig{}, nil
-		}
 		return nil, fmt.Errorf("read yaml config: %w", err)
 	}
 
