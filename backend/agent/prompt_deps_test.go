@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"eino-cli/backend/config"
-	"eino-cli/backend/config/schema"
 )
 
 func TestBuildPromptDeps_SkillsWiredFromConfigPaths(t *testing.T) {
@@ -21,7 +20,7 @@ func TestBuildPromptDeps_SkillsWiredFromConfigPaths(t *testing.T) {
 	}
 
 	cfg := config.Config{
-		Skills: schema.SkillsConfig{Paths: []string{root}},
+		Skills: config.SkillsConfig{Paths: []string{root}},
 	}
 	deps := BuildPromptDeps(cfg, PromptDepsOptions{})
 	if deps.LoadSkills == nil {
@@ -45,15 +44,15 @@ func TestBuildPromptDeps_SkillsWiredFromConfigPaths(t *testing.T) {
 
 func TestBuildPromptDeps_DeferredAndACPWired(t *testing.T) {
 	cfg := config.Config{
-		ToolSearch: schema.ToolSearchConfig{
+		ToolSearch: config.ToolSearchConfig{
 			Enabled: true,
-			Deferred: []schema.DeferredToolEntry{
+			Deferred: []config.DeferredToolEntry{
 				{Name: "web_search", Description: "web search"},
 				{Name: "shell", Description: "shell"},
 			},
 		},
-		ACP: schema.ACPConfig{
-			Agents: map[string]schema.ACPAgentEntry{
+		ACP: config.ACPConfig{
+			Agents: map[string]config.ACPAgentEntry{
 				"codex": {Description: "codex agent"},
 			},
 		},
@@ -125,10 +124,10 @@ func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
 		[]byte("---\nname: demo\ndescription: Demo skill.\n---\n"), 0o644)
 
 	cfg := config.Config{
-		Skills: schema.SkillsConfig{Paths: []string{root}},
-		ToolSearch: schema.ToolSearchConfig{
+		Skills: config.SkillsConfig{Paths: []string{root}},
+		ToolSearch: config.ToolSearchConfig{
 			Enabled: true,
-			Deferred: []schema.DeferredToolEntry{
+			Deferred: []config.DeferredToolEntry{
 				{Name: "fancy_search"},
 			},
 		},

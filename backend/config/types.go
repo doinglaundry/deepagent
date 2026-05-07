@@ -1,4 +1,25 @@
-package schema
+package config
+
+// This file holds the public, runtime-facing type definitions
+// for the config package. It used to live as its own
+// `eino-cli/backend/config/schema` subpackage so downstream
+// packages (agent, runtime/eino) could depend on the types
+// without pulling in the YAML/env loader. In practice every
+// downstream importer already pulls in the parent `config`
+// package via type aliases (`config.Config = schema.Config`,
+// etc.), so the split was generating duplication for no
+// isolation benefit. Merging the types into `config` makes
+// "one config package, one source of truth" the rule.
+//
+// Conventions for new types:
+//   - Public, runtime-facing — used by code outside `config`
+//     (lead agent, runtime factory, prompt deps, ...).
+//     Internal-only YAML wire shapes belong in yaml.go alongside
+//     the loader.
+//   - Carry `json` tags for the runtime view, plus `yaml` tags
+//     when they're embedded directly into FileConfig (i.e. when
+//     YAML and runtime shape happen to coincide — see
+//     SkillsConfig and ToolSearchConfig for examples).
 
 type ModelConfig struct {
 	Name     string `json:"name"`

@@ -85,7 +85,7 @@ func BuildPromptDeps(cfg config.Config, opts PromptDepsOptions) *PromptDeps {
 	return deps
 }
 
-// BuildAppConfig projects schema.Config onto agent.AppConfig (the
+// BuildAppConfig projects config.Config onto agent.AppConfig (the
 // runtime-merged view used by the prompt + middleware chain). Defaults that
 // the Python deerflow runtime applies through code (rather than YAML) are
 // reproduced here so the prompt section gating stays consistent across the

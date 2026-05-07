@@ -6,13 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"eino-cli/backend/config/schema"
 )
-
-type Config = schema.Config
-type ModelConfig = schema.ModelConfig
-type AgentConfig = schema.AgentConfig
 
 const (
 	defaultRuntimeModel     = "kimi"
