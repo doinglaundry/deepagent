@@ -94,7 +94,13 @@ func buildChatModel(
 	reasoningEffort string,
 ) (model.BaseChatModel, error) {
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
-	apiKey := strings.TrimSpace(os.Getenv(strings.TrimSpace(cfg.APIKeyEnv)))
+	// Literal key (cfg.APIKey) wins over env-var lookup. The YAML
+	// loader populates exactly one of these per model entry — see
+	// loadFromYAML for the precedence rules.
+	apiKey := strings.TrimSpace(cfg.APIKey)
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv(strings.TrimSpace(cfg.APIKeyEnv)))
+	}
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 
 	switch provider {

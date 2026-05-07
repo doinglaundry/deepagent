@@ -120,10 +120,19 @@ func loadFromYAML(path string) (map[string]*schema.ModelConfig, yamlExtras, erro
 		} else if m.APIBase != "" {
 			mc.BaseURL = m.APIBase
 		}
-		if m.APIKeyEnv != "" {
+		// API-key resolution precedence:
+		//   1. explicit api_key_env: FOO  -> read $FOO at runtime
+		//   2. api_key: $FOO              -> read $FOO at runtime
+		//   3. api_key: <literal-value>   -> use the literal directly
+		// Literal keys are convenient for local testing; prefer
+		// the env-var forms for shared / source-controlled configs.
+		switch {
+		case m.APIKeyEnv != "":
 			mc.APIKeyEnv = m.APIKeyEnv
-		} else if v, ok := strings.CutPrefix(m.APIKey, "$"); ok {
-			mc.APIKeyEnv = v
+		case strings.HasPrefix(m.APIKey, "$"):
+			mc.APIKeyEnv = strings.TrimPrefix(m.APIKey, "$")
+		case strings.TrimSpace(m.APIKey) != "":
+			mc.APIKey = strings.TrimSpace(m.APIKey)
 		}
 		if m.TimeoutSeconds > 0 {
 			mc.TimeoutSeconds = m.TimeoutSeconds

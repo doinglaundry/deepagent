@@ -11,7 +11,6 @@ import (
 )
 
 type Config = schema.Config
-
 type ModelConfig = schema.ModelConfig
 type AgentConfig = schema.AgentConfig
 
@@ -93,7 +92,11 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if mc.TimeoutSeconds <= 0 {
 		mc.TimeoutSeconds = cfg.RuntimeTimeout
 	}
-	if strings.TrimSpace(mc.APIKeyEnv) == "" {
+	// Only fall back to the provider-default env var when the user
+	// hasn't supplied a literal key OR an explicit env-var name.
+	// Filling in APIKeyEnv unconditionally would clobber a literal
+	// key in the validateConfig "either-or" check below.
+	if strings.TrimSpace(mc.APIKey) == "" && strings.TrimSpace(mc.APIKeyEnv) == "" {
 		mc.APIKeyEnv = defaultAPIKeyEnv(mc.Provider)
 	}
 	cfg.Models[defaultModel] = mc
@@ -144,8 +147,11 @@ func validateConfig(cfg Config) error {
 	if strings.TrimSpace(modelCfg.Provider) == "" {
 		return fmt.Errorf("model %q missing provider", defaultModelKey)
 	}
-	if strings.TrimSpace(modelCfg.APIKeyEnv) == "" {
-		return fmt.Errorf("model %q missing api key env", defaultModelKey)
+	// Either a literal api_key or an api_key_env (env-var indirection)
+	// must be present. The YAML loader normalises one or the other —
+	// validateConfig only re-asserts it.
+	if strings.TrimSpace(modelCfg.APIKey) == "" && strings.TrimSpace(modelCfg.APIKeyEnv) == "" {
+		return fmt.Errorf("model %q missing api_key (literal or $ENV form)", defaultModelKey)
 	}
 	if modelCfg.TimeoutSeconds <= 0 {
 		return fmt.Errorf("model %q timeout must be positive", defaultModelKey)

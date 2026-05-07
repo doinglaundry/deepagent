@@ -1,10 +1,20 @@
 package schema
 
 type ModelConfig struct {
-	Name           string `json:"name"`
-	Provider       string `json:"provider"`
-	Model          string `json:"model"`
-	BaseURL        string `json:"base_url,omitempty"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	BaseURL  string `json:"base_url,omitempty"`
+
+	// APIKey holds a literal credential pulled directly from the
+	// YAML (the `api_key: sk-...` form). Prefer APIKeyEnv for
+	// shared / source-controlled configs — literal keys here will
+	// be persisted to disk in plain text.
+	APIKey string `json:"api_key,omitempty"`
+
+	// APIKeyEnv is the env-var name to read at runtime (the
+	// `api_key: $MOONSHOT_API_KEY` or `api_key_env: MOONSHOT_API_KEY`
+	// form). Used as the fallback when APIKey is empty.
 	APIKeyEnv      string `json:"api_key_env,omitempty"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 
