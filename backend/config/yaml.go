@@ -166,46 +166,51 @@ type FileConfig struct {
 	Checkpointer   Checkpointer     `yaml:"checkpointer"`
 }
 
-// Extras bundles the non-model sections so the caller can fold
-// them into Config alongside the models map.
-type Extras struct {
-	Skills     SkillsConfig
-	ToolSearch ToolSearchConfig
-}
-
-func loadFromYAML(path string) (map[string]*ModelConfig, Extras, error) {
+// loadFromYAML reads, parses, and lightly cleans the YAML file. It
+// owns only the normalisations the YAML decoder can't express
+// directly (e.g. dropping deferred entries with blank names); wire-
+// shape → runtime-shape transformation lives in normalizeModels and
+// the rest of the caller's pipeline.
+//
+// Returns the populated FileConfig directly. The caller picks the
+// fields it needs (fc.Skills / fc.ToolSearch / ...) — there's no
+// intermediate "extras" wrapper, every consumer already knows which
+// section it owns.
+func loadFromYAML(path string) (*FileConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, Extras{}, nil
+			return &FileConfig{}, nil
 		}
-		return nil, Extras{}, fmt.Errorf("read yaml config: %w", err)
-	}
-	var fc FileConfig
-	if err = yaml.Unmarshal(data, &fc); err != nil {
-		return nil, Extras{}, fmt.Errorf("parse yaml config: %w", err)
+		return nil, fmt.Errorf("read yaml config: %w", err)
 	}
 
-	// fc.Skills and fc.ToolSearch already share their runtime
-	// types — yaml.Unmarshal populated them in place. We only own
-	// per-field normalisations the YAML decoder can't express:
-	// dropping deferred entries with blank names.
-	extras := Extras{
-		Skills:     fc.Skills,
-		ToolSearch: fc.ToolSearch,
+	var fc FileConfig
+	if err = yaml.Unmarshal(data, &fc); err != nil {
+		return nil, fmt.Errorf("parse yaml config: %w", err)
 	}
-	if len(extras.ToolSearch.Deferred) > 0 {
-		filtered := extras.ToolSearch.Deferred[:0]
-		for _, d := range extras.ToolSearch.Deferred {
+
+	if len(fc.ToolSearch.Deferred) > 0 {
+		filtered := fc.ToolSearch.Deferred[:0]
+		for _, d := range fc.ToolSearch.Deferred {
 			if strings.TrimSpace(d.Name) == "" {
 				continue
 			}
 			filtered = append(filtered, d)
 		}
-		extras.ToolSearch.Deferred = filtered
+		fc.ToolSearch.Deferred = filtered
 	}
 
-	if len(fc.Models) == 0 {
+	return &fc, nil
+}
+
+// normalizeModels turns the YAML wire shape ([]ModelEntry, with
+// legacy aliases like api_base / timeout) into the runtime shape
+// (map[string]*ModelConfig, keyed by name). When the YAML doesn't
+// declare any models, falls back to a built-in kimi default so the
+// rest of normalizeConfig has something to validate.
+func normalizeModels(entries []ModelEntry) map[string]*ModelConfig {
+	if len(entries) == 0 {
 		return map[string]*ModelConfig{
 			defaultYAMLModel: {
 				Name:           defaultYAMLModel,
@@ -215,11 +220,11 @@ func loadFromYAML(path string) (map[string]*ModelConfig, Extras, error) {
 				APIKeyEnv:      "MOONSHOT_API_KEY",
 				TimeoutSeconds: 60,
 			},
-		}, extras, nil
+		}
 	}
 
-	models := make(map[string]*ModelConfig, len(fc.Models))
-	for _, m := range fc.Models {
+	out := make(map[string]*ModelConfig, len(entries))
+	for _, m := range entries {
 		mc := ModelConfig{
 			Name:     m.Name,
 			Provider: m.Provider,
@@ -252,10 +257,9 @@ func loadFromYAML(path string) (map[string]*ModelConfig, Extras, error) {
 		if mc.Provider == "" {
 			mc.Provider = inferProvider(mc.BaseURL, m.Name)
 		}
-		models[m.Name] = ToPtr(mc)
+		out[m.Name] = ToPtr(mc)
 	}
-
-	return models, extras, nil
+	return out
 }
 
 func inferProvider(baseURL, name string) string {

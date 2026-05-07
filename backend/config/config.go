@@ -26,7 +26,7 @@ func Load() (Config, error) {
 	persistenceDir := filepath.Join(root, ".eino-cli")
 
 	configPath := filepath.Join(root, "yaml", "config.yaml")
-	yamlModels, yamlExtras, err := loadFromYAML(configPath)
+	fc, err := loadFromYAML(configPath)
 	if err != nil {
 		return Config{}, fmt.Errorf("load yaml config: %w", err)
 	}
@@ -42,18 +42,18 @@ func Load() (Config, error) {
 		RuntimeTimeout: envOrDefaultInt("EINO_RUNTIME_TIMEOUT", defaultRuntimeTimeout),
 
 		// DefaultModel comes from the built-in fallback for now;
-		// yamlFileConfig.DefaultModel exists to mirror the YAML
-		// schema but is not wired through (default is hardcoded
-		// to "kimi" in defaultYAMLModel).
+		// FileConfig.DefaultModel exists to mirror the YAML schema
+		// but is not wired through (default is hardcoded to "kimi"
+		// in defaultYAMLModel).
 		DefaultModel: defaultYAMLModel,
 		// DefaultAgent has no YAML source — env override or
 		// built-in default ("default") chosen in normalizeConfig.
 		DefaultAgent: envOrDefault("EINO_DEFAULT_AGENT", ""),
 
-		Models: yamlModels,
+		Models: normalizeModels(fc.Models),
 
-		Skills:     yamlExtras.Skills,
-		ToolSearch: yamlExtras.ToolSearch,
+		Skills:     fc.Skills,
+		ToolSearch: fc.ToolSearch,
 	}
 
 	normalized, err := normalizeConfig(cfg)
