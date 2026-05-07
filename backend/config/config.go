@@ -26,37 +26,31 @@ func Load() (Config, error) {
 	persistenceDir := filepath.Join(root, ".eino-cli")
 
 	configPath := filepath.Join(root, "yaml", "config.yaml")
-	fc, err := loadFromYAML(configPath)
+	cfg, err := loadFromYAML(configPath)
 	if err != nil {
 		return Config{}, fmt.Errorf("load yaml config: %w", err)
 	}
 
-	cfg := Config{
-		RootDir:        root,
-		PersistenceDir: persistenceDir,
-		SessionsDir:    filepath.Join(persistenceDir, "sessions"),
-		MemoryDir:      filepath.Join(persistenceDir, "memory"),
-		CheckpointDir:  filepath.Join(persistenceDir, "checkpoints"),
+	// Wire up runtime fields after the YAML decode. Order matters:
+	// the decoder won't touch yaml:"-" fields, but doing this after
+	// loadFromYAML keeps the "yaml-sourced vs runtime-sourced"
+	// boundary visible at a glance.
+	cfg.RootDir = root
+	cfg.PersistenceDir = persistenceDir
+	cfg.SessionsDir = filepath.Join(persistenceDir, "sessions")
+	cfg.MemoryDir = filepath.Join(persistenceDir, "memory")
+	cfg.CheckpointDir = filepath.Join(persistenceDir, "checkpoints")
+	cfg.RuntimeModel = envOrDefault("EINO_RUNTIME_MODEL", defaultRuntimeModel)
+	cfg.RuntimeTimeout = envOrDefaultInt("EINO_RUNTIME_TIMEOUT", defaultRuntimeTimeout)
+	cfg.DefaultAgent = envOrDefault("EINO_DEFAULT_AGENT", "")
 
-		RuntimeModel:   envOrDefault("EINO_RUNTIME_MODEL", defaultRuntimeModel),
-		RuntimeTimeout: envOrDefaultInt("EINO_RUNTIME_TIMEOUT", defaultRuntimeTimeout),
+	// DefaultModel still comes from the built-in fallback. The YAML
+	// `default_model:` field is parsed into cfg.DefaultModel by the
+	// decoder, but we deliberately overwrite it until that switch
+	// is wired through. Drop this line to honour the YAML value.
+	cfg.DefaultModel = defaultYAMLModel
 
-		// DefaultModel comes from the built-in fallback for now;
-		// FileConfig.DefaultModel exists to mirror the YAML schema
-		// but is not wired through (default is hardcoded to "kimi"
-		// in defaultYAMLModel).
-		DefaultModel: defaultYAMLModel,
-		// DefaultAgent has no YAML source — env override or
-		// built-in default ("default") chosen in normalizeConfig.
-		DefaultAgent: envOrDefault("EINO_DEFAULT_AGENT", ""),
-
-		Models: normalizeModels(fc.Models),
-
-		Skills:     fc.Skills,
-		ToolSearch: fc.ToolSearch,
-	}
-
-	normalized, err := normalizeConfig(cfg)
+	normalized, err := normalizeConfig(*cfg)
 	if err != nil {
 		return Config{}, err
 	}

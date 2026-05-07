@@ -127,66 +127,55 @@ type Checkpointer struct {
 	ConnectionString string `yaml:"connection_string"`
 }
 
-// FileConfig is the wire shape we unmarshal config.yaml into. The
-// field set mirrors yaml/config.yaml's top-level sections one-
-// for-one, in the order they appear in the file. Sections that
-// don't yet have a downstream consumer are still parsed so that
-// typo'd or unknown top-level keys are easy to track down.
+// UnmarshalYAML bridges the one wire/runtime mismatch that prevents
+// Config from being a plain yaml.Unmarshal target: yaml's `models:`
+// is a list of ModelEntry (with legacy aliases like api_base /
+// timeout), but downstream wants map[string]*ModelConfig keyed by
+// name. We capture the list locally, then run normalizeModels.
 //
-// Default-agent / agent / ACP configuration intentionally has no
-// field here — those are resolved entirely from env vars + built-
-// in defaults inside normalizeConfig, and the YAML doesn't
-// declare them.
+// All other fields ride through unchanged via the alias trick:
+// `type alias Config` shares Config's underlying struct (and thus
+// its yaml tags) but strips this method, avoiding infinite
+// recursion. The inline-embedded alias decodes every yaml-tagged
+// Config field; only `models:` is intercepted by the override
+// below.
 //
-// Models / Tool keep their own private mirrors because they
-// carry legacy aliases or heterogeneous extras that the YAML
-// decoder can't express directly.
-//
-// Named FileConfig (rather than just Config) to avoid colliding
-// with the runtime-facing Config defined in types.go.
-type FileConfig struct {
-	DefaultModel   string           `yaml:"default_model"`
-	ConfigVersion  int              `yaml:"config_version"`
-	LogLevel       string           `yaml:"log_level"`
-	TokenUsage     TokenUsage       `yaml:"token_usage"`
-	Models         []ModelEntry     `yaml:"models"`
-	ToolGroups     []ToolGroup      `yaml:"tool_groups"`
-	Tools          []Tool           `yaml:"tools"`
-	ToolSearch     ToolSearchConfig `yaml:"tool_search"`
-	Uploads        Uploads          `yaml:"uploads"`
-	Sandbox        Sandbox          `yaml:"sandbox"`
-	Skills         SkillsConfig     `yaml:"skills"`
-	Title          Title            `yaml:"title"`
-	Summarization  Summarization    `yaml:"summarization"`
-	Memory         Memory           `yaml:"memory"`
-	AgentsAPI      AgentsAPI        `yaml:"agents_api"`
-	SkillEvolution SkillEvolution   `yaml:"skill_evolution"`
-	Checkpointer   Checkpointer     `yaml:"checkpointer"`
+// Runtime fields on Config are tagged yaml:"-" and therefore
+// untouched by this method — Load() fills them in after the YAML
+// decode returns.
+func (c *Config) UnmarshalYAML(node *yaml.Node) error {
+	type alias Config
+	aux := struct {
+		alias  `yaml:",inline"`
+		Models []ModelEntry `yaml:"models"`
+	}{
+		alias: alias(*c),
+	}
+	if err := node.Decode(&aux); err != nil {
+		return err
+	}
+	*c = Config(aux.alias)
+	c.Models = normalizeModels(aux.Models)
+	return nil
 }
 
-// loadFromYAML reads and parses the YAML file. Wire-shape →
-// runtime-shape transformation lives in normalizeModels and the
-// rest of the caller's pipeline; this function deliberately does
-// no semantic normalisation, so a malformed entry (e.g. a
-// deferred-tool record with a blank name) surfaces downstream as
-// a validation error rather than getting silently dropped here.
-//
-// Returns the populated FileConfig directly. The caller picks the
-// fields it needs (fc.Skills / fc.ToolSearch / ...) — there's no
-// intermediate "extras" wrapper, every consumer already knows which
-// section it owns.
-func loadFromYAML(path string) (*FileConfig, error) {
+// loadFromYAML reads and decodes config.yaml into a fresh Config.
+// The decoder dispatches through Config.UnmarshalYAML, so the
+// returned value already has Models in runtime-shape; runtime-only
+// fields (RootDir, env-driven defaults) remain zero and get filled
+// by Load.
+func loadFromYAML(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read yaml config: %w", err)
 	}
 
-	var fc FileConfig
-	if err = yaml.Unmarshal(data, &fc); err != nil {
+	var cfg Config
+	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse yaml config: %w", err)
 	}
 
-	return &fc, nil
+	return &cfg, nil
 }
 
 // normalizeModels turns the YAML wire shape ([]ModelEntry, with

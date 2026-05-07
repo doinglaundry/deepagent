@@ -129,24 +129,62 @@ type ACPConfig struct {
 	Agents map[string]ACPAgentEntry `json:"agents,omitempty" yaml:"agents,omitempty"`
 }
 
+// Config is the application's single source of truth. It carries
+// two layers in one struct:
+//
+//   - Runtime fields populated by Load() from os.Getwd / env vars /
+//     built-in defaults. Tagged yaml:"-" so yaml.Unmarshal skips
+//     them and they survive a YAML decode.
+//
+//   - YAML fields populated by Config.UnmarshalYAML (defined in
+//     yaml.go) directly from yaml/config.yaml. Tags mirror the
+//     file's top-level keys one-for-one, so a typo on either side
+//     is immediately visible against the canonical declarations
+//     here.
+//
+// This replaces an older "Config + FileConfig" split. The split
+// existed because YAML's `models:` is a list while runtime needs
+// map[string]*ModelConfig. UnmarshalYAML now performs that
+// translation in-place via the alias trick (see yaml.go), so
+// downstream packages see exactly one config type.
+//
+// New top-level YAML sections only need to be declared here once
+// — UnmarshalYAML's alias handles them automatically. Sections
+// without a runtime consumer carry json:"-" so they don't leak
+// into JSON dumps.
 type Config struct {
-	RootDir        string `json:"root_dir"`
-	PersistenceDir string `json:"persistence_dir"`
-	SessionsDir    string `json:"sessions_dir"`
-	MemoryDir      string `json:"memory_dir"`
-	CheckpointDir  string `json:"checkpoint_dir"`
+	RootDir        string `json:"root_dir"        yaml:"-"`
+	PersistenceDir string `json:"persistence_dir" yaml:"-"`
+	SessionsDir    string `json:"sessions_dir"    yaml:"-"`
+	MemoryDir      string `json:"memory_dir"      yaml:"-"`
+	CheckpointDir  string `json:"checkpoint_dir"  yaml:"-"`
 
-	DefaultModel string                  `json:"default_model"`
-	Models       map[string]*ModelConfig `json:"models"`
-	DefaultAgent string                  `json:"default_agent"`
-	Agents       map[string]AgentConfig  `json:"agents"`
+	RuntimeModel   string `json:"runtime_model"   yaml:"-"`
+	RuntimeTimeout int    `json:"runtime_timeout" yaml:"-"`
 
-	RuntimeModel   string `json:"runtime_model"`
-	RuntimeTimeout int    `json:"runtime_timeout"`
+	DefaultAgent string                 `json:"default_agent"   yaml:"-"`
+	Agents       map[string]AgentConfig `json:"agents"          yaml:"-"`
+	ACP          ACPConfig              `json:"acp,omitempty"   yaml:"-"`
 
-	// Phase 5 (data sources): wire these from yaml/config.yaml so the
-	// PromptDeps builder can populate the corresponding prompt sections.
-	Skills     SkillsConfig     `json:"skills,omitempty"`
-	ToolSearch ToolSearchConfig `json:"tool_search,omitempty"`
-	ACP        ACPConfig        `json:"acp,omitempty"`
+	// Fields below this line are sourced from yaml/config.yaml. The
+	// order matches the file's top-level sections so a side-by-side
+	// read remains easy.
+
+	DefaultModel   string                  `json:"default_model"           yaml:"default_model"`
+	ConfigVersion  int                     `json:"-"                       yaml:"config_version"`
+	LogLevel       string                  `json:"-"                       yaml:"log_level"`
+	TokenUsage     TokenUsage              `json:"-"                       yaml:"token_usage"`
+	Models         map[string]*ModelConfig `json:"models"                  yaml:"-"` // built from the YAML list via UnmarshalYAML + normalizeModels
+	ToolGroups     []ToolGroup             `json:"-"                       yaml:"tool_groups"`
+	Tools          []Tool                  `json:"-"                       yaml:"tools"`
+	ToolSearch     ToolSearchConfig        `json:"tool_search,omitempty"   yaml:"tool_search"`
+	Uploads        Uploads                 `json:"-"                       yaml:"uploads"`
+	Sandbox        Sandbox                 `json:"-"                       yaml:"sandbox"`
+	Skills         SkillsConfig            `json:"skills,omitempty"        yaml:"skills"`
+	Title          Title                   `json:"-"                       yaml:"title"`
+	Summarization  Summarization           `json:"-"                       yaml:"summarization"`
+	Memory         Memory                  `json:"-"                       yaml:"memory"`
+	AgentsAPI      AgentsAPI               `json:"-"                       yaml:"agents_api"`
+	SkillEvolution SkillEvolution          `json:"-"                       yaml:"skill_evolution"`
+	Checkpointer   Checkpointer            `json:"-"                       yaml:"checkpointer"`
 }
