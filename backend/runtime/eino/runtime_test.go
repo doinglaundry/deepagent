@@ -16,7 +16,7 @@ func TestBuildRuntimeUnsupportedProvider(t *testing.T) {
 		DefaultModel: "primary",
 		DefaultAgent: "default",
 		Models: map[string]*config.ModelConfig{
-			"primary": {Name: "primary", Provider: "unknown", Model: "foo", APIKeyEnv: "FOO_KEY", TimeoutSeconds: 30},
+			"primary": {Name: "primary", Provider: "unknown", Model: "foo", APIKey: "test-key", TimeoutSeconds: 30},
 		},
 		Agents: map[string]config.AgentConfig{
 			"default": {Name: "deep-agent", Instruction: "You are a helpful assistant.", MaxIteration: 6},
@@ -31,12 +31,11 @@ func TestBuildRuntimeUnsupportedProvider(t *testing.T) {
 }
 
 func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	runtime, err := NewDeepAgentRuntime(context.Background(), config.ModelConfig{
 		Name:           "primary",
 		Provider:       "claude",
 		Model:          "claude-sonnet-4-6",
-		APIKeyEnv:      "ANTHROPIC_API_KEY",
+		APIKey:         "test-key",
 		TimeoutSeconds: 30,
 	}, config.AgentConfig{
 		Name:         "deep-agent",

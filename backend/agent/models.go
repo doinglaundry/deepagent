@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -94,13 +93,13 @@ func buildChatModel(
 	reasoningEffort string,
 ) (model.BaseChatModel, error) {
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
-	// Literal key (cfg.APIKey) wins over env-var lookup. The YAML
-	// loader populates exactly one of these per model entry — see
-	// loadFromYAML for the precedence rules.
+	// cfg.APIKey arrives already resolved to a literal credential:
+	// the YAML loader expands $ENV / api_key_env at decode time, and
+	// normalizeConfig falls back to the provider's canonical env via
+	// defaultAPIKeyEnv when neither was supplied. Empty here means
+	// "no credential anywhere" — the chat model factory below will
+	// reject it.
 	apiKey := strings.TrimSpace(cfg.APIKey)
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(os.Getenv(strings.TrimSpace(cfg.APIKeyEnv)))
-	}
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 
 	switch provider {
