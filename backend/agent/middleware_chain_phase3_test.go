@@ -28,7 +28,7 @@ func TestBuildChain_GatedMiddlewares(t *testing.T) {
 		ToolSearch: config.ToolSearchConfig{Enabled: true},
 	}
 	deps := AgentDeps{
-		DeferredToolNames: func() []string { return []string{"big-tool"} },
+		DeferredToolNamesFunc: func() []string { return []string{"big-tool"} },
 		HITLTools:         []string{"shell"},
 	}
 

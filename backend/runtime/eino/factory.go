@@ -30,10 +30,10 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 			GetMemoryData:            memoryAcc.GetMemoryData,
 			FormatMemoryForInjection: memoryAcc.FormatMemoryForInjection,
 		}),
-		DeferredToolNames: agent.DeferredToolNamesFromConfig(cfg),
-		HITLApproval:      defaultHITLApproval,
-		MemoryHooks:       memoryAcc.Hooks(),
-		MemoryFlushHook:   memoryAcc.FlushBeforeSummarization,
+		DeferredToolNamesFunc: agent.DeferredToolNamesFromConfig(cfg),
+		HITLApprovalFunc:      defaultHITLApproval,
+		MemoryHooks:           memoryAcc.Hooks(),
+		MemoryFlushHookFunc:   memoryAcc.FlushBeforeSummarization,
 	}
 	return NewDeepAgentRuntime(ctx, cfg, deps)
 }

@@ -86,10 +86,11 @@ func BuildPromptDeps(cfg config.Config, opts PromptDepsOptions) *PromptDeps {
 }
 
 // DeferredToolNamesFromConfig returns a closure compatible with
-// AgentDeps.DeferredToolNames so the DeferredTools middleware can filter
-// the active tool set. Returns nil when no deferred tools are configured —
-// callers should pass that directly through AgentDeps.DeferredToolNames
-// to keep the middleware from being attached.
+// AgentDeps.DeferredToolNamesFunc so the DeferredTools middleware can
+// filter the active tool set. Returns nil when no deferred tools are
+// configured — callers should pass that directly through
+// AgentDeps.DeferredToolNamesFunc to keep the middleware from being
+// attached.
 func DeferredToolNamesFromConfig(cfg config.Config) func() []string {
 	if len(cfg.ToolSearch.Deferred) == 0 {
 		return nil

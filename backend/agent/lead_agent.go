@@ -30,35 +30,38 @@ type AgentDeps struct {
 	// WorkingDir is consulted only when Sandbox is nil; ignored otherwise.
 	WorkingDir string
 
-	// HITLTools and HITLApproval drive the human-in-the-loop middleware.
-	// HITLTools is the set of tool names that require approval; empty
-	// means no gating. HITLApproval is the callback that prompts the user
-	// — it receives the tool name + raw JSON args and returns approve/deny.
-	// nil callback treats every gated call as approved (Phase 1 behavior).
-	HITLTools    []string
-	HITLApproval func(ctx context.Context, toolName, args string) bool
+	// HITLTools and HITLApprovalFunc drive the human-in-the-loop
+	// middleware. HITLTools is the set of tool names that require
+	// approval; empty means no gating. HITLApprovalFunc is the callback
+	// that prompts the user — it receives the tool name + raw JSON args
+	// and returns approve/deny. nil callback treats every gated call as
+	// approved (Phase 1 behavior).
+	HITLTools        []string
+	HITLApprovalFunc func(ctx context.Context, toolName, args string) bool
 
-	// OnClarification, if non-nil, is invoked when the model emits an
-	// ask_clarification tool call. The middleware always rewrites the
-	// assistant message to surface the question; this callback gives the
-	// host a hook for telemetry / custom rendering.
-	OnClarification func(ctx context.Context, question string)
+	// OnClarificationFunc, if non-nil, is invoked when the model emits
+	// an ask_clarification tool call. The middleware always rewrites
+	// the assistant message to surface the question; this callback
+	// gives the host a hook for telemetry / custom rendering.
+	OnClarificationFunc func(ctx context.Context, question string)
 
-	// DeferredToolNames is the live list of tool names the
+	// DeferredToolNamesFunc returns the live list of tool names the
 	// DeferredTools middleware should filter out of the active set when
 	// cfg.ToolSearch.Enabled is true. Without this the middleware
 	// is not attached.
-	DeferredToolNames func() []string
+	DeferredToolNamesFunc func() []string
 
 	// MemoryHooks drives the Memory middleware's inject / extract data
-	// plane. Wire only when cfg.Memory.Enabled is true.
+	// plane. Wire only when cfg.Memory.Enabled is true. (Not a single
+	// func — this is a struct bundling Inject + Extract callbacks, so
+	// it does not get the Func suffix.)
 	MemoryHooks middlewares.MemoryHooks
 
-	// MemoryFlushHook is plugged into the summarization middleware so
-	// the host can persist memorable bits before/around summarization.
-	// Optional; nil means "no flush hook" — the middleware skips the
-	// callback entirely.
-	MemoryFlushHook middlewares.SummarizationMemoryFlushHook
+	// MemoryFlushHookFunc is plugged into the summarization middleware
+	// so the host can persist memorable bits before/around
+	// summarization. Optional; nil means "no flush hook" — the
+	// middleware skips the callback entirely.
+	MemoryFlushHookFunc middlewares.SummarizationMemoryFlushHook
 }
 
 // MakeLeadAgent mirrors deerflow.agents.lead_agent.agent.make_lead_agent.

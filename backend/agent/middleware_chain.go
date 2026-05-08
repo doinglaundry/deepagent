@@ -66,8 +66,8 @@ func BuildChain(
 		chatModel = append(chatModel, middlewares.NewViewImage(imageFetcher))
 	}
 
-	if cfg.ToolSearch.Enabled && deps.DeferredToolNames != nil {
-		chatModel = append(chatModel, middlewares.NewDeferredTools(deps.DeferredToolNames))
+	if cfg.ToolSearch.Enabled && deps.DeferredToolNamesFunc != nil {
+		chatModel = append(chatModel, middlewares.NewDeferredTools(deps.DeferredToolNamesFunc))
 	}
 
 	if rt.SubagentEnabled {
@@ -75,7 +75,7 @@ func BuildChain(
 	}
 
 	if len(deps.HITLTools) > 0 {
-		chatModel = append(chatModel, middlewares.NewHITL(deps.HITLTools, deps.HITLApproval))
+		chatModel = append(chatModel, middlewares.NewHITL(deps.HITLTools, deps.HITLApprovalFunc))
 	}
 
 	if cfg.Summarization.Enabled {
@@ -86,7 +86,7 @@ func BuildChain(
 			0, // contextMessages — same
 			cfg.Summarization.SummaryPrompt,
 			summaryModel,
-			deps.MemoryFlushHook,
+			deps.MemoryFlushHookFunc,
 		)
 		if err != nil {
 			return Chain{}, fmt.Errorf("build summarization mw: %w", err)
@@ -97,7 +97,7 @@ func BuildChain(
 	}
 
 	clar := middlewares.NewClarification()
-	clar.OnQuestion = deps.OnClarification
+	clar.OnQuestion = deps.OnClarificationFunc
 	chatModel = append(chatModel, clar)
 
 	var agentMWs []adk.AgentMiddleware
