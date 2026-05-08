@@ -53,12 +53,12 @@ func TestMemoryAccessor_FilterDropsShortAndTaskPrefixed(t *testing.T) {
 		memorystore.Memory{Key: "task", Content: memorystore.TaskMemoryPrefix + "do x", TurnIndex: 3},
 	)
 	acc := NewMemoryAccessor(store)
-	data := acc.GetMemoryData("any", "").(memoryDataKey)
-	if len(data.Memories) != 1 {
-		t.Fatalf("expected 1 memory after filter, got %d: %+v", len(data.Memories), data.Memories)
+	data := acc.GetMemoryData("any", "")
+	if len(data) != 1 {
+		t.Fatalf("expected 1 memory after filter, got %d: %+v", len(data), data)
 	}
-	if data.Memories[0].Key != "ok" {
-		t.Errorf("expected the long entry to survive, got %s", data.Memories[0].Key)
+	if data[0].Key != "ok" {
+		t.Errorf("expected the long entry to survive, got %s", data[0].Key)
 	}
 }
 

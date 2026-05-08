@@ -636,9 +636,6 @@ func ApplyPromptTemplate(opts PromptOptions) string {
 	acpSection := buildACPSection(opts.Config)
 
 	agentName := opts.AgentName
-	if agentName == "" {
-		agentName = "DeerFlow 2.0"
-	}
 
 	// {soul} stays in the template for forward-compat — Python had a
 	// LoadAgentSoul hook that loaded SOUL.md. Nobody wires it in

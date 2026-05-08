@@ -1,10 +1,8 @@
 package agent
 
 import (
-	"fmt"
-	"log/slog"
-
 	"eino-cli/backend/config"
+	"fmt"
 )
 
 // RuntimeContext mirrors the per-request runtime config that the Python
@@ -110,15 +108,6 @@ func NewRuntimeContext(cfg config.Config, seed *RuntimeContext) (RuntimeContext,
 
 	resolvedName := fallback(rt.AgentName, "default")
 	resolvedModel := fallback(rt.ModelName, "default")
-	slog.Info("Create Agent",
-		"agent_name", resolvedName,
-		"thinking_enabled", rt.ThinkingEnabled,
-		"reasoning_effort", rt.ReasoningEffort,
-		"model_name", resolvedModel,
-		"is_plan_mode", rt.IsPlanMode,
-		"subagent_enabled", rt.SubagentEnabled,
-		"max_concurrent_subagents", rt.MaxConcurrentSubagents,
-	)
 
 	if rt.Metadata == nil {
 		rt.Metadata = map[string]any{}

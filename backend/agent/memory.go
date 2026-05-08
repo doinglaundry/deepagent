@@ -14,14 +14,6 @@ import (
 	memorystore "eino-cli/backend/memory/store"
 )
 
-// memoryDataKey is the type the prompt-side accessor returns from
-// GetMemoryData. We declare a named struct so the matching
-// FormatMemoryForInjection can rely on a single shape — Python uses a
-// dict; Go is happier with a typed payload.
-type memoryDataKey struct {
-	Memories []memorystore.Memory
-}
-
 // MemoryAccessor binds a memory/store.Store to the prompt-side and
 // runtime-side memory hooks the lead agent expects. One accessor
 // instance backs both:
@@ -59,32 +51,32 @@ func NewMemoryAccessor(store *memorystore.Store) *MemoryAccessor {
 }
 
 // GetMemoryData is the prompt-side memory accessor invoked by
-// ApplyPromptTemplate's <memory> section. The agentName
-// + userID arguments are accepted for API parity with deerflow but
-// currently ignored — the store does not partition by either yet, and
-// callers that need partitioning should provide a separate store.
-func (a *MemoryAccessor) GetMemoryData(agentName, userID string) any {
+// ApplyPromptTemplate's <memory> section. The agentName + userID
+// arguments are accepted for API parity with deerflow but currently
+// ignored — the store does not partition by either yet, and callers
+// that need partitioning should provide a separate store.
+//
+// Returns the filtered, deduped, capped slice of memories. nil and
+// empty slice both mean "nothing to inject"; callers should not treat
+// them differently.
+func (a *MemoryAccessor) GetMemoryData(agentName, userID string) []memorystore.Memory {
 	if a == nil || a.store == nil {
-		return memoryDataKey{}
+		return nil
 	}
 	memories, err := a.store.LoadAll()
 	if err != nil {
-		// Match Python's "log + return empty" behaviour.
-		promptLogger.Warn("memory accessor: load failed", "err", err)
-		return memoryDataKey{}
+		return nil
 	}
-	cleaned := a.filter(memories)
-	return memoryDataKey{Memories: cleaned}
+	return a.filter(memories)
 }
 
-// FormatMemoryForInjection turns the typed payload back into the bullet
-// list deerflow's prompt template expects. The maxTokens parameter is a
-// soft budget — we approximate "1 token ≈ 4 chars" rather than dragging
-// in a tokenizer dep just for this. Callers can pass 0 to disable the
-// budget.
-func (a *MemoryAccessor) FormatMemoryForInjection(data any, maxTokens int) string {
-	payload, ok := data.(memoryDataKey)
-	if !ok || len(payload.Memories) == 0 {
+// FormatMemoryForInjection renders a slice from GetMemoryData as the
+// bullet list deerflow's prompt template expects. The maxTokens
+// parameter is a soft budget — we approximate "1 token ≈ 4 chars"
+// rather than dragging in a tokenizer dep just for this. Pass 0 to
+// disable the budget.
+func (a *MemoryAccessor) FormatMemoryForInjection(memories []memorystore.Memory, maxTokens int) string {
+	if len(memories) == 0 {
 		return ""
 	}
 	const charsPerToken = 4
@@ -98,7 +90,7 @@ func (a *MemoryAccessor) FormatMemoryForInjection(data any, maxTokens int) strin
 		used  int
 		first = true
 	)
-	for _, m := range payload.Memories {
+	for _, m := range memories {
 		line := fmt.Sprintf("- (turn %d) %s", m.TurnIndex, strings.TrimSpace(m.Content))
 		if budget > 0 && used+len(line) > budget {
 			break
