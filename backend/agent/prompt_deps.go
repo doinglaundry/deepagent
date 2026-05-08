@@ -85,31 +85,10 @@ func BuildPromptDeps(cfg config.Config, opts PromptDepsOptions) *PromptDeps {
 	return deps
 }
 
-// BuildAppConfig projects config.Config onto agent.AppConfig (the
-// runtime-merged view used by the prompt + middleware chain). Defaults that
-// the Python deerflow runtime applies through code (rather than YAML) are
-// reproduced here so the prompt section gating stays consistent across the
-// two implementations.
-//
-// Memory defaults to enabled so the <memory> prompt section + the Memory
-// middleware can both attach. Both are no-ops without an accessor / hooks
-// supplied, so leaving them on costs nothing when memory isn't wired.
-func BuildAppConfig(cfg config.Config) *AppConfig {
-	app := &AppConfig{
-		ToolSearch: ToolSearchConfig{Enabled: cfg.ToolSearch.Enabled},
-		Memory: MemoryConfig{
-			Enabled:            true,
-			InjectionEnabled:   true,
-			MaxInjectionTokens: 1024,
-		},
-	}
-	return app
-}
-
 // DeferredToolNamesFromConfig returns a closure compatible with
-// ChainOptions.DeferredToolNames so the DeferredTools middleware can filter
+// AgentDeps.DeferredToolNames so the DeferredTools middleware can filter
 // the active tool set. Returns nil when no deferred tools are configured —
-// callers should pass that directly through ChainOptions.DeferredToolNames
+// callers should pass that directly through AgentDeps.DeferredToolNames
 // to keep the middleware from being attached.
 func DeferredToolNamesFromConfig(cfg config.Config) func() []string {
 	if len(cfg.ToolSearch.Deferred) == 0 {

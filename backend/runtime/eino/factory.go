@@ -19,43 +19,43 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 	if !ok {
 		return nil, fmt.Errorf("model %q not found", modelName)
 	}
-	if strings.TrimSpace(mc.Name) == "" {
-		mc.Name = modelName
-	}
 
 	agentName := strings.TrimSpace(cfg.DefaultAgent)
 	if agentName == "" {
 		return nil, fmt.Errorf("default agent is required")
 	}
-	ac, ok := cfg.Agents[agentName]
-	if !ok {
+	if _, ok := cfg.Agents[agentName]; !ok {
 		return nil, fmt.Errorf("agent %q not found", agentName)
 	}
 
 	switch strings.ToLower(strings.TrimSpace(mc.Provider)) {
 	case "claude", "anthropic", "openai", "kimi", "moonshot":
-		// Phase 5+: build the prompt-side data sources (skills / deferred
-		// / ACP / memory) and the AppConfig view from the loaded YAML,
-		// then thread them into NewDeepAgentRuntime alongside the runtime
-		// extras (HITL approval, deferred-tool name resolver, memory
-		// hooks).
-		memoryStore := memorystore.NewStore(cfg.MemoryDir)
-		memoryAcc := agent.NewMemoryAccessor(memoryStore)
-
-		promptDeps := agent.BuildPromptDeps(cfg, agent.PromptDepsOptions{
-			GetMemoryData:            memoryAcc.GetMemoryData,
-			FormatMemoryForInjection: memoryAcc.FormatMemoryForInjection,
-		})
-		appCfg := agent.BuildAppConfig(cfg)
-		extras := agent.RuntimeExtras{
-			DeferredToolNames: agent.DeferredToolNamesFromConfig(cfg),
-			HITLApproval:      defaultHITLApproval,
-			HITLTools:         nil, // wired by REPL when /approve flow exists
-			MemoryHooks:       memoryAcc.Hooks(),
-			MemoryFlushHook:   memoryAcc.FlushBeforeSummarization,
-		}
-		return NewDeepAgentRuntime(ctx, *mc, ac, cfg.CheckpointDir, promptDeps, appCfg, extras)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", mc.Provider)
 	}
+
+	memoryAcc := agent.NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
+
+	deps := agent.AgentDeps{
+		PromptDeps: agent.BuildPromptDeps(cfg, agent.PromptDepsOptions{
+			GetMemoryData:            memoryAcc.GetMemoryData,
+			FormatMemoryForInjection: memoryAcc.FormatMemoryForInjection,
+		}),
+		// AppConfig defaults: Memory on (no-op without hooks anyway),
+		// ToolSearch driven by yaml. Other gates stay zero — flip
+		// them on once their backing middleware has a real consumer.
+		AppConfig: &agent.AppConfig{
+			ToolSearch: agent.ToolSearchConfig{Enabled: cfg.ToolSearch.Enabled},
+			Memory: agent.MemoryConfig{
+				Enabled:            true,
+				InjectionEnabled:   true,
+				MaxInjectionTokens: 1024,
+			},
+		},
+		DeferredToolNames: agent.DeferredToolNamesFromConfig(cfg),
+		HITLApproval:      defaultHITLApproval,
+		MemoryHooks:       memoryAcc.Hooks(),
+		MemoryFlushHook:   memoryAcc.FlushBeforeSummarization,
+	}
+	return NewDeepAgentRuntime(ctx, cfg, deps)
 }

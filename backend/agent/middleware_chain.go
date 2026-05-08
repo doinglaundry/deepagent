@@ -23,54 +23,6 @@ type Chain struct {
 	ChatModel []adk.ChatModelAgentMiddleware
 }
 
-// ChainOptions bundles everything BuildChain needs to assemble the
-// middleware slices. Keeping it as a struct (instead of a long parameter
-// list) lets future phases add knobs without touching every call site.
-type ChainOptions struct {
-	Runtime      RuntimeContext
-	ModelName    string
-	AgentName    string
-	ModelConfig  *config.ModelConfig
-	Config       config.Config
-	AppConfig    *AppConfig // may be nil; behaves as zero-value
-	SummaryModel model.BaseChatModel
-
-	// MemoryFlushHook is the callback the summarization middleware
-	// invokes once a summary has been finalised — see
-	// middlewares.NewSummarization for the exact timing. Optional; nil
-	// means "no flush hook" (the middleware behaves as before).
-	MemoryFlushHook middlewares.SummarizationMemoryFlushHook
-
-	// MemoryHooks plugs the host-side memory data plane into the Memory
-	// middleware. Optional; without hooks the middleware is a no-op even
-	// when the gate flag is on.
-	MemoryHooks middlewares.MemoryHooks
-
-	// DeferredToolNames provides the live deferred-tool name list that the
-	// DeferredTools middleware filters out of the active tool set. Wire
-	// this from the same source as PromptDeps.GetDeferredRegistry.
-	DeferredToolNames func() []string
-
-	// HITLApproval is consulted for each gated tool call when HITL is
-	// enabled. Nil treats every call as approved.
-	HITLApproval func(ctx context.Context, toolName, args string) bool
-
-	// HITLTools are the tool names that require approval (e.g. shell.execute).
-	HITLTools []string
-
-	// OnClarification (optional) is called whenever the Clarification
-	// middleware rewrites an ask_clarification tool call. The host can
-	// use this for telemetry / custom rendering — the rewrite happens
-	// regardless.
-	OnClarification func(ctx context.Context, question string)
-
-	// ImageFetcher provides the binary image bytes the ViewImage
-	// middleware needs to construct multimodal user messages. Without
-	// it the middleware degrades to logging skeleton even when the
-	// active model SupportsVision.
-	ImageFetcher middlewares.ImageFetcher
-}
-
 // BuildChain mirrors Python _build_middlewares. The slot order matches the
 // deerflow code in spirit:
 //
@@ -81,8 +33,21 @@ type ChainOptions struct {
 //
 // Plus the AgentMiddleware (struct-based) slot for plan-mode Todo, since
 // AgentMiddleware is the natural fit for static instruction additions.
-func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
-	app := opts.AppConfig
+//
+// Inputs are the four high-level types already in scope at the call site
+// (rt / cfg / deps) plus the externally-built summaryModel — no
+// intermediate ChainOptions struct, the deps bag carries the per-host
+// extras (HITL, memory hooks, deferred tool resolver, sandbox).
+func BuildChain(
+	ctx context.Context,
+	rt RuntimeContext,
+	cfg config.Config,
+	deps AgentDeps,
+	summaryModel model.BaseChatModel,
+) (Chain, error) {
+	app := deps.AppConfig
+	modelCfg := cfg.Models[rt.ModelName]
+	imageFetcher := discoverImageFetcher(deps.Sandbox)
 
 	chatModel := []adk.ChatModelAgentMiddleware{
 		middlewares.NewAgentState(),
@@ -92,27 +57,27 @@ func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
 	}
 
 	if app != nil && app.Memory.Enabled {
-		chatModel = append(chatModel, middlewares.NewMemory(opts.MemoryHooks))
+		chatModel = append(chatModel, middlewares.NewMemory(deps.MemoryHooks))
 	}
 
 	if app != nil && app.TokenUsage.Enabled {
 		chatModel = append(chatModel, middlewares.NewTokenUsage())
 	}
 
-	if opts.ModelConfig != nil && opts.ModelConfig.SupportsVision {
-		chatModel = append(chatModel, middlewares.NewViewImage(opts.ImageFetcher))
+	if modelCfg != nil && modelCfg.SupportsVision {
+		chatModel = append(chatModel, middlewares.NewViewImage(imageFetcher))
 	}
 
-	if app != nil && app.ToolSearch.Enabled && opts.DeferredToolNames != nil {
-		chatModel = append(chatModel, middlewares.NewDeferredTools(opts.DeferredToolNames))
+	if app != nil && app.ToolSearch.Enabled && deps.DeferredToolNames != nil {
+		chatModel = append(chatModel, middlewares.NewDeferredTools(deps.DeferredToolNames))
 	}
 
-	if opts.Runtime.SubagentEnabled {
-		chatModel = append(chatModel, middlewares.NewSubagentLimit(opts.Runtime.MaxConcurrentSubagents))
+	if rt.SubagentEnabled {
+		chatModel = append(chatModel, middlewares.NewSubagentLimit(rt.MaxConcurrentSubagents))
 	}
 
-	if app != nil && app.HumanInTheLoop.Enabled && len(opts.HITLTools) > 0 {
-		chatModel = append(chatModel, middlewares.NewHITL(opts.HITLTools, opts.HITLApproval))
+	if app != nil && app.HumanInTheLoop.Enabled && len(deps.HITLTools) > 0 {
+		chatModel = append(chatModel, middlewares.NewHITL(deps.HITLTools, deps.HITLApproval))
 	}
 
 	if app != nil && app.Summarization.Enabled {
@@ -122,8 +87,8 @@ func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
 			app.Summarization.ContextTokens,
 			app.Summarization.ContextMessages,
 			app.Summarization.UserInstruction,
-			opts.SummaryModel,
-			opts.MemoryFlushHook,
+			summaryModel,
+			deps.MemoryFlushHook,
 		)
 		if err != nil {
 			return Chain{}, fmt.Errorf("build summarization mw: %w", err)
@@ -133,13 +98,12 @@ func BuildChain(ctx context.Context, opts ChainOptions) (Chain, error) {
 		}
 	}
 
-	// Clarification stays last — same invariant as Python.
 	clar := middlewares.NewClarification()
-	clar.OnQuestion = opts.OnClarification
+	clar.OnQuestion = deps.OnClarification
 	chatModel = append(chatModel, clar)
 
 	var agentMWs []adk.AgentMiddleware
-	if opts.Runtime.IsPlanMode {
+	if rt.IsPlanMode {
 		agentMWs = append(agentMWs, middlewares.NewTodo())
 	}
 

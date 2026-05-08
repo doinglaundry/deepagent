@@ -14,23 +14,17 @@ import (
 // Clarification middleware remains last.
 func TestBuildChain_GatedMiddlewares(t *testing.T) {
 	rt := NewRuntimeContext()
+	rt.ModelName = "primary"
+	rt.AgentName = "default"
 	rt.SubagentEnabled = true
 	rt.IsPlanMode = true
 
-	chain, err := BuildChain(context.Background(), ChainOptions{
-		Runtime:   rt,
-		ModelName: "primary",
-		AgentName: "default",
-		ModelConfig: &config.ModelConfig{
-			Name:           "primary",
-			Provider:       "kimi",
-			SupportsVision: true,
+	cfg := config.Config{
+		Models: map[string]*config.ModelConfig{
+			"primary": {Name: "primary", Provider: "kimi", SupportsVision: true},
 		},
-		Config: config.Config{
-			Models: map[string]*config.ModelConfig{
-				"primary": {Name: "primary", Provider: "kimi", SupportsVision: true},
-			},
-		},
+	}
+	deps := AgentDeps{
 		AppConfig: &AppConfig{
 			Memory:         MemoryConfig{Enabled: true},
 			TokenUsage:     TokenUsageConfig{Enabled: true},
@@ -39,7 +33,9 @@ func TestBuildChain_GatedMiddlewares(t *testing.T) {
 		},
 		DeferredToolNames: func() []string { return []string{"big-tool"} },
 		HITLTools:         []string{"shell"},
-	})
+	}
+
+	chain, err := BuildChain(context.Background(), rt, cfg, deps, nil)
 	if err != nil {
 		t.Fatalf("BuildChain: %v", err)
 	}
@@ -78,15 +74,15 @@ func TestBuildChain_GatedMiddlewares(t *testing.T) {
 // TestBuildChain_NoGatesEmittedWhenDisabled checks that the gated slots
 // disappear when their flags are off.
 func TestBuildChain_NoGatesEmittedWhenDisabled(t *testing.T) {
-	chain, err := BuildChain(context.Background(), ChainOptions{
-		Runtime:   NewRuntimeContext(),
-		ModelName: "primary",
-		ModelConfig: &config.ModelConfig{
-			Name:           "primary",
-			Provider:       "kimi",
-			SupportsVision: false,
+	rt := NewRuntimeContext()
+	rt.ModelName = "primary"
+	cfg := config.Config{
+		Models: map[string]*config.ModelConfig{
+			"primary": {Name: "primary", Provider: "kimi", SupportsVision: false},
 		},
-	})
+	}
+
+	chain, err := BuildChain(context.Background(), rt, cfg, AgentDeps{}, nil)
 	if err != nil {
 		t.Fatalf("BuildChain: %v", err)
 	}

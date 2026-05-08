@@ -30,81 +30,55 @@ type DeepAgentRuntime struct {
 // deerflow lead-agent assembly (prompt template, middleware chain,
 // model resolution).
 //
-// promptDeps + appCfg are optional. When non-nil they populate the
-// dynamic prompt sections (skills, deferred tools, ACP, memory hooks);
-// when nil the prompt degrades to the same "no extras" output Phase 2
-// shipped with.
+// cfg is the full loaded config; deps carries the host-supplied extras
+// (sandbox, prompt deps, app config, HITL/memory hooks). Both the
+// model and agent names come from cfg.DefaultModel / cfg.DefaultAgent
+// — BuildRuntime validates those upstream, so this layer trusts cfg
+// and only fills in missing host-context defaults (cwd-backed
+// sandbox).
 //
-// We keep the runtime's history/checkpoint/streaming responsibilities here
-// because they belong to the eino-cli REPL, not to the agent itself.
-func NewDeepAgentRuntime(
-	ctx context.Context,
-	modelCfg config.ModelConfig,
-	agentCfg config.AgentConfig,
-	checkpointDir string,
-	promptDeps *agent.PromptDeps,
-	appCfg *agent.AppConfig,
-	extras ...agent.RuntimeExtras,
-) (Runtime, error) {
-	modelName := strings.TrimSpace(modelCfg.Name)
-	if modelName == "" {
-		modelName = strings.TrimSpace(modelCfg.Model)
-	}
+// We keep the runtime's history/checkpoint/streaming responsibilities
+// here because they belong to the eino-cli REPL, not to the agent
+// itself.
+func NewDeepAgentRuntime(ctx context.Context, cfg config.Config, deps agent.AgentDeps) (Runtime, error) {
+	modelName := strings.TrimSpace(cfg.DefaultModel)
 	if modelName == "" {
 		return nil, fmt.Errorf("model name is required")
 	}
+	if _, ok := cfg.Models[modelName]; !ok {
+		return nil, fmt.Errorf("model %q not found", modelName)
+	}
 
-	agentName := strings.TrimSpace(agentCfg.Name)
+	agentName := strings.TrimSpace(cfg.DefaultAgent)
 	if agentName == "" {
 		agentName = "deep-agent"
 	}
 
-	// Build a single-entry config view for MakeLeadAgent. The REPL only
-	// runs one agent + one model at a time, so this is a faithful
-	// projection of the surrounding config.Config.
-	cfgView := config.Config{
-		DefaultModel: modelName,
-		DefaultAgent: agentName,
-		Models:       map[string]*config.ModelConfig{modelName: cloneModelCfg(modelCfg, modelName)},
-		Agents:       map[string]config.AgentConfig{agentName: agentCfg},
-	}
-
 	rt := agent.NewRuntimeContext()
-	rt.AgentName = ""        // empty → "default" branch in MakeLeadAgent
-	rt.ModelName = modelName // resolve to the only model in cfgView
+	rt.AgentName = agentName
+	rt.ModelName = modelName
 	rt.SubagentEnabled = false
 	rt.IsPlanMode = false
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = "."
+	if deps.Sandbox == nil || deps.WorkingDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			cwd = "."
+		}
+		if deps.Sandbox == nil {
+			deps.Sandbox = agent.NewLocalSandbox(cwd)
+		}
+		if deps.WorkingDir == "" {
+			deps.WorkingDir = cwd
+		}
 	}
 
-	deps := agent.AgentDeps{
-		// Phase 4: the local sandbox provider replaces the previous
-		// runtime/eino-owned newLocalBackend/newLocalShell helpers.
-		Sandbox:    agent.NewLocalSandbox(cwd),
-		WorkingDir: cwd,
-		// Phase 5: nil values fall back to Python's "no extras" branches,
-		// so callers that don't configure skills/deferred/ACP keep the
-		// existing behaviour.
-		PromptDeps: promptDeps,
-		AppConfig:  appCfg,
-	}
-	// Phase 6: layer in any host-supplied runtime extras (HITL approval,
-	// deferred-tool resolver, memory hooks, ...). Only the first
-	// RuntimeExtras is honoured — variadic is a back-compat seam, not a
-	// merging spec.
-	if len(extras) > 0 {
-		deps = extras[0].ApplyTo(deps)
-	}
-
-	leadAgent, err := agent.MakeLeadAgent(ctx, rt, cfgView, deps)
+	leadAgent, err := agent.MakeLeadAgent(ctx, rt, cfg, deps)
 	if err != nil {
 		return nil, fmt.Errorf("build lead agent: %w", err)
 	}
 
-	store := checkpoint.NewStore(checkpointDir)
+	store := checkpoint.NewStore(cfg.CheckpointDir)
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{
 		Agent:           leadAgent,
 		EnableStreaming: true,
@@ -112,14 +86,6 @@ func NewDeepAgentRuntime(
 	})
 
 	return &DeepAgentRuntime{modelName: modelName, runner: runner, maxHistoryTurns: 20}, nil
-}
-
-func cloneModelCfg(in config.ModelConfig, defaultName string) *config.ModelConfig {
-	out := in
-	if strings.TrimSpace(out.Name) == "" {
-		out.Name = defaultName
-	}
-	return &out
 }
 
 func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, error) {

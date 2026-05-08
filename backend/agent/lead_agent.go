@@ -97,6 +97,11 @@ func MakeLeadAgent(
 	if err != nil {
 		return nil, err
 	}
+	// Pin the resolved model name back onto rt so any downstream
+	// helper that reads cfg.Models[rt.ModelName] sees the same entry
+	// GetModelConfig picked (the fallback path may differ from the
+	// raw rt.ModelName the caller supplied).
+	rt.ModelName = modelName
 
 	thinkingEnabled := getThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
 	populateRuntimeMetadata(&rt, agentName, modelName, thinkingEnabled, agentConfig)
@@ -107,42 +112,26 @@ func MakeLeadAgent(
 	}
 	summaryModel := buildSummaryChatModel(ctx, cfg, deps.AppConfig, chatModel)
 
-	sandbox := deps.Sandbox
-	if sandbox == nil {
-		sandbox = NewLocalSandbox(deps.WorkingDir)
+	if deps.Sandbox == nil {
+		deps.Sandbox = NewLocalSandbox(deps.WorkingDir)
 	}
-	appCfg := mergeSandboxMounts(deps.AppConfig, sandbox.Mounts())
+	deps.AppConfig = mergeSandboxMounts(deps.AppConfig, deps.Sandbox.Mounts())
 
 	prompt := ApplyPromptTemplate(PromptOptions{
 		SubagentEnabled:        rt.SubagentEnabled,
 		MaxConcurrentSubagents: rt.MaxConcurrentSubagents,
 		AgentName:              agentName,
 		AvailableSkills:        skillsFromProfile(agentConfig),
-		AppConfig:              appCfg,
+		AppConfig:              deps.AppConfig,
 		Deps:                   deps.PromptDeps,
 	})
 
-	chain, err := BuildChain(ctx, ChainOptions{
-		Runtime:           rt,
-		ModelName:         modelName,
-		AgentName:         agentName,
-		ModelConfig:       modelCfg,
-		Config:            cfg,
-		AppConfig:         appCfg,
-		SummaryModel:      summaryModel,
-		HITLTools:         deps.HITLTools,
-		HITLApproval:      deps.HITLApproval,
-		OnClarification:   deps.OnClarification,
-		DeferredToolNames: deps.DeferredToolNames,
-		MemoryHooks:       deps.MemoryHooks,
-		MemoryFlushHook:   deps.MemoryFlushHook,
-		ImageFetcher:      discoverImageFetcher(sandbox),
-	})
+	chain, err := BuildChain(ctx, rt, cfg, deps, summaryModel)
 	if err != nil {
 		return nil, fmt.Errorf("build middleware chain: %w", err)
 	}
 
-	subAgents, withGeneral, err := getSubAgents(ctx, rt, cfg, deps, appCfg)
+	subAgents, withGeneral, err := getSubAgents(ctx, rt, cfg, deps, deps.AppConfig)
 	if err != nil {
 		return nil, fmt.Errorf("build subagents: %w", err)
 	}
@@ -170,7 +159,7 @@ func MakeLeadAgent(
 	// Phase 9: honour profile.ToolGroups (deerflow's
 	// get_available_tools(groups=...) filter). nil ToolGroups → inherit
 	// all (Backend + Shell stay wired); explicit slice → opt-in only.
-	applyToolGroups(deepCfg, agentConfig, sandbox)
+	applyToolGroups(deepCfg, agentConfig, deps.Sandbox)
 
 	agentImpl, err := deep.New(ctx, deepCfg)
 	if err != nil {

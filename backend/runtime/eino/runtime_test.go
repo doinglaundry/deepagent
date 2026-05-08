@@ -8,6 +8,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
+	"eino-cli/backend/agent"
 	"eino-cli/backend/config"
 )
 
@@ -31,17 +32,23 @@ func TestBuildRuntimeUnsupportedProvider(t *testing.T) {
 }
 
 func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
-	runtime, err := NewDeepAgentRuntime(context.Background(), config.ModelConfig{
-		Name:           "primary",
-		Provider:       "claude",
-		Model:          "claude-sonnet-4-6",
-		APIKey:         "test-key",
-		TimeoutSeconds: 30,
-	}, config.AgentConfig{
-		Name:         "deep-agent",
-		Instruction:  "You are a helpful assistant.",
-		MaxIteration: 6,
-	}, "", nil, nil)
+	cfg := config.Config{
+		DefaultModel: "primary",
+		DefaultAgent: "default",
+		Models: map[string]*config.ModelConfig{
+			"primary": {
+				Name:           "primary",
+				Provider:       "claude",
+				Model:          "claude-sonnet-4-6",
+				APIKey:         "test-key",
+				TimeoutSeconds: 30,
+			},
+		},
+		Agents: map[string]config.AgentConfig{
+			"default": {Name: "deep-agent", Instruction: "You are a helpful assistant.", MaxIteration: 6},
+		},
+	}
+	runtime, err := NewDeepAgentRuntime(context.Background(), cfg, agent.AgentDeps{})
 	if err != nil {
 		t.Fatalf("NewDeepAgentRuntime() error = %v", err)
 	}
