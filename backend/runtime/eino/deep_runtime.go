@@ -38,7 +38,7 @@ type DeepAgentRuntime struct {
 // here because they belong to the eino-cli REPL, not to the agent
 // itself.
 func NewDeepAgentRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
-	rt, err := agent.NewRuntimeContext(cfg)
+	rt, err := agent.NewRuntimeContext(cfg, nil)
 	if err != nil {
 		return nil, err
 	}

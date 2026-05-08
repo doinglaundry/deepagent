@@ -10,10 +10,13 @@ import (
 )
 
 func makeChainTestRT() RuntimeContext {
-	rt := defaultRuntimeContext()
-	rt.ModelName = "primary"
-	rt.AgentName = "default"
-	return rt
+	return RuntimeContext{
+		ThinkingEnabled:        true,
+		MaxConcurrentSubagents: 3,
+		Metadata:               map[string]any{},
+		ModelName:              "primary",
+		AgentName:              "default",
+	}
 }
 
 func makeChainTestCfg() config.Config {

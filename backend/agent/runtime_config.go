@@ -36,7 +36,7 @@ type RuntimeContext struct {
 	SubagentEnabled bool
 
 	// MaxConcurrentSubagents is the hard cap on parallel `task` calls per
-	// turn. Defaults to 3 (set by defaultRuntimeContext / MergeRuntime).
+	// turn. Defaults to 3 (set by NewRuntimeContext / MergeRuntime).
 	MaxConcurrentSubagents int
 
 	// HITLTools lists the tool names that require human approval before
@@ -52,45 +52,90 @@ type RuntimeContext struct {
 	Metadata map[string]any
 }
 
-// NewRuntimeContext returns a fully-finalized RuntimeContext for the
-// lead agent: it stamps the hardcoded defaults, seeds AgentName /
-// ModelName from cfg's defaults, then runs FinalizeRuntimeContext to
-// canonicalize names, resolve the chat model, collapse ThinkingEnabled,
-// and emit the "Create Agent" log + Metadata seed.
+// NewRuntimeContext returns a fully-canonical RuntimeContext: it
+// stamps defaults (when seed is nil), validates the agent name,
+// resolves the chat model and ThinkingEnabled against cfg, and emits
+// the "Create Agent" log plus a Metadata snapshot. After it returns,
+// rt is treated as immutable input by MakeLeadAgent / BuildChain /
+// the prompt assembler / the deep.Config builder.
 //
-// Production callers (NewDeepAgentRuntime today) should always go
-// through this function — it is the single line that gives you a
-// ready-to-pass-to-MakeLeadAgent rt.
+// Two call shapes:
 //
-// SubagentEnabled / IsPlanMode are left at the Go zero (false). Hosts
-// that want either on flip the field on the returned value before
-// calling MakeLeadAgent.
+//   - Lead agent: NewRuntimeContext(cfg, nil). Hardcoded defaults
+//     (ThinkingEnabled=true, MaxConcurrentSubagents=3) get stamped and
+//     AgentName / ModelName are seeded from cfg.DefaultAgent /
+//     DefaultModel.
 //
-// Subagent assembly (buildNamedSubagents) does NOT call this — it
-// forks the parent rt, overrides AgentName, and re-runs
-// FinalizeRuntimeContext directly. That keeps "fresh rt for the lead"
-// and "derived rt for a subagent" as two clearly separate flows.
-func NewRuntimeContext(cfg config.Config) (RuntimeContext, error) {
-	rt := defaultRuntimeContext()
-	rt.AgentName = cfg.DefaultAgent
-	rt.ModelName = cfg.DefaultModel
-	if err := FinalizeRuntimeContext(&rt, cfg); err != nil {
+//   - Subagent: NewRuntimeContext(cfg, &seed). The caller forks the
+//     parent rt, overrides AgentName (and usually
+//     SubagentEnabled=false / MaxConcurrentSubagents=0), and hands
+//     that here for canonicalization. This keeps "fork parent +
+//     override + canonicalize" as one atomic operation rather than a
+//     two-step ceremony.
+//
+// SubagentEnabled / IsPlanMode are left at the Go zero on the lead
+// path. Hosts that want either on flip the field on the returned
+// value before calling MakeLeadAgent.
+func NewRuntimeContext(cfg config.Config, seed *RuntimeContext) (RuntimeContext, error) {
+	var rt RuntimeContext
+	if seed != nil {
+		rt = *seed
+	} else {
+		rt = RuntimeContext{
+			ThinkingEnabled:        true, // Python: cfg.get("thinking_enabled", True)
+			MaxConcurrentSubagents: 3,    // Python: cfg.get("max_concurrent_subagents", 3)
+			Metadata:               map[string]any{},
+			AgentName:              cfg.DefaultAgent,
+			ModelName:              cfg.DefaultModel,
+		}
+	}
+
+	agentName, err := ValidateAgentName(rt.AgentName)
+	if err != nil {
 		return RuntimeContext{}, err
 	}
-	return rt, nil
-}
+	rt.AgentName = agentName
 
-// defaultRuntimeContext is the hardcoded-defaults seed used internally
-// by NewRuntimeContext and exposed (only) to tests in this package
-// that need a known starting point without going through cfg-seeding
-// or Finalize. The defaults mirror Python's cfg.get(..., default)
-// fallbacks.
-func defaultRuntimeContext() RuntimeContext {
-	return RuntimeContext{
-		ThinkingEnabled:        true, // Python: cfg.get("thinking_enabled", True)
-		MaxConcurrentSubagents: 3,    // Python: cfg.get("max_concurrent_subagents", 3)
-		Metadata:               map[string]any{},
+	agentConfig, err := GetAgentConfig(cfg, agentName)
+	if err != nil {
+		return RuntimeContext{}, fmt.Errorf("load agent profile %q: %w", agentName, err)
 	}
+
+	modelName, modelCfg, err := GetModelConfig(rt.ModelName, agentConfig, cfg)
+	if err != nil {
+		return RuntimeContext{}, err
+	}
+	rt.ModelName = modelName
+	rt.ThinkingEnabled = getThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
+
+	resolvedName := fallback(rt.AgentName, "default")
+	resolvedModel := fallback(rt.ModelName, "default")
+	slog.Info("Create Agent",
+		"agent_name", resolvedName,
+		"thinking_enabled", rt.ThinkingEnabled,
+		"reasoning_effort", rt.ReasoningEffort,
+		"model_name", resolvedModel,
+		"is_plan_mode", rt.IsPlanMode,
+		"subagent_enabled", rt.SubagentEnabled,
+		"max_concurrent_subagents", rt.MaxConcurrentSubagents,
+	)
+
+	if rt.Metadata == nil {
+		rt.Metadata = map[string]any{}
+	}
+	rt.Metadata["agent_name"] = resolvedName
+	rt.Metadata["model_name"] = resolvedModel
+	rt.Metadata["thinking_enabled"] = rt.ThinkingEnabled
+	rt.Metadata["reasoning_effort"] = rt.ReasoningEffort
+	rt.Metadata["is_plan_mode"] = rt.IsPlanMode
+	rt.Metadata["subagent_enabled"] = rt.SubagentEnabled
+	if agentConfig != nil {
+		rt.Metadata["tool_groups"] = agentConfig.ToolGroups
+		if agentConfig.Skills != nil {
+			rt.Metadata["available_skills"] = agentConfig.Skills
+		}
+	}
+	return rt, nil
 }
 
 // MergeRuntime overlays configurable+context maps onto a RuntimeContext.
@@ -136,76 +181,6 @@ func (rt RuntimeContext) MergeRuntime(configurable, context map[string]any) Runt
 		rt.Metadata = map[string]any{}
 	}
 	return rt
-}
-
-// FinalizeRuntimeContext is the SOLE place rt is mutated against cfg.
-// After it returns, rt is canonical and downstream callers (MakeLeadAgent,
-// BuildChain, the prompt assembler, the deep.Config builder) treat rt
-// as immutable input.
-//
-// What it does, in order:
-//
-//  1. Validate rt.AgentName, write the canonical form back.
-//  2. Look up the agent profile so cascading model resolution can read
-//     agent_config.Model. Errors propagate.
-//  3. Resolve rt.ModelName via the rt → agent.Model → cfg.DefaultModel
-//     cascade and write the resolved name back.
-//  4. Collapse rt.ThinkingEnabled into the resolved boolean (intent AND
-//     model supports thinking). Emits a slog.Warn on downgrade.
-//  5. Emit the "Create Agent" line and seed rt.Metadata with the
-//     post-resolution values so middleware / renderers downstream see
-//     the same view as the log.
-//
-// The split with MakeLeadAgent is now: this function freezes rt, that
-// function consumes rt. Tests and subagent recursion call Finalize too
-// (each subagent gets its own canonical rt).
-func FinalizeRuntimeContext(rt *RuntimeContext, cfg config.Config) error {
-	agentName, err := ValidateAgentName(rt.AgentName)
-	if err != nil {
-		return err
-	}
-	rt.AgentName = agentName
-
-	agentConfig, err := GetAgentConfig(cfg, agentName)
-	if err != nil {
-		return fmt.Errorf("load agent profile %q: %w", agentName, err)
-	}
-
-	modelName, modelCfg, err := GetModelConfig(rt.ModelName, agentConfig, cfg)
-	if err != nil {
-		return err
-	}
-	rt.ModelName = modelName
-	rt.ThinkingEnabled = getThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
-
-	resolvedName := fallback(rt.AgentName, "default")
-	resolvedModel := fallback(rt.ModelName, "default")
-	slog.Info("Create Agent",
-		"agent_name", resolvedName,
-		"thinking_enabled", rt.ThinkingEnabled,
-		"reasoning_effort", rt.ReasoningEffort,
-		"model_name", resolvedModel,
-		"is_plan_mode", rt.IsPlanMode,
-		"subagent_enabled", rt.SubagentEnabled,
-		"max_concurrent_subagents", rt.MaxConcurrentSubagents,
-	)
-
-	if rt.Metadata == nil {
-		rt.Metadata = map[string]any{}
-	}
-	rt.Metadata["agent_name"] = resolvedName
-	rt.Metadata["model_name"] = resolvedModel
-	rt.Metadata["thinking_enabled"] = rt.ThinkingEnabled
-	rt.Metadata["reasoning_effort"] = rt.ReasoningEffort
-	rt.Metadata["is_plan_mode"] = rt.IsPlanMode
-	rt.Metadata["subagent_enabled"] = rt.SubagentEnabled
-	if agentConfig != nil {
-		rt.Metadata["tool_groups"] = agentConfig.ToolGroups
-		if agentConfig.Skills != nil {
-			rt.Metadata["available_skills"] = agentConfig.Skills
-		}
-	}
-	return nil
 }
 
 func boolFrom(m map[string]any, k string) (bool, bool) {

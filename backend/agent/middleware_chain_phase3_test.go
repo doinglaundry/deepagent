@@ -13,12 +13,16 @@ import (
 // + rt) and verifies the resulting chain contains the expected
 // middleware types and that the Clarification middleware remains last.
 func TestBuildChain_GatedMiddlewares(t *testing.T) {
-	rt := defaultRuntimeContext()
-	rt.ModelName = "primary"
-	rt.AgentName = "default"
-	rt.SubagentEnabled = true
-	rt.IsPlanMode = true
-	rt.HITLTools = []string{"shell"}
+	rt := RuntimeContext{
+		ThinkingEnabled:        true,
+		MaxConcurrentSubagents: 3,
+		Metadata:               map[string]any{},
+		ModelName:              "primary",
+		AgentName:              "default",
+		SubagentEnabled:        true,
+		IsPlanMode:             true,
+		HITLTools:              []string{"shell"},
+	}
 
 	cfg := config.Config{
 		Models: map[string]*config.ModelConfig{
@@ -72,8 +76,12 @@ func TestBuildChain_GatedMiddlewares(t *testing.T) {
 // TestBuildChain_NoGatesEmittedWhenDisabled checks that the gated slots
 // disappear when their flags are off.
 func TestBuildChain_NoGatesEmittedWhenDisabled(t *testing.T) {
-	rt := defaultRuntimeContext()
-	rt.ModelName = "primary"
+	rt := RuntimeContext{
+		ThinkingEnabled:        true,
+		MaxConcurrentSubagents: 3,
+		Metadata:               map[string]any{},
+		ModelName:              "primary",
+	}
 	cfg := config.Config{
 		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "kimi", SupportsVision: false},

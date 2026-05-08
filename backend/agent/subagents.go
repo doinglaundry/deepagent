@@ -72,12 +72,16 @@ func buildNamedSubagents(
 		// Per-subagent runtime: same defaults as the lead, but force
 		// SubagentEnabled=false so the recursive deep.New call doesn't
 		// also try to wire its own subagents (defence in depth — the
-		// context flag does the actual cap).
-		subRT := rt
-		subRT.AgentName = name
-		subRT.SubagentEnabled = false
-		subRT.MaxConcurrentSubagents = 0
-		if err := FinalizeRuntimeContext(&subRT, cfg); err != nil {
+		// context flag does the actual cap). NewRuntimeContext with a
+		// non-nil seed canonicalizes this fork in place (validates the
+		// new AgentName, re-resolves the chat model against the
+		// subagent's profile, refreshes Metadata).
+		subSeed := rt
+		subSeed.AgentName = name
+		subSeed.SubagentEnabled = false
+		subSeed.MaxConcurrentSubagents = 0
+		subRT, err := NewRuntimeContext(cfg, &subSeed)
+		if err != nil {
 			slog.Warn(
 				"failed to finalize subagent runtime; skipping",
 				"agent", name,

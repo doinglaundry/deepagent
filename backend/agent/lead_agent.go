@@ -27,9 +27,10 @@ import (
 //
 // rt is treated as immutable: every mutation (name canonicalization,
 // model resolution, thinking-mode collapse, metadata seed + log line)
-// lives in FinalizeRuntimeContext. Callers must call Finalize before
-// MakeLeadAgent — both production entry points (NewDeepAgentRuntime
-// and buildNamedSubagents) do so. MakeLeadAgent itself only consumes.
+// lives in NewRuntimeContext. Both production entry points
+// (NewDeepAgentRuntime for the lead, buildNamedSubagents for forks)
+// route through it before calling MakeLeadAgent. MakeLeadAgent itself
+// only consumes rt.
 //
 // MakeLeadAgent is also self-contained: it owns its filesystem backend
 // / shell (cwd-rooted via newLocalBackend / newLocalShell) and its
