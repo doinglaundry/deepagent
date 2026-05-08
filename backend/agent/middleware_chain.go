@@ -54,8 +54,8 @@ func BuildChain(
 		middlewares.NewLoopDetection(),
 	}
 
-	if cfg.Memory.Enabled {
-		chatModel = append(chatModel, middlewares.NewMemory(deps.MemoryHooks))
+	if cfg.Memory.Enabled && deps.Mem != nil {
+		chatModel = append(chatModel, middlewares.NewMemory(deps.Mem.Hooks()))
 	}
 
 	if cfg.TokenUsage.Enabled {
@@ -79,6 +79,10 @@ func BuildChain(
 	}
 
 	if cfg.Summarization.Enabled {
+		var flushHook middlewares.SummarizationMemoryFlushHook
+		if deps.Mem != nil {
+			flushHook = deps.Mem.FlushBeforeSummarization
+		}
 		summaryMW, err := middlewares.NewSummarization(
 			ctx,
 			cfg.Summarization.Enabled,
@@ -86,7 +90,7 @@ func BuildChain(
 			0, // contextMessages — same
 			cfg.Summarization.SummaryPrompt,
 			summaryModel,
-			deps.MemoryFlushHookFunc,
+			flushHook,
 		)
 		if err != nil {
 			return Chain{}, fmt.Errorf("build summarization mw: %w", err)

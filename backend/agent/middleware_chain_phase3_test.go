@@ -28,8 +28,9 @@ func TestBuildChain_GatedMiddlewares(t *testing.T) {
 		ToolSearch: config.ToolSearchConfig{Enabled: true},
 	}
 	deps := AgentDeps{
+		Mem:                   NewMemoryAccessor(nil),
 		DeferredToolNamesFunc: func() []string { return []string{"big-tool"} },
-		HITLTools:         []string{"shell"},
+		HITLTools:             []string{"shell"},
 	}
 
 	chain, err := BuildChain(context.Background(), rt, cfg, deps, nil)

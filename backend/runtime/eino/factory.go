@@ -24,13 +24,10 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 		return nil, fmt.Errorf("unsupported model provider %q", mc.Provider)
 	}
 
-	memoryAcc := agent.NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
 	deps := agent.AgentDeps{
-		Mem:                   memoryAcc,
+		Mem:                   agent.NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir)),
 		DeferredToolNamesFunc: agent.DeferredToolNamesFromConfig(cfg),
 		HITLApprovalFunc:      defaultHITLApproval,
-		MemoryHooks:           memoryAcc.Hooks(),
-		MemoryFlushHookFunc:   memoryAcc.FlushBeforeSummarization,
 	}
 	return NewDeepAgentRuntime(ctx, cfg, deps)
 }

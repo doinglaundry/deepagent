@@ -26,10 +26,12 @@ type AgentDeps struct {
 	// shipped with before Phase 4.
 	Sandbox SandboxProvider
 
-	// Mem is the memory accessor used by the prompt's <memory> section.
-	// nil simply skips that section. The same accessor also powers the
-	// MemoryHooks / MemoryFlushHookFunc fields below — the prompt path
-	// just needs a direct handle for read-side rendering.
+	// Mem is the single memory dependency. The prompt's <memory>
+	// section, the Memory middleware (inject / extract), and the
+	// summarization flush hook all derive their callbacks from the
+	// methods on this accessor. nil disables every memory-related path
+	// — middleware_chain.go gates on `deps.Mem != nil`, so callers that
+	// don't want memory simply leave this zero.
 	Mem *MemoryAccessor
 
 	// WorkingDir is consulted only when Sandbox is nil; ignored otherwise.
@@ -55,18 +57,6 @@ type AgentDeps struct {
 	// cfg.ToolSearch.Enabled is true. Without this the middleware
 	// is not attached.
 	DeferredToolNamesFunc func() []string
-
-	// MemoryHooks drives the Memory middleware's inject / extract data
-	// plane. Wire only when cfg.Memory.Enabled is true. (Not a single
-	// func — this is a struct bundling Inject + Extract callbacks, so
-	// it does not get the Func suffix.)
-	MemoryHooks middlewares.MemoryHooks
-
-	// MemoryFlushHookFunc is plugged into the summarization middleware
-	// so the host can persist memorable bits before/around
-	// summarization. Optional; nil means "no flush hook" — the
-	// middleware skips the callback entirely.
-	MemoryFlushHookFunc middlewares.SummarizationMemoryFlushHook
 }
 
 // MakeLeadAgent mirrors deerflow.agents.lead_agent.agent.make_lead_agent.
