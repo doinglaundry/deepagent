@@ -14,14 +14,14 @@ import (
 //
 // Phase 3 ships the BeforeAgent hook surface and a NameProvider abstraction;
 // the actual deferred-registry plumbing lands when DeferredRegistry has a
-// real backing source (currently PromptDeps.GetDeferredRegistry returns
-// nil in the runtime/eino wiring).
+// real backing source (currently agent.DeferredToolNamesFromConfig returns
+// nil in the runtime/eino wiring when no deferred tools are configured).
 type DeferredTools struct {
 	*adk.BaseChatModelAgentMiddleware
 
 	// NameProvider returns the names of deferred tools that should be
 	// excluded from the active tool list. Wire this to the same source that
-	// PromptDeps.GetDeferredRegistry pulls from so the prompt section and
+	// agent.DeferredToolNames pulls from so the prompt section and
 	// the runtime tool list stay in sync.
 	NameProvider func() []string
 

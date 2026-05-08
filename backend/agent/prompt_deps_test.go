@@ -9,7 +9,7 @@ import (
 	"eino-cli/backend/config"
 )
 
-func TestBuildPromptDeps_SkillsWiredFromConfigPaths(t *testing.T) {
+func TestLoadEnabledSkillsFromConfig_FromPaths(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "demo"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -22,27 +22,22 @@ func TestBuildPromptDeps_SkillsWiredFromConfigPaths(t *testing.T) {
 	cfg := config.Config{
 		Skills: config.SkillsConfig{Paths: []string{root}},
 	}
-	deps := BuildPromptDeps(cfg, nil)
-	if deps.LoadSkills == nil {
-		t.Fatal("LoadSkills should be wired")
-	}
-	got := deps.LoadSkills()
+	got := loadEnabledSkillsFromConfig(cfg)
 	if len(got) != 1 {
-		t.Fatalf("LoadSkills: got %d, want 1: %+v", len(got), got)
+		t.Fatalf("loadEnabledSkillsFromConfig: got %d, want 1: %+v", len(got), got)
 	}
 	if got[0].Name != "demo" || got[0].Description != "A demo skill." {
 		t.Fatalf("loaded skill mismatch: %+v", got[0])
 	}
+}
 
-	// Cached: a second call should not rescan disk and should return the
-	// same slice.
-	cached := deps.LoadSkills()
-	if len(cached) != 1 || cached[0].Name != "demo" {
-		t.Fatalf("cached LoadSkills mismatch: %+v", cached)
+func TestLoadEnabledSkillsFromConfig_NoPaths(t *testing.T) {
+	if got := loadEnabledSkillsFromConfig(config.Config{}); got != nil {
+		t.Fatalf("empty config should yield nil skill list, got %+v", got)
 	}
 }
 
-func TestBuildPromptDeps_DeferredAndACPWired(t *testing.T) {
+func TestDeferredToolNames(t *testing.T) {
 	cfg := config.Config{
 		ToolSearch: config.ToolSearchConfig{
 			Enabled: true,
@@ -51,69 +46,33 @@ func TestBuildPromptDeps_DeferredAndACPWired(t *testing.T) {
 				{Name: "shell", Description: "shell"},
 			},
 		},
-		ACP: config.ACPConfig{
-			Agents: map[string]config.ACPAgentEntry{
-				"codex": {Description: "codex agent"},
-			},
-		},
 	}
-	deps := BuildPromptDeps(cfg, nil)
-	if deps.GetDeferredRegistry == nil {
-		t.Fatal("GetDeferredRegistry should be wired")
-	}
-	reg := deps.GetDeferredRegistry()
-	if len(reg) != 2 || reg[0] != "web_search" {
-		t.Fatalf("registry mismatch: %+v", reg)
+	names := DeferredToolNames(cfg)
+	if len(names) != 2 || names[0] != "web_search" || names[1] != "shell" {
+		t.Fatalf("DeferredToolNames mismatch: %+v", names)
 	}
 
-	if deps.GetACPAgents == nil {
-		t.Fatal("GetACPAgents should be wired")
-	}
-	acp := deps.GetACPAgents()
-	if _, ok := acp["codex"]; !ok {
-		t.Fatalf("codex missing from ACP map: %+v", acp)
+	if got := DeferredToolNames(config.Config{}); got != nil {
+		t.Fatalf("empty cfg should yield nil, got %+v", got)
 	}
 }
 
-func TestBuildPromptDeps_SubagentConfigSurfacedFromAgents(t *testing.T) {
+func TestDeferredToolNamesFromConfig_ClosureNilWhenEmpty(t *testing.T) {
+	if fn := DeferredToolNamesFromConfig(config.Config{}); fn != nil {
+		t.Fatal("expected nil closure when no deferred tools configured")
+	}
 	cfg := config.Config{
-		Agents: map[string]config.AgentConfig{
-			"researcher": {
-				Name:        "researcher",
-				Description: "Deep research specialist.",
-			},
-			"empty": {Name: "empty"},
+		ToolSearch: config.ToolSearchConfig{
+			Deferred: []config.DeferredToolEntry{{Name: "fancy_search"}},
 		},
 	}
-	deps := BuildPromptDeps(cfg, nil)
-	if deps.GetSubagentConfig == nil {
-		t.Fatal("GetSubagentConfig should be wired when cfg.Agents is non-empty")
+	fn := DeferredToolNamesFromConfig(cfg)
+	if fn == nil {
+		t.Fatal("expected non-nil closure")
 	}
-	if got := deps.GetSubagentConfig("researcher"); got == nil ||
-		!strings.Contains(got.Description, "research specialist") {
-		t.Fatalf("researcher lookup mismatch: %+v", got)
-	}
-	if got := deps.GetSubagentConfig("empty"); got != nil {
-		t.Fatalf("empty description must yield nil, got %+v", got)
-	}
-	if got := deps.GetSubagentConfig("missing"); got != nil {
-		t.Fatalf("missing key must yield nil, got %+v", got)
-	}
-}
-
-func TestBuildPromptDeps_EmptyConfigDegradesGracefully(t *testing.T) {
-	deps := BuildPromptDeps(config.Config{}, nil)
-	if deps.LoadSkills == nil {
-		t.Fatal("LoadSkills should always be set")
-	}
-	if got := deps.LoadSkills(); got != nil {
-		t.Fatalf("empty config should yield nil skill list, got %+v", got)
-	}
-	if deps.GetDeferredRegistry != nil {
-		t.Fatal("GetDeferredRegistry should remain nil when no deferred tools configured")
-	}
-	if deps.GetACPAgents != nil {
-		t.Fatal("GetACPAgents should remain nil when no agents configured")
+	got := fn()
+	if len(got) != 1 || got[0] != "fancy_search" {
+		t.Fatalf("closure result mismatch: %+v", got)
 	}
 }
 
@@ -132,12 +91,10 @@ func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
 			},
 		},
 	}
-	deps := BuildPromptDeps(cfg, nil)
 
 	out := ApplyPromptTemplate(PromptOptions{
 		AgentName: "default",
 		Config:    cfg,
-		Deps:      deps,
 	})
 
 	if !strings.Contains(out, "<available_skills>") {
@@ -148,5 +105,19 @@ func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
 	}
 	if !strings.Contains(out, "<available-deferred-tools>") || !strings.Contains(out, "fancy_search") {
 		t.Fatalf("deferred-tools section missing from prompt")
+	}
+}
+
+func TestApplyPromptTemplate_NilMemSkipsMemorySection(t *testing.T) {
+	cfg := config.Config{
+		Memory: config.Memory{Enabled: true, InjectionEnabled: true, MaxInjectionTokens: 1024},
+	}
+	out := ApplyPromptTemplate(PromptOptions{
+		AgentName: "default",
+		Config:    cfg,
+		Mem:       nil,
+	})
+	if strings.Contains(out, "<memory>") {
+		t.Fatalf("nil Mem should skip <memory> section, got:\n%s", out)
 	}
 }

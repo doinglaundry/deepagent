@@ -58,7 +58,8 @@ func NewMemoryAccessor(store *memorystore.Store) *MemoryAccessor {
 	}
 }
 
-// GetMemoryData populates PromptDeps.GetMemoryData. The agentName
+// GetMemoryData is the prompt-side memory accessor invoked by
+// ApplyPromptTemplate's <memory> section. The agentName
 // + userID arguments are accepted for API parity with deerflow but
 // currently ignored — the store does not partition by either yet, and
 // callers that need partitioning should provide a separate store.

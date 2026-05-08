@@ -2,77 +2,58 @@ package agent
 
 import (
 	"log/slog"
-	"strings"
-	"sync"
 
 	"eino-cli/backend/agent/skills"
 	"eino-cli/backend/config"
 )
 
-// BuildPromptDeps wires up PromptDeps from a fully-loaded config.Config
-// and an optional MemoryAccessor. Mirrors the Python "compose every
-// dependency at the edge" pattern; without this helper the runtime
-// layer would have to know about every individual data source.
+// This file holds the small, stateless helpers that ApplyPromptTemplate
+// (and the runtime middleware factory) consult to derive prompt-time
+// data from a config.Config. There is no PromptDeps callback struct —
+// every consumer just calls these helpers directly.
+
+// loadEnabledSkillsFromConfig scans cfg.Skills.Paths for SKILL.md files
+// and returns the enabled skills as the prompt-side Skill type.
 //
-// Pass nil for mem if memory is not configured — the prompt's <memory>
-// section will simply be empty (the template handles nil accessors
-// gracefully).
+// The scan runs on every call (no in-process cache) — for ~30 SKILL.md
+// files across our public/custom directories, the cost is in the low
+// milliseconds cold and sub-millisecond after the OS page cache warms,
+// which is well below the latency floor of any LLM call. Re-introduce
+// caching here only if a real workload demonstrates a problem.
 //
-// Skills are loaded eagerly on first call (then cached for the lifetime
-// of the returned PromptDeps) so the on-disk scan happens once per REPL
-// session instead of once per turn.
-//
-// Knobs we deliberately do NOT expose here (LoadAgentSoul,
-// EffectiveUserID, custom SkillLoader): nobody currently overrides
-// them, and YAGNI — re-introduce the options struct only when a real
-// caller appears.
-func BuildPromptDeps(cfg config.Config, mem *MemoryAccessor) *PromptDeps {
-	deps := &PromptDeps{}
-	if mem != nil {
-		deps.GetMemoryData = mem.GetMemoryData
-		deps.FormatMemoryForInjection = mem.FormatMemoryForInjection
+// Errors are logged and treated as "no skills" (Python's try/except
+// branch returns []).
+func loadEnabledSkillsFromConfig(cfg config.Config) []Skill {
+	if len(cfg.Skills.Paths) == 0 {
+		return nil
 	}
-
-	paths := append([]string(nil), cfg.Skills.Paths...)
-	deps.LoadSkills = makeCachedSkillLoader(paths, cfg.Skills.Enabled)
-
-	if names := DeferredToolNamesFromConfig(cfg); names != nil {
-		deps.GetDeferredRegistry = names
+	loaded, err := skills.LoadFromPaths(cfg.Skills.Paths)
+	if err != nil {
+		slog.Warn("skills loader: scan failed", "err", err)
+		return nil
 	}
-
-	// Subagent description lookup: surface AgentConfig.Description so
-	// the prompt's <available-subagents> section gets a one-liner per
-	// configured agent. Without this hook the section silently skips
-	// every entry that isn't built-in (the previous behaviour).
-	if len(cfg.Agents) > 0 {
-		agents := cfg.Agents
-		deps.GetSubagentConfig = func(name string) *SubagentConfig {
-			a, ok := agents[name]
-			if !ok || strings.TrimSpace(a.Description) == "" {
-				return nil
-			}
-			return &SubagentConfig{Description: a.Description}
+	out := make([]Skill, 0, len(loaded))
+	for _, s := range loaded {
+		if !skills.IsEnabled(s.Name, s.Category, cfg.Skills.Enabled) {
+			continue
 		}
+		out = append(out, Skill{
+			Name:        s.Name,
+			Description: s.Description,
+			Category:    s.Category,
+			SkillFile:   s.SkillFile,
+		})
 	}
-
-	if len(cfg.ACP.Agents) > 0 {
-		acp := make(map[string]any, len(cfg.ACP.Agents))
-		for name, a := range cfg.ACP.Agents {
-			acp[name] = map[string]any{"description": a.Description}
-		}
-		deps.GetACPAgents = func() map[string]any { return acp }
-	}
-
-	return deps
+	return out
 }
 
-// DeferredToolNamesFromConfig returns a closure compatible with
-// AgentDeps.DeferredToolNamesFunc so the DeferredTools middleware can
-// filter the active tool set. Returns nil when no deferred tools are
-// configured — callers should pass that directly through
-// AgentDeps.DeferredToolNamesFunc to keep the middleware from being
-// attached.
-func DeferredToolNamesFromConfig(cfg config.Config) func() []string {
+// DeferredToolNames returns the names of tools that should be advertised
+// in the prompt's <available-deferred-tools> section AND filtered out of
+// the active toolbelt by the DeferredTools middleware. Both consumers
+// must pull from the same source so prompt and toolbelt stay in sync.
+//
+// Returns nil when no deferred tools are configured.
+func DeferredToolNames(cfg config.Config) []string {
 	if len(cfg.ToolSearch.Deferred) == 0 {
 		return nil
 	}
@@ -80,46 +61,17 @@ func DeferredToolNamesFromConfig(cfg config.Config) func() []string {
 	for _, e := range cfg.ToolSearch.Deferred {
 		names = append(names, e.Name)
 	}
-	return func() []string { return names }
+	return names
 }
 
-// makeCachedSkillLoader returns a closure that scans the given paths
-// once and caches the result for the lifetime of the closure.
-// sync.Once guards concurrent first-touch (multiple agent invocations
-// from the TUI / smoke runs share one process). The enabled map is
-// applied at scan time so disabled skills never reach the prompt; an
-// empty map means "use deerflow defaults" (every public/custom skill
-// enabled).
-func makeCachedSkillLoader(paths []string, enabled map[string]bool) func() []Skill {
-	if len(paths) == 0 {
-		return func() []Skill { return nil }
+// DeferredToolNamesFromConfig wraps DeferredToolNames in a closure
+// compatible with AgentDeps.DeferredToolNamesFunc. Returns nil when no
+// deferred tools are configured so the middleware factory can detect
+// "don't attach" via a simple nil check.
+func DeferredToolNamesFromConfig(cfg config.Config) func() []string {
+	names := DeferredToolNames(cfg)
+	if len(names) == 0 {
+		return nil
 	}
-
-	var (
-		once   sync.Once
-		cached []Skill
-	)
-
-	return func() []Skill {
-		once.Do(func() {
-			loaded, err := skills.LoadFromPaths(paths)
-			if err != nil {
-				slog.Warn("skills loader: scan failed", "err", err)
-				return
-			}
-			cached = make([]Skill, 0, len(loaded))
-			for _, s := range loaded {
-				if !skills.IsEnabled(s.Name, s.Category, enabled) {
-					continue
-				}
-				cached = append(cached, Skill{
-					Name:        s.Name,
-					Description: s.Description,
-					Category:    s.Category,
-					SkillFile:   s.SkillFile,
-				})
-			}
-		})
-		return cached
-	}
+	return func() []string { return names }
 }

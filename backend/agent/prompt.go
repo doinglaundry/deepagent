@@ -1,10 +1,12 @@
 // Package agent contains the lead-agent assembly logic ported from
 // deerflow.agents.lead_agent. prompt.go is a 1:1 translation of
-// deerflow.agents.lead_agent.prompt: it builds the system prompt fed to the
-// chat model. External runtime dependencies (skills, subagents, memory, ACP,
-// sandbox mounts) are abstracted via the PromptDeps struct so the Go side can
-// stay decoupled from the Python deerflow runtime — every nil function maps
-// to the corresponding Python try/except branch that returns "".
+// deerflow.agents.lead_agent.prompt: it builds the system prompt fed
+// to the chat model.
+//
+// External data (skills, subagents, memory, ACP, sandbox mounts) is
+// pulled directly from config.Config and *MemoryAccessor — no
+// PromptDeps callback bag — so the prompt assembler reads its inputs
+// from the same authoritative sources every other layer uses.
 package agent
 
 import (
@@ -28,35 +30,10 @@ type Skill struct {
 	SkillFile   string
 }
 
-// SubagentConfig mirrors deerflow.subagents.registry.SubagentConfig.
-type SubagentConfig struct {
-	Description string
-}
-
 // Mount mirrors a sandbox mount entry.
 type Mount struct {
 	ContainerPath string
 	ReadOnly      bool
-}
-
-// PromptDeps abstracts every external runtime call the Python module makes.
-// A nil function maps to Python's try/except branch (return ""), keeping the
-// final prompt deterministic even when the surrounding runtime is missing.
-type PromptDeps struct {
-	LoadAgentSoul            func(agentName string) string
-	LoadSkills               func() []Skill // enabled-only
-	GetSubagentNames         func() []string
-	GetSubagentConfig        func(name string) *SubagentConfig
-	GetEffectiveUserID       func() string
-	GetMemoryData            func(agentName, userID string) any
-	FormatMemoryForInjection func(data any, maxTokens int) string
-	// GetDeferredRegistry returns the names of deferred tools that should
-	// be advertised to the model in <available-deferred-tools>. The
-	// runtime middleware (DeferredTools) filters those same names out of
-	// the active tool set; both consumers should pull from the same
-	// source so the prompt and the toolbelt stay in sync.
-	GetDeferredRegistry func() []string
-	GetACPAgents        func() map[string]any
 }
 
 // AvailableSkills represents Python's `available_skills: set[str] | None`.
@@ -82,9 +59,11 @@ func SkillSet(names ...string) *AvailableSkills {
 //
 // Config carries the full loaded config; ApplyPromptTemplate reads the
 // gate fields from cfg.* directly (cfg.Memory, cfg.SkillEvolution,
-// cfg.ToolSearch). Mounts are runtime-discovered (sandbox.Mounts())
-// and threaded through separately so prompt rendering doesn't have to
-// know how to merge configured + discovered mounts.
+// cfg.ToolSearch, cfg.Agents, cfg.ACP, cfg.Skills). Mounts are
+// runtime-discovered (sandbox.Mounts()) and threaded through
+// separately so prompt rendering doesn't have to know how to merge
+// configured + discovered mounts. Mem is the optional memory accessor
+// — nil simply skips the <memory> section.
 type PromptOptions struct {
 	SubagentEnabled        bool
 	MaxConcurrentSubagents int
@@ -92,19 +71,12 @@ type PromptOptions struct {
 	AvailableSkills        *AvailableSkills // nil == AllSkills() == Python None
 	Config                 config.Config
 	Mounts                 []Mount
-	Deps                   *PromptDeps
+	Mem                    *MemoryAccessor
 }
 
 // -----------------------------------------------------------------------------
 // Internal helpers
 // -----------------------------------------------------------------------------
-
-func nonNilDeps(d *PromptDeps) PromptDeps {
-	if d == nil {
-		return PromptDeps{}
-	}
-	return *d
-}
 
 func contains(haystack []string, needle string) bool {
 	for _, s := range haystack {
@@ -125,62 +97,23 @@ func availableSkillsAsSet(a *AvailableSkills) (allSkills bool, names []string) {
 }
 
 // -----------------------------------------------------------------------------
-// _build_available_subagents_description
-// -----------------------------------------------------------------------------
-
-func buildAvailableSubagentsDescription(deps PromptDeps, availableNames []string, bashAvailable bool) string {
-	bashDesc := "Not available in the current sandbox configuration. Use direct file/web tools or switch to AioSandboxProvider for isolated shell access."
-	if bashAvailable {
-		bashDesc = "For command execution (git, build, test, deploy operations)"
-	}
-	builtin := map[string]string{
-		"general-purpose": "For ANY non-trivial task - web research, code exploration, file operations, analysis, etc.",
-		"bash":            bashDesc,
-	}
-
-	var lines []string
-	for _, name := range availableNames {
-		if d, ok := builtin[name]; ok {
-			lines = append(lines, fmt.Sprintf("- **%s**: %s", name, d))
-			continue
-		}
-		if deps.GetSubagentConfig == nil {
-			continue
-		}
-		cfg := deps.GetSubagentConfig(name)
-		if cfg == nil {
-			continue
-		}
-		first := strings.TrimSpace(strings.SplitN(cfg.Description, "\n", 2)[0])
-		lines = append(lines, fmt.Sprintf("- **%s**: %s", name, first))
-	}
-	return strings.Join(lines, "\n")
-}
-
-// -----------------------------------------------------------------------------
 // _build_subagent_section
 // -----------------------------------------------------------------------------
 
-func buildSubagentSection(deps PromptDeps, n int) string {
-	var availableNames []string
-	if deps.GetSubagentNames != nil {
-		availableNames = deps.GetSubagentNames()
-	}
-	bashAvailable := contains(availableNames, "bash")
-
-	availableSubagents := buildAvailableSubagentsDescription(deps, availableNames, bashAvailable)
-
+// buildSubagentSection renders the orchestrator block. The Python
+// original consults a subagent registry to enumerate available
+// subagents; in eino-cli that registry was never wired up, so the
+// "Available Subagents" listing has always been empty in production
+// and the bash-aware copy paths were always unreachable. We preserve
+// that exact behaviour here (empty listing, non-bash example variants).
+//
+// If you wire a real subagent registry later, this is the spot to
+// re-introduce dynamic per-agent descriptions and the bash-aware
+// variants — drive them off cfg.Agents (or a new registry) directly.
+func buildSubagentSection(n int) string {
+	availableSubagents := ""
 	directToolExamples := "ls, read_file, web_search, etc."
-	if bashAvailable {
-		directToolExamples = "bash, ls, read_file, web_search, etc."
-	}
-
-	var directExecutionExample string
-	if bashAvailable {
-		directExecutionExample = "# User asks: \"Run the tests\"\n# Thinking: Cannot decompose into parallel sub-tasks\n# → Execute directly\n\nbash(\"npm test\")  # Direct execution, not task()"
-	} else {
-		directExecutionExample = "# User asks: \"Read the README\"\n# Thinking: Single straightforward file read\n# → Execute directly\n\nread_file(\"workspace/README.md\")  # Direct execution, not task()"
-	}
+	directExecutionExample := "# User asks: \"Read the README\"\n# Thinking: Single straightforward file read\n# → Execute directly\n\nread_file(\"workspace/README.md\")  # Direct execution, not task()"
 
 	lines := []string{
 		"<subagent_system>",
@@ -319,20 +252,19 @@ func buildSubagentSection(deps PromptDeps, n int) string {
 
 // getMemoryContext mirrors deerflow.agents.lead_agent.prompt._get_memory_context.
 // Python wraps the body in try/except and returns "" on any failure; the Go
-// equivalent is "every dep is nil-safe → return ''".
-func getMemoryContext(agentName string, deps PromptDeps, mem config.Memory) string {
-	if deps.GetMemoryData == nil || deps.FormatMemoryForInjection == nil {
+// equivalent is "nil accessor or disabled → return ''".
+//
+// The Python upstream also threads a non-empty user_id through here, but
+// eino-cli has never wired one (single-user CLI), so userID stays "".
+func getMemoryContext(agentName string, mem *MemoryAccessor, m config.Memory) string {
+	if mem == nil {
 		return ""
 	}
-	if !mem.Enabled || !mem.InjectionEnabled {
+	if !m.Enabled || !m.InjectionEnabled {
 		return ""
 	}
-	userID := ""
-	if deps.GetEffectiveUserID != nil {
-		userID = deps.GetEffectiveUserID()
-	}
-	memoryData := deps.GetMemoryData(agentName, userID)
-	memoryContent := deps.FormatMemoryForInjection(memoryData, mem.MaxInjectionTokens)
+	memoryData := mem.GetMemoryData(agentName, "")
+	memoryContent := mem.FormatMemoryForInjection(memoryData, m.MaxInjectionTokens)
 	if strings.TrimSpace(memoryContent) == "" {
 		return ""
 	}
@@ -344,11 +276,8 @@ func getMemoryContext(agentName string, deps PromptDeps, mem config.Memory) stri
 // -----------------------------------------------------------------------------
 
 // GetSkillsPromptSection mirrors get_skills_prompt_section.
-func GetSkillsPromptSection(available *AvailableSkills, deps PromptDeps, skillEvolutionEnabled bool) string {
-	var skills []Skill
-	if deps.LoadSkills != nil {
-		skills = deps.LoadSkills()
-	}
+func GetSkillsPromptSection(available *AvailableSkills, cfg config.Config, skillEvolutionEnabled bool) string {
+	skills := loadEnabledSkillsFromConfig(cfg)
 
 	if len(skills) == 0 && !skillEvolutionEnabled {
 		return ""
@@ -430,31 +359,15 @@ func GetSkillsPromptSection(available *AvailableSkills, deps PromptDeps, skillEv
 }
 
 // -----------------------------------------------------------------------------
-// get_agent_soul
-// -----------------------------------------------------------------------------
-
-// GetAgentSoul mirrors get_agent_soul.
-func GetAgentSoul(agentName string, deps PromptDeps) string {
-	if deps.LoadAgentSoul == nil {
-		return ""
-	}
-	soul := deps.LoadAgentSoul(agentName)
-	if soul == "" {
-		return ""
-	}
-	return "<soul>\n" + soul + "\n</soul>\n"
-}
-
-// -----------------------------------------------------------------------------
 // get_deferred_tools_prompt_section
 // -----------------------------------------------------------------------------
 
 // GetDeferredToolsPromptSection mirrors get_deferred_tools_prompt_section.
-func GetDeferredToolsPromptSection(deps PromptDeps, toolSearchEnabled bool) string {
-	if !toolSearchEnabled || deps.GetDeferredRegistry == nil {
+func GetDeferredToolsPromptSection(cfg config.Config, toolSearchEnabled bool) string {
+	if !toolSearchEnabled {
 		return ""
 	}
-	names := deps.GetDeferredRegistry()
+	names := DeferredToolNames(cfg)
 	if len(names) == 0 {
 		return ""
 	}
@@ -465,12 +378,12 @@ func GetDeferredToolsPromptSection(deps PromptDeps, toolSearchEnabled bool) stri
 // _build_acp_section
 // -----------------------------------------------------------------------------
 
-func buildACPSection(deps PromptDeps) string {
-	if deps.GetACPAgents == nil {
-		return ""
-	}
-	agents := deps.GetACPAgents()
-	if len(agents) == 0 {
+// buildACPSection emits the ACP block when at least one ACP agent is
+// configured. The block content is constant — it doesn't reference the
+// individual agent descriptions — so the function only checks
+// "configured at all".
+func buildACPSection(cfg config.Config) string {
+	if len(cfg.ACP.Agents) == 0 {
 		return ""
 	}
 	return "" +
@@ -726,14 +639,12 @@ var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"
 //  2. Substituting the named placeholders inside SYSTEM_PROMPT_TEMPLATE.
 //  3. Appending the current date footer in the same "%Y-%m-%d, %A" format.
 func ApplyPromptTemplate(opts PromptOptions) string {
-	deps := nonNilDeps(opts.Deps)
-
-	memoryContext := getMemoryContext(opts.AgentName, deps, opts.Config.Memory)
+	memoryContext := getMemoryContext(opts.AgentName, opts.Mem, opts.Config.Memory)
 
 	n := opts.MaxConcurrentSubagents
 	subagentSection := ""
 	if opts.SubagentEnabled {
-		subagentSection = buildSubagentSection(deps, n)
+		subagentSection = buildSubagentSection(n)
 	}
 
 	subagentReminder := ""
@@ -752,10 +663,10 @@ func ApplyPromptTemplate(opts PromptOptions) string {
 			fmt.Sprintf("NEVER launch more than %d `task` calls in one response.**\n", n)
 	}
 
-	skillsSection := GetSkillsPromptSection(opts.AvailableSkills, deps, opts.Config.SkillEvolution.Enabled)
-	deferredToolsSection := GetDeferredToolsPromptSection(deps, opts.Config.ToolSearch.Enabled)
+	skillsSection := GetSkillsPromptSection(opts.AvailableSkills, opts.Config, opts.Config.SkillEvolution.Enabled)
+	deferredToolsSection := GetDeferredToolsPromptSection(opts.Config, opts.Config.ToolSearch.Enabled)
 
-	acpSection := buildACPSection(deps)
+	acpSection := buildACPSection(opts.Config)
 	customMountsSection := buildCustomMountsSection(opts.Mounts)
 	var nonEmpty []string
 	if acpSection != "" {
@@ -771,11 +682,13 @@ func ApplyPromptTemplate(opts PromptOptions) string {
 		agentName = "DeerFlow 2.0"
 	}
 
-	soul := GetAgentSoul(opts.AgentName, deps)
-
+	// {soul} stays in the template for forward-compat — Python had a
+	// LoadAgentSoul hook that loaded SOUL.md. Nobody wires it in
+	// eino-cli today, so substitute the empty string and revisit when
+	// a real soul-loading path appears.
 	replacer := strings.NewReplacer(
 		"{agent_name}", agentName,
-		"{soul}", soul,
+		"{soul}", "",
 		"{memory_context}", memoryContext,
 		"{subagent_thinking}", subagentThinking,
 		"{skills_section}", skillsSection,

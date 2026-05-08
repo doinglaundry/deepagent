@@ -14,8 +14,9 @@ import (
 )
 
 // AgentDeps bundles the host-supplied capabilities that don't live in
-// config: a sandbox (filesystem + shell + mounts) and the per-call
-// PromptDeps (the same one ApplyPromptTemplate consumes).
+// config: a sandbox (filesystem + shell + mounts), an optional memory
+// accessor, and the runtime callback funcs the middleware chain
+// consults.
 //
 // The split mirrors deerflow's distinction between "config" (declarative)
 // and "runtime" (host implementations).
@@ -25,7 +26,11 @@ type AgentDeps struct {
 	// shipped with before Phase 4.
 	Sandbox SandboxProvider
 
-	PromptDeps *PromptDeps
+	// Mem is the memory accessor used by the prompt's <memory> section.
+	// nil simply skips that section. The same accessor also powers the
+	// MemoryHooks / MemoryFlushHookFunc fields below — the prompt path
+	// just needs a direct handle for read-side rendering.
+	Mem *MemoryAccessor
 
 	// WorkingDir is consulted only when Sandbox is nil; ignored otherwise.
 	WorkingDir string
@@ -125,7 +130,7 @@ func MakeLeadAgent(
 		AvailableSkills:        skillsFromProfile(agentConfig),
 		Config:                 cfg,
 		Mounts:                 deps.Sandbox.Mounts(),
-		Deps:                   deps.PromptDeps,
+		Mem:                    deps.Mem,
 	})
 
 	chain, err := BuildChain(ctx, rt, cfg, deps, summaryModel)

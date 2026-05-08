@@ -11,8 +11,9 @@
 //     the loader only consumes name/description/license.
 //
 // This package is a leaf — it deliberately does NOT import the agent
-// package. agent.BuildPromptDeps converts skills.Skill into agent.Skill,
-// keeping the import graph one-way (agent → skills, never the reverse).
+// package. agent.loadEnabledSkillsFromConfig converts skills.Skill into
+// agent.Skill, keeping the import graph one-way (agent → skills, never
+// the reverse).
 package skills
 
 import (
@@ -39,7 +40,7 @@ type Skill struct {
 	SkillDir     string // absolute path to the skill's directory
 	SkillFile    string // absolute path to SKILL.md
 	RelativePath string // path relative to the category root
-	Enabled      bool   // populated by BuildPromptDeps via the extensions config; loader leaves it true so a no-config caller still sees every skill
+	Enabled      bool   // populated by IsEnabled callers via the extensions config; loader leaves it true so a no-config caller still sees every skill
 }
 
 // LoadFromPaths scans each search path for SKILL.md files and returns
