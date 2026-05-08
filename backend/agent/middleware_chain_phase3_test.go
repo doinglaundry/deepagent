@@ -13,7 +13,7 @@ import (
 // + rt) and verifies the resulting chain contains the expected
 // middleware types and that the Clarification middleware remains last.
 func TestBuildChain_GatedMiddlewares(t *testing.T) {
-	rt := NewRuntimeContext()
+	rt := defaultRuntimeContext()
 	rt.ModelName = "primary"
 	rt.AgentName = "default"
 	rt.SubagentEnabled = true
@@ -72,7 +72,7 @@ func TestBuildChain_GatedMiddlewares(t *testing.T) {
 // TestBuildChain_NoGatesEmittedWhenDisabled checks that the gated slots
 // disappear when their flags are off.
 func TestBuildChain_NoGatesEmittedWhenDisabled(t *testing.T) {
-	rt := NewRuntimeContext()
+	rt := defaultRuntimeContext()
 	rt.ModelName = "primary"
 	cfg := config.Config{
 		Models: map[string]*config.ModelConfig{

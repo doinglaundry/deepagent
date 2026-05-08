@@ -99,7 +99,7 @@ func TestGetModelConfig_PreferAgentConfig(t *testing.T) {
 }
 
 func TestMergeRuntime(t *testing.T) {
-	rt := NewRuntimeContext()
+	rt := defaultRuntimeContext()
 	merged := rt.MergeRuntime(map[string]any{
 		"model_name":               "claude",
 		"thinking_enabled":         false,
@@ -127,7 +127,7 @@ func TestMergeRuntime(t *testing.T) {
 }
 
 func TestMergeRuntime_DefaultMaxConcurrent(t *testing.T) {
-	rt := RuntimeContext{} // not via NewRuntimeContext on purpose
+	rt := RuntimeContext{} // not via defaultRuntimeContext on purpose
 	merged := rt.MergeRuntime(nil, nil)
 	if merged.MaxConcurrentSubagents != 3 {
 		t.Fatalf("default MaxConcurrentSubagents: got %d, want 3",
@@ -139,7 +139,7 @@ func TestMergeRuntime_DefaultMaxConcurrent(t *testing.T) {
 }
 
 func TestMergeRuntime_ContextOverridesConfigurable(t *testing.T) {
-	rt := NewRuntimeContext()
+	rt := defaultRuntimeContext()
 	merged := rt.MergeRuntime(map[string]any{
 		"model_name": "kimi",
 	}, map[string]any{

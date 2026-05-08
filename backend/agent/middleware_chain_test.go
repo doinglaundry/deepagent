@@ -10,7 +10,7 @@ import (
 )
 
 func makeChainTestRT() RuntimeContext {
-	rt := NewRuntimeContext()
+	rt := defaultRuntimeContext()
 	rt.ModelName = "primary"
 	rt.AgentName = "default"
 	return rt

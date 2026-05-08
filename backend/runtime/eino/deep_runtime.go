@@ -24,28 +24,22 @@ type DeepAgentRuntime struct {
 	maxHistoryTurns     int
 }
 
-// NewDeepAgentRuntime stands up the runtime context, freezes it
-// against cfg via FinalizeRuntimeContext (the single point that
-// resolves agent / model / thinking-mode and emits the "Create
-// Agent" log), then delegates the actual agent assembly to
-// agent.MakeLeadAgent.
+// NewDeepAgentRuntime stands up the runtime context (cfg-seeded +
+// finalized in one call via agent.NewRuntimeContext), then delegates
+// the actual agent assembly to agent.MakeLeadAgent.
 //
-// cfg is trusted to satisfy the post-Load invariants (default model
-// + agent exist, Models / Agents maps populated). MakeLeadAgent
-// treats rt as immutable input and owns its own sandbox / memory
-// accessor; this function adds nothing to that pipeline beyond rt
-// finalization and the surrounding adk.Runner wiring.
+// cfg is trusted to satisfy the post-Load invariants (default model +
+// agent exist, Models / Agents maps populated). MakeLeadAgent treats
+// rt as immutable input and owns its own backend / shell / memory
+// accessor; this function adds nothing to that pipeline beyond the rt
+// stand-up and the surrounding adk.Runner wiring.
 //
 // We keep the runtime's history/checkpoint/streaming responsibilities
 // here because they belong to the eino-cli REPL, not to the agent
 // itself.
 func NewDeepAgentRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
-	rt := agent.NewRuntimeContext()
-	rt.AgentName = cfg.DefaultAgent
-	rt.ModelName = cfg.DefaultModel
-	rt.SubagentEnabled = false
-	rt.IsPlanMode = false
-	if err := agent.FinalizeRuntimeContext(&rt, cfg); err != nil {
+	rt, err := agent.NewRuntimeContext(cfg)
+	if err != nil {
 		return nil, err
 	}
 

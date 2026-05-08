@@ -36,7 +36,7 @@ type RuntimeContext struct {
 	SubagentEnabled bool
 
 	// MaxConcurrentSubagents is the hard cap on parallel `task` calls per
-	// turn. Defaults to 3 in NewRuntimeContext if unset.
+	// turn. Defaults to 3 (set by defaultRuntimeContext / MergeRuntime).
 	MaxConcurrentSubagents int
 
 	// HITLTools lists the tool names that require human approval before
@@ -52,9 +52,40 @@ type RuntimeContext struct {
 	Metadata map[string]any
 }
 
-// NewRuntimeContext returns a RuntimeContext with the same defaults the
-// Python make_lead_agent applies via cfg.get(..., default).
-func NewRuntimeContext() RuntimeContext {
+// NewRuntimeContext returns a fully-finalized RuntimeContext for the
+// lead agent: it stamps the hardcoded defaults, seeds AgentName /
+// ModelName from cfg's defaults, then runs FinalizeRuntimeContext to
+// canonicalize names, resolve the chat model, collapse ThinkingEnabled,
+// and emit the "Create Agent" log + Metadata seed.
+//
+// Production callers (NewDeepAgentRuntime today) should always go
+// through this function — it is the single line that gives you a
+// ready-to-pass-to-MakeLeadAgent rt.
+//
+// SubagentEnabled / IsPlanMode are left at the Go zero (false). Hosts
+// that want either on flip the field on the returned value before
+// calling MakeLeadAgent.
+//
+// Subagent assembly (buildNamedSubagents) does NOT call this — it
+// forks the parent rt, overrides AgentName, and re-runs
+// FinalizeRuntimeContext directly. That keeps "fresh rt for the lead"
+// and "derived rt for a subagent" as two clearly separate flows.
+func NewRuntimeContext(cfg config.Config) (RuntimeContext, error) {
+	rt := defaultRuntimeContext()
+	rt.AgentName = cfg.DefaultAgent
+	rt.ModelName = cfg.DefaultModel
+	if err := FinalizeRuntimeContext(&rt, cfg); err != nil {
+		return RuntimeContext{}, err
+	}
+	return rt, nil
+}
+
+// defaultRuntimeContext is the hardcoded-defaults seed used internally
+// by NewRuntimeContext and exposed (only) to tests in this package
+// that need a known starting point without going through cfg-seeding
+// or Finalize. The defaults mirror Python's cfg.get(..., default)
+// fallbacks.
+func defaultRuntimeContext() RuntimeContext {
 	return RuntimeContext{
 		ThinkingEnabled:        true, // Python: cfg.get("thinking_enabled", True)
 		MaxConcurrentSubagents: 3,    // Python: cfg.get("max_concurrent_subagents", 3)
