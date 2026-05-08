@@ -54,13 +54,6 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if !ok || mc == nil {
 		return cfg, errors.New("default model not found")
 	}
-
-	// Fall back to the provider's canonical env when yaml supplied
-	// neither api_key nor api_key_env (or the env it pointed at was
-	// empty). Lets a minimal `provider: openai` entry just work as
-	// long as the user has OPENAI_API_KEY exported. mc is a pointer
-	// into cfg.Models, so writing through it updates the map in
-	// place.
 	if mc.APIKey == "" {
 		mc.APIKey = os.Getenv(defaultAPIKeyEnv(mc.Provider))
 	}
