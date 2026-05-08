@@ -9,9 +9,9 @@ import (
 	"eino-cli/backend/config"
 )
 
-// TestBuildChain_GatedMiddlewares wires every gating flag on and verifies
-// the resulting chain contains the expected middleware types and that the
-// Clarification middleware remains last.
+// TestBuildChain_GatedMiddlewares wires every gating flag on (via cfg
+// + deps) and verifies the resulting chain contains the expected
+// middleware types and that the Clarification middleware remains last.
 func TestBuildChain_GatedMiddlewares(t *testing.T) {
 	rt := NewRuntimeContext()
 	rt.ModelName = "primary"
@@ -23,14 +23,11 @@ func TestBuildChain_GatedMiddlewares(t *testing.T) {
 		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "kimi", SupportsVision: true},
 		},
+		Memory:     config.Memory{Enabled: true},
+		TokenUsage: config.TokenUsage{Enabled: true},
+		ToolSearch: config.ToolSearchConfig{Enabled: true},
 	}
 	deps := AgentDeps{
-		AppConfig: &AppConfig{
-			Memory:         MemoryConfig{Enabled: true},
-			TokenUsage:     TokenUsageConfig{Enabled: true},
-			ToolSearch:     ToolSearchConfig{Enabled: true},
-			HumanInTheLoop: HumanInTheLoopConfig{Enabled: true},
-		},
 		DeferredToolNames: func() []string { return []string{"big-tool"} },
 		HITLTools:         []string{"shell"},
 	}

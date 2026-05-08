@@ -13,28 +13,23 @@ import (
 // accidentally exercising the deep.New path.
 func dummyConfig() config.Config { return config.Config{} }
 
-// TestIsZeroSubagentsConfig covers the "did the host configure
-// subagents?" check used to decide whether to light up the general-
-// purpose subagent default.
-func TestIsZeroSubagentsConfig(t *testing.T) {
-	cases := []struct {
-		name string
-		in   SubagentsConfig
-		want bool
-	}{
-		{"zero", SubagentsConfig{}, true},
-		{"general only", SubagentsConfig{GeneralEnabled: true}, false},
-		{"names only", SubagentsConfig{Names: []string{"x"}}, false},
-		{"empty names slice still zero", SubagentsConfig{Names: []string{}}, true},
-		{"max concurrent set", SubagentsConfig{MaxConcurrent: 3}, false},
-		{"max per turn set", SubagentsConfig{MaxPerTurn: 1}, false},
+// TestGeneralSubagentEnabled covers the "open the general-purpose
+// subagent target" gate that replaced the SubagentsConfig knob —
+// enabled iff rt.SubagentEnabled is on AND we're not already inside
+// a recursive subagent build.
+func TestGeneralSubagentEnabled(t *testing.T) {
+	rtOff := RuntimeContext{SubagentEnabled: false}
+	rtOn := RuntimeContext{SubagentEnabled: true}
+
+	if generalSubagentEnabled(context.Background(), rtOff) {
+		t.Errorf("expected disabled when rt.SubagentEnabled=false")
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := isZeroSubagentsConfig(c.in); got != c.want {
-				t.Errorf("isZeroSubagentsConfig(%+v) = %v, want %v", c.in, got, c.want)
-			}
-		})
+	if !generalSubagentEnabled(context.Background(), rtOn) {
+		t.Errorf("expected enabled when rt.SubagentEnabled=true at depth 0")
+	}
+	nested := withSubagentBuild(context.Background())
+	if generalSubagentEnabled(nested, rtOn) {
+		t.Errorf("expected disabled inside a recursive subagent build")
 	}
 }
 

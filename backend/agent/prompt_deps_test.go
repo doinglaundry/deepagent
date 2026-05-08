@@ -133,18 +133,10 @@ func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
 		},
 	}
 	deps := BuildPromptDeps(cfg, PromptDepsOptions{})
-	app := &AppConfig{
-		ToolSearch: ToolSearchConfig{Enabled: cfg.ToolSearch.Enabled},
-		Memory: MemoryConfig{
-			Enabled:            true,
-			InjectionEnabled:   true,
-			MaxInjectionTokens: 1024,
-		},
-	}
 
 	out := ApplyPromptTemplate(PromptOptions{
 		AgentName: "default",
-		AppConfig: app,
+		Config:    cfg,
 		Deps:      deps,
 	})
 

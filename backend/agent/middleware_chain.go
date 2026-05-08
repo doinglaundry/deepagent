@@ -28,16 +28,15 @@ type Chain struct {
 //
 //	always-on   → AgentState, Title, ToolError, LoopDetect
 //	gated       → TokenUsage, ViewImage, DeferredTools, SubagentLimit,
-//	              Memory, HITL, Summarize  (each behind its config flag)
+//	              Memory, HITL, Summarize  (each behind its YAML flag)
 //	always-last → Clarification (Python invariant)
 //
 // Plus the AgentMiddleware (struct-based) slot for plan-mode Todo, since
 // AgentMiddleware is the natural fit for static instruction additions.
 //
-// Inputs are the four high-level types already in scope at the call site
-// (rt / cfg / deps) plus the externally-built summaryModel — no
-// intermediate ChainOptions struct, the deps bag carries the per-host
-// extras (HITL, memory hooks, deferred tool resolver, sandbox).
+// Gates are read straight from cfg — there is no longer a separate
+// agent.AppConfig view. HITL is gated on `len(deps.HITLTools) > 0`
+// alone (the deer-flow yaml gate had no independent meaning).
 func BuildChain(
 	ctx context.Context,
 	rt RuntimeContext,
@@ -45,7 +44,6 @@ func BuildChain(
 	deps AgentDeps,
 	summaryModel model.BaseChatModel,
 ) (Chain, error) {
-	app := deps.AppConfig
 	modelCfg := cfg.Models[rt.ModelName]
 	imageFetcher := discoverImageFetcher(deps.Sandbox)
 
@@ -56,11 +54,11 @@ func BuildChain(
 		middlewares.NewLoopDetection(),
 	}
 
-	if app != nil && app.Memory.Enabled {
+	if cfg.Memory.Enabled {
 		chatModel = append(chatModel, middlewares.NewMemory(deps.MemoryHooks))
 	}
 
-	if app != nil && app.TokenUsage.Enabled {
+	if cfg.TokenUsage.Enabled {
 		chatModel = append(chatModel, middlewares.NewTokenUsage())
 	}
 
@@ -68,7 +66,7 @@ func BuildChain(
 		chatModel = append(chatModel, middlewares.NewViewImage(imageFetcher))
 	}
 
-	if app != nil && app.ToolSearch.Enabled && deps.DeferredToolNames != nil {
+	if cfg.ToolSearch.Enabled && deps.DeferredToolNames != nil {
 		chatModel = append(chatModel, middlewares.NewDeferredTools(deps.DeferredToolNames))
 	}
 
@@ -76,17 +74,17 @@ func BuildChain(
 		chatModel = append(chatModel, middlewares.NewSubagentLimit(rt.MaxConcurrentSubagents))
 	}
 
-	if app != nil && app.HumanInTheLoop.Enabled && len(deps.HITLTools) > 0 {
+	if len(deps.HITLTools) > 0 {
 		chatModel = append(chatModel, middlewares.NewHITL(deps.HITLTools, deps.HITLApproval))
 	}
 
-	if app != nil && app.Summarization.Enabled {
+	if cfg.Summarization.Enabled {
 		summaryMW, err := middlewares.NewSummarization(
 			ctx,
-			app.Summarization.Enabled,
-			app.Summarization.ContextTokens,
-			app.Summarization.ContextMessages,
-			app.Summarization.UserInstruction,
+			cfg.Summarization.Enabled,
+			0, // contextTokens — let the middleware default kick in
+			0, // contextMessages — same
+			cfg.Summarization.SummaryPrompt,
 			summaryModel,
 			deps.MemoryFlushHook,
 		)

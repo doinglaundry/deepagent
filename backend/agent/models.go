@@ -32,7 +32,7 @@ func getThinkingEnabled(requested bool, modelCfg *config.ModelConfig, modelName 
 }
 
 // buildSummaryChatModel returns the chat model the summarization
-// middleware should use. When AppConfig.Summarization.Model names a
+// middleware should use. When cfg.Summarization.ModelName names a
 // model different from the lead agent's, build it on the side so
 // summarization runs against a cheaper / shorter-context client.
 // Summarization never wants thinking nor reasoning_effort — both add
@@ -43,13 +43,9 @@ func getThinkingEnabled(requested bool, modelCfg *config.ModelConfig, modelName 
 func buildSummaryChatModel(
 	ctx context.Context,
 	cfg config.Config,
-	appCfg *AppConfig,
 	fallbackModel model.BaseChatModel,
 ) model.BaseChatModel {
-	if appCfg == nil {
-		return fallbackModel
-	}
-	smName := strings.TrimSpace(appCfg.Summarization.Model)
+	smName := strings.TrimSpace(cfg.Summarization.ModelName)
 	if smName == "" {
 		return fallbackModel
 	}

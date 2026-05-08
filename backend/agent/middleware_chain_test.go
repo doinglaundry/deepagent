@@ -58,12 +58,11 @@ func TestBuildChain_DefaultOrder(t *testing.T) {
 }
 
 // TestBuildChain_SummarizationDisabled confirms the summarization slot is
-// omitted when AppConfig.Summarization.Enabled is false (Phase 2 default).
+// omitted when cfg.Summarization.Enabled is false (Phase 2 default).
 func TestBuildChain_SummarizationDisabled(t *testing.T) {
-	deps := AgentDeps{
-		AppConfig: &AppConfig{Summarization: SummarizationConfig{Enabled: false}},
-	}
-	chain, err := BuildChain(context.Background(), makeChainTestRT(), makeChainTestCfg(), deps, nil)
+	cfg := makeChainTestCfg()
+	cfg.Summarization = config.Summarization{Enabled: false}
+	chain, err := BuildChain(context.Background(), makeChainTestRT(), cfg, AgentDeps{}, nil)
 	if err != nil {
 		t.Fatalf("BuildChain: unexpected error: %v", err)
 	}
@@ -78,10 +77,9 @@ func TestBuildChain_SummarizationDisabled(t *testing.T) {
 // TestBuildChain_SummarizationEnabledWithoutModel surfaces the configuration
 // error when summarization is on but no SummaryModel is provided.
 func TestBuildChain_SummarizationEnabledWithoutModel(t *testing.T) {
-	deps := AgentDeps{
-		AppConfig: &AppConfig{Summarization: SummarizationConfig{Enabled: true}},
-	}
-	_, err := BuildChain(context.Background(), makeChainTestRT(), makeChainTestCfg(), deps, nil)
+	cfg := makeChainTestCfg()
+	cfg.Summarization = config.Summarization{Enabled: true}
+	_, err := BuildChain(context.Background(), makeChainTestRT(), cfg, AgentDeps{}, nil)
 	if err == nil {
 		t.Fatalf("expected error when summarization is enabled without a model")
 	}

@@ -10,49 +10,21 @@ import (
 	"eino-cli/backend/config"
 )
 
-// getSubAgents builds the SubAgents slice and the "include
-// general-purpose subagent" flag passed to deep.Config.
+// generalSubagentEnabled reports whether the deep agent should expose
+// the built-in general-purpose subagent (a clone of the lead with a
+// generic instruction). Subagent dispatch as a whole is gated on
+// rt.SubagentEnabled + the recursion guard; this helper just answers
+// "include the general-purpose target?" within that gate.
 //
-// Subagent dispatch is disabled (returns nil, false, nil) when:
-//   - rt.SubagentEnabled is false (host opt-out), OR
-//   - the recursion guard is set (we're already building a subagent
-//     — depth-1 cap so subagents can't dispatch their own subagents).
-//
-// Otherwise:
-//   - withGeneral = true when the host explicitly enabled it OR didn't
-//     configure SubagentsConfig at all (so the model still gets a
-//     working task() target by default).
-//   - subAgents are built recursively from AppConfig.Subagents.Names;
-//     individual build failures are logged-and-skipped inside
-//     buildNamedSubagents.
-func getSubAgents(
-	ctx context.Context,
-	rt RuntimeContext,
-	cfg config.Config,
-	deps AgentDeps,
-	appCfg *AppConfig,
-) ([]adk.Agent, bool, error) {
+// Today the answer is always true once the gate is open: the dedicated
+// SubagentsConfig knob is gone (it was always zero in production), so
+// the general-purpose target is the only target — anything else would
+// leave the model with a `task()` tool that can't be invoked.
+func generalSubagentEnabled(ctx context.Context, rt RuntimeContext) bool {
 	if !rt.SubagentEnabled || isSubagentBuild(ctx) {
-		return nil, false, nil
+		return false
 	}
-	var subCfg SubagentsConfig
-	if appCfg != nil {
-		subCfg = appCfg.Subagents
-	}
-	withGeneral := subCfg.GeneralEnabled || isZeroSubagentsConfig(subCfg)
-	built, err := buildNamedSubagents(ctx, rt, cfg, deps, subCfg.Names)
-	if err != nil {
-		return nil, false, err
-	}
-	return built, withGeneral, nil
-}
-
-// isZeroSubagentsConfig reports whether all SubagentsConfig fields are
-// at their zero value. We can't use `==` because the struct contains a
-// slice; this helper preserves the "user didn't configure anything"
-// detection used to opt into the general-purpose subagent default.
-func isZeroSubagentsConfig(c SubagentsConfig) bool {
-	return !c.GeneralEnabled && len(c.Names) == 0 && c.MaxConcurrent == 0 && c.MaxPerTurn == 0
+	return true
 }
 
 // subagentBuildKey is a context-only sentinel used to short-circuit
@@ -78,6 +50,10 @@ func isSubagentBuild(ctx context.Context) bool {
 // A subagent that fails to build is logged-and-skipped rather than
 // failing the whole turn — partial subagent availability is preferable
 // to a hard error when a sibling agent is misconfigured.
+//
+// Currently no caller passes non-empty names — production wiring
+// always relies on the general-purpose subagent. The function is kept
+// for future yaml-driven named subagent dispatch.
 func buildNamedSubagents(
 	ctx context.Context,
 	rt RuntimeContext,

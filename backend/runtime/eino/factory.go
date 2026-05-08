@@ -41,17 +41,6 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 			GetMemoryData:            memoryAcc.GetMemoryData,
 			FormatMemoryForInjection: memoryAcc.FormatMemoryForInjection,
 		}),
-		// AppConfig defaults: Memory on (no-op without hooks anyway),
-		// ToolSearch driven by yaml. Other gates stay zero — flip
-		// them on once their backing middleware has a real consumer.
-		AppConfig: &agent.AppConfig{
-			ToolSearch: agent.ToolSearchConfig{Enabled: cfg.ToolSearch.Enabled},
-			Memory: agent.MemoryConfig{
-				Enabled:            true,
-				InjectionEnabled:   true,
-				MaxInjectionTokens: 1024,
-			},
-		},
 		DeferredToolNames: agent.DeferredToolNamesFromConfig(cfg),
 		HITLApproval:      defaultHITLApproval,
 		MemoryHooks:       memoryAcc.Hooks(),

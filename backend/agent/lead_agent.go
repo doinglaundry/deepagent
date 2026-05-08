@@ -26,7 +26,6 @@ type AgentDeps struct {
 	Sandbox SandboxProvider
 
 	PromptDeps *PromptDeps
-	AppConfig  *AppConfig
 
 	// WorkingDir is consulted only when Sandbox is nil; ignored otherwise.
 	WorkingDir string
@@ -47,12 +46,12 @@ type AgentDeps struct {
 
 	// DeferredToolNames is the live list of tool names the
 	// DeferredTools middleware should filter out of the active set when
-	// AppConfig.ToolSearch.Enabled is true. Without this the middleware
+	// cfg.ToolSearch.Enabled is true. Without this the middleware
 	// is not attached.
 	DeferredToolNames func() []string
 
 	// MemoryHooks drives the Memory middleware's inject / extract data
-	// plane. Wire only when AppConfig.Memory.Enabled is true.
+	// plane. Wire only when cfg.Memory.Enabled is true.
 	MemoryHooks middlewares.MemoryHooks
 
 	// MemoryFlushHook is plugged into the summarization middleware so
@@ -110,19 +109,19 @@ func MakeLeadAgent(
 	if err != nil {
 		return nil, err
 	}
-	summaryModel := buildSummaryChatModel(ctx, cfg, deps.AppConfig, chatModel)
+	summaryModel := buildSummaryChatModel(ctx, cfg, chatModel)
 
 	if deps.Sandbox == nil {
 		deps.Sandbox = NewLocalSandbox(deps.WorkingDir)
 	}
-	deps.AppConfig = mergeSandboxMounts(deps.AppConfig, deps.Sandbox.Mounts())
 
 	prompt := ApplyPromptTemplate(PromptOptions{
 		SubagentEnabled:        rt.SubagentEnabled,
 		MaxConcurrentSubagents: rt.MaxConcurrentSubagents,
 		AgentName:              agentName,
 		AvailableSkills:        skillsFromProfile(agentConfig),
-		AppConfig:              deps.AppConfig,
+		Config:                 cfg,
+		Mounts:                 deps.Sandbox.Mounts(),
 		Deps:                   deps.PromptDeps,
 	})
 
@@ -131,10 +130,7 @@ func MakeLeadAgent(
 		return nil, fmt.Errorf("build middleware chain: %w", err)
 	}
 
-	subAgents, withGeneral, err := getSubAgents(ctx, rt, cfg, deps, deps.AppConfig)
-	if err != nil {
-		return nil, fmt.Errorf("build subagents: %w", err)
-	}
+	withGeneral := generalSubagentEnabled(ctx, rt)
 
 	deepCfg := &deep.Config{
 		Name:         fallback(agentName, "deep-agent"),
@@ -142,11 +138,9 @@ func MakeLeadAgent(
 		ChatModel:    chatModel,
 		Instruction:  prompt,
 		MaxIteration: defaultIterationLimit(agentConfig),
-		// Phase 10: driven by rt.SubagentEnabled + AppConfig.Subagents
-		// so callers that wired sub-agent dispatch actually get a
-		// task() tool.
+		// Phase 10: driven by rt.SubagentEnabled (the sole gate after
+		// the SubagentsConfig YAML knob was removed).
 		WithoutGeneralSubAgent: !withGeneral,
-		SubAgents:              subAgents,
 		// Phase 8: write_todos is always available so the agent can
 		// self-elect to track multi-step work even outside plan mode —
 		// matching Cursor / Claude Code. The plan-mode-only nudge
@@ -206,23 +200,6 @@ func populateRuntimeMetadata(rt *RuntimeContext, agentName, modelName string, th
 			rt.Metadata["available_skills"] = profile.Skills
 		}
 	}
-}
-
-// mergeSandboxMounts layers runtime-provided sandbox mounts on top of
-// any statically-configured AppConfig.Sandbox.Mounts. The base config
-// is treated as immutable: a defensive copy is returned only when
-// there's actually something to merge in. nil base + empty mounts ⇒
-// nil out (no allocation).
-func mergeSandboxMounts(appCfg *AppConfig, mounts []Mount) *AppConfig {
-	if len(mounts) == 0 {
-		return appCfg
-	}
-	out := AppConfig{}
-	if appCfg != nil {
-		out = *appCfg
-	}
-	out.Sandbox.Mounts = append(append([]Mount(nil), out.Sandbox.Mounts...), mounts...)
-	return &out
 }
 
 // discoverImageFetcher checks whether the sandbox provider can read

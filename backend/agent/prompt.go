@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"eino-cli/backend/config"
 )
 
 // -----------------------------------------------------------------------------
@@ -35,88 +37,6 @@ type SubagentConfig struct {
 type Mount struct {
 	ContainerPath string
 	ReadOnly      bool
-}
-
-// MemoryConfig mirrors deerflow's memory config block.
-type MemoryConfig struct {
-	Enabled            bool
-	InjectionEnabled   bool
-	MaxInjectionTokens int
-}
-
-// SkillEvolutionConfig mirrors deerflow's skill_evolution config block.
-type SkillEvolutionConfig struct {
-	Enabled bool
-}
-
-// ToolSearchConfig mirrors deerflow's tool_search config block.
-type ToolSearchConfig struct {
-	Enabled bool
-}
-
-// SandboxConfig holds custom mount info.
-type SandboxConfig struct {
-	Mounts []Mount
-}
-
-// SummarizationConfig captures the deerflow summarization knobs.
-// Phase 2 wires this into the always-on middleware chain via
-// middlewares.NewSummarization.
-//
-// Model (Phase 11) names a model from cfg.Models that the summarization
-// middleware should use *instead* of the lead-agent's own chat model.
-// Mirrors deerflow's app_config.SUMMARIZATION_MODEL: a smaller/cheaper
-// model can compact context without burning the lead-agent's premium
-// budget. Empty string falls back to the lead model.
-type SummarizationConfig struct {
-	Enabled         bool
-	ContextTokens   int
-	ContextMessages int
-	UserInstruction string
-	Model           string
-}
-
-// TokenUsageConfig is the gate flag for the token-usage middleware (Phase 3).
-type TokenUsageConfig struct {
-	Enabled bool
-}
-
-// HumanInTheLoopConfig is the gate flag for the HITL middleware (Phase 3).
-type HumanInTheLoopConfig struct {
-	Enabled bool
-}
-
-// SubagentsConfig controls deep agent's `task()` dispatch surface.
-//
-// Mirrors deerflow's `subagents:` block:
-//   - GeneralEnabled: whether to expose the built-in "general-purpose"
-//     subagent (a clone of the lead with a generic instruction). When
-//     true and Names is empty, deep.New still gets a `task()` tool.
-//     Defaults to true on a non-zero AppConfig.
-//   - Names: extra named subagents to wire from cfg.Agents. Each name
-//     is resolved through GetAgentConfig and instantiated via a
-//     recursive MakeAgent call (with recursion-depth = 1 cap to
-//     prevent loops).
-//   - MaxConcurrent / MaxPerTurn: surfaced into the prompt and used by
-//     the SubagentLimit middleware once the cap is enforced upstream.
-type SubagentsConfig struct {
-	GeneralEnabled bool
-	Names          []string
-	MaxConcurrent  int
-	MaxPerTurn     int
-}
-
-// AppConfig mirrors deerflow.config.app_config.AppConfig
-// (only the fields touched by the prompt assembler and middleware chain).
-type AppConfig struct {
-	Memory         MemoryConfig
-	SkillEvolution SkillEvolutionConfig
-	ToolSearch     ToolSearchConfig
-	Sandbox        SandboxConfig
-	Summarization  SummarizationConfig
-	TokenUsage     TokenUsageConfig
-	HumanInTheLoop HumanInTheLoopConfig
-	Subagents      SubagentsConfig
 }
 
 // PromptDeps abstracts every external runtime call the Python module makes.
@@ -159,12 +79,19 @@ func SkillSet(names ...string) *AvailableSkills {
 }
 
 // PromptOptions is the input to ApplyPromptTemplate.
+//
+// Config carries the full loaded config; ApplyPromptTemplate reads the
+// gate fields from cfg.* directly (cfg.Memory, cfg.SkillEvolution,
+// cfg.ToolSearch). Mounts are runtime-discovered (sandbox.Mounts())
+// and threaded through separately so prompt rendering doesn't have to
+// know how to merge configured + discovered mounts.
 type PromptOptions struct {
 	SubagentEnabled        bool
 	MaxConcurrentSubagents int
 	AgentName              string
 	AvailableSkills        *AvailableSkills // nil == AllSkills() == Python None
-	AppConfig              *AppConfig
+	Config                 config.Config
+	Mounts                 []Mount
 	Deps                   *PromptDeps
 }
 
@@ -393,12 +320,11 @@ func buildSubagentSection(deps PromptDeps, n int) string {
 // getMemoryContext mirrors deerflow.agents.lead_agent.prompt._get_memory_context.
 // Python wraps the body in try/except and returns "" on any failure; the Go
 // equivalent is "every dep is nil-safe → return ''".
-func getMemoryContext(agentName string, deps PromptDeps, app *AppConfig) string {
-	if app == nil || deps.GetMemoryData == nil || deps.FormatMemoryForInjection == nil {
+func getMemoryContext(agentName string, deps PromptDeps, mem config.Memory) string {
+	if deps.GetMemoryData == nil || deps.FormatMemoryForInjection == nil {
 		return ""
 	}
-	cfg := app.Memory
-	if !cfg.Enabled || !cfg.InjectionEnabled {
+	if !mem.Enabled || !mem.InjectionEnabled {
 		return ""
 	}
 	userID := ""
@@ -406,7 +332,7 @@ func getMemoryContext(agentName string, deps PromptDeps, app *AppConfig) string 
 		userID = deps.GetEffectiveUserID()
 	}
 	memoryData := deps.GetMemoryData(agentName, userID)
-	memoryContent := deps.FormatMemoryForInjection(memoryData, cfg.MaxInjectionTokens)
+	memoryContent := deps.FormatMemoryForInjection(memoryData, mem.MaxInjectionTokens)
 	if strings.TrimSpace(memoryContent) == "" {
 		return ""
 	}
@@ -418,15 +344,10 @@ func getMemoryContext(agentName string, deps PromptDeps, app *AppConfig) string 
 // -----------------------------------------------------------------------------
 
 // GetSkillsPromptSection mirrors get_skills_prompt_section.
-func GetSkillsPromptSection(available *AvailableSkills, deps PromptDeps, app *AppConfig) string {
+func GetSkillsPromptSection(available *AvailableSkills, deps PromptDeps, skillEvolutionEnabled bool) string {
 	var skills []Skill
 	if deps.LoadSkills != nil {
 		skills = deps.LoadSkills()
-	}
-
-	skillEvolutionEnabled := false
-	if app != nil {
-		skillEvolutionEnabled = app.SkillEvolution.Enabled
 	}
 
 	if len(skills) == 0 && !skillEvolutionEnabled {
@@ -529,11 +450,8 @@ func GetAgentSoul(agentName string, deps PromptDeps) string {
 // -----------------------------------------------------------------------------
 
 // GetDeferredToolsPromptSection mirrors get_deferred_tools_prompt_section.
-func GetDeferredToolsPromptSection(deps PromptDeps, app *AppConfig) string {
-	if app == nil || !app.ToolSearch.Enabled {
-		return ""
-	}
-	if deps.GetDeferredRegistry == nil {
+func GetDeferredToolsPromptSection(deps PromptDeps, toolSearchEnabled bool) string {
+	if !toolSearchEnabled || deps.GetDeferredRegistry == nil {
 		return ""
 	}
 	names := deps.GetDeferredRegistry()
@@ -567,11 +485,7 @@ func buildACPSection(deps PromptDeps) string {
 // _build_custom_mounts_section
 // -----------------------------------------------------------------------------
 
-func buildCustomMountsSection(app *AppConfig) string {
-	if app == nil {
-		return ""
-	}
-	mounts := app.Sandbox.Mounts
+func buildCustomMountsSection(mounts []Mount) string {
 	if len(mounts) == 0 {
 		return ""
 	}
@@ -814,7 +728,7 @@ var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"
 func ApplyPromptTemplate(opts PromptOptions) string {
 	deps := nonNilDeps(opts.Deps)
 
-	memoryContext := getMemoryContext(opts.AgentName, deps, opts.AppConfig)
+	memoryContext := getMemoryContext(opts.AgentName, deps, opts.Config.Memory)
 
 	n := opts.MaxConcurrentSubagents
 	subagentSection := ""
@@ -838,11 +752,11 @@ func ApplyPromptTemplate(opts PromptOptions) string {
 			fmt.Sprintf("NEVER launch more than %d `task` calls in one response.**\n", n)
 	}
 
-	skillsSection := GetSkillsPromptSection(opts.AvailableSkills, deps, opts.AppConfig)
-	deferredToolsSection := GetDeferredToolsPromptSection(deps, opts.AppConfig)
+	skillsSection := GetSkillsPromptSection(opts.AvailableSkills, deps, opts.Config.SkillEvolution.Enabled)
+	deferredToolsSection := GetDeferredToolsPromptSection(deps, opts.Config.ToolSearch.Enabled)
 
 	acpSection := buildACPSection(deps)
-	customMountsSection := buildCustomMountsSection(opts.AppConfig)
+	customMountsSection := buildCustomMountsSection(opts.Mounts)
 	var nonEmpty []string
 	if acpSection != "" {
 		nonEmpty = append(nonEmpty, acpSection)
