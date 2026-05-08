@@ -58,7 +58,7 @@ func NewMemoryAccessor(store *memorystore.Store) *MemoryAccessor {
 	}
 }
 
-// GetMemoryData satisfies PromptDepsOptions.GetMemoryData. The agentName
+// GetMemoryData populates PromptDeps.GetMemoryData. The agentName
 // + userID arguments are accepted for API parity with deerflow but
 // currently ignored — the store does not partition by either yet, and
 // callers that need partitioning should provide a separate store.

@@ -22,7 +22,7 @@ func TestBuildPromptDeps_SkillsWiredFromConfigPaths(t *testing.T) {
 	cfg := config.Config{
 		Skills: config.SkillsConfig{Paths: []string{root}},
 	}
-	deps := BuildPromptDeps(cfg, PromptDepsOptions{})
+	deps := BuildPromptDeps(cfg, nil)
 	if deps.LoadSkills == nil {
 		t.Fatal("LoadSkills should be wired")
 	}
@@ -57,7 +57,7 @@ func TestBuildPromptDeps_DeferredAndACPWired(t *testing.T) {
 			},
 		},
 	}
-	deps := BuildPromptDeps(cfg, PromptDepsOptions{})
+	deps := BuildPromptDeps(cfg, nil)
 	if deps.GetDeferredRegistry == nil {
 		t.Fatal("GetDeferredRegistry should be wired")
 	}
@@ -85,7 +85,7 @@ func TestBuildPromptDeps_SubagentConfigSurfacedFromAgents(t *testing.T) {
 			"empty": {Name: "empty"},
 		},
 	}
-	deps := BuildPromptDeps(cfg, PromptDepsOptions{})
+	deps := BuildPromptDeps(cfg, nil)
 	if deps.GetSubagentConfig == nil {
 		t.Fatal("GetSubagentConfig should be wired when cfg.Agents is non-empty")
 	}
@@ -102,7 +102,7 @@ func TestBuildPromptDeps_SubagentConfigSurfacedFromAgents(t *testing.T) {
 }
 
 func TestBuildPromptDeps_EmptyConfigDegradesGracefully(t *testing.T) {
-	deps := BuildPromptDeps(config.Config{}, PromptDepsOptions{})
+	deps := BuildPromptDeps(config.Config{}, nil)
 	if deps.LoadSkills == nil {
 		t.Fatal("LoadSkills should always be set")
 	}
@@ -132,7 +132,7 @@ func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
 			},
 		},
 	}
-	deps := BuildPromptDeps(cfg, PromptDepsOptions{})
+	deps := BuildPromptDeps(cfg, nil)
 
 	out := ApplyPromptTemplate(PromptOptions{
 		AgentName: "default",

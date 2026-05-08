@@ -26,10 +26,7 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 
 	memoryAcc := agent.NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
 	deps := agent.AgentDeps{
-		PromptDeps: agent.BuildPromptDeps(cfg, agent.PromptDepsOptions{
-			GetMemoryData:            memoryAcc.GetMemoryData,
-			FormatMemoryForInjection: memoryAcc.FormatMemoryForInjection,
-		}),
+		PromptDeps:            agent.BuildPromptDeps(cfg, memoryAcc),
 		DeferredToolNamesFunc: agent.DeferredToolNamesFromConfig(cfg),
 		HITLApprovalFunc:      defaultHITLApproval,
 		MemoryHooks:           memoryAcc.Hooks(),

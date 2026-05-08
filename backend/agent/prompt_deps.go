@@ -9,51 +9,32 @@ import (
 	"eino-cli/backend/config"
 )
 
-// PromptDepsOptions bundles overrides for BuildPromptDeps. Pass empty for
-// defaults derived purely from cfg.
-type PromptDepsOptions struct {
-	// SkillLoader, if non-nil, returns the live skill list. Defaults to
-	// scanning cfg.Skills.Paths via skills.LoadFromPaths.
-	SkillLoader func() []Skill
-
-	// EffectiveUserID returns the user identity used to namespace memory.
-	// Defaults to "" (== Python's empty user_id default).
-	EffectiveUserID func() string
-
-	// GetMemoryData / FormatMemoryForInjection are the prompt-side
-	// memory accessors the lead agent's <memory> section consults.
-	// Wire from MemoryAccessor.GetMemoryData / .FormatMemoryForInjection
-	// (or supply your own to swap the data source entirely).
-	GetMemoryData            func(agentName, userID string) any
-	FormatMemoryForInjection func(data any, maxTokens int) string
-
-	// AgentSoulLoader returns the SOUL.md content for the given agent.
-	// Defaults to "" (no <soul> section).
-	LoadAgentSoul func(agentName string) string
-}
-
-// BuildPromptDeps wires up PromptDeps from a fully-loaded config.Config plus
-// optional overrides. Mirrors the Python "compose every dependency at the
-// edge" pattern; without this helper the runtime layer would have to know
-// about every individual data source.
+// BuildPromptDeps wires up PromptDeps from a fully-loaded config.Config
+// and an optional MemoryAccessor. Mirrors the Python "compose every
+// dependency at the edge" pattern; without this helper the runtime
+// layer would have to know about every individual data source.
 //
-// Skills are loaded eagerly on first call (then cached for the lifetime of
-// the returned PromptDeps) so the on-disk scan happens once per REPL session
-// instead of once per turn.
-func BuildPromptDeps(cfg config.Config, opts PromptDepsOptions) *PromptDeps {
-	deps := &PromptDeps{
-		LoadAgentSoul:            opts.LoadAgentSoul,
-		GetEffectiveUserID:       opts.EffectiveUserID,
-		GetMemoryData:            opts.GetMemoryData,
-		FormatMemoryForInjection: opts.FormatMemoryForInjection,
+// Pass nil for mem if memory is not configured — the prompt's <memory>
+// section will simply be empty (the template handles nil accessors
+// gracefully).
+//
+// Skills are loaded eagerly on first call (then cached for the lifetime
+// of the returned PromptDeps) so the on-disk scan happens once per REPL
+// session instead of once per turn.
+//
+// Knobs we deliberately do NOT expose here (LoadAgentSoul,
+// EffectiveUserID, custom SkillLoader): nobody currently overrides
+// them, and YAGNI — re-introduce the options struct only when a real
+// caller appears.
+func BuildPromptDeps(cfg config.Config, mem *MemoryAccessor) *PromptDeps {
+	deps := &PromptDeps{}
+	if mem != nil {
+		deps.GetMemoryData = mem.GetMemoryData
+		deps.FormatMemoryForInjection = mem.FormatMemoryForInjection
 	}
 
-	loader := opts.SkillLoader
-	if loader == nil {
-		paths := append([]string(nil), cfg.Skills.Paths...)
-		loader = makeCachedSkillLoader(paths, cfg.Skills.Enabled)
-	}
-	deps.LoadSkills = loader
+	paths := append([]string(nil), cfg.Skills.Paths...)
+	deps.LoadSkills = makeCachedSkillLoader(paths, cfg.Skills.Enabled)
 
 	if names := DeferredToolNamesFromConfig(cfg); names != nil {
 		deps.GetDeferredRegistry = names
