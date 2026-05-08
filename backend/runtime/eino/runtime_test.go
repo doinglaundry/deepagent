@@ -8,7 +8,6 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
-	"eino-cli/backend/agent"
 	"eino-cli/backend/config"
 )
 
@@ -48,7 +47,7 @@ func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
 			"default": {Name: "deep-agent", Instruction: "You are a helpful assistant.", MaxIteration: 6},
 		},
 	}
-	runtime, err := NewDeepAgentRuntime(context.Background(), cfg, agent.AgentDeps{})
+	runtime, err := NewDeepAgentRuntime(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("NewDeepAgentRuntime() error = %v", err)
 	}

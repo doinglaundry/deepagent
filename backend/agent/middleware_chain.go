@@ -9,6 +9,7 @@ import (
 
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
+	memorystore "eino-cli/backend/memory/store"
 )
 
 // Chain bundles the two middleware slices that deep.New consumes.
@@ -34,18 +35,30 @@ type Chain struct {
 // Plus the AgentMiddleware (struct-based) slot for plan-mode Todo, since
 // AgentMiddleware is the natural fit for static instruction additions.
 //
-// Gates are read straight from cfg — there is no longer a separate
-// agent.AppConfig view. HITL is gated on `len(deps.HITLTools) > 0`
-// alone (the deer-flow yaml gate had no independent meaning).
+// All gates are read straight from cfg + rt — every host capability that
+// used to live on agent.AgentDeps now has a self-contained default:
+//   - Sandbox: NewLocalSandbox("") — cwd-backed local fs / shell.
+//   - Mem: NewMemoryAccessor backed by cfg.MemoryDir (Memory middleware
+//     is still gated on cfg.Memory.Enabled, so an empty MemoryDir
+//     simply means "the gate stays off").
+//   - HITL approval: defaultHITLApproval (stdin y/N), gated on rt.HITLTools.
+//   - Deferred tool names: derived from cfg.ToolSearch.Deferred.
+//
+// MakeLeadAgent constructs its own sandbox / mem instances; BuildChain
+// reconstructs equivalent ones here so each function stays callable in
+// isolation. The instances are stateless (LocalSandbox) or read-only at
+// this stage (MemoryAccessor's writes happen later, via the middleware
+// hooks), so duplicate construction is free.
 func BuildChain(
 	ctx context.Context,
 	rt RuntimeContext,
 	cfg config.Config,
-	deps AgentDeps,
 	summaryModel model.BaseChatModel,
 ) (Chain, error) {
 	modelCfg := cfg.Models[rt.ModelName]
-	imageFetcher := discoverImageFetcher(deps.Sandbox)
+	sandbox := NewLocalSandbox("")
+	mem := NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
+	imageFetcher := discoverImageFetcher(sandbox)
 
 	chatModel := []adk.ChatModelAgentMiddleware{
 		middlewares.NewAgentState(),
@@ -54,8 +67,8 @@ func BuildChain(
 		middlewares.NewLoopDetection(),
 	}
 
-	if cfg.Memory.Enabled && deps.Mem != nil {
-		chatModel = append(chatModel, middlewares.NewMemory(deps.Mem.Hooks()))
+	if cfg.Memory.Enabled {
+		chatModel = append(chatModel, middlewares.NewMemory(mem.Hooks()))
 	}
 
 	if cfg.TokenUsage.Enabled {
@@ -66,23 +79,21 @@ func BuildChain(
 		chatModel = append(chatModel, middlewares.NewViewImage(imageFetcher))
 	}
 
-	if cfg.ToolSearch.Enabled && deps.DeferredToolNamesFunc != nil {
-		chatModel = append(chatModel, middlewares.NewDeferredTools(deps.DeferredToolNamesFunc))
+	if cfg.ToolSearch.Enabled {
+		if names := DeferredToolNamesFromConfig(cfg); names != nil {
+			chatModel = append(chatModel, middlewares.NewDeferredTools(names))
+		}
 	}
 
 	if rt.SubagentEnabled {
 		chatModel = append(chatModel, middlewares.NewSubagentLimit(rt.MaxConcurrentSubagents))
 	}
 
-	if len(deps.HITLTools) > 0 {
-		chatModel = append(chatModel, middlewares.NewHITL(deps.HITLTools, deps.HITLApprovalFunc))
+	if len(rt.HITLTools) > 0 {
+		chatModel = append(chatModel, middlewares.NewHITL(rt.HITLTools, defaultHITLApproval))
 	}
 
 	if cfg.Summarization.Enabled {
-		var flushHook middlewares.SummarizationMemoryFlushHook
-		if deps.Mem != nil {
-			flushHook = deps.Mem.FlushBeforeSummarization
-		}
 		summaryMW, err := middlewares.NewSummarization(
 			ctx,
 			cfg.Summarization.Enabled,
@@ -90,7 +101,7 @@ func BuildChain(
 			0, // contextMessages — same
 			cfg.Summarization.SummaryPrompt,
 			summaryModel,
-			flushHook,
+			mem.FlushBeforeSummarization,
 		)
 		if err != nil {
 			return Chain{}, fmt.Errorf("build summarization mw: %w", err)
@@ -100,9 +111,7 @@ func BuildChain(
 		}
 	}
 
-	clar := middlewares.NewClarification()
-	clar.OnQuestion = deps.OnClarificationFunc
-	chatModel = append(chatModel, clar)
+	chatModel = append(chatModel, middlewares.NewClarification())
 
 	var agentMWs []adk.AgentMiddleware
 	if rt.IsPlanMode {

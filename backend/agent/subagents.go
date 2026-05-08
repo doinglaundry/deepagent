@@ -58,7 +58,6 @@ func buildNamedSubagents(
 	ctx context.Context,
 	rt RuntimeContext,
 	cfg config.Config,
-	deps AgentDeps,
 	names []string,
 ) ([]adk.Agent, error) {
 	if len(names) == 0 {
@@ -79,7 +78,7 @@ func buildNamedSubagents(
 		subRT.SubagentEnabled = false
 		subRT.MaxConcurrentSubagents = 0
 
-		sub, err := MakeLeadAgent(withSubagentBuild(ctx), subRT, cfg, deps)
+		sub, err := MakeLeadAgent(withSubagentBuild(ctx), subRT, cfg)
 		if err != nil {
 			slog.Warn(
 				"failed to build subagent; skipping",

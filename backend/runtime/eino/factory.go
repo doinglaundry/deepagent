@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"eino-cli/backend/agent"
 	"eino-cli/backend/config"
-	memorystore "eino-cli/backend/memory/store"
 )
 
 // BuildRuntime is the entry point that turns a fully-loaded config
@@ -16,6 +14,11 @@ import (
 // populated), so the only validation that lives here is the one
 // invariant Load can't speak to: this package only knows how to
 // drive a fixed set of model providers.
+//
+// The agent assembly itself is fully self-contained inside
+// agent.MakeLeadAgent — no host-side deps need to be threaded
+// through, so this function reduces to "validate provider then hand
+// off cfg".
 func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 	mc := cfg.Models[cfg.DefaultModel]
 	switch strings.ToLower(strings.TrimSpace(mc.Provider)) {
@@ -23,11 +26,5 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", mc.Provider)
 	}
-
-	deps := agent.AgentDeps{
-		Mem:                   agent.NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir)),
-		DeferredToolNamesFunc: agent.DeferredToolNamesFromConfig(cfg),
-		HITLApprovalFunc:      defaultHITLApproval,
-	}
-	return NewDeepAgentRuntime(ctx, cfg, deps)
+	return NewDeepAgentRuntime(ctx, cfg)
 }

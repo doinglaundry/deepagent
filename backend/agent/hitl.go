@@ -1,4 +1,4 @@
-package eino
+package agent
 
 import (
 	"bufio"
@@ -9,17 +9,26 @@ import (
 	"sync"
 )
 
-// defaultHITLApproval is the stdin-based approval prompter used by the
-// eino-cli REPL. It is invoked synchronously from inside an agent run, so
-// the REPL goroutine is naturally suspended while we read y/N from stdin.
+// defaultHITLApproval is the stdin-based approval prompter used when
+// rt.HITLTools is non-empty. It is invoked synchronously from inside
+// an agent run, so the calling goroutine is naturally suspended while
+// we read y/N from stdin.
 //
 // Output goes to stdout via fmt.Fprintf so it interleaves with the chat
 // stream the user is already watching. Input is read line-by-line from
 // stdin under a package-level mutex — concurrent agent runs would
 // otherwise race on the same scanner.
 //
-// Decision rule: case-insensitive "y" / "yes" approves; everything else
-// (including EOF / read error) denies, which is the safer default.
+// Decision rule: case-insensitive "y" / "yes" approves; everything
+// else (including EOF / read error) denies, which is the safer
+// default.
+//
+// Hosts that need different approval UX (web UI, auto-approve in
+// tests, etc.) should attach the HITL middleware themselves with a
+// custom callback rather than relying on the gate baked into BuildChain.
+// The current single-host shape (eino-cli REPL) doesn't justify a
+// configurable seam here yet — keep this file simple and revisit when
+// a second host appears.
 var defaultHITLApproval = func() func(ctx context.Context, toolName, args string) bool {
 	var (
 		mu      sync.Mutex

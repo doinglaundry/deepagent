@@ -3,7 +3,6 @@ package eino
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -31,36 +30,24 @@ type DeepAgentRuntime struct {
 // model resolution).
 //
 // cfg is trusted to satisfy the post-Load invariants (default model
-// + agent exist, Models / Agents maps populated); deps carries the
-// host-supplied extras (sandbox, prompt deps, HITL/memory hooks).
-// The only host-context default we still fill in here is a cwd-backed
-// LocalSandbox when deps.Sandbox is nil — the rest is just a
-// straight-through wiring step.
+// + agent exist, Models / Agents maps populated). agent.MakeLeadAgent
+// owns its sandbox and memory accessor, so this function reduces to:
+//
+//  1. Stand up an empty RuntimeContext seeded with the cfg defaults.
+//  2. Hand it to agent.MakeLeadAgent.
+//  3. Wrap the resulting lead agent in an adk.Runner.
 //
 // We keep the runtime's history/checkpoint/streaming responsibilities
 // here because they belong to the eino-cli REPL, not to the agent
 // itself.
-func NewDeepAgentRuntime(ctx context.Context, cfg config.Config, deps agent.AgentDeps) (Runtime, error) {
+func NewDeepAgentRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 	rt := agent.NewRuntimeContext()
 	rt.AgentName = cfg.DefaultAgent
 	rt.ModelName = cfg.DefaultModel
 	rt.SubagentEnabled = false
 	rt.IsPlanMode = false
 
-	if deps.Sandbox == nil || deps.WorkingDir == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			cwd = "."
-		}
-		if deps.Sandbox == nil {
-			deps.Sandbox = agent.NewLocalSandbox(cwd)
-		}
-		if deps.WorkingDir == "" {
-			deps.WorkingDir = cwd
-		}
-	}
-
-	leadAgent, err := agent.MakeLeadAgent(ctx, rt, cfg, deps)
+	leadAgent, err := agent.MakeLeadAgent(ctx, rt, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build lead agent: %w", err)
 	}

@@ -71,7 +71,7 @@ func getDeferredToolNames(cfg config.Config) []string {
 }
 
 // DeferredToolNamesFromConfig wraps getDeferredToolNames in a closure
-// compatible with AgentDeps.DeferredToolNamesFunc. Returns nil when no
+// the DeferredTools middleware can call lazily. Returns nil when no
 // deferred tools are configured so the middleware factory can detect
 // "don't attach" via a simple nil check.
 func DeferredToolNamesFromConfig(cfg config.Config) func() []string {

@@ -11,53 +11,8 @@ import (
 
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
+	memorystore "eino-cli/backend/memory/store"
 )
-
-// AgentDeps bundles the host-supplied capabilities that don't live in
-// config: a sandbox (filesystem + shell + mounts), an optional memory
-// accessor, and the runtime callback funcs the middleware chain
-// consults.
-//
-// The split mirrors deerflow's distinction between "config" (declarative)
-// and "runtime" (host implementations).
-type AgentDeps struct {
-	// Sandbox owns Backend / Shell / Mounts. If nil, MakeLeadAgent falls
-	// back to NewLocalSandbox(WorkingDir) — the same behaviour eino-cli
-	// shipped with before Phase 4.
-	Sandbox SandboxProvider
-
-	// Mem is the single memory dependency. The prompt's <memory>
-	// section, the Memory middleware (inject / extract), and the
-	// summarization flush hook all derive their callbacks from the
-	// methods on this accessor. nil disables every memory-related path
-	// — middleware_chain.go gates on `deps.Mem != nil`, so callers that
-	// don't want memory simply leave this zero.
-	Mem *MemoryAccessor
-
-	// WorkingDir is consulted only when Sandbox is nil; ignored otherwise.
-	WorkingDir string
-
-	// HITLTools and HITLApprovalFunc drive the human-in-the-loop
-	// middleware. HITLTools is the set of tool names that require
-	// approval; empty means no gating. HITLApprovalFunc is the callback
-	// that prompts the user — it receives the tool name + raw JSON args
-	// and returns approve/deny. nil callback treats every gated call as
-	// approved (Phase 1 behavior).
-	HITLTools        []string
-	HITLApprovalFunc func(ctx context.Context, toolName, args string) bool
-
-	// OnClarificationFunc, if non-nil, is invoked when the model emits
-	// an ask_clarification tool call. The middleware always rewrites
-	// the assistant message to surface the question; this callback
-	// gives the host a hook for telemetry / custom rendering.
-	OnClarificationFunc func(ctx context.Context, question string)
-
-	// DeferredToolNamesFunc returns the live list of tool names the
-	// DeferredTools middleware should filter out of the active set when
-	// cfg.ToolSearch.Enabled is true. Without this the middleware
-	// is not attached.
-	DeferredToolNamesFunc func() []string
-}
 
 // MakeLeadAgent mirrors deerflow.agents.lead_agent.agent.make_lead_agent.
 //
@@ -72,13 +27,19 @@ type AgentDeps struct {
 // support, filesystem subagent tools). The remaining steps line up
 // 1:1.
 //
+// MakeLeadAgent is self-contained: it owns its sandbox (cwd-backed
+// LocalSandbox) and its memory accessor (cfg.MemoryDir-backed store).
+// Hosts that want different behaviour for either should swap in their
+// own assembly function rather than threading deps through here — the
+// extra DI layer was deleted in this revision because every production
+// call site used identical defaults.
+//
 // The bootstrap branch from the Python original is intentionally
 // omitted per the technical plan.
 func MakeLeadAgent(
 	ctx context.Context,
 	rt RuntimeContext,
 	cfg config.Config,
-	deps AgentDeps,
 ) (adk.ResumableAgent, error) {
 	agentName, err := ValidateAgentName(rt.AgentName)
 	if err != nil {
@@ -109,9 +70,8 @@ func MakeLeadAgent(
 	}
 	summaryModel := buildSummaryChatModel(ctx, cfg, chatModel)
 
-	if deps.Sandbox == nil {
-		deps.Sandbox = NewLocalSandbox(deps.WorkingDir)
-	}
+	sandbox := NewLocalSandbox("")
+	mem := NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
 
 	prompt := ApplyPromptTemplate(PromptOptions{
 		SubagentEnabled:        rt.SubagentEnabled,
@@ -119,11 +79,11 @@ func MakeLeadAgent(
 		AgentName:              agentName,
 		AvailableSkills:        skillsFromProfile(agentConfig),
 		Config:                 cfg,
-		Mounts:                 deps.Sandbox.Mounts(),
-		Mem:                    deps.Mem,
+		Mounts:                 sandbox.Mounts(),
+		Mem:                    mem,
 	})
 
-	chain, err := BuildChain(ctx, rt, cfg, deps, summaryModel)
+	chain, err := BuildChain(ctx, rt, cfg, summaryModel)
 	if err != nil {
 		return nil, fmt.Errorf("build middleware chain: %w", err)
 	}
@@ -151,7 +111,7 @@ func MakeLeadAgent(
 	// Phase 9: honour profile.ToolGroups (deerflow's
 	// get_available_tools(groups=...) filter). nil ToolGroups → inherit
 	// all (Backend + Shell stay wired); explicit slice → opt-in only.
-	applyToolGroups(deepCfg, agentConfig, deps.Sandbox)
+	applyToolGroups(deepCfg, agentConfig, sandbox)
 
 	agentImpl, err := deep.New(ctx, deepCfg)
 	if err != nil {

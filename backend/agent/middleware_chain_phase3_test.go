@@ -10,7 +10,7 @@ import (
 )
 
 // TestBuildChain_GatedMiddlewares wires every gating flag on (via cfg
-// + deps) and verifies the resulting chain contains the expected
+// + rt) and verifies the resulting chain contains the expected
 // middleware types and that the Clarification middleware remains last.
 func TestBuildChain_GatedMiddlewares(t *testing.T) {
 	rt := NewRuntimeContext()
@@ -18,22 +18,22 @@ func TestBuildChain_GatedMiddlewares(t *testing.T) {
 	rt.AgentName = "default"
 	rt.SubagentEnabled = true
 	rt.IsPlanMode = true
+	rt.HITLTools = []string{"shell"}
 
 	cfg := config.Config{
 		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "kimi", SupportsVision: true},
 		},
+		MemoryDir:  t.TempDir(),
 		Memory:     config.Memory{Enabled: true},
 		TokenUsage: config.TokenUsage{Enabled: true},
-		ToolSearch: config.ToolSearchConfig{Enabled: true},
-	}
-	deps := AgentDeps{
-		Mem:                   NewMemoryAccessor(nil),
-		DeferredToolNamesFunc: func() []string { return []string{"big-tool"} },
-		HITLTools:             []string{"shell"},
+		ToolSearch: config.ToolSearchConfig{
+			Enabled:  true,
+			Deferred: []config.DeferredToolEntry{{Name: "big-tool"}},
+		},
 	}
 
-	chain, err := BuildChain(context.Background(), rt, cfg, deps, nil)
+	chain, err := BuildChain(context.Background(), rt, cfg, nil)
 	if err != nil {
 		t.Fatalf("BuildChain: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestBuildChain_NoGatesEmittedWhenDisabled(t *testing.T) {
 		},
 	}
 
-	chain, err := BuildChain(context.Background(), rt, cfg, AgentDeps{}, nil)
+	chain, err := BuildChain(context.Background(), rt, cfg, nil)
 	if err != nil {
 		t.Fatalf("BuildChain: %v", err)
 	}

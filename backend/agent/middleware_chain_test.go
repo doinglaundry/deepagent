@@ -29,7 +29,7 @@ func makeChainTestCfg() config.Config {
 // Clarification middleware (Python invariant) and contains the documented
 // always-on members in the expected order.
 func TestBuildChain_DefaultOrder(t *testing.T) {
-	chain, err := BuildChain(context.Background(), makeChainTestRT(), makeChainTestCfg(), AgentDeps{}, nil)
+	chain, err := BuildChain(context.Background(), makeChainTestRT(), makeChainTestCfg(), nil)
 	if err != nil {
 		t.Fatalf("BuildChain: unexpected error: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestBuildChain_DefaultOrder(t *testing.T) {
 func TestBuildChain_SummarizationDisabled(t *testing.T) {
 	cfg := makeChainTestCfg()
 	cfg.Summarization = config.Summarization{Enabled: false}
-	chain, err := BuildChain(context.Background(), makeChainTestRT(), cfg, AgentDeps{}, nil)
+	chain, err := BuildChain(context.Background(), makeChainTestRT(), cfg, nil)
 	if err != nil {
 		t.Fatalf("BuildChain: unexpected error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestBuildChain_SummarizationDisabled(t *testing.T) {
 func TestBuildChain_SummarizationEnabledWithoutModel(t *testing.T) {
 	cfg := makeChainTestCfg()
 	cfg.Summarization = config.Summarization{Enabled: true}
-	_, err := BuildChain(context.Background(), makeChainTestRT(), cfg, AgentDeps{}, nil)
+	_, err := BuildChain(context.Background(), makeChainTestRT(), cfg, nil)
 	if err == nil {
 		t.Fatalf("expected error when summarization is enabled without a model")
 	}

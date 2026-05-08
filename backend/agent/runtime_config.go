@@ -32,6 +32,14 @@ type RuntimeContext struct {
 	// turn. Defaults to 3 in NewRuntimeContext if unset.
 	MaxConcurrentSubagents int
 
+	// HITLTools lists the tool names that require human approval before
+	// the agent may invoke them. Empty (nil or zero-length) means no
+	// gating — that is, BuildChain will not attach the HITL middleware
+	// at all. Approval prompts are routed through agent.defaultHITLApproval
+	// (stdin y/N) so this is a pure declaration of intent; hosts that
+	// want different approval UX should attach the middleware themselves.
+	HITLTools []string
+
 	// Metadata accumulates trace-tagging key/values (analogous to LangSmith
 	// metadata in the Python implementation).
 	Metadata map[string]any
