@@ -8,7 +8,6 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
-	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
 	memorystore "eino-cli/backend/memory/store"
 )
@@ -32,12 +31,11 @@ import (
 // MakeLeadAgent — both production entry points (NewDeepAgentRuntime
 // and buildNamedSubagents) do so. MakeLeadAgent itself only consumes.
 //
-// MakeLeadAgent is also self-contained: it owns its sandbox (cwd-backed
-// LocalSandbox) and its memory accessor (cfg.MemoryDir-backed store).
-// Hosts that want different behaviour for either should swap in their
-// own assembly function rather than threading deps through here — the
-// extra DI layer was deleted in the previous revision because every
-// production call site used identical defaults.
+// MakeLeadAgent is also self-contained: it owns its filesystem backend
+// / shell (cwd-rooted via newLocalBackend / newLocalShell) and its
+// memory accessor (cfg.MemoryDir-backed store). The previous
+// SandboxProvider abstraction was deleted — only the local impl was
+// ever wired in, so the interface had no second-host justification.
 //
 // The bootstrap branch from the Python original is intentionally
 // omitted per the technical plan.
@@ -58,7 +56,8 @@ func MakeLeadAgent(
 	}
 	summaryModel := buildSummaryChatModel(ctx, cfg, chatModel)
 
-	sandbox := NewLocalSandbox("")
+	backend := newLocalBackend("")
+	shell := newLocalShell("")
 	mem := NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
 
 	prompt := ApplyPromptTemplate(PromptOptions{
@@ -67,7 +66,6 @@ func MakeLeadAgent(
 		AgentName:              rt.AgentName,
 		AvailableSkills:        skillsFromProfile(agentConfig),
 		Config:                 cfg,
-		Mounts:                 sandbox.Mounts(),
 		Mem:                    mem,
 	})
 
@@ -99,7 +97,7 @@ func MakeLeadAgent(
 	// Phase 9: honour profile.ToolGroups (deerflow's
 	// get_available_tools(groups=...) filter). nil ToolGroups → inherit
 	// all (Backend + Shell stay wired); explicit slice → opt-in only.
-	applyToolGroups(deepCfg, agentConfig, sandbox)
+	applyToolGroups(deepCfg, agentConfig, backend, shell)
 
 	agentImpl, err := deep.New(ctx, deepCfg)
 	if err != nil {
@@ -112,28 +110,6 @@ func MakeLeadAgent(
 // Orchestration helpers (collocated with MakeLeadAgent because they
 // only exist to keep its body short and have no other call sites).
 // -----------------------------------------------------------------------------
-
-// discoverImageFetcher checks whether the sandbox provider can read
-// image bytes (optional ImageReader capability) and returns the
-// fetcher the ViewImage middleware expects. Returns nil when the
-// sandbox doesn't expose ReadImage; the middleware silently skips in
-// that case.
-func discoverImageFetcher(sandbox SandboxProvider) middlewares.ImageFetcher {
-	r, ok := sandbox.(ImageReader)
-	if !ok {
-		return nil
-	}
-	return imageFetcherFunc(r.ReadImage)
-}
-
-// imageFetcherFunc adapts a plain ReadImage method into the
-// middlewares.ImageFetcher interface so MakeLeadAgent doesn't have to
-// declare a dedicated wrapper type per provider.
-type imageFetcherFunc func(ctx context.Context, path string) ([]byte, string, error)
-
-func (f imageFetcherFunc) ReadImage(ctx context.Context, path string) ([]byte, string, error) {
-	return f(ctx, path)
-}
 
 // -----------------------------------------------------------------------------
 // Tiny shared utilities

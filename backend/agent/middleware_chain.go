@@ -35,18 +35,19 @@ type Chain struct {
 // Plus the AgentMiddleware (struct-based) slot for plan-mode Todo, since
 // AgentMiddleware is the natural fit for static instruction additions.
 //
-// All gates are read straight from cfg + rt — every host capability that
-// used to live on agent.AgentDeps now has a self-contained default:
-//   - Sandbox: NewLocalSandbox("") — cwd-backed local fs / shell.
+// All gates are read straight from cfg + rt — every host capability is
+// derived in-place with a self-contained default:
 //   - Mem: NewMemoryAccessor backed by cfg.MemoryDir (Memory middleware
 //     is still gated on cfg.Memory.Enabled, so an empty MemoryDir
 //     simply means "the gate stays off").
 //   - HITL approval: defaultHITLApproval (stdin y/N), gated on rt.HITLTools.
 //   - Deferred tool names: derived from cfg.ToolSearch.Deferred.
+//   - ViewImage fetcher: closed over readImage("", path) — cwd-rooted
+//     resolution, same root MakeLeadAgent uses for fs/shell.
 //
-// MakeLeadAgent constructs its own sandbox / mem instances; BuildChain
-// reconstructs equivalent ones here so each function stays callable in
-// isolation. The instances are stateless (LocalSandbox) or read-only at
+// MakeLeadAgent constructs its own backend / shell / mem instances;
+// BuildChain reconstructs an equivalent mem here so each function stays
+// callable in isolation. The instances are stateless or read-only at
 // this stage (MemoryAccessor's writes happen later, via the middleware
 // hooks), so duplicate construction is free.
 func BuildChain(
@@ -56,9 +57,10 @@ func BuildChain(
 	summaryModel model.BaseChatModel,
 ) (Chain, error) {
 	modelCfg := cfg.Models[rt.ModelName]
-	sandbox := NewLocalSandbox("")
 	mem := NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
-	imageFetcher := discoverImageFetcher(sandbox)
+	imageFetcher := imageFetcherFunc(func(ctx context.Context, path string) ([]byte, string, error) {
+		return readImage(ctx, "", path)
+	})
 
 	chatModel := []adk.ChatModelAgentMiddleware{
 		middlewares.NewAgentState(),

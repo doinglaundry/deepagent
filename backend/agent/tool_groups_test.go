@@ -9,26 +9,15 @@ import (
 	"eino-cli/backend/config"
 )
 
-// stubSandbox is a SandboxProvider whose Backend() / Shell() return
-// distinct sentinel values so the test can assert which slot was wired.
-// We rely on the embedded interface fields to give us "non-nil but
-// otherwise inert" implementations — the test never invokes any of the
-// methods, only the != nil predicate that applyToolGroups uses.
-type stubSandbox struct {
-	backend filesystem.Backend
-	shell   filesystem.Shell
-}
-
-func (s *stubSandbox) Backend() filesystem.Backend { return s.backend }
-func (s *stubSandbox) Shell() filesystem.Shell     { return s.shell }
-func (s *stubSandbox) Mounts() []Mount             { return nil }
-func (s *stubSandbox) WorkingDir() string          { return "" }
-
+// stubBackend / stubShell are non-nil but inert sentinels: applyToolGroups
+// only checks "is the value non-nil" before installing it on deep.Config,
+// so the embedded interface fields suffice without any real fs I/O.
 type stubBackend struct{ filesystem.Backend }
 type stubShell struct{ filesystem.Shell }
 
 func TestApplyToolGroups(t *testing.T) {
-	sb := &stubSandbox{backend: stubBackend{}, shell: stubShell{}}
+	backend := stubBackend{}
+	shell := stubShell{}
 
 	type want struct {
 		hasBackend bool
@@ -85,7 +74,7 @@ func TestApplyToolGroups(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := &deep.Config{}
-			applyToolGroups(cfg, c.profile, sb)
+			applyToolGroups(cfg, c.profile, backend, shell)
 			if (cfg.Backend != nil) != c.want.hasBackend {
 				t.Errorf("Backend=%v, want hasBackend=%v", cfg.Backend != nil, c.want.hasBackend)
 			}

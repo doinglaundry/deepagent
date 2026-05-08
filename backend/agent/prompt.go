@@ -3,10 +3,10 @@
 // deerflow.agents.lead_agent.prompt: it builds the system prompt fed
 // to the chat model.
 //
-// External data (skills, subagents, memory, ACP, sandbox mounts) is
-// pulled directly from config.Config and *MemoryAccessor — no
-// PromptDeps callback bag — so the prompt assembler reads its inputs
-// from the same authoritative sources every other layer uses.
+// External data (skills, subagents, memory, ACP) is pulled directly
+// from config.Config and *MemoryAccessor — no PromptDeps callback bag
+// — so the prompt assembler reads its inputs from the same
+// authoritative sources every other layer uses.
 package agent
 
 import (
@@ -28,12 +28,6 @@ type Skill struct {
 	Description string
 	Category    string // "custom" → marked [custom, editable]; otherwise [built-in]
 	SkillFile   string
-}
-
-// Mount mirrors a sandbox mount entry.
-type Mount struct {
-	ContainerPath string
-	ReadOnly      bool
 }
 
 // AvailableSkills represents Python's `available_skills: set[str] | None`.
@@ -59,18 +53,14 @@ func SkillSet(names ...string) *AvailableSkills {
 //
 // Config carries the full loaded config; ApplyPromptTemplate reads the
 // gate fields from cfg.* directly (cfg.Memory, cfg.SkillEvolution,
-// cfg.ToolSearch, cfg.Agents, cfg.ACP, cfg.Skills). Mounts are
-// runtime-discovered (sandbox.Mounts()) and threaded through
-// separately so prompt rendering doesn't have to know how to merge
-// configured + discovered mounts. Mem is the optional memory accessor
-// — nil simply skips the <memory> section.
+// cfg.ToolSearch, cfg.Agents, cfg.ACP, cfg.Skills). Mem is the
+// optional memory accessor — nil simply skips the <memory> section.
 type PromptOptions struct {
 	SubagentEnabled        bool
 	MaxConcurrentSubagents int
 	AgentName              string
 	AvailableSkills        *AvailableSkills // nil == AllSkills() == Python None
 	Config                 config.Config
-	Mounts                 []Mount
 	Mem                    *MemoryAccessor
 }
 
@@ -395,29 +385,6 @@ func buildACPSection(cfg config.Config) string {
 }
 
 // -----------------------------------------------------------------------------
-// _build_custom_mounts_section
-// -----------------------------------------------------------------------------
-
-func buildCustomMountsSection(mounts []Mount) string {
-	if len(mounts) == 0 {
-		return ""
-	}
-	lines := make([]string, 0, len(mounts))
-	for _, m := range mounts {
-		access := "read-write"
-		if m.ReadOnly {
-			access = "read-only"
-		}
-		lines = append(lines, fmt.Sprintf(
-			"- Custom mount: `%s` - Host directory mapped into the sandbox (%s)",
-			m.ContainerPath, access,
-		))
-	}
-	return "\n**Custom Mounted Directories:**\n" + strings.Join(lines, "\n") +
-		"\n- If the user needs files outside workspace/uploads/outputs, use these absolute container paths directly when they match the requested directory"
-}
-
-// -----------------------------------------------------------------------------
 // SYSTEM_PROMPT_TEMPLATE
 //
 // This is the verbatim port of Python's SYSTEM_PROMPT_TEMPLATE. Go raw strings
@@ -635,7 +602,7 @@ var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"
 
 // ApplyPromptTemplate mirrors deerflow.agents.lead_agent.prompt.apply_prompt_template.
 // It assembles the system prompt by:
-//  1. Resolving every dynamic section (memory, skills, subagent, ACP, mounts).
+//  1. Resolving every dynamic section (memory, skills, subagent, ACP).
 //  2. Substituting the named placeholders inside SYSTEM_PROMPT_TEMPLATE.
 //  3. Appending the current date footer in the same "%Y-%m-%d, %A" format.
 func ApplyPromptTemplate(opts PromptOptions) string {
@@ -667,15 +634,6 @@ func ApplyPromptTemplate(opts PromptOptions) string {
 	deferredToolsSection := GetDeferredToolsPromptSection(opts.Config, opts.Config.ToolSearch.Enabled)
 
 	acpSection := buildACPSection(opts.Config)
-	customMountsSection := buildCustomMountsSection(opts.Mounts)
-	var nonEmpty []string
-	if acpSection != "" {
-		nonEmpty = append(nonEmpty, acpSection)
-	}
-	if customMountsSection != "" {
-		nonEmpty = append(nonEmpty, customMountsSection)
-	}
-	acpAndMountsSection := strings.Join(nonEmpty, "\n")
 
 	agentName := opts.AgentName
 	if agentName == "" {
@@ -695,7 +653,7 @@ func ApplyPromptTemplate(opts PromptOptions) string {
 		"{deferred_tools_section}", deferredToolsSection,
 		"{subagent_section}", subagentSection,
 		"{subagent_reminder}", subagentReminder,
-		"{acp_section}", acpAndMountsSection,
+		"{acp_section}", acpSection,
 	)
 	prompt := replacer.Replace(systemPromptTemplate)
 
@@ -704,7 +662,7 @@ func ApplyPromptTemplate(opts PromptOptions) string {
 
 // -----------------------------------------------------------------------------
 // Logging hook (parity with Python's logger.exception in
-// _build_custom_mounts_section / _get_memory_context).
+// _get_memory_context).
 // -----------------------------------------------------------------------------
 
 // promptLogger is exposed so callers can swap in a project-wide slog handler.

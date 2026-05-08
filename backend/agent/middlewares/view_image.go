@@ -13,10 +13,10 @@ import (
 )
 
 // ImageFetcher is the data-plane dependency for the ViewImage middleware.
-// We intentionally do NOT depend on the agent.SandboxProvider type here
-// — the agent package depends on this one, so re-using the sandbox
-// interface would form an import cycle. Callers wire any value that
-// satisfies "ReadImage(ctx, path) ([]byte, string, error)".
+// It is declared here (rather than in the agent package) because the
+// agent package imports this one — declaring it upstream would form a
+// cycle. The agent package satisfies it via an inline imageFetcherFunc
+// adapter closing over readImage.
 type ImageFetcher interface {
 	ReadImage(ctx context.Context, path string) ([]byte, string, error)
 }

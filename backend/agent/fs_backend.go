@@ -16,55 +16,57 @@ import (
 	"github.com/cloudwego/eino/adk/filesystem"
 )
 
-// LocalSandboxProvider is the on-host SandboxProvider — it exposes the real
-// filesystem rooted at a given working directory and runs shell commands
-// directly via /bin/bash. It is the default sandbox the eino-cli REPL uses
-// when no other provider is wired in.
+// This file owns the on-host implementations of the deep agent's tool
+// surface — file ops (localBackend), shell exec (localShell), and image
+// reading (readImage). Previously these lived behind a SandboxProvider
+// interface ("local / Docker / aio-sandbox / ACP" pluggable hosts), but
+// only the local impl was ever wired into eino-cli, so the abstraction
+// was deleted alongside this rename. If a second host appears, restore
+// the interface; until then everything here is just plain types and
+// functions used directly by MakeLeadAgent / BuildChain.
+
+// localBackend implements filesystem.Backend (Read / Write / Edit / Ls /
+// Grep / Glob) against a real filesystem rooted at root. Relative paths
+// in requests resolve under root; absolute paths are honoured as-is.
+type localBackend struct{ root string }
+
+// localShell implements filesystem.Shell by exec'ing /bin/bash with the
+// agent's logical CWD.
+type localShell struct{ cwd string }
+
+// resolveRoot mirrors the old NewLocalSandbox("") fallback: empty input
+// → os.Getwd() → "." as the last resort. Both backend and shell pass
+// the same value, so they always agree on what "relative" means.
+func resolveRoot(root string) string {
+	if strings.TrimSpace(root) != "" {
+		return root
+	}
+	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+		return cwd
+	}
+	return "."
+}
+
+func newLocalBackend(root string) *localBackend { return &localBackend{root: resolveRoot(root)} }
+func newLocalShell(cwd string) *localShell      { return &localShell{cwd: resolveRoot(cwd)} }
+
+// readImage resolves path against root, refuses non-regular files,
+// infers the MIME type via the standard library's content sniffer
+// (with an extension fallback), and returns the raw bytes ready for
+// base64 encoding into a multimodal message. Empty root falls back to
+// cwd via resolveRoot.
 //
-// The Backend / Shell implementations are migrated wholesale from the
-// previous runtime/eino/fs_backend.go so the runtime layer no longer owns
-// any filesystem details.
-type LocalSandboxProvider struct {
-	root   string
-	mounts []Mount
-}
-
-// NewLocalSandbox returns a LocalSandboxProvider rooted at the given
-// working directory. Empty falls back to os.Getwd().
-func NewLocalSandbox(root string) *LocalSandboxProvider {
-	if strings.TrimSpace(root) == "" {
-		root, _ = os.Getwd()
-	}
-	if root == "" {
-		root = "."
-	}
-	return &LocalSandboxProvider{root: root}
-}
-
-// WithMounts returns a copy of the provider with the given mounts attached.
-// Use this to inject custom paths the prompt should advertise to the LLM.
-func (p *LocalSandboxProvider) WithMounts(mounts []Mount) *LocalSandboxProvider {
-	cp := *p
-	cp.mounts = append([]Mount(nil), mounts...)
-	return &cp
-}
-
-func (p *LocalSandboxProvider) Backend() filesystem.Backend { return &localBackend{root: p.root} }
-func (p *LocalSandboxProvider) Shell() filesystem.Shell     { return &localShell{cwd: p.root} }
-func (p *LocalSandboxProvider) Mounts() []Mount             { return p.mounts }
-func (p *LocalSandboxProvider) WorkingDir() string          { return p.root }
-
-// ReadImage satisfies ImageReader. It resolves path against the sandbox
-// root, refuses non-regular files, infers the MIME type via the standard
-// library's content sniffer (with an extension fallback), and returns the
-// raw bytes ready for base64 encoding into a multimodal message.
-func (p *LocalSandboxProvider) ReadImage(ctx context.Context, path string) ([]byte, string, error) {
+// This used to be LocalSandboxProvider.ReadImage — it became a plain
+// function once the SandboxProvider abstraction was deleted.
+// middleware_chain.go wraps it in an imageFetcherFunc adapter to
+// satisfy the ViewImage middleware's ImageFetcher interface.
+func readImage(ctx context.Context, root, path string) ([]byte, string, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, "", fmt.Errorf("read image: path is empty")
 	}
 	abs := path
 	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(p.root, abs)
+		abs = filepath.Join(resolveRoot(root), abs)
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
@@ -96,6 +98,16 @@ func (p *LocalSandboxProvider) ReadImage(ctx context.Context, path string) ([]by
 	return data, mime, nil
 }
 
+// imageFetcherFunc adapts a plain ReadImage-shaped function into the
+// middlewares.ImageFetcher interface (declared in
+// agent/middlewares/view_image.go). BuildChain constructs one inline
+// closing over readImage + the cwd root.
+type imageFetcherFunc func(ctx context.Context, path string) ([]byte, string, error)
+
+func (f imageFetcherFunc) ReadImage(ctx context.Context, path string) ([]byte, string, error) {
+	return f(ctx, path)
+}
+
 // mimeFromExt returns a best-effort image MIME type for known file
 // extensions. Returns "" when the extension isn't a known image format
 // so callers know to keep the sniffer's verdict.
@@ -123,10 +135,8 @@ func mimeFromExt(path string) string {
 }
 
 // -----------------------------------------------------------------------------
-// localBackend / localShell — migrated from runtime/eino/fs_backend.go.
+// localBackend — filesystem.Backend implementation
 // -----------------------------------------------------------------------------
-
-type localBackend struct{ root string }
 
 func (b *localBackend) LsInfo(ctx context.Context, req *filesystem.LsInfoRequest) ([]filesystem.FileInfo, error) {
 	dir := req.Path
@@ -296,7 +306,9 @@ func (b *localBackend) Edit(ctx context.Context, req *filesystem.EditRequest) er
 	return os.WriteFile(p, []byte(newContent), 0644)
 }
 
-type localShell struct{ cwd string }
+// -----------------------------------------------------------------------------
+// localShell — filesystem.Shell implementation
+// -----------------------------------------------------------------------------
 
 func (s *localShell) Execute(ctx context.Context, input *filesystem.ExecuteRequest) (*filesystem.ExecuteResponse, error) {
 	cmd := exec.CommandContext(ctx, "bash", "-lc", input.Command)

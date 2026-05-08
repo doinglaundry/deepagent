@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/cloudwego/eino/adk/filesystem"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
 	"eino-cli/backend/config"
@@ -17,17 +18,19 @@ import (
 // the two switches eino exposes.
 //
 // nil ToolGroups (Python's None) means "no filter, inherit all": both
-// Backend and Shell are wired from the sandbox provider. An explicit
-// slice opts into specific groups; unknown groups are
-// logged-and-ignored rather than failing, so a config that mentions
-// web_search / mcp / other groups not yet wired up in Go still loads
-// (with reduced capability instead of an error). An empty slice means
-// "no built-in tools at all".
-func applyToolGroups(cfg *deep.Config, profile *config.AgentConfig, sandbox SandboxProvider) {
+// Backend and Shell are wired through. An explicit slice opts into
+// specific groups; unknown groups are logged-and-ignored rather than
+// failing, so a config that mentions web_search / mcp / other groups
+// not yet wired up in Go still loads (with reduced capability instead
+// of an error). An empty slice means "no built-in tools at all".
+//
+// Callers pass the backend and shell directly — there used to be a
+// SandboxProvider abstraction in front of these, but it was deleted
+// when only the local impl was ever wired in.
+func applyToolGroups(cfg *deep.Config, profile *config.AgentConfig, backend filesystem.Backend, shell filesystem.Shell) {
 	if profile == nil || profile.ToolGroups == nil {
-		// None / nil → inherit all built-in groups.
-		cfg.Backend = sandbox.Backend()
-		cfg.Shell = sandbox.Shell()
+		cfg.Backend = backend
+		cfg.Shell = shell
 		return
 	}
 	enabledFS := false
@@ -49,9 +52,9 @@ func applyToolGroups(cfg *deep.Config, profile *config.AgentConfig, sandbox Sand
 		}
 	}
 	if enabledFS {
-		cfg.Backend = sandbox.Backend()
+		cfg.Backend = backend
 	}
 	if enabledShell {
-		cfg.Shell = sandbox.Shell()
+		cfg.Shell = shell
 	}
 }
