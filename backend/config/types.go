@@ -97,7 +97,6 @@ type Config struct {
 	Tools          []Tool                  `json:"-"                       yaml:"tools"`
 	ToolSearch     ToolSearchConfig        `json:"tool_search,omitempty"   yaml:"tool_search"`
 	Uploads        Uploads                 `json:"-"                       yaml:"uploads"`
-	Sandbox        Sandbox                 `json:"-"                       yaml:"sandbox"`
 	Skills         SkillsConfig            `json:"skills,omitempty"        yaml:"skills"`
 	Title          Title                   `json:"-"                       yaml:"title"`
 	Summarization  Summarization           `json:"-"                       yaml:"summarization"`

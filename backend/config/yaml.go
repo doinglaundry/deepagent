@@ -61,18 +61,6 @@ type Uploads struct {
 	PDFConverter         string `yaml:"pdf_converter"`
 }
 
-type SandboxMount struct {
-	HostPath      string `yaml:"host_path"`
-	ContainerPath string `yaml:"container_path"`
-	ReadOnly      bool   `yaml:"read_only"`
-}
-
-type Sandbox struct {
-	Use           string         `yaml:"use"`
-	AllowHostBash bool           `yaml:"allow_host_bash"`
-	Mounts        []SandboxMount `yaml:"mounts"`
-}
-
 type Title struct {
 	Enabled   bool   `yaml:"enabled"`
 	MaxWords  int    `yaml:"max_words"`
