@@ -30,33 +30,20 @@ type DeepAgentRuntime struct {
 // deerflow lead-agent assembly (prompt template, middleware chain,
 // model resolution).
 //
-// cfg is the full loaded config; deps carries the host-supplied extras
-// (sandbox, prompt deps, app config, HITL/memory hooks). Both the
-// model and agent names come from cfg.DefaultModel / cfg.DefaultAgent
-// — BuildRuntime validates those upstream, so this layer trusts cfg
-// and only fills in missing host-context defaults (cwd-backed
-// sandbox).
+// cfg is trusted to satisfy the post-Load invariants (default model
+// + agent exist, Models / Agents maps populated); deps carries the
+// host-supplied extras (sandbox, prompt deps, HITL/memory hooks).
+// The only host-context default we still fill in here is a cwd-backed
+// LocalSandbox when deps.Sandbox is nil — the rest is just a
+// straight-through wiring step.
 //
 // We keep the runtime's history/checkpoint/streaming responsibilities
 // here because they belong to the eino-cli REPL, not to the agent
 // itself.
 func NewDeepAgentRuntime(ctx context.Context, cfg config.Config, deps agent.AgentDeps) (Runtime, error) {
-	modelName := strings.TrimSpace(cfg.DefaultModel)
-	if modelName == "" {
-		return nil, fmt.Errorf("model name is required")
-	}
-	if _, ok := cfg.Models[modelName]; !ok {
-		return nil, fmt.Errorf("model %q not found", modelName)
-	}
-
-	agentName := strings.TrimSpace(cfg.DefaultAgent)
-	if agentName == "" {
-		agentName = "deep-agent"
-	}
-
 	rt := agent.NewRuntimeContext()
-	rt.AgentName = agentName
-	rt.ModelName = modelName
+	rt.AgentName = cfg.DefaultAgent
+	rt.ModelName = cfg.DefaultModel
 	rt.SubagentEnabled = false
 	rt.IsPlanMode = false
 
@@ -85,7 +72,7 @@ func NewDeepAgentRuntime(ctx context.Context, cfg config.Config, deps agent.Agen
 		CheckPointStore: store,
 	})
 
-	return &DeepAgentRuntime{modelName: modelName, runner: runner, maxHistoryTurns: 20}, nil
+	return &DeepAgentRuntime{modelName: cfg.DefaultModel, runner: runner, maxHistoryTurns: 20}, nil
 }
 
 func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, error) {

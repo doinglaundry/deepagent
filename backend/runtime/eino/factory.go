@@ -10,24 +10,14 @@ import (
 	memorystore "eino-cli/backend/memory/store"
 )
 
+// BuildRuntime is the entry point that turns a fully-loaded config
+// into a Runtime. config.Load() has already established every
+// invariant we need (default model + agent exist, Models map is
+// populated), so the only validation that lives here is the one
+// invariant Load can't speak to: this package only knows how to
+// drive a fixed set of model providers.
 func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
-	modelName := strings.TrimSpace(cfg.DefaultModel)
-	if modelName == "" {
-		return nil, fmt.Errorf("default model is required")
-	}
-	mc, ok := cfg.Models[modelName]
-	if !ok {
-		return nil, fmt.Errorf("model %q not found", modelName)
-	}
-
-	agentName := strings.TrimSpace(cfg.DefaultAgent)
-	if agentName == "" {
-		return nil, fmt.Errorf("default agent is required")
-	}
-	if _, ok := cfg.Agents[agentName]; !ok {
-		return nil, fmt.Errorf("agent %q not found", agentName)
-	}
-
+	mc := cfg.Models[cfg.DefaultModel]
 	switch strings.ToLower(strings.TrimSpace(mc.Provider)) {
 	case "claude", "anthropic", "openai", "kimi", "moonshot":
 	default:
@@ -35,7 +25,6 @@ func BuildRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 	}
 
 	memoryAcc := agent.NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
-
 	deps := agent.AgentDeps{
 		PromptDeps: agent.BuildPromptDeps(cfg, agent.PromptDepsOptions{
 			GetMemoryData:            memoryAcc.GetMemoryData,
