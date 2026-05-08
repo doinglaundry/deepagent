@@ -77,6 +77,14 @@ func buildNamedSubagents(
 		subRT.AgentName = name
 		subRT.SubagentEnabled = false
 		subRT.MaxConcurrentSubagents = 0
+		if err := FinalizeRuntimeContext(&subRT, cfg); err != nil {
+			slog.Warn(
+				"failed to finalize subagent runtime; skipping",
+				"agent", name,
+				"err", err,
+			)
+			continue
+		}
 
 		sub, err := MakeLeadAgent(withSubagentBuild(ctx), subRT, cfg)
 		if err != nil {

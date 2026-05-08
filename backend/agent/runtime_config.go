@@ -1,5 +1,12 @@
 package agent
 
+import (
+	"fmt"
+	"log/slog"
+
+	"eino-cli/backend/config"
+)
+
 // RuntimeContext mirrors the per-request runtime config that the Python
 // make_lead_agent extracts from RunnableConfig.configurable + .context. We
 // pass it explicitly through the call chain rather than relying on
@@ -98,6 +105,76 @@ func (rt RuntimeContext) MergeRuntime(configurable, context map[string]any) Runt
 		rt.Metadata = map[string]any{}
 	}
 	return rt
+}
+
+// FinalizeRuntimeContext is the SOLE place rt is mutated against cfg.
+// After it returns, rt is canonical and downstream callers (MakeLeadAgent,
+// BuildChain, the prompt assembler, the deep.Config builder) treat rt
+// as immutable input.
+//
+// What it does, in order:
+//
+//  1. Validate rt.AgentName, write the canonical form back.
+//  2. Look up the agent profile so cascading model resolution can read
+//     agent_config.Model. Errors propagate.
+//  3. Resolve rt.ModelName via the rt → agent.Model → cfg.DefaultModel
+//     cascade and write the resolved name back.
+//  4. Collapse rt.ThinkingEnabled into the resolved boolean (intent AND
+//     model supports thinking). Emits a slog.Warn on downgrade.
+//  5. Emit the "Create Agent" line and seed rt.Metadata with the
+//     post-resolution values so middleware / renderers downstream see
+//     the same view as the log.
+//
+// The split with MakeLeadAgent is now: this function freezes rt, that
+// function consumes rt. Tests and subagent recursion call Finalize too
+// (each subagent gets its own canonical rt).
+func FinalizeRuntimeContext(rt *RuntimeContext, cfg config.Config) error {
+	agentName, err := ValidateAgentName(rt.AgentName)
+	if err != nil {
+		return err
+	}
+	rt.AgentName = agentName
+
+	agentConfig, err := GetAgentConfig(cfg, agentName)
+	if err != nil {
+		return fmt.Errorf("load agent profile %q: %w", agentName, err)
+	}
+
+	modelName, modelCfg, err := GetModelConfig(rt.ModelName, agentConfig, cfg)
+	if err != nil {
+		return err
+	}
+	rt.ModelName = modelName
+	rt.ThinkingEnabled = getThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
+
+	resolvedName := fallback(rt.AgentName, "default")
+	resolvedModel := fallback(rt.ModelName, "default")
+	slog.Info("Create Agent",
+		"agent_name", resolvedName,
+		"thinking_enabled", rt.ThinkingEnabled,
+		"reasoning_effort", rt.ReasoningEffort,
+		"model_name", resolvedModel,
+		"is_plan_mode", rt.IsPlanMode,
+		"subagent_enabled", rt.SubagentEnabled,
+		"max_concurrent_subagents", rt.MaxConcurrentSubagents,
+	)
+
+	if rt.Metadata == nil {
+		rt.Metadata = map[string]any{}
+	}
+	rt.Metadata["agent_name"] = resolvedName
+	rt.Metadata["model_name"] = resolvedModel
+	rt.Metadata["thinking_enabled"] = rt.ThinkingEnabled
+	rt.Metadata["reasoning_effort"] = rt.ReasoningEffort
+	rt.Metadata["is_plan_mode"] = rt.IsPlanMode
+	rt.Metadata["subagent_enabled"] = rt.SubagentEnabled
+	if agentConfig != nil {
+		rt.Metadata["tool_groups"] = agentConfig.ToolGroups
+		if agentConfig.Skills != nil {
+			rt.Metadata["available_skills"] = agentConfig.Skills
+		}
+	}
+	return nil
 }
 
 func boolFrom(m map[string]any, k string) (bool, bool) {

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
@@ -27,12 +26,18 @@ import (
 // support, filesystem subagent tools). The remaining steps line up
 // 1:1.
 //
-// MakeLeadAgent is self-contained: it owns its sandbox (cwd-backed
+// rt is treated as immutable: every mutation (name canonicalization,
+// model resolution, thinking-mode collapse, metadata seed + log line)
+// lives in FinalizeRuntimeContext. Callers must call Finalize before
+// MakeLeadAgent — both production entry points (NewDeepAgentRuntime
+// and buildNamedSubagents) do so. MakeLeadAgent itself only consumes.
+//
+// MakeLeadAgent is also self-contained: it owns its sandbox (cwd-backed
 // LocalSandbox) and its memory accessor (cfg.MemoryDir-backed store).
 // Hosts that want different behaviour for either should swap in their
 // own assembly function rather than threading deps through here — the
-// extra DI layer was deleted in this revision because every production
-// call site used identical defaults.
+// extra DI layer was deleted in the previous revision because every
+// production call site used identical defaults.
 //
 // The bootstrap branch from the Python original is intentionally
 // omitted per the technical plan.
@@ -41,30 +46,13 @@ func MakeLeadAgent(
 	rt RuntimeContext,
 	cfg config.Config,
 ) (adk.ResumableAgent, error) {
-	agentName, err := ValidateAgentName(rt.AgentName)
+	agentConfig, err := GetAgentConfig(cfg, rt.AgentName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load agent profile %q: %w", rt.AgentName, err)
 	}
+	modelCfg := cfg.Models[rt.ModelName]
 
-	agentConfig, err := GetAgentConfig(cfg, agentName)
-	if err != nil {
-		return nil, fmt.Errorf("load agent profile %q: %w", agentName, err)
-	}
-
-	modelName, modelCfg, err := GetModelConfig(rt.ModelName, agentConfig, cfg)
-	if err != nil {
-		return nil, err
-	}
-	// Pin the resolved model name back onto rt so any downstream
-	// helper that reads cfg.Models[rt.ModelName] sees the same entry
-	// GetModelConfig picked (the fallback path may differ from the
-	// raw rt.ModelName the caller supplied).
-	rt.ModelName = modelName
-
-	thinkingEnabled := getThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
-	populateRuntimeMetadata(&rt, agentName, modelName, thinkingEnabled, agentConfig)
-
-	chatModel, err := buildChatModel(ctx, *modelCfg, thinkingEnabled, rt.ReasoningEffort)
+	chatModel, err := buildChatModel(ctx, *modelCfg, rt.ThinkingEnabled, rt.ReasoningEffort)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +64,7 @@ func MakeLeadAgent(
 	prompt := ApplyPromptTemplate(PromptOptions{
 		SubagentEnabled:        rt.SubagentEnabled,
 		MaxConcurrentSubagents: rt.MaxConcurrentSubagents,
-		AgentName:              agentName,
+		AgentName:              rt.AgentName,
 		AvailableSkills:        skillsFromProfile(agentConfig),
 		Config:                 cfg,
 		Mounts:                 sandbox.Mounts(),
@@ -91,7 +79,7 @@ func MakeLeadAgent(
 	withGeneral := generalSubagentEnabled(ctx, rt)
 
 	deepCfg := &deep.Config{
-		Name:         fallback(agentName, "deep-agent"),
+		Name:         fallback(rt.AgentName, "deep-agent"),
 		Description:  "Deep Agent",
 		ChatModel:    chatModel,
 		Instruction:  prompt,
@@ -124,41 +112,6 @@ func MakeLeadAgent(
 // Orchestration helpers (collocated with MakeLeadAgent because they
 // only exist to keep its body short and have no other call sites).
 // -----------------------------------------------------------------------------
-
-// populateRuntimeMetadata logs the "Create Agent" line and seeds
-// rt.Metadata with the same fields so downstream middleware /
-// renderers can inspect them. rt.Metadata is mutated in place (maps
-// are reference types).
-func populateRuntimeMetadata(rt *RuntimeContext, agentName, modelName string, thinkingEnabled bool, profile *config.AgentConfig) {
-	resolvedName := fallback(agentName, "default")
-	resolvedModel := fallback(modelName, "default")
-
-	slog.Info("Create Agent",
-		"agent_name", resolvedName,
-		"thinking_enabled", thinkingEnabled,
-		"reasoning_effort", rt.ReasoningEffort,
-		"model_name", resolvedModel,
-		"is_plan_mode", rt.IsPlanMode,
-		"subagent_enabled", rt.SubagentEnabled,
-		"max_concurrent_subagents", rt.MaxConcurrentSubagents,
-	)
-
-	if rt.Metadata == nil {
-		rt.Metadata = map[string]any{}
-	}
-	rt.Metadata["agent_name"] = resolvedName
-	rt.Metadata["model_name"] = resolvedModel
-	rt.Metadata["thinking_enabled"] = thinkingEnabled
-	rt.Metadata["reasoning_effort"] = rt.ReasoningEffort
-	rt.Metadata["is_plan_mode"] = rt.IsPlanMode
-	rt.Metadata["subagent_enabled"] = rt.SubagentEnabled
-	if profile != nil {
-		rt.Metadata["tool_groups"] = profile.ToolGroups
-		if profile.Skills != nil {
-			rt.Metadata["available_skills"] = profile.Skills
-		}
-	}
-}
 
 // discoverImageFetcher checks whether the sandbox provider can read
 // image bytes (optional ImageReader capability) and returns the
