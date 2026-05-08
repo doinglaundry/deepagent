@@ -253,12 +253,13 @@ func getMemoryContext(agentName string, mem *MemoryAccessor, m config.Memory) st
 	if !m.Enabled || !m.InjectionEnabled {
 		return ""
 	}
-	memoryData := mem.GetMemoryData(agentName, "")
-	memoryContent := mem.FormatMemoryForInjection(memoryData, m.MaxInjectionTokens)
-	if strings.TrimSpace(memoryContent) == "" {
+	block := mem.PromptBlock(agentName, m.MaxInjectionTokens)
+	if block == "" {
 		return ""
 	}
-	return "<memory>\n" + memoryContent + "\n</memory>\n"
+	// Trailing newline keeps the section visually separated from
+	// whatever the prompt assembler concatenates next.
+	return block + "\n"
 }
 
 // -----------------------------------------------------------------------------
