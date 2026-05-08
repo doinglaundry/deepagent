@@ -37,7 +37,7 @@ func TestLoadEnabledSkillsFromConfig_NoPaths(t *testing.T) {
 	}
 }
 
-func TestDeferredToolNames(t *testing.T) {
+func TestGetDeferredToolNames(t *testing.T) {
 	cfg := config.Config{
 		ToolSearch: config.ToolSearchConfig{
 			Enabled: true,
@@ -47,12 +47,12 @@ func TestDeferredToolNames(t *testing.T) {
 			},
 		},
 	}
-	names := DeferredToolNames(cfg)
+	names := getDeferredToolNames(cfg)
 	if len(names) != 2 || names[0] != "web_search" || names[1] != "shell" {
-		t.Fatalf("DeferredToolNames mismatch: %+v", names)
+		t.Fatalf("getDeferredToolNames mismatch: %+v", names)
 	}
 
-	if got := DeferredToolNames(config.Config{}); got != nil {
+	if got := getDeferredToolNames(config.Config{}); got != nil {
 		t.Fatalf("empty cfg should yield nil, got %+v", got)
 	}
 }

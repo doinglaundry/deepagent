@@ -367,7 +367,7 @@ func GetDeferredToolsPromptSection(cfg config.Config, toolSearchEnabled bool) st
 	if !toolSearchEnabled {
 		return ""
 	}
-	names := DeferredToolNames(cfg)
+	names := getDeferredToolNames(cfg)
 	if len(names) == 0 {
 		return ""
 	}

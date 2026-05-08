@@ -47,13 +47,19 @@ func loadEnabledSkillsFromConfig(cfg config.Config) []Skill {
 	return out
 }
 
-// DeferredToolNames returns the names of tools that should be advertised
-// in the prompt's <available-deferred-tools> section AND filtered out of
-// the active toolbelt by the DeferredTools middleware. Both consumers
-// must pull from the same source so prompt and toolbelt stay in sync.
+// getDeferredToolNames returns the names of tools that should be
+// advertised in the prompt's <available-deferred-tools> section AND
+// filtered out of the active toolbelt by the DeferredTools middleware.
+// Both consumers must pull from the same source so prompt and toolbelt
+// stay in sync.
 //
 // Returns nil when no deferred tools are configured.
-func DeferredToolNames(cfg config.Config) []string {
+//
+// Unexported on purpose: in-package consumers (the prompt assembler
+// and DeferredToolNamesFromConfig below) call this directly. External
+// packages that want the runtime-flavored closure should use
+// DeferredToolNamesFromConfig instead — that is the public surface.
+func getDeferredToolNames(cfg config.Config) []string {
 	if len(cfg.ToolSearch.Deferred) == 0 {
 		return nil
 	}
@@ -64,12 +70,12 @@ func DeferredToolNames(cfg config.Config) []string {
 	return names
 }
 
-// DeferredToolNamesFromConfig wraps DeferredToolNames in a closure
+// DeferredToolNamesFromConfig wraps getDeferredToolNames in a closure
 // compatible with AgentDeps.DeferredToolNamesFunc. Returns nil when no
 // deferred tools are configured so the middleware factory can detect
 // "don't attach" via a simple nil check.
 func DeferredToolNamesFromConfig(cfg config.Config) func() []string {
-	names := DeferredToolNames(cfg)
+	names := getDeferredToolNames(cfg)
 	if len(names) == 0 {
 		return nil
 	}

@@ -21,8 +21,8 @@ type DeferredTools struct {
 
 	// NameProvider returns the names of deferred tools that should be
 	// excluded from the active tool list. Wire this to the same source that
-	// agent.DeferredToolNames pulls from so the prompt section and
-	// the runtime tool list stay in sync.
+	// agent.DeferredToolNamesFromConfig pulls from so the prompt section
+	// and the runtime tool list stay in sync.
 	NameProvider func() []string
 
 	Logger *slog.Logger
