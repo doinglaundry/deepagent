@@ -41,21 +41,6 @@ func SkillSet(names ...string) *AvailableSkills {
 	return &AvailableSkills{All: false, Names: append([]string(nil), names...)}
 }
 
-// PromptOptions is the input to ApplyPromptTemplate.
-//
-// Config carries the full loaded config; ApplyPromptTemplate reads the
-// gate fields from cfg.* directly (cfg.Memory, cfg.SkillEvolution,
-// cfg.ToolSearch, cfg.Agents, cfg.ACP, cfg.Skills). Mem is the
-// optional memory accessor — nil simply skips the <memory> section.
-type PromptOptions struct {
-	SubagentEnabled        bool
-	MaxConcurrentSubagents int
-	AgentName              string
-	AvailableSkills        *AvailableSkills // nil == AllSkills() == Python None
-	Config                 config.Config
-	Mem                    *MemoryAccessor
-}
-
 // -----------------------------------------------------------------------------
 // Internal helpers
 // -----------------------------------------------------------------------------
@@ -610,44 +595,35 @@ var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"
 //  1. Resolving every dynamic section (memory, skills, subagent, ACP).
 //  2. Substituting the named placeholders inside SYSTEM_PROMPT_TEMPLATE.
 //  3. Appending the current date footer in the same "%Y-%m-%d, %A" format.
-func ApplyPromptTemplate(opts PromptOptions) string {
-	memoryContext := getMemoryContext(opts.AgentName, opts.Mem, opts.Config.Memory)
+func ApplyPromptTemplate(rt RuntimeContext, agentCfg *config.AgentConfig, cfg config.Config, mem *MemoryAccessor) string {
+	memoryContext := getMemoryContext(rt.AgentName, mem, cfg.Memory)
 
-	n := opts.MaxConcurrentSubagents
+	n := rt.MaxConcurrentSubagents
 	subagentSection := ""
-	if opts.SubagentEnabled {
-		subagentSection = buildSubagentSection(n)
-	}
-
 	subagentReminder := ""
-	if opts.SubagentEnabled {
+	subagentThinking := ""
+	if rt.SubagentEnabled {
+		subagentSection = buildSubagentSection(n)
 		subagentReminder = "" +
 			"- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. " +
 			fmt.Sprintf("**HARD LIMIT: max %d `task` calls per response.** ", n) +
 			fmt.Sprintf("If >%d sub-tasks, split into sequential batches of ≤%d. Synthesize after ALL batches complete.\n", n, n)
-	}
-
-	subagentThinking := ""
-	if opts.SubagentEnabled {
 		subagentThinking = "" +
 			"- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. " +
 			fmt.Sprintf("If count > %d, you MUST plan batches of ≤%d and only launch the FIRST batch now. ", n, n) +
 			fmt.Sprintf("NEVER launch more than %d `task` calls in one response.**\n", n)
 	}
 
-	skillsSection := GetSkillsPromptSection(opts.AvailableSkills, opts.Config, opts.Config.SkillEvolution.Enabled)
-	deferredToolsSection := GetDeferredToolsPromptSection(opts.Config, opts.Config.ToolSearch.Enabled)
-
-	acpSection := buildACPSection(opts.Config)
-
-	agentName := opts.AgentName
+	skillsSection := GetSkillsPromptSection(skillsFromProfile(agentCfg), cfg, cfg.SkillEvolution.Enabled)
+	deferredToolsSection := GetDeferredToolsPromptSection(cfg, cfg.ToolSearch.Enabled)
+	acpSection := buildACPSection(cfg)
 
 	// {soul} stays in the template for forward-compat — Python had a
 	// LoadAgentSoul hook that loaded SOUL.md. Nobody wires it in
 	// eino-cli today, so substitute the empty string and revisit when
 	// a real soul-loading path appears.
 	replacer := strings.NewReplacer(
-		"{agent_name}", agentName,
+		"{agent_name}", rt.AgentName,
 		"{soul}", "",
 		"{memory_context}", memoryContext,
 		"{subagent_thinking}", subagentThinking,

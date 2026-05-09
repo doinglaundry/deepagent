@@ -42,14 +42,7 @@ func MakeLeadAgent(
 	shell := newLocalShell("")
 	mem := NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
 
-	prompt := ApplyPromptTemplate(PromptOptions{
-		SubagentEnabled:        rt.SubagentEnabled,
-		MaxConcurrentSubagents: rt.MaxConcurrentSubagents,
-		AgentName:              rt.AgentName,
-		AvailableSkills:        skillsFromProfile(agentConfig),
-		Config:                 cfg,
-		Mem:                    mem,
-	})
+	prompt := ApplyPromptTemplate(rt, agentConfig, cfg, mem)
 
 	withGeneral := generalSubagentEnabled(ctx, rt)
 

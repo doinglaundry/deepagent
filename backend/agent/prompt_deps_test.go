@@ -92,10 +92,7 @@ func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
 		},
 	}
 
-	out := ApplyPromptTemplate(PromptOptions{
-		AgentName: "default",
-		Config:    cfg,
-	})
+	out := ApplyPromptTemplate(RuntimeContext{AgentName: "default"}, nil, cfg, nil)
 
 	if !strings.Contains(out, "<available_skills>") {
 		t.Fatalf("available_skills section missing from prompt:\n%s", out)
@@ -112,11 +109,7 @@ func TestApplyPromptTemplate_NilMemSkipsMemorySection(t *testing.T) {
 	cfg := config.Config{
 		Memory: config.Memory{Enabled: true, InjectionEnabled: true, MaxInjectionTokens: 1024},
 	}
-	out := ApplyPromptTemplate(PromptOptions{
-		AgentName: "default",
-		Config:    cfg,
-		Mem:       nil,
-	})
+	out := ApplyPromptTemplate(RuntimeContext{AgentName: "default"}, nil, cfg, nil)
 	if strings.Contains(out, "<memory>") {
 		t.Fatalf("nil Mem should skip <memory> section, got:\n%s", out)
 	}
