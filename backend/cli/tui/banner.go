@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -27,10 +28,27 @@ const bannerASCII = ` ____   ____    _    ____  _  __
  ___) | |_| |/ ___ \| |_| | . \ 
 |____/ \____/_/   \_\____/|_|\_\`
 
-// bannerArtStyle is the colour applied to the SGADK block letters.
-// Bold magenta matches headerTitleStyle so the banner reads as part
-// of the same visual identity as the header.
-var bannerArtStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
+// weekdayPalette is a 7-colour ROYGBIV rotation indexed by
+// time.Weekday() (Sunday=0 … Saturday=6). 256-colour terminal codes
+// chosen for both pleasant saturation and clear distinguishability —
+// turning "what day is it?" into a tiny guessing game every session.
+var weekdayPalette = [7]lipgloss.Color{
+	time.Sunday:    "196", // red
+	time.Monday:    "208", // orange
+	time.Tuesday:   "220", // gold
+	time.Wednesday: "46",  // green
+	time.Thursday:  "51",  // cyan
+	time.Friday:    "33",  // blue
+	time.Saturday:  "129", // purple
+}
+
+// bannerArtStyle is the lipgloss style applied to the SGADK block
+// letters. Re-evaluated on every call so a long-running session that
+// crosses midnight picks up the new day's colour after /clear (the
+// only path that re-runs renderBanner).
+func bannerArtStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(weekdayPalette[time.Now().Weekday()])
+}
 
 // renderBanner returns the welcome banner — figlet block letters
 // stacked over the subtitle / version / author lines, ready to be
@@ -39,7 +57,7 @@ var bannerArtStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1
 // prompt at the top of every fresh session.
 func renderBanner() string {
 	parts := []string{
-		bannerArtStyle.Render(bannerASCII),
+		bannerArtStyle().Render(bannerASCII),
 		"",
 		dimStyle.Render(bannerSubtitle),
 		dimStyle.Render("Version: " + bannerVersion),
