@@ -8,32 +8,21 @@ import (
 )
 
 // DeferredTools mirrors deerflow.agents.middlewares.deferred_tools_middleware.
-// The Python middleware intercepts a `register_tool` (or similar) call and
-// late-binds the requested tool into the agent's tool list for subsequent
-// turns.
-//
-// Phase 3 ships the BeforeAgent hook surface and a NameProvider abstraction;
-// the actual deferred-registry plumbing lands when DeferredRegistry has a
-// real backing source (currently agent.DeferredToolNamesFromConfig returns
-// nil in the runtime/eino wiring when no deferred tools are configured).
+// It excludes the configured names from the active tool list before each run.
 type DeferredTools struct {
 	*adk.BaseChatModelAgentMiddleware
 
-	// NameProvider returns the names of deferred tools that should be
-	// excluded from the active tool list. Wire this to the same source that
-	// agent.DeferredToolNamesFromConfig pulls from so the prompt section
-	// and the runtime tool list stay in sync.
-	NameProvider func() []string
+	Names []string
 
 	Logger *slog.Logger
 }
 
 // NewDeferredTools returns a DeferredTools middleware. Only attach when
 // AppConfig.ToolSearch.Enabled is true.
-func NewDeferredTools(provider func() []string) *DeferredTools {
+func NewDeferredTools(names []string) *DeferredTools {
 	return &DeferredTools{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
-		NameProvider:                 provider,
+		Names:                        names,
 		Logger:                       slog.Default(),
 	}
 }
@@ -42,15 +31,11 @@ func (m *DeferredTools) BeforeAgent(
 	ctx context.Context,
 	runCtx *adk.ChatModelAgentContext,
 ) (context.Context, *adk.ChatModelAgentContext, error) {
-	if runCtx == nil || m.NameProvider == nil {
+	if runCtx == nil || len(m.Names) == 0 {
 		return ctx, runCtx, nil
 	}
-	deferred := m.NameProvider()
-	if len(deferred) == 0 {
-		return ctx, runCtx, nil
-	}
-	deferredSet := make(map[string]struct{}, len(deferred))
-	for _, n := range deferred {
+	deferredSet := make(map[string]struct{}, len(m.Names))
+	for _, n := range m.Names {
 		deferredSet[n] = struct{}{}
 	}
 

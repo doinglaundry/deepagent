@@ -37,42 +37,18 @@ func TestLoadEnabledSkillsFromConfig_NoPaths(t *testing.T) {
 	}
 }
 
-func TestGetDeferredToolNames(t *testing.T) {
-	cfg := config.Config{
-		ToolSearch: config.ToolSearchConfig{
-			Enabled: true,
-			Deferred: []config.DeferredToolEntry{
-				{Name: "web_search", Description: "web search"},
-				{Name: "shell", Description: "shell"},
-			},
-		},
-	}
-	names := getDeferredToolNames(cfg)
-	if len(names) != 2 || names[0] != "web_search" || names[1] != "shell" {
-		t.Fatalf("getDeferredToolNames mismatch: %+v", names)
-	}
-
-	if got := getDeferredToolNames(config.Config{}); got != nil {
-		t.Fatalf("empty cfg should yield nil, got %+v", got)
-	}
-}
-
-func TestDeferredToolNamesFromConfig_ClosureNilWhenEmpty(t *testing.T) {
-	if fn := DeferredToolNamesFromConfig(config.Config{}); fn != nil {
-		t.Fatal("expected nil closure when no deferred tools configured")
+func TestDeferredToolNamesFromConfig_NilWhenEmpty(t *testing.T) {
+	if got := DeferredToolNamesFromConfig(config.Config{}); got != nil {
+		t.Fatal("expected nil slice when no deferred tools configured")
 	}
 	cfg := config.Config{
 		ToolSearch: config.ToolSearchConfig{
 			Deferred: []config.DeferredToolEntry{{Name: "fancy_search"}},
 		},
 	}
-	fn := DeferredToolNamesFromConfig(cfg)
-	if fn == nil {
-		t.Fatal("expected non-nil closure")
-	}
-	got := fn()
+	got := DeferredToolNamesFromConfig(cfg)
 	if len(got) != 1 || got[0] != "fancy_search" {
-		t.Fatalf("closure result mismatch: %+v", got)
+		t.Fatalf("DeferredToolNamesFromConfig mismatch: %+v", got)
 	}
 }
 
