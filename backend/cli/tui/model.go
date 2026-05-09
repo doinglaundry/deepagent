@@ -272,10 +272,10 @@ func formatDebugInput(ev middlewares.DebugEvent) string {
 		ev.AgentName, ev.Turn, len(ev.Messages), humanBytes(totalBytes))
 	for _, msg := range ev.Messages {
 		fmt.Fprintf(&sb, "[%s] %s\n", msg.Role, truncate(msg.Content, debugBodyMaxBytes))
-		for _, tc := range msg.ToolCalls {
+		for _, call := range msg.ToolCalls {
 			fmt.Fprintf(&sb, "  ↳ tool_call %s(%s)\n",
-				tc.Function.Name,
-				truncate(tc.Function.Arguments, debugToolArgMaxBytes))
+				call.Function.Name,
+				truncate(call.Function.Arguments, debugToolArgMaxBytes))
 		}
 	}
 	return strings.TrimRight(sb.String(), "\n")
@@ -294,10 +294,10 @@ func formatDebugOutput(ev middlewares.DebugEvent) string {
 	if c := strings.TrimSpace(last.Content); c != "" {
 		fmt.Fprintf(&sb, "[%s] %s\n", last.Role, truncate(last.Content, debugBodyMaxBytes))
 	}
-	for _, tc := range last.ToolCalls {
+	for _, call := range last.ToolCalls {
 		fmt.Fprintf(&sb, "  ↳ tool_call %s(%s)\n",
-			tc.Function.Name,
-			truncate(tc.Function.Arguments, debugToolArgMaxBytes))
+			call.Function.Name,
+			truncate(call.Function.Arguments, debugToolArgMaxBytes))
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }

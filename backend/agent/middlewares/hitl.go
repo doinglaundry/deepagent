@@ -64,7 +64,7 @@ func NewHITL(tools []string, cb func(context.Context, string, string) bool) *HIT
 func (m *HITL) AfterModelRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,
-	mc *adk.ModelContext,
+	modelCtx *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
 	if state == nil || len(state.Messages) == 0 || len(m.Tools) == 0 {
 		return ctx, state, nil

@@ -44,7 +44,7 @@ func NewTitle() *Title {
 func (m *Title) BeforeModelRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,
-	mc *adk.ModelContext,
+	modelCtx *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
 	if state == nil {
 		return ctx, state, nil

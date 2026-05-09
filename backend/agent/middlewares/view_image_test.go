@@ -47,10 +47,10 @@ func makeStateWithToolCall(callID, name, args, toolResult string) (*adk.ChatMode
 			{Role: schema.Tool, ToolCallID: callID, ToolName: name, Content: toolResult},
 		},
 	}
-	tc := &adk.ToolCallsContext{
+	toolCallsCtx := &adk.ToolCallsContext{
 		ToolCalls: []adk.ToolContext{{Name: name, CallID: callID}},
 	}
-	return state, tc
+	return state, toolCallsCtx
 }
 
 // TestViewImage_AppendsMultimodalUserMessage is the happy-path test:
@@ -60,8 +60,8 @@ func TestViewImage_AppendsMultimodalUserMessage(t *testing.T) {
 	fetcher := &stubFetcher{data: []byte{0x89, 'P', 'N', 'G'}, mime: "image/png"}
 	mw := NewViewImage(fetcher)
 
-	state, tc := makeStateWithToolCall("c1", "view_image", `{"path":"/tmp/x.png"}`, "raw bytes")
-	_, out, err := mw.AfterToolCallsRewriteState(context.Background(), state, tc)
+	state, toolCallsCtx := makeStateWithToolCall("c1", "view_image", `{"path":"/tmp/x.png"}`, "raw bytes")
+	_, out, err := mw.AfterToolCallsRewriteState(context.Background(), state, toolCallsCtx)
 	if err != nil {
 		t.Fatalf("AfterToolCallsRewriteState: %v", err)
 	}
@@ -101,8 +101,8 @@ func TestViewImage_AppendsMultimodalUserMessage(t *testing.T) {
 // text on the next iteration.
 func TestViewImage_FetcherErrorIsSoftSkip(t *testing.T) {
 	mw := NewViewImage(&stubFetcher{err: errors.New("boom")})
-	state, tc := makeStateWithToolCall("c1", "view_image", `{"path":"x.png"}`, "original tool result")
-	_, out, err := mw.AfterToolCallsRewriteState(context.Background(), state, tc)
+	state, toolCallsCtx := makeStateWithToolCall("c1", "view_image", `{"path":"x.png"}`, "original tool result")
+	_, out, err := mw.AfterToolCallsRewriteState(context.Background(), state, toolCallsCtx)
 	if err != nil {
 		t.Fatalf("AfterToolCallsRewriteState: %v", err)
 	}
@@ -119,8 +119,8 @@ func TestViewImage_FetcherErrorIsSoftSkip(t *testing.T) {
 // skeleton).
 func TestViewImage_NoFetcher_NoOp(t *testing.T) {
 	mw := NewViewImage(nil)
-	state, tc := makeStateWithToolCall("c1", "view_image", `{"path":"x.png"}`, "tool result")
-	_, out, err := mw.AfterToolCallsRewriteState(context.Background(), state, tc)
+	state, toolCallsCtx := makeStateWithToolCall("c1", "view_image", `{"path":"x.png"}`, "tool result")
+	_, out, err := mw.AfterToolCallsRewriteState(context.Background(), state, toolCallsCtx)
 	if err != nil {
 		t.Fatalf("AfterToolCallsRewriteState: %v", err)
 	}
@@ -135,8 +135,8 @@ func TestViewImage_NoFetcher_NoOp(t *testing.T) {
 func TestViewImage_OtherToolsBypass(t *testing.T) {
 	fetcher := &stubFetcher{data: []byte("img"), mime: "image/png"}
 	mw := NewViewImage(fetcher)
-	state, tc := makeStateWithToolCall("c1", "filesystem.read", `{"path":"x.txt"}`, "file content")
-	_, out, err := mw.AfterToolCallsRewriteState(context.Background(), state, tc)
+	state, toolCallsCtx := makeStateWithToolCall("c1", "filesystem.read", `{"path":"x.txt"}`, "file content")
+	_, out, err := mw.AfterToolCallsRewriteState(context.Background(), state, toolCallsCtx)
 	if err != nil {
 		t.Fatalf("AfterToolCallsRewriteState: %v", err)
 	}
@@ -153,8 +153,8 @@ func TestViewImage_OtherToolsBypass(t *testing.T) {
 func TestViewImage_MaxBytesExceededIsSoftSkip(t *testing.T) {
 	mw := NewViewImage(&stubFetcher{data: []byte("aaaaaa"), mime: "image/png"})
 	mw.MaxBytes = 1
-	state, tc := makeStateWithToolCall("c1", "view_image", `{"path":"big.png"}`, "tool result")
-	_, out, err := mw.AfterToolCallsRewriteState(context.Background(), state, tc)
+	state, toolCallsCtx := makeStateWithToolCall("c1", "view_image", `{"path":"big.png"}`, "tool result")
+	_, out, err := mw.AfterToolCallsRewriteState(context.Background(), state, toolCallsCtx)
 	if err != nil {
 		t.Fatalf("AfterToolCallsRewriteState: %v", err)
 	}

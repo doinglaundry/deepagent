@@ -44,16 +44,16 @@ func buildSummaryChatModel(
 	ctx context.Context,
 	cfg config.Config,
 ) model.BaseChatModel {
-	smName := strings.TrimSpace(cfg.Summarization.ModelName)
-	if smName == "" {
-		smName = cfg.DefaultModel
+	summaryModelName := strings.TrimSpace(cfg.Summarization.ModelName)
+	if summaryModelName == "" {
+		summaryModelName = cfg.DefaultModel
 	}
-	smCfg := cfg.Models[smName]
-	sm, err := buildChatModel(ctx, *smCfg, false, "")
+	summaryModelCfg := cfg.Models[summaryModelName]
+	summaryModel, err := buildChatModel(ctx, *summaryModelCfg, false, "")
 	if err != nil {
 		return nil
 	}
-	return sm
+	return summaryModel
 }
 
 // buildChatModel is the agent-package chat model factory.

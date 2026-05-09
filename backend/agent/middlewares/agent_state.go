@@ -54,7 +54,7 @@ func (m *AgentState) Snapshot() AgentStateSnapshot {
 func (m *AgentState) AfterModelRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,
-	mc *adk.ModelContext,
+	modelCtx *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
 	m.mu.Lock()
 	m.state.ModelCalls++
@@ -66,11 +66,11 @@ func (m *AgentState) AfterModelRewriteState(
 func (m *AgentState) AfterToolCallsRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,
-	tc *adk.ToolCallsContext,
+	toolCallsCtx *adk.ToolCallsContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
 	count := 0
-	if tc != nil {
-		count = len(tc.ToolCalls)
+	if toolCallsCtx != nil {
+		count = len(toolCallsCtx.ToolCalls)
 	}
 	m.mu.Lock()
 	m.state.ToolCalls += count

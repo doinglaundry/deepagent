@@ -56,7 +56,7 @@ func NewClarification() *Clarification {
 func (m *Clarification) AfterModelRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,
-	mc *adk.ModelContext,
+	modelCtx *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
 	if state == nil || len(state.Messages) == 0 {
 		return ctx, state, nil

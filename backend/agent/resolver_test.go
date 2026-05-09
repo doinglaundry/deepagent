@@ -80,12 +80,12 @@ func TestGetModelConfig_PreferAgentConfig(t *testing.T) {
 	}
 	agentConfig := &config.AgentConfig{Model: "claude"}
 
-	name, mc, err := GetModelConfig("", agentConfig, cfg)
+	name, modelCfg, err := GetModelConfig("", agentConfig, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if name != "claude" || mc == nil || mc.Name != "claude" {
-		t.Fatalf("got name=%q mc=%v, want claude", name, mc)
+	if name != "claude" || modelCfg == nil || modelCfg.Name != "claude" {
+		t.Fatalf("got name=%q modelCfg=%v, want claude", name, modelCfg)
 	}
 
 	// Explicit request beats agent config.

@@ -15,13 +15,13 @@ func GetAgentConfig(cfg config.Config, name string) (*config.AgentConfig, error)
 	if name == "" {
 		return nil, nil
 	}
-	ac, ok := cfg.Agents[name]
+	agentCfg, ok := cfg.Agents[name]
 	if !ok {
 		return nil, fmt.Errorf("agent %q not found in cfg.Agents", name)
 	}
-	ac.Name = nameOrFallback(ac.Name, name)
-	ac.Model = strings.TrimSpace(ac.Model)
-	return &ac, nil
+	agentCfg.Name = nameOrFallback(agentCfg.Name, name)
+	agentCfg.Model = strings.TrimSpace(agentCfg.Model)
+	return &agentCfg, nil
 }
 
 func nameOrFallback(candidate, fallback string) string {

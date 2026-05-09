@@ -61,12 +61,12 @@ func Load() (Config, error) {
 //   - cfg.Skills.Paths includes $RootDir/backend/skills when present.
 func normalizeConfig(cfg Config) (Config, error) {
 	defaultModel := strings.TrimSpace(cfg.DefaultModel)
-	mc, ok := cfg.Models[defaultModel]
-	if !ok || mc == nil {
+	modelCfg, ok := cfg.Models[defaultModel]
+	if !ok || modelCfg == nil {
 		return cfg, errors.New("default model not found")
 	}
-	if mc.APIKey == "" {
-		mc.APIKey = os.Getenv(defaultAPIKeyEnv(mc.Provider))
+	if modelCfg.APIKey == "" {
+		modelCfg.APIKey = os.Getenv(defaultAPIKeyEnv(modelCfg.Provider))
 	}
 
 	if strings.TrimSpace(cfg.DefaultAgent) == "" {
@@ -89,22 +89,22 @@ func normalizeConfig(cfg Config) (Config, error) {
 	return cfg, nil
 }
 
-func appendDefaultSkillsPath(rootDir string, sc SkillsConfig) SkillsConfig {
+func appendDefaultSkillsPath(rootDir string, skillsCfg SkillsConfig) SkillsConfig {
 	if rootDir == "" {
-		return sc
+		return skillsCfg
 	}
 	skillPath := filepath.Join(rootDir, "backend", "skills")
 	info, err := os.Stat(skillPath)
 	if err != nil || !info.IsDir() {
-		return sc
+		return skillsCfg
 	}
-	for _, existing := range sc.Paths {
+	for _, existing := range skillsCfg.Paths {
 		if existing == skillPath {
-			return sc
+			return skillsCfg
 		}
 	}
-	sc.Paths = append(sc.Paths, skillPath)
-	return sc
+	skillsCfg.Paths = append(skillsCfg.Paths, skillPath)
+	return skillsCfg
 }
 
 func defaultAPIKeyEnv(provider string) string {

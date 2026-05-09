@@ -43,7 +43,7 @@ func NewSubagentLimit(maxParallel int) *SubagentLimit {
 func (m *SubagentLimit) AfterModelRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,
-	mc *adk.ModelContext,
+	modelCtx *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
 	if state == nil || len(state.Messages) == 0 {
 		return ctx, state, nil
@@ -54,8 +54,8 @@ func (m *SubagentLimit) AfterModelRewriteState(
 	}
 
 	taskCount := 0
-	for _, tc := range last.ToolCalls {
-		if tc.Function.Name == m.TaskToolName {
+	for _, call := range last.ToolCalls {
+		if call.Function.Name == m.TaskToolName {
 			taskCount++
 		}
 	}
@@ -66,15 +66,15 @@ func (m *SubagentLimit) AfterModelRewriteState(
 	kept := make([]schema.ToolCall, 0, len(last.ToolCalls))
 	keptTasks := 0
 	dropped := 0
-	for _, tc := range last.ToolCalls {
-		if tc.Function.Name == m.TaskToolName {
+	for _, call := range last.ToolCalls {
+		if call.Function.Name == m.TaskToolName {
 			if keptTasks >= m.MaxParallel {
 				dropped++
 				continue
 			}
 			keptTasks++
 		}
-		kept = append(kept, tc)
+		kept = append(kept, call)
 	}
 	last.ToolCalls = kept
 	m.Logger.Warn("subagent-limit: truncated parallel task() calls",

@@ -76,9 +76,9 @@ func NewViewImage(fetcher ImageFetcher) *ViewImage {
 func (m *ViewImage) AfterToolCallsRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,
-	tc *adk.ToolCallsContext,
+	toolCallsCtx *adk.ToolCallsContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
-	if state == nil || tc == nil || len(tc.ToolCalls) == 0 {
+	if state == nil || toolCallsCtx == nil || len(toolCallsCtx.ToolCalls) == 0 {
 		return ctx, state, nil
 	}
 
@@ -97,7 +97,7 @@ func (m *ViewImage) AfterToolCallsRewriteState(
 	}
 
 	parts := make([]schema.MessageInputPart, 0)
-	for _, call := range tc.ToolCalls {
+	for _, call := range toolCallsCtx.ToolCalls {
 		if call.Name != m.ViewImageToolName {
 			continue
 		}

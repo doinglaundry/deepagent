@@ -187,45 +187,45 @@ func normalizeModels(entries []ModelEntry) map[string]*ModelConfig {
 
 	out := make(map[string]*ModelConfig, len(entries))
 	for _, m := range entries {
-		mc := ModelConfig{
+		modelCfg := ModelConfig{
 			Name:     m.Name,
 			Provider: m.Provider,
 			Model:    m.Model,
 		}
 		if m.BaseURL != "" {
-			mc.BaseURL = m.BaseURL
+			modelCfg.BaseURL = m.BaseURL
 		} else if m.APIBase != "" {
-			mc.BaseURL = m.APIBase
+			modelCfg.BaseURL = m.APIBase
 		}
 		// API-key resolution: env-var indirection is a load-time
 		// concern, so we resolve the env name to its actual value
-		// here and store the literal in mc.APIKey. Downstream code
+		// here and store the literal in modelCfg.APIKey. Downstream code
 		// only ever sees a literal credential.
 		//
 		// Precedence:
 		//   1. api_key_env: FOO    -> os.Getenv("FOO")
 		//   2. api_key: $FOO       -> os.Getenv("FOO")
 		//   3. api_key: <literal>  -> use as-is
-		// If neither field is set, mc.APIKey is left empty and
+		// If neither field is set, modelCfg.APIKey is left empty and
 		// normalizeConfig falls back to the provider's canonical
 		// env via defaultAPIKeyEnv.
 		switch {
 		case m.APIKeyEnv != "":
-			mc.APIKey = os.Getenv(m.APIKeyEnv)
+			modelCfg.APIKey = os.Getenv(m.APIKeyEnv)
 		case strings.HasPrefix(m.APIKey, "$"):
-			mc.APIKey = os.Getenv(strings.TrimPrefix(m.APIKey, "$"))
+			modelCfg.APIKey = os.Getenv(strings.TrimPrefix(m.APIKey, "$"))
 		case strings.TrimSpace(m.APIKey) != "":
-			mc.APIKey = strings.TrimSpace(m.APIKey)
+			modelCfg.APIKey = strings.TrimSpace(m.APIKey)
 		}
 		if m.TimeoutSeconds > 0 {
-			mc.TimeoutSeconds = m.TimeoutSeconds
+			modelCfg.TimeoutSeconds = m.TimeoutSeconds
 		} else if m.Timeout > 0 {
-			mc.TimeoutSeconds = int(m.Timeout)
+			modelCfg.TimeoutSeconds = int(m.Timeout)
 		}
-		if mc.Provider == "" {
-			mc.Provider = inferProvider(mc.BaseURL, m.Name)
+		if modelCfg.Provider == "" {
+			modelCfg.Provider = inferProvider(modelCfg.BaseURL, m.Name)
 		}
-		out[m.Name] = ToPtr(mc)
+		out[m.Name] = ToPtr(modelCfg)
 	}
 	return out
 }

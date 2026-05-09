@@ -49,7 +49,7 @@ func NewMemory(hooks MemoryHooks) *Memory {
 func (m *Memory) BeforeModelRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,
-	mc *adk.ModelContext,
+	modelCtx *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
 	if state == nil || m.injected || m.Hooks.Inject == nil {
 		return ctx, state, nil
@@ -62,7 +62,7 @@ func (m *Memory) BeforeModelRewriteState(
 func (m *Memory) AfterModelRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,
-	mc *adk.ModelContext,
+	modelCtx *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
 	if state == nil || m.Hooks.Extract == nil {
 		return ctx, state, nil

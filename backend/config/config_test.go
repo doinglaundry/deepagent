@@ -71,8 +71,8 @@ func TestAppendDefaultSkillsPath(t *testing.T) {
 	})
 
 	t.Run("idempotent when already configured", func(t *testing.T) {
-		sc := SkillsConfig{Paths: []string{want, "/other/path"}}
-		got := appendDefaultSkillsPath(root, sc)
+		skillsCfg := SkillsConfig{Paths: []string{want, "/other/path"}}
+		got := appendDefaultSkillsPath(root, skillsCfg)
 		if len(got.Paths) != 2 {
 			t.Fatalf("expected 2 paths preserved, got %v", got.Paths)
 		}
