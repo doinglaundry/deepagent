@@ -11,8 +11,7 @@ import (
 	memorystore "eino-cli/backend/memory/store"
 )
 
-// newSeededStore creates a memory store under a tmp dir and writes the
-// given memories. Returns the store + the dir for cleanup.
+// newSeededStore creates a memory store under t.TempDir() seeded with items.
 func newSeededStore(t *testing.T, items ...memorystore.Memory) *memorystore.Store {
 	t.Helper()
 	store := memorystore.NewStore(t.TempDir())
@@ -24,9 +23,6 @@ func newSeededStore(t *testing.T, items ...memorystore.Memory) *memorystore.Stor
 	return store
 }
 
-// TestMemoryAccessor_PromptHooksRoundTrip verifies the prompt-side
-// accessors return a typed payload that round-trips through the
-// FormatMemoryForInjection bullet renderer.
 func TestMemoryAccessor_PromptHooksRoundTrip(t *testing.T) {
 	store := newSeededStore(t,
 		memorystore.Memory{Key: "m1", Content: "user prefers tabs over spaces", TurnIndex: 1},
@@ -44,8 +40,6 @@ func TestMemoryAccessor_PromptHooksRoundTrip(t *testing.T) {
 	}
 }
 
-// TestMemoryAccessor_FilterDropsShortAndTaskPrefixed verifies
-// MinContentLen and TaskMemoryPrefix exclusion both apply.
 func TestMemoryAccessor_FilterDropsShortAndTaskPrefixed(t *testing.T) {
 	store := newSeededStore(t,
 		memorystore.Memory{Key: "ok", Content: "real preference about UTF-8", TurnIndex: 1},
@@ -62,9 +56,6 @@ func TestMemoryAccessor_FilterDropsShortAndTaskPrefixed(t *testing.T) {
 	}
 }
 
-// TestMemoryAccessor_InjectPrependsSystemMessage verifies the runtime
-// hook prepends a <memory>...</memory> system block when the store is
-// non-empty.
 func TestMemoryAccessor_InjectPrependsSystemMessage(t *testing.T) {
 	store := newSeededStore(t,
 		memorystore.Memory{Key: "m1", Content: "user prefers concise answers", TurnIndex: 1},
@@ -88,8 +79,6 @@ func TestMemoryAccessor_InjectPrependsSystemMessage(t *testing.T) {
 	}
 }
 
-// TestMemoryAccessor_InjectIsNoOpWhenEmpty ensures we don't waste tokens
-// when the memory store is empty (no system message added).
 func TestMemoryAccessor_InjectIsNoOpWhenEmpty(t *testing.T) {
 	acc := NewMemoryAccessor(newSeededStore(t))
 	in := []*schema.Message{schema.UserMessage("hi")}
@@ -99,8 +88,6 @@ func TestMemoryAccessor_InjectIsNoOpWhenEmpty(t *testing.T) {
 	}
 }
 
-// TestMemoryAccessor_NilStoreIsNoOp confirms passing nil is safe so the
-// runtime layer can degrade gracefully when MemoryDir doesn't exist.
 func TestMemoryAccessor_NilStoreIsNoOp(t *testing.T) {
 	acc := NewMemoryAccessor(nil)
 	data := acc.GetMemories("a", "")
@@ -113,12 +100,8 @@ func TestMemoryAccessor_NilStoreIsNoOp(t *testing.T) {
 	}
 }
 
-// TestMemoryAccessor_FlushBeforeSummarization is a smoke test for the
-// memory_flush_hook plumbing — the call must succeed without error
-// even when the store is nil, and must return nil for a real store too.
-// The actual extraction policy is intentionally a stub today; this
-// test just guards the contract so a future commit landing the
-// extraction logic doesn't accidentally start returning errors.
+// TestMemoryAccessor_FlushBeforeSummarization smoke-tests the memory_flush_hook
+// contract: nil store and real-store-empty-state both must return nil.
 func TestMemoryAccessor_FlushBeforeSummarization(t *testing.T) {
 	t.Run("nil store", func(t *testing.T) {
 		acc := NewMemoryAccessor(nil)
@@ -147,8 +130,6 @@ func TestMemoryAccessor_FlushBeforeSummarization(t *testing.T) {
 	})
 }
 
-// TestMemoryAccessor_FormatRespectsTokenBudget verifies the soft token
-// budget truncates output at the boundary.
 func TestMemoryAccessor_FormatRespectsTokenBudget(t *testing.T) {
 	store := newSeededStore(t,
 		memorystore.Memory{Key: "a", Content: strings.Repeat("xxxxxxxxxx", 5), TurnIndex: 1},
@@ -157,7 +138,6 @@ func TestMemoryAccessor_FormatRespectsTokenBudget(t *testing.T) {
 	)
 	acc := NewMemoryAccessor(store)
 	data := acc.GetMemories("any", "")
-	// Budget of 20 tokens ≈ 80 chars: only ~1 entry fits.
 	short := acc.FormatMemoryForInjection(data, 20)
 	long := acc.FormatMemoryForInjection(data, 0)
 	if len(short) >= len(long) {

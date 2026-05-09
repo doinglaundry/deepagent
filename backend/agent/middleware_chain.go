@@ -57,13 +57,8 @@ func GetChatModelMiddlewares(ctx context.Context, cfg config.Config, mem *Memory
 		}
 	}
 
-	// Trace must run BEFORE Clarification: Before hooks are no-ops on
-	// Clarification (so position there doesn't matter for input
-	// snapshots), but After hooks run in registration order — and
-	// Clarification's After hook REWRITES the assistant message
-	// in-place. Trace registered first captures the model's raw
-	// response before that rewrite. No-op when no DebugConsumer is
-	// in ctx.
+	// Trace must run BEFORE Clarification so its After hook captures
+	// the raw assistant message before Clarification's in-place rewrite.
 	middlewareList = append(middlewareList, middlewares.NewTrace(rt.AgentName))
 	middlewareList = append(middlewareList, middlewares.NewClarification())
 	return

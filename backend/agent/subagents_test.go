@@ -7,16 +7,8 @@ import (
 	"eino-cli/backend/config"
 )
 
-// dummyConfig is a minimal config.Config used by subagent build tests
-// — empty Models and Agents maps, so any real model/agent resolution
-// would fail, which is exactly what we want to keep these tests from
-// accidentally exercising the deep.New path.
 func dummyConfig() config.Config { return config.Config{} }
 
-// TestGeneralSubagentEnabled covers the "open the general-purpose
-// subagent target" gate that replaced the SubagentsConfig knob —
-// enabled iff rt.SubagentEnabled is on AND we're not already inside
-// a recursive subagent build.
 func TestGeneralSubagentEnabled(t *testing.T) {
 	rtOff := RuntimeContext{SubagentEnabled: false}
 	rtOn := RuntimeContext{SubagentEnabled: true}
@@ -33,9 +25,6 @@ func TestGeneralSubagentEnabled(t *testing.T) {
 	}
 }
 
-// TestSubagentBuildContextGuard verifies the depth-1 recursion cap.
-// The bare context returns false (no flag); calling withSubagentBuild
-// flips it; nested calls keep returning true (idempotent).
 func TestSubagentBuildContextGuard(t *testing.T) {
 	ctx := context.Background()
 	if isSubagentBuild(ctx) {
@@ -48,16 +37,11 @@ func TestSubagentBuildContextGuard(t *testing.T) {
 	if !isSubagentBuild(withSubagentBuild(flagged)) {
 		t.Fatal("nested withSubagentBuild should remain flagged")
 	}
-	// The original context must be unchanged (we don't mutate the
-	// parent).
 	if isSubagentBuild(ctx) {
 		t.Fatal("parent ctx must not have been mutated")
 	}
 }
 
-// TestBuildNamedSubagents_EmptyInput exercises the cheap fast-path so
-// the recursive build is skipped entirely when there's nothing to
-// build (matches the bypass in MakeLeadAgent above the deep.Config).
 func TestBuildNamedSubagents_EmptyInput(t *testing.T) {
 	got, err := buildNamedSubagents(context.Background(), RuntimeContext{}, dummyConfig(), nil)
 	if err != nil {

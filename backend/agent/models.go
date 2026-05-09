@@ -15,10 +15,8 @@ import (
 	"eino-cli/backend/config"
 )
 
-// getThinkingEnabled honours rt.ThinkingEnabled but downgrades to
-// false (with a warn log) when the resolved model declares it doesn't
-// support extended thinking. Mirrors deerflow's silent-downgrade with
-// an explicit log signal.
+// getThinkingEnabled honours requested but downgrades to false (with a warn) when
+// the resolved model does not declare SupportsThinking.
 func getThinkingEnabled(requested bool, modelCfg *config.ModelConfig, modelName string) bool {
 	if !requested {
 		return false
@@ -31,15 +29,9 @@ func getThinkingEnabled(requested bool, modelCfg *config.ModelConfig, modelName 
 	return false
 }
 
-// buildSummaryChatModel returns the chat model the summarization
-// middleware should use. When cfg.Summarization.ModelName names a
-// model different from the lead agent's, build it on the side so
-// summarization runs against a cheaper / shorter-context client.
-// Summarization never wants thinking nor reasoning_effort — both add
-// latency for no quality gain on a compaction task — so we pass
-// false / "" explicitly. Any failure (missing config, build error)
-// falls back to fallbackModel with a warn log; a misconfigured
-// summary model must never block the lead agent.
+// buildSummaryChatModel returns the chat model used by the summarization
+// middleware (no thinking, no reasoning_effort). nil on any failure — a
+// misconfigured summary model must never block the lead agent.
 func buildSummaryChatModel(
 	ctx context.Context,
 	cfg config.Config,
@@ -56,18 +48,8 @@ func buildSummaryChatModel(
 	return summaryModel
 }
 
-// buildChatModel is the agent-package chat model factory.
-//
-// Mirrors deerflow's create_chat_model(name, thinking_enabled,
-// reasoning_effort): the lead-agent assembly resolves both flags from
-// the RuntimeContext and hands them in here so the actual API client
-// is constructed with the right knobs.
-//
-// thinkingEnabled is honoured by Claude (extended-thinking; budget
-// comes from cfg.ThinkingBudgetTokens or a 4096 default).
-// reasoningEffort is honoured by OpenAI (low/medium/high →
-// openai.ReasoningEffortLevel). Kimi / Moonshot ignore both — neither
-// is in the upstream API surface.
+// buildChatModel is the agent-package chat model factory. thinkingEnabled is
+// only honoured by Claude; reasoningEffort is only honoured by OpenAI.
 func buildChatModel(
 	ctx context.Context,
 	cfg config.ModelConfig,
@@ -75,12 +57,6 @@ func buildChatModel(
 	reasoningEffort string,
 ) (model.BaseChatModel, error) {
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
-	// cfg.APIKey arrives already resolved to a literal credential:
-	// the YAML loader expands $ENV / api_key_env at decode time, and
-	// normalizeConfig falls back to the provider's canonical env via
-	// defaultAPIKeyEnv when neither was supplied. Empty here means
-	// "no credential anywhere" — the chat model factory below will
-	// reject it.
 	apiKey := strings.TrimSpace(cfg.APIKey)
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 
@@ -159,11 +135,8 @@ func buildKimiChatModel(
 	})
 }
 
-// parseReasoningEffort maps the textual effort knob coming from
-// RuntimeContext / RunnableConfig onto the typed enum the OpenAI
-// client expects. An empty / unknown value falls through as the zero
-// value (== "no override"), matching Python's behaviour where a
-// missing reasoning_effort lets the upstream default apply.
+// parseReasoningEffort maps the textual effort knob to the OpenAI typed enum;
+// empty / unknown returns "" (no override).
 func parseReasoningEffort(s string) openaimodel.ReasoningEffortLevel {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "low":

@@ -23,11 +23,8 @@ type Skill struct {
 	SkillFile   string
 }
 
-// AvailableSkills represents Python's `available_skills: set[str] | None`.
-//
-//   - All == true                       → mirrors Python `None` (load every enabled skill).
-//   - All == false, Names == nil/empty  → mirrors Python `set()` (no skills).
-//   - All == false, Names == [...]      → mirrors Python `set([...])`.
+// AvailableSkills mirrors Python's `available_skills: set[str] | None`.
+// All=true → load every enabled skill (Python None); else Names is the explicit set.
 type AvailableSkills struct {
 	All   bool
 	Names []string
@@ -68,16 +65,7 @@ func availableSkillsAsSet(a *AvailableSkills) (allSkills bool, names []string) {
 // _build_subagent_section
 // -----------------------------------------------------------------------------
 
-// buildSubagentSection renders the orchestrator block. The Python
-// original consults a subagent registry to enumerate available
-// subagents; in eino-cli that registry was never wired up, so the
-// "Available Subagents" listing has always been empty in production
-// and the bash-aware copy paths were always unreachable. We preserve
-// that exact behaviour here (empty listing, non-bash example variants).
-//
-// If you wire a real subagent registry later, this is the spot to
-// re-introduce dynamic per-agent descriptions and the bash-aware
-// variants — drive them off cfg.Agents (or a new registry) directly.
+// buildSubagentSection renders the orchestrator block; n is the per-turn task() cap.
 func buildSubagentSection(n int) string {
 	availableSubagents := ""
 	directToolExamples := "ls, read_file, web_search, etc."
@@ -218,12 +206,8 @@ func buildSubagentSection(n int) string {
 // _get_memory_context
 // -----------------------------------------------------------------------------
 
-// getMemoryContext mirrors deerflow.agents.lead_agent.prompt._get_memory_context.
-// Python wraps the body in try/except and returns "" on any failure; the Go
-// equivalent is "nil accessor or disabled → return ''".
-//
-// The Python upstream also threads a non-empty user_id through here, but
-// eino-cli has never wired one (single-user CLI), so userID stays "".
+// getMemoryContext returns the <memory> block (with trailing newline)
+// or "" when memory injection is disabled or the accessor is nil.
 func getMemoryContext(agentName string, mem *MemoryAccessor, m config.Memory) string {
 	if mem == nil {
 		return ""
@@ -235,8 +219,6 @@ func getMemoryContext(agentName string, mem *MemoryAccessor, m config.Memory) st
 	if block == "" {
 		return ""
 	}
-	// Trailing newline keeps the section visually separated from
-	// whatever the prompt assembler concatenates next.
 	return block + "\n"
 }
 
@@ -347,10 +329,7 @@ func GetDeferredToolsPromptSection(cfg config.Config, toolSearchEnabled bool) st
 // _build_acp_section
 // -----------------------------------------------------------------------------
 
-// buildACPSection emits the ACP block when at least one ACP agent is
-// configured. The block content is constant — it doesn't reference the
-// individual agent descriptions — so the function only checks
-// "configured at all".
+// buildACPSection emits the static ACP block when at least one ACP agent is configured.
 func buildACPSection(cfg config.Config) string {
 	if len(cfg.ACP.Agents) == 0 {
 		return ""
@@ -363,27 +342,8 @@ func buildACPSection(cfg config.Config) string {
 		"- To deliver ACP output to the user: copy from `/mnt/acp-workspace/<file>` to `outputs/<file>`, then use `present_files`"
 }
 
-// -----------------------------------------------------------------------------
-// SYSTEM_PROMPT_TEMPLATE
-//
-// This is the verbatim port of Python's SYSTEM_PROMPT_TEMPLATE. Go raw strings
-// cannot contain backticks, so the template stores every backtick as the
-// sentinel "§" (U+00A7) — confirmed absent from the upstream template — and
-// substitutes them back at package init time via strings.ReplaceAll.
-// -----------------------------------------------------------------------------
-
-// Layout convention used in the template below:
-//   - Top-level XML tags (<role>, <thinking_style>, ...) stay at column 0.
-//   - Their inner content is indented 2 spaces so a human reader can
-//     scan section boundaries at a glance.
-//   - Top-level placeholders ({soul}, {memory_context}, {skills_section},
-//     {deferred_tools_section}, {subagent_section}) sit at column 0 on
-//     their own line — their substituted values bring full XML blocks
-//     of their own.
-//   - Placeholders embedded mid-bullet-list ({subagent_thinking},
-//     {subagent_reminder}, {acp_section}) get the 2-space indent of
-//     their containing block; when empty they collapse to "  " before
-//     the next bullet so the bullet stays aligned with its siblings.
+// systemPromptTemplateRaw uses "§" as a backtick sentinel (Go raw strings
+// cannot contain backticks); package init swaps them back via ReplaceAll.
 const systemPromptTemplateRaw = `
 <role>
   You are {agent_name}, an open-source super agent.
@@ -591,11 +551,9 @@ var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"
 // apply_prompt_template (entry point)
 // -----------------------------------------------------------------------------
 
-// ApplyPromptTemplate mirrors deerflow.agents.lead_agent.prompt.apply_prompt_template.
-// It assembles the system prompt by:
-//  1. Resolving every dynamic section (memory, skills, subagent, ACP).
-//  2. Substituting the named placeholders inside SYSTEM_PROMPT_TEMPLATE.
-//  3. Appending the current date footer in the same "%Y-%m-%d, %A" format.
+// ApplyPromptTemplate assembles the system prompt: resolves dynamic
+// sections, substitutes placeholders in systemPromptTemplate, and appends
+// the current-date footer.
 func ApplyPromptTemplate(rt RuntimeContext, agentCfg *config.AgentConfig, cfg config.Config, mem *MemoryAccessor) string {
 	memoryContext := getMemoryContext(rt.AgentName, mem, cfg.Memory)
 
@@ -619,10 +577,7 @@ func ApplyPromptTemplate(rt RuntimeContext, agentCfg *config.AgentConfig, cfg co
 	deferredToolsSection := GetDeferredToolsPromptSection(cfg, cfg.ToolSearch.Enabled)
 	acpSection := buildACPSection(cfg)
 
-	// {soul} stays in the template for forward-compat — Python had a
-	// LoadAgentSoul hook that loaded SOUL.md. Nobody wires it in
-	// eino-cli today, so substitute the empty string and revisit when
-	// a real soul-loading path appears.
+	// {soul} is forward-compat for an eventual SOUL.md loader; substitute "" today.
 	replacer := strings.NewReplacer(
 		"{agent_name}", rt.AgentName,
 		"{soul}", "",
@@ -639,31 +594,11 @@ func ApplyPromptTemplate(rt RuntimeContext, agentCfg *config.AgentConfig, cfg co
 	return prompt + "\n<current_date>" + time.Now().Format("2006-01-02, Monday") + "</current_date>"
 }
 
-// -----------------------------------------------------------------------------
-// Logging hook (parity with Python's logger.exception in
-// _get_memory_context).
-// -----------------------------------------------------------------------------
-
-// promptLogger is exposed so callers can swap in a project-wide slog handler.
-// Code paths that mirror Python's `logger.exception` write through this.
+// promptLogger is the package-wide slog handler; callers can swap it.
 var promptLogger = slog.Default()
 
-// -----------------------------------------------------------------------------
-// Config-derived helpers — read by ApplyPromptTemplate and the runtime
-// middleware factory to derive prompt-time data from a config.Config.
-// -----------------------------------------------------------------------------
-
-// loadEnabledSkillsFromConfig scans cfg.Skills.Paths for SKILL.md files
-// and returns the enabled skills as the prompt-side Skill type.
-//
-// The scan runs on every call (no in-process cache) — for ~30 SKILL.md
-// files across our public/custom directories, the cost is in the low
-// milliseconds cold and sub-millisecond after the OS page cache warms,
-// which is well below the latency floor of any LLM call. Re-introduce
-// caching here only if a real workload demonstrates a problem.
-//
-// Errors are logged and treated as "no skills" (Python's try/except
-// branch returns []).
+// loadEnabledSkillsFromConfig scans cfg.Skills.Paths for SKILL.md files and
+// returns the enabled skills as the prompt-side Skill type. Errors yield nil.
 func loadEnabledSkillsFromConfig(cfg config.Config) []Skill {
 	if len(cfg.Skills.Paths) == 0 {
 		return nil

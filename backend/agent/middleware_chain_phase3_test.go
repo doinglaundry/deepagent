@@ -9,11 +9,8 @@ import (
 	"eino-cli/backend/config"
 )
 
-// With every gating flag turned on (Memory, TokenUsage, DeferredTools,
-// SubagentLimit, HITL, plan-mode Todo) the chain interleaves the gated
-// middlewares between the always-on prefix and the Trace + Clarification
-// tail. Asserts both the relative order and the count to catch silent
-// drift when new gates are added without updating this test.
+// All gates ON: gated middlewares interleave between always-on prefix
+// and the Trace + Clarification tail in the documented order.
 func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 	rt := RuntimeContext{
 		ThinkingEnabled:        true,
@@ -72,9 +69,7 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 	}
 }
 
-// With every gating flag off, only the always-on backbone (4 prefix
-// + Trace + Clarification) survives, and the agent-side Todo
-// middleware drops too.
+// All gates OFF: only the always-on backbone survives.
 func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
 	rt := RuntimeContext{
 		ThinkingEnabled:        true,

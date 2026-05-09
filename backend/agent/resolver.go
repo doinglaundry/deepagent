@@ -9,23 +9,11 @@ import (
 	"eino-cli/backend/config"
 )
 
-// The custom-agent descriptor used at runtime is config.AgentConfig.
-// We deliberately do NOT define a parallel "AgentProfile" / domain
-// type here — the field set is identical to the on-disk schema and
-// runtime never derives anything from it, so a wrapper would be pure
-// boilerplate (plus a Description-shaped trap: any field added to the
-// schema would silently get dropped at the runtime boundary).
-//
-// Precedent: *config.ModelConfig is also passed straight through from
-// the loader to the runtime. Same shape here.
-
-// agentNamePattern mirrors the validation rule used by the Python
-// validate_agent_name: lower/upper letters, digits, dash, underscore.
+// agentNamePattern is the validation rule for agent_name: letters, digits, dash, underscore.
 var agentNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// ValidateAgentName mirrors deerflow.config.agents_config.validate_agent_name.
-// Returns "" for empty input (the Python "default" sentinel) and an error for
-// names that contain illegal characters.
+// ValidateAgentName returns the trimmed name (or "" for empty/default sentinel).
+// Returns error when the name contains illegal characters.
 func ValidateAgentName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -37,14 +25,8 @@ func ValidateAgentName(name string) (string, error) {
 	return trimmed, nil
 }
 
-// GetModelName mirrors deerflow.agents.lead_agent.agent._resolve_model_name.
-//
-// Resolution order:
-//  1. requested name, if it exists in cfg.Models
-//  2. fall back to the global default (cfg.DefaultModel)
-//
-// Falls back with a slog.Warn when the requested name is non-empty but
-// missing — matching Python's logger.warning behaviour.
+// GetModelName returns requested if present in cfg.Models, else cfg.DefaultModel.
+// A non-empty-but-missing requested falls through with a Warn.
 func GetModelName(requested string, cfg config.Config) (string, error) {
 	defaultName := strings.TrimSpace(cfg.DefaultModel)
 	if defaultName == "" || cfg.Models[defaultName] == nil {
@@ -70,6 +52,5 @@ func GetModelConfig(modelName string, agentConfig *config.AgentConfig, cfg confi
 	if err != nil {
 		return "", nil, err
 	}
-	// GetModelName guarantees `name` is present in cfg.Models.
 	return name, cfg.Models[name], nil
 }

@@ -13,15 +13,9 @@ import (
 	memorystore "eino-cli/backend/memory/store"
 )
 
-// MakeLeadAgent assembles the deep agent for `rt.AgentName` and returns
-// the lead's *Trace alongside it. The trace pointer is what
-// DeepAgentRuntime uses to reset the turn counter on /clear; subagent
-// callers ignore it (their Trace dies with each ExecuteStream).
-//
-// Returns nil for *Trace if (somehow) the chain didn't include one
-// — callers must treat it as optional. Today the chain always
-// includes one, but pinning that into the signature would couple this
-// function to middleware_chain.go's exact composition.
+// MakeLeadAgent assembles the deep agent for rt.AgentName and returns the
+// lead's *Trace alongside it. The trace pointer is what DeepAgentRuntime
+// uses to reset the turn counter on /clear; the *Trace may be nil.
 func MakeLeadAgent(
 	ctx context.Context,
 	rt RuntimeContext,

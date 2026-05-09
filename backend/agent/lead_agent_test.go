@@ -8,9 +8,6 @@ import (
 	"eino-cli/backend/config"
 )
 
-// TestDefaultIterationLimit covers the precedence rules: nil profile
-// and zero / negative values fall back to the runtime default; an
-// explicit positive value wins.
 func TestDefaultIterationLimit(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -32,9 +29,6 @@ func TestDefaultIterationLimit(t *testing.T) {
 	}
 }
 
-// TestParseReasoningEffort exercises the textual → typed mapping the
-// OpenAI client expects. Empty / unknown inputs must fall through as
-// the zero value so the upstream default applies.
 func TestParseReasoningEffort(t *testing.T) {
 	cases := []struct {
 		in   string
