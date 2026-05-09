@@ -11,8 +11,8 @@ import (
 	"eino-cli/backend/config"
 )
 
-func TestBuildRuntimeUnsupportedProvider(t *testing.T) {
-	runtime, err := BuildRuntime(context.Background(), config.Config{
+func TestNewDeepAgentRuntimeUnsupportedProvider(t *testing.T) {
+	runtime, err := NewDeepAgentRuntime(context.Background(), config.Config{
 		DefaultModel: "primary",
 		DefaultAgent: "default",
 		Models: map[string]*config.ModelConfig{

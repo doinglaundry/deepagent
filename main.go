@@ -25,7 +25,7 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	rt, err := eino.BuildRuntime(context.Background(), cfg)
+	rt, err := eino.NewDeepAgentRuntime(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("build runtime: %v", err)
 	}
