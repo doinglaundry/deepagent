@@ -42,9 +42,15 @@ func Run(rt eino.Runtime) error {
 	if err != nil {
 		return err
 	}
+	// No mouse mode: the TUI doesn't use clicks/drags, and
+	// WithMouseCellMotion floods stdin with SGR mouse-motion
+	// escape sequences (\x1b[<65;col;rowM) every time the cursor
+	// moves over the terminal. bubbletea routes parsed mouse
+	// events to tea.MouseMsg, but stray bytes from incomplete
+	// sequences leak into textinput as visible characters. Easier
+	// to just not enable mouse since we don't need it.
 	prog := tea.NewProgram(m,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 		tea.WithInput(os.Stdin),
 		tea.WithOutput(os.Stdout),
 	)

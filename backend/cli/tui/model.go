@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/runtime/eino"
@@ -52,9 +53,15 @@ type Model struct {
 	cancel  context.CancelFunc
 
 	mdRenderer *glamour.TermRenderer
-	width      int
-	height     int
-	ready      bool
+	// mdStyle is the glamour style name ("dark" / "light"), detected
+	// once in New() before bubbletea takes over stdin. Caching it
+	// here keeps subsequent renderer rebuilds (on resize) from
+	// re-querying the terminal — those queries leak their OSC 11
+	// responses into textinput once we're in raw mode.
+	mdStyle string
+	width   int
+	height  int
+	ready   bool
 
 	// pendingExit is set by the first Ctrl-C in idle state; a
 	// second Ctrl-C while it's set quits.
@@ -96,6 +103,15 @@ func New(rt eino.Runtime) (*Model, error) {
 
 	vp := viewport.New(80, 10)
 
+	// Detect terminal background ONCE here, while stdin is still in
+	// cooked mode. After Run() hands stdin to bubbletea (raw mode),
+	// any OSC 11 query response would race with bubbletea's
+	// keypress parser and leak into textinput as visible bytes.
+	style := "dark"
+	if !lipgloss.HasDarkBackground() {
+		style = "light"
+	}
+
 	return &Model{
 		rt:        rt,
 		cwd:       cwd,
@@ -104,6 +120,7 @@ func New(rt eino.Runtime) (*Model, error) {
 		viewport:  vp,
 		spin:      sp,
 		messages:  freshMessages(),
+		mdStyle:   style,
 	}, nil
 }
 
@@ -124,8 +141,13 @@ func (m *Model) renderMarkdown(content string) string {
 		width = 80
 	}
 	if m.mdRenderer == nil {
+		// WithStandardStyle (not WithAutoStyle): the latter sends an
+		// OSC 11 query to the terminal at every renderer rebuild,
+		// and bubbletea's raw-mode input parser then misreads the
+		// response as keypresses. We resolved dark/light once in
+		// New() before bubbletea claimed stdin.
 		r, err := glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
+			glamour.WithStandardStyle(m.mdStyle),
 			glamour.WithWordWrap(width),
 		)
 		if err != nil {
