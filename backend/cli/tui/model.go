@@ -29,8 +29,8 @@ const (
 // paste history into the viewport without re-rendering on every
 // keystroke.
 type chatMessage struct {
-	Role     string // "user" | "assistant" | "system" | "debug-input" | "debug-output"
-	Content  string // raw text
+	Role     string // "user" | "assistant" | "system" | "debug-input" | "debug-output" | "banner"
+	Content  string // raw text (or pre-rendered ANSI for "banner")
 	Rendered string // post-markdown, for assistant only
 }
 
@@ -103,6 +103,7 @@ func New(rt eino.Runtime) (*Model, error) {
 		input:     ti,
 		viewport:  vp,
 		spin:      sp,
+		messages:  freshMessages(),
 	}, nil
 }
 
@@ -176,6 +177,10 @@ func (m *Model) renderMessage(msg chatMessage) string {
 		return debugInputMarkerStyle.Render("▶ ") + debugBodyStyle.Render(msg.Content)
 	case "debug-output":
 		return debugOutputMarkerStyle.Render("◀ ") + debugBodyStyle.Render(msg.Content)
+	case "banner":
+		// Already pre-rendered ANSI (figlet block letters + dim
+		// subtitle). Return verbatim — no prefix, no markdown.
+		return msg.Content
 	default:
 		return msg.Content
 	}

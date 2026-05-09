@@ -167,7 +167,7 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 	case "exit", "quit":
 		return tea.Quit, true
 	case "clear":
-		m.messages = nil
+		m.messages = freshMessages()
 		m.rebuildHistory()
 		m.rt.ClearHistory()
 		return nil, true
