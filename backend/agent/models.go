@@ -43,30 +43,16 @@ func getThinkingEnabled(requested bool, modelCfg *config.ModelConfig, modelName 
 func buildSummaryChatModel(
 	ctx context.Context,
 	cfg config.Config,
-	fallbackModel model.BaseChatModel,
 ) model.BaseChatModel {
 	smName := strings.TrimSpace(cfg.Summarization.ModelName)
 	if smName == "" {
-		return fallbackModel
+		smName = cfg.DefaultModel
 	}
 	smCfg := cfg.Models[smName]
-	if smCfg == nil {
-		slog.Warn(
-			"summarization model not found in cfg.Models; falling back to lead chat model",
-			"summary_model", smName,
-		)
-		return fallbackModel
-	}
 	sm, err := buildChatModel(ctx, *smCfg, false, "")
 	if err != nil {
-		slog.Warn(
-			"summarization model build failed; falling back to lead chat model",
-			"summary_model", smName,
-			"err", err,
-		)
-		return fallbackModel
+		return nil
 	}
-	slog.Info("summarization will use a separate chat model", "summary_model", smName)
 	return sm
 }
 

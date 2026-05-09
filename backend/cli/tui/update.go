@@ -6,6 +6,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"eino-cli/backend/agent/middlewares"
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -18,6 +20,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleChunk(msg)
 	case doneMsg:
 		return m.handleDone(msg)
+	case middlewares.DebugEvent:
+		return m.handleDebug(msg)
 	case spinner.TickMsg:
 		if !m.streaming {
 			// Self-terminate the tick chain when nobody's
@@ -130,10 +134,28 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	m.streamBuf.Reset()
 	m.lastErr = nil
 
-	ch, cancel, awaitDone := startStream(m.rt, text)
+	var consumer middlewares.DebugConsumer
+	if m.debug && m.prog != nil {
+		consumer = teaProgramConsumer{p: m.prog}
+	}
+
+	ch, cancel, awaitDone := startStream(m.rt, text, consumer)
 	m.chunkCh = ch
 	m.cancel = cancel
 	return m, tea.Batch(waitForChunk(ch), awaitDone, m.spin.Tick)
+}
+
+// handleDebug renders a DebugEvent received via prog.Send (from the
+// Trace middleware). Each event becomes one new message in scrollback,
+// styled distinctly so the eye can skim past when not interesting.
+func (m *Model) handleDebug(ev middlewares.DebugEvent) (tea.Model, tea.Cmd) {
+	switch ev.Phase {
+	case middlewares.DebugBefore:
+		m.pushMessage("debug-input", formatDebugInput(ev))
+	case middlewares.DebugAfter:
+		m.pushMessage("debug-output", formatDebugOutput(ev))
+	}
+	return m, nil
 }
 
 func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
@@ -149,12 +171,37 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		m.rebuildHistory()
 		m.rt.ClearHistory()
 		return nil, true
+	case "debug":
+		return m.handleDebugCmd(text), true
 	case "help":
 		m.pushMessage("user", text)
 		m.pushMessage("assistant", builtinHelp())
 		return nil, true
 	}
 	return nil, false
+}
+
+// handleDebugCmd processes "/debug [on|off|toggle]". Empty arg toggles.
+// Always returns nil cmd; state mutation is in m.debug.
+func (m *Model) handleDebugCmd(text string) tea.Cmd {
+	arg := strings.TrimSpace(strings.TrimPrefix(text, "/debug"))
+	switch strings.ToLower(arg) {
+	case "", "toggle":
+		m.debug = !m.debug
+	case "on":
+		m.debug = true
+	case "off":
+		m.debug = false
+	default:
+		m.pushMessage("system", "usage: /debug [on|off|toggle]")
+		return nil
+	}
+	state := "off"
+	if m.debug {
+		state = "on"
+	}
+	m.pushMessage("system", fmt.Sprintf("debug = %s", state))
+	return nil
 }
 
 func (m *Model) handleChunk(msg chunkMsg) (tea.Model, tea.Cmd) {

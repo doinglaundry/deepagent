@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"eino-cli/backend/agent"
+	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
 	"eino-cli/backend/session/checkpoint"
 )
@@ -22,6 +23,10 @@ type DeepAgentRuntime struct {
 	pendingCheckpointID string
 	history             []*schema.Message
 	maxHistoryTurns     int
+	// trace is the lead agent's debug-trace middleware. nil-safe:
+	// only used by ClearHistory to reset the per-turn counter so
+	// /clear restarts numbering at 1.
+	trace *middlewares.Trace
 }
 
 // NewDeepAgentRuntime stands up the runtime context (cfg-seeded +
@@ -43,7 +48,7 @@ func NewDeepAgentRuntime(ctx context.Context, cfg config.Config) (Runtime, error
 		return nil, err
 	}
 
-	leadAgent, err := agent.MakeLeadAgent(ctx, rt, cfg)
+	leadAgent, trace, err := agent.MakeLeadAgent(ctx, rt, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build lead agent: %w", err)
 	}
@@ -55,7 +60,12 @@ func NewDeepAgentRuntime(ctx context.Context, cfg config.Config) (Runtime, error
 		CheckPointStore: store,
 	})
 
-	return &DeepAgentRuntime{modelName: cfg.DefaultModel, runner: runner, maxHistoryTurns: 20}, nil
+	return &DeepAgentRuntime{
+		modelName:       cfg.DefaultModel,
+		runner:          runner,
+		maxHistoryTurns: 20,
+		trace:           trace,
+	}, nil
 }
 
 func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, error) {
@@ -106,6 +116,9 @@ func (r *DeepAgentRuntime) ClearHistory() {
 	r.mu.Lock()
 	r.history = nil
 	r.mu.Unlock()
+	if r.trace != nil {
+		r.trace.ResetTurn()
+	}
 }
 
 func (r *DeepAgentRuntime) Name() string {

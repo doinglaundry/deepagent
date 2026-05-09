@@ -16,6 +16,13 @@ var (
 	assistantPrefixStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10")) // green
 	systemPrefixStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))           // orange
 
+	// Debug trace styling: faint body so debug blocks visually subordinate
+	// to the real conversation; bold markers in distinct hues for input vs
+	// output so the eye can pair them up.
+	debugInputMarkerStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))  // light blue
+	debugOutputMarkerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207")) // light magenta
+	debugBodyStyle         = lipgloss.NewStyle().Faint(true)
+
 	headerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
 	footerStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 

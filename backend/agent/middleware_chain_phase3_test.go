@@ -9,10 +9,12 @@ import (
 	"eino-cli/backend/config"
 )
 
-// TestBuildChain_GatedMiddlewares wires every gating flag on (via cfg
-// + rt) and verifies the resulting chain contains the expected
-// middleware types and that the Clarification middleware remains last.
-func TestBuildChain_GatedMiddlewares(t *testing.T) {
+// With every gating flag turned on (Memory, TokenUsage, DeferredTools,
+// SubagentLimit, HITL, plan-mode Todo) the chain interleaves the gated
+// middlewares between the always-on prefix and the Trace + Clarification
+// tail. Asserts both the relative order and the count to catch silent
+// drift when new gates are added without updating this test.
+func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 	rt := RuntimeContext{
 		ThinkingEnabled:        true,
 		MaxConcurrentSubagents: 3,
@@ -37,10 +39,7 @@ func TestBuildChain_GatedMiddlewares(t *testing.T) {
 		},
 	}
 
-	chain, err := BuildChain(context.Background(), rt, cfg, nil)
-	if err != nil {
-		t.Fatalf("BuildChain: %v", err)
-	}
+	chain := GetChatModelMiddlewares(context.Background(), cfg, NewMemoryAccessor(nil), rt)
 
 	wantOrder := []reflect.Type{
 		reflect.TypeOf(&middlewares.AgentState{}),
@@ -49,33 +48,34 @@ func TestBuildChain_GatedMiddlewares(t *testing.T) {
 		reflect.TypeOf(&middlewares.LoopDetection{}),
 		reflect.TypeOf(&middlewares.Memory{}),
 		reflect.TypeOf(&middlewares.TokenUsage{}),
-		reflect.TypeOf(&middlewares.ViewImage{}),
 		reflect.TypeOf(&middlewares.DeferredTools{}),
 		reflect.TypeOf(&middlewares.SubagentLimit{}),
 		reflect.TypeOf(&middlewares.HITL{}),
+		reflect.TypeOf(&middlewares.Trace{}),
 		reflect.TypeOf(&middlewares.Clarification{}),
 	}
-	if len(chain.ChatModel) != len(wantOrder) {
-		t.Fatalf("len(chain.ChatModel) = %d, want %d", len(chain.ChatModel), len(wantOrder))
+	if len(chain) != len(wantOrder) {
+		t.Fatalf("len(chain) = %d, want %d", len(chain), len(wantOrder))
 	}
 	for i, want := range wantOrder {
-		got := reflect.TypeOf(chain.ChatModel[i])
-		if got != want {
+		if got := reflect.TypeOf(chain[i]); got != want {
 			t.Fatalf("slot %d: got %v, want %v", i, got, want)
 		}
 	}
 
-	if len(chain.Agent) != 1 {
-		t.Fatalf("expected 1 AgentMiddleware (Todo), got %d", len(chain.Agent))
+	agentMWs := GetAgentMiddleWares(rt)
+	if len(agentMWs) != 1 {
+		t.Fatalf("expected 1 AgentMiddleware (Todo), got %d", len(agentMWs))
 	}
-	if chain.Agent[0].AdditionalInstruction == "" {
+	if agentMWs[0].AdditionalInstruction == "" {
 		t.Fatalf("Todo middleware should set AdditionalInstruction")
 	}
 }
 
-// TestBuildChain_NoGatesEmittedWhenDisabled checks that the gated slots
-// disappear when their flags are off.
-func TestBuildChain_NoGatesEmittedWhenDisabled(t *testing.T) {
+// With every gating flag off, only the always-on backbone (4 prefix
+// + Trace + Clarification) survives, and the agent-side Todo
+// middleware drops too.
+func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
 	rt := RuntimeContext{
 		ThinkingEnabled:        true,
 		MaxConcurrentSubagents: 3,
@@ -88,22 +88,19 @@ func TestBuildChain_NoGatesEmittedWhenDisabled(t *testing.T) {
 		},
 	}
 
-	chain, err := BuildChain(context.Background(), rt, cfg, nil)
-	if err != nil {
-		t.Fatalf("BuildChain: %v", err)
-	}
-	for _, mw := range chain.ChatModel {
+	chain := GetChatModelMiddlewares(context.Background(), cfg, NewMemoryAccessor(nil), rt)
+	for _, mw := range chain {
 		switch mw.(type) {
 		case *middlewares.Memory,
 			*middlewares.TokenUsage,
-			*middlewares.ViewImage,
 			*middlewares.DeferredTools,
 			*middlewares.SubagentLimit,
 			*middlewares.HITL:
 			t.Fatalf("gated middleware %T present without flag", mw)
 		}
 	}
-	if len(chain.Agent) != 0 {
-		t.Fatalf("expected no AgentMiddlewares without plan mode, got %d", len(chain.Agent))
+
+	if got := len(GetAgentMiddleWares(rt)); got != 0 {
+		t.Fatalf("expected no AgentMiddlewares without plan mode, got %d", got)
 	}
 }

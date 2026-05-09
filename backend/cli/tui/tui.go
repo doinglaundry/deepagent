@@ -48,6 +48,11 @@ func Run(rt eino.Runtime) error {
 		tea.WithInput(os.Stdin),
 		tea.WithOutput(os.Stdout),
 	)
+	// Back-reference so cross-goroutine consumers (e.g. the debug
+	// trace middleware) can call prog.Send directly. bubbletea
+	// supports this circular-reference idiom; both ends die with
+	// prog.Run() returning.
+	m.prog = prog
 	_, err = prog.Run()
 	return err
 }

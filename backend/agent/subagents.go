@@ -90,7 +90,7 @@ func buildNamedSubagents(
 			continue
 		}
 
-		sub, err := MakeLeadAgent(withSubagentBuild(ctx), subRT, cfg)
+		sub, _, err := MakeLeadAgent(withSubagentBuild(ctx), subRT, cfg)
 		if err != nil {
 			slog.Warn(
 				"failed to build subagent; skipping",
