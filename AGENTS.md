@@ -1,131 +1,60 @@
 # AGENTS.md
 
-Project-level coding-style brief for AI agents (Cursor, Codex, etc.) and
-human contributors working on the eino-cli codebase. Loaded automatically
-when an agent starts a task in this repo.
+eino-cli 仓库的项目级编码风格说明，面向 AI Agent（Cursor、Codex 等）和
+人类贡献者。Agent 在本仓库内启动任务时会自动加载本文件。
 
-## Core philosophy
+## 核心原则
 
-The repo's overall style is captured in one rule:
+> **结构体只装数据。函数承载行为。尽量少传数据。尽量少压调用栈。**
 
-> **Structs are for data. Functions are for behavior. Minimize data
-> passing. Minimize call-chain depth.**
+四个推论：
 
-Every other guideline below is a corollary.
+1. **结构体只装"必须一起出现的状态"。**字段必须共享生命周期，并且放在一起读才有意义。
+2. **行为住在普通顶层函数里。** 不挂 receiver，不藏 callback 字段，
+   不躲 `deps.X.Y(...)`。函数体能从上到下在一处读完。
+3. **少传数据。** 三个调用者都传 `cfg` 的同一种衍生量 → 把衍生内化进
+   被调用方。结构体 7 个字段只接 2 个 → 剩下 5 个删掉。
+4. **少压调用栈。** 业务代码从最外层接口到最底层执行，**总深度尽量在
+   4 层以内**。每一层都得做实事；纯转发层折叠掉。
 
-### What this means in practice
+## 结构体何时存在
 
-1. **Structs hold state that travels together.**
-   Not callback bags, not parameter objects, not "DI containers".
-   A struct earns its existence when its fields share a lifetime and
-   reading them together is meaningful. The moment a struct's only job
-   is "carry these three callbacks from A to B", consider deleting it
-   and inlining each callback at the call site instead.
+**矫枉过正预警**：替代方案是 8+ 参数函数时，结构体反而是对的；两种
+序列化格式共用一个 Go 类型也保留 —— 用 struct tag（`json:"x"
+yaml:"x"`）解决，不要并行 DTO。
 
-2. **Behavior lives in plain top-level functions.**
-   Not on receiver methods, not in callback fields, not behind layered
-   `deps.X.Y(...)` lookups. A function's body should read
-   top-to-bottom in one place.
+**项目特例：配置只用一个 `config.Config`。** 子模块要的只是其中几个
+字段时，传整个 `cfg` 进去，让消费方自己读。**禁止**为某个子系统定义
+并行配置结构体把字段拷一遍 —— 这是本仓库最常见的 indirection 来源。
 
-3. **Minimize data passing.**
-   Each parameter must justify itself. If three callers all pass the
-   same derivation of `cfg`, internalize the derivation. If a struct
-   has seven fields and production wires only two, the other five are
-   dead weight — delete them.
+## 命名
+- **变量名 = 语义本身**：`getID()` 的返回值叫 `id`，不叫 `result` /
+  `r` / `tmp`。
+- **禁止私造缩写**：`usrCnt` / `procRslt` / `tmpVal` 一律展开。Go 通行
+  短词（`ctx` / `err` / `cfg` / `fn` / `req` / `resp` / `i` / `ok`）
+  保留 —— 已是行业默认词汇。可读性永远第一。
+- 重命名扫到底：所有调用点、注释、测试在同一个 commit 里改完。半截
+  重命名只会留下考古地层。
 
-4. **Minimize call-chain depth.**
-   `factory → BuildRuntime → NewDeepAgentRuntime → MakeLeadAgent` is
-   fine when each hop adds value (provider validation, history
-   wiring, prompt assembly). It's noise when every hop just forwards
-   args. Collapse pure pass-through layers.
+## 注释
 
-## When to delete a struct
-
-Trigger on any of these:
-
-- Every production call site sets the same value for every field →
-  internalize the defaults inside the consumer.
-- The struct's fields are already on `cfg` or `RuntimeContext` →
-  move them onto the existing host instead of duplicating.
-- ≥50% of fields are dead in production and reserved for "future
-  host integrations" → YAGNI; delete now, restore when the second
-  host actually appears.
-- The struct only exists to project a subset of another struct
-  (DTO / view) → delete; let the consumer read the source directly.
-
-## When to keep a struct
-
-Don't over-correct. Keep the struct when:
-
-- Fields are genuinely heterogeneous and travel together as
-  *state* (e.g. `RuntimeContext` carries per-run flags that all
-  vary independently and all need to be readable at any call site).
-- The alternative is a function with 7+ parameters.
-- Two serialization formats need to share one Go type — use struct
-  tags (`json:"x" yaml:"x"`) instead of inventing a parallel DTO.
-
-## Naming
-
-- Functions named after the **return type's noun**, not the
-  mechanism. `GetModelConfig` (returns `ModelConfig`), not
-  `ResolveModelForAgent`.
-- Function-typed fields end in `Func` (`HITLApprovalFunc`).
-  Readers should know at a glance whether to call or store.
-- **Outcome verbs over mechanism verbs**: `populate*` / `assemble*`
-  over `set*` / `build*` when the function does meaningful work.
-- **Full rename sweeps**: every call site, comment, and test in
-  the same commit. Half-renames leave archeological layers.
-
-## Comments
-
-When a comment earns its line, keep it to **one line that answers "why"** —
-the *what* is the code's job. Multi-line block comments above functions
-or inline are a smell: usually they restate the syntax, or hint that the
-function is doing two things and the comment is patching the seam.
+- **最多两行，回答"为什么"。** "做什么"是代码自己的工作。
+- 一行不够时先反问：是不是该改名 / 拆函数？
+- 例外（合法的多行场景）：
+  - Package doc（`// Package x ...`）—— 在 `go doc` 里整体阅读；
+  - 大型字面量的结构约定（如 prompt 模板的缩进规则）；
+  - 非显式外部约束（协议怪癖、上游 bug），读者从代码里复原不出来。
+- 默认动作是删。**永远不要**给刚生成的代码贴段落级解释 —— 那段话该
+  在 commit message 或 spec 文档里。
 
 ```go
 // Reset turn counter so /clear restarts numbering at 1.
 func (t *Trace) ResetTurn() { t.turn.Store(0) }
 ```
 
-When a single line genuinely isn't enough, ask first whether the comment
-should become a name or a split function instead. Real exceptions:
+## 简洁赋值（少用 if/else）
 
-- Package docs (`// Package x ...`) — they're read together in `go doc`.
-- Structural conventions for a large literal (e.g. a prompt template's
-  indentation rules) that aren't derivable from the literal itself.
-- Non-obvious external constraints (protocol quirk, upstream bug) the
-  reader can't recover from the code.
-
-Default to deleting a comment before adding one. Especially: never narrate
-freshly-generated code with paragraph-length explanations. If reviewers
-need that much context, the explanation belongs in the commit message or
-a spec doc, not next to the symbol.
-
-## Validation flow
-
-- Validate once, at the earliest authoritative layer
-  (e.g. `config.normalizeConfig`). Downstream trusts the contract.
-- Strict failures over soft degradation for *critical* invariants
-  (missing default model, missing agent). Soft fallback for truly
-  optional things (empty memory dir → no memory, not an error).
-- Trust your callee. If `ValidateAgentName` rejects empty strings,
-  callers don't pre-trim and re-check. Pre-checks hide where the
-  real check happens.
-
-## Error handling
-
-- Differentiate by **what failed**, not where you noticed.
-  `"default model %q not found"` beats `"config error"`.
-- Every `if err != nil` branch either adds context with `%w` or
-  returns the bare error because the caller already has the
-  context. Don't double-wrap.
-
-## Micro-patterns
-
-### Copy → judge → replace
-
-For in-place normalization (trim whitespace, supply default):
+原地标准化的标准写法：
 
 ```go
 trimmed := strings.TrimSpace(name)
@@ -135,10 +64,10 @@ if trimmed == "" {
 ac.Name = trimmed
 ```
 
-Each line has one responsibility. Avoid the inverted form:
+每行只承担一件事。避免把赋值拆到 if/else 两支：
 
 ```go
-// AVOID — assignment split across both branches
+// AVOID
 if strings.TrimSpace(ac.Name) == "" {
     ac.Name = name
 } else {
@@ -146,84 +75,67 @@ if strings.TrimSpace(ac.Name) == "" {
 }
 ```
 
-### Custom UnmarshalYAML alias trick
+三类典型替换：
 
-When YAML shape ≠ Go shape (list ↔ map, legacy aliases), reach for
-the alias trick on the Go target type instead of inventing a parallel
-DTO:
+- **默认值赋值** → 先赋默认，再用 if 覆盖（上例）；
+- **错误处理** → 提前 return，不要把主逻辑塞进 else；
+- **二选一映射** → map / switch / lookup 表，不要嵌套 if。
 
-```go
-func (c *Config) UnmarshalYAML(node *yaml.Node) error {
-    type alias Config
-    aux := struct {
-        alias  `yaml:",inline"`
-        Models []ModelEntry `yaml:"models"` // YAML shape
-    }{alias: alias(*c)}
-    if err := node.Decode(&aux); err != nil {
-        return err
-    }
-    *c = Config(aux.alias)
-    c.Models = normalizeModels(aux.Models) // → Go shape
-    return nil
-}
+## Commit 粒度
+
+- 纯重命名 ≠ 行为变更 → 拆成两个 commit。
+- "摘掉中间层" + "重连消费方" → 各占一个 commit。
+- 每个 commit 的 diff 要能用一句话说清。
+
+## Agent 工作纪律
+
+面向 LLM Agent 的执行守则。**这套规则向"谨慎"倾斜，不向"速度"倾斜；
+trivial 任务自行判断。**
+
+### 1. 想清楚再下手
+
+- 不要假设。不要把困惑藏起来。把权衡说在明面上。
+- 实施前：把假设说出来，不确定就问；多种合理解读时列出来让 user
+  选，不要静悄悄挑一种；存在更简单方案时明说，必要时反驳；任何
+  不清楚的点 —— 停下来、指明困惑、提问。
+
+### 2. 改动外科手术化
+
+- 只动**必须动的部分**。每一行 diff 都能直接追溯到 user 的请求。
+- 不要"顺手优化"邻近代码、注释、格式；不要重构没坏的东西；现有风格
+  即使你不喜欢，也照搬。
+- 自己引入后变 unused 的 import / 变量 / 函数自己清；预先存在的
+  dead code 不要顺手删 —— 提一下让 user 决定。
+
+### 3. 目标驱动执行
+
+把任务转化为可验证的目标：
+
+| 模糊请求 | 可验证目标 |
+|---|---|
+| "加校验" | 为非法输入写测试，再让它通过 |
+| "修这个 bug" | 先写一个能复现 bug 的测试，再让它通过 |
+| "重构 X" | 确保前后测试都通过 |
+
+多步任务先列简短计划：
+
+```
+1. [步骤] → 验证：[检查]
+2. [步骤] → 验证：[检查]
+3. [步骤] → 验证：[检查]
 ```
 
-One type, two formats, no DTO sprawl.
+强成功标准 → Agent 能自循环跑完；弱标准（"让它能跑"）→ 反复打扰 user。
 
-## Commit granularity
+### 4. 简洁性
 
-- **Pure renames travel separately from behavioral changes.**
-  Reviewers verify a rename is mechanical without scanning logic
-  edits. `git bisect` can pin regressions to the behavior commit.
-- When a refactor naturally splits into "remove indirection layer"
-  + "rewire consumers", give each its own commit.
+`核心原则` 和 `结构体何时存在` 已经覆盖：不写 user 没要求的功能、
+不为单次代码搞抽象、不为不可能场景做错误处理、200 行能写成 50 行就
+重写。资深工程师看一眼会说"过度设计"的，就是过度设计。
 
-## Audit checklist (hidden duplication)
+## 何时不适用
 
-When two structs / functions / config layers look similar:
+公共库 API（向前兼容靠 struct option）、插件系统（DI 包正是接缝）、
+领域富类型（method 真的在建模 —— `time.Time` / `*sql.Tx`）。
 
-1. Diff their **field / parameter sets**.
-2. Diff their **lifetimes** (constructed / destroyed together?).
-3. Diff their **consumers** (same callers? same call frequency?).
-
-If all three diffs are small or empty → isomorphic. Merge.
-
-## Pre-flight checklist for new structs / parameters
-
-Before adding a struct, DI bag, or parameter, ask:
-
-- [ ] Does this hold **data**, or just **callbacks / forwarded args**?
-- [ ] Will every production call site pass the same value for ≥50%
-      of the fields?
-- [ ] Could the consumer derive each field from `cfg` /
-      `RuntimeContext` directly?
-- [ ] Is there an existing struct where these fields would
-      naturally live?
-
-If you can't answer **no** to all four, you're probably adding
-indirection that the next refactor will remove.
-
-## Anti-pattern catalog
-
-| Smell | Fix |
-|---|---|
-| `XxxDeps` / `XxxOptions` struct with mostly-zero fields in production | Delete struct; pass the live fields as args, internalize the rest. |
-| Two structs with identical field sets in different packages | Merge with shared tags; one type for both formats. |
-| Function calls validate the same input the callee re-validates | Trust the callee; remove the outer check. |
-| 4+ pass-through layers between caller and the function that does the work | Collapse pure forwarders; keep only layers that add value. |
-| Struct field of type `func(...)` set once at construction and never reassigned | The function is a constant; inline it at the call site. |
-| Multi-line block comment narrating what freshly-written code does | Compress to one line answering "why", or delete and let the names carry the meaning. |
-
-## When *not* to apply
-
-This style fits Go service code where call sites are countable and
-behavior is the product. It's a poor fit for:
-
-- **Public library APIs** where struct-based options preserve
-  forward compatibility (`grpc.DialOption`, `http.Server` fields).
-- **Plugin systems** where DI bags are the seam external code hooks
-  into.
-- **Domain-rich types** where methods on receivers genuinely model
-  the object (`time.Time`, `*sql.Tx`).
-
-The rule is "minimize indirection", not "eliminate methods".
+规则是"减少 indirection"，不是"消灭 method"。
