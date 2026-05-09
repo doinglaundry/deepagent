@@ -56,6 +56,27 @@ func TestBuiltinHelpMentionsDebug(t *testing.T) {
 	}
 }
 
+// renderMessage for an "assistant" entry must not start with a
+// newline: the green ⏺ marker and the model's reply have to share the
+// first line, otherwise the chat looks like the model emitted an
+// empty turn followed by a body. Guards against glamour leaking its
+// document margin (leading "\n" / spaces) into the rendered field.
+func TestRenderMessage_AssistantPrefixSameLine(t *testing.T) {
+	m := &Model{}
+	m.viewport.Width = 80
+
+	const reply = "Why don't scientists trust atoms? Because they make up everything!"
+	rendered := m.renderMarkdown(reply)
+	out := m.renderMessage(chatMessage{Role: "assistant", Content: reply, Rendered: rendered})
+
+	if strings.HasPrefix(out, "\n") || strings.HasPrefix(rendered, "\n") {
+		t.Fatalf("assistant render starts with newline; ⏺ marker and body should share line 1.\nrendered=%q\nout=%q", rendered, out)
+	}
+	if !strings.Contains(firstLine(out), "atoms") {
+		t.Errorf("first line should hold the start of the reply; got %q", firstLine(out))
+	}
+}
+
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		return s[:i]

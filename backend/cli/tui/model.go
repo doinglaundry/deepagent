@@ -136,7 +136,12 @@ func (m *Model) renderMarkdown(content string) string {
 	if err != nil {
 		return content
 	}
-	return strings.TrimRight(out, "\n")
+	// Glamour wraps output in a document margin: leading newline +
+	// per-line indent + trailing newline. Strip leading/trailing
+	// whitespace so the "⏺ " prefix sits flush against the first
+	// character on the same line; internal indentation between
+	// paragraphs is preserved.
+	return strings.TrimSpace(out)
 }
 
 // rebuildHistory regenerates the viewport's content string from
