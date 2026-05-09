@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"log/slog"
 
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
@@ -40,7 +41,7 @@ func GetChatModelMiddlewares(ctx context.Context, cfg config.Config, mem *Memory
 
 	if cfg.Summarization.Enabled {
 		summaryModel := buildSummaryChatModel(ctx, cfg)
-		summaryMW, _ := middlewares.NewSummarization(
+		summaryMW, err := middlewares.NewSummarization(
 			ctx,
 			cfg.Summarization.Enabled,
 			0,
@@ -49,8 +50,9 @@ func GetChatModelMiddlewares(ctx context.Context, cfg config.Config, mem *Memory
 			summaryModel,
 			mem.FlushBeforeSummarization,
 		)
-
-		if summaryMW != nil {
+		if err != nil {
+			slog.Warn("summarization disabled: build failed", "err", err)
+		} else if summaryMW != nil {
 			middlewareList = append(middlewareList, summaryMW)
 		}
 	}
