@@ -190,16 +190,16 @@ func buildSubagentSection(n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// getMemoryContext returns the <memory> block (with trailing newline)
+// getMemoryPrompt returns the <memory> block (with trailing newline)
 // or "" when memory injection is disabled or the accessor is nil.
-func getMemoryContext(agentName string, mem *MemoryAccessor, m config.Memory) string {
+func getMemoryPrompt(agentName string, mem *MemoryAccessor, m config.Memory) string {
 	if mem == nil {
 		return ""
 	}
 	if !m.Enabled || !m.InjectionEnabled {
 		return ""
 	}
-	block := mem.PromptBlock(agentName, m.MaxInjectionTokens)
+	block := mem.GetPromptBlock(agentName, m.MaxInjectionTokens)
 	if block == "" {
 		return ""
 	}
@@ -519,9 +519,9 @@ const systemPromptTemplateRaw = `
 // systemPromptTemplate is the runtime-resolved template (with § replaced by `).
 var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`")
 
-// ApplyPromptTemplate assembles the system prompt and appends the current-date footer.
-func ApplyPromptTemplate(rt RuntimeContext, agentCfg *config.AgentConfig, cfg *config.Config, mem *MemoryAccessor) string {
-	memoryContext := getMemoryContext(rt.AgentName, mem, cfg.Memory)
+// GetSystemPrompt assembles the system prompt and appends the current-date footer.
+func GetSystemPrompt(rt RuntimeContext, cfg *config.Config, mem *MemoryAccessor) string {
+	memoryContext := getMemoryPrompt(rt.AgentName, mem, cfg.Memory)
 
 	n := rt.MaxConcurrentSubagents
 	subagentSection := ""
@@ -539,7 +539,7 @@ func ApplyPromptTemplate(rt RuntimeContext, agentCfg *config.AgentConfig, cfg *c
 			fmt.Sprintf("NEVER launch more than %d `task` calls in one response.**\n", n)
 	}
 
-	skillsSection := GetSkillsPromptSection(skillsFromProfile(agentCfg), cfg, cfg.SkillEvolution.Enabled)
+	skillsSection := GetSkillsPromptSection(skillsFromProfile(rt.AgentConfig), cfg, cfg.SkillEvolution.Enabled)
 	deferredToolsSection := GetDeferredToolsPromptSection(cfg, cfg.ToolSearch.Enabled)
 	acpSection := buildACPSection(cfg)
 

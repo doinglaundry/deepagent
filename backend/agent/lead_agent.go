@@ -30,9 +30,7 @@ func MakeLeadAgent(
 	shell := newLocalShell("")
 	mem := NewMemoryAccessor(memorystore.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "memory")))
 
-	prompt := ApplyPromptTemplate(rt, rt.AgentConfig, cfg, mem)
-
-	withGeneral := generalSubagentEnabled(rt)
+	prompt := GetSystemPrompt(rt, cfg, mem)
 
 	handlers := GetChatModelMiddlewares(ctx, cfg, mem, rt)
 
@@ -42,7 +40,7 @@ func MakeLeadAgent(
 		ChatModel:              chatModel,
 		Instruction:            prompt,
 		MaxIteration:           defaultIterationLimit(rt.AgentConfig),
-		WithoutGeneralSubAgent: !withGeneral,
+		WithoutGeneralSubAgent: !rt.SubagentEnabled,
 		WithoutWriteTodos:      false,
 		Middlewares:            GetAgentMiddleWares(rt),
 		Handlers:               handlers,

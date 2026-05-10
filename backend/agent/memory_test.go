@@ -29,7 +29,7 @@ func TestMemoryAccessor_PromptHooksRoundTrip(t *testing.T) {
 		memorystore.Memory{Key: "m2", Content: "user lives in UTC+8", TurnIndex: 2},
 	)
 	acc := NewMemoryAccessor(store)
-	data := acc.GetMemories("any", "")
+	data := memoryDataKey{Memories: acc.loadFiltered()}
 	out := acc.FormatMemoryForInjection(data, 0)
 
 	if !strings.Contains(out, "user prefers tabs over spaces") {
@@ -47,7 +47,7 @@ func TestMemoryAccessor_FilterDropsShortAndTaskPrefixed(t *testing.T) {
 		memorystore.Memory{Key: "task", Content: memorystore.TaskMemoryPrefix + "do x", TurnIndex: 3},
 	)
 	acc := NewMemoryAccessor(store)
-	data := acc.GetMemories("any", "").(memoryDataKey)
+	data := memoryDataKey{Memories: acc.loadFiltered()}
 	if len(data.Memories) != 1 {
 		t.Fatalf("expected 1 memory after filter, got %d: %+v", len(data.Memories), data.Memories)
 	}
@@ -90,7 +90,7 @@ func TestMemoryAccessor_InjectIsNoOpWhenEmpty(t *testing.T) {
 
 func TestMemoryAccessor_NilStoreIsNoOp(t *testing.T) {
 	acc := NewMemoryAccessor(nil)
-	data := acc.GetMemories("a", "")
+	data := memoryDataKey{Memories: acc.loadFiltered()}
 	if acc.FormatMemoryForInjection(data, 0) != "" {
 		t.Errorf("expected empty format for nil store")
 	}
@@ -137,7 +137,7 @@ func TestMemoryAccessor_FormatRespectsTokenBudget(t *testing.T) {
 		memorystore.Memory{Key: "c", Content: strings.Repeat("zzzzzzzzzz", 5), TurnIndex: 3},
 	)
 	acc := NewMemoryAccessor(store)
-	data := acc.GetMemories("any", "")
+	data := memoryDataKey{Memories: acc.loadFiltered()}
 	short := acc.FormatMemoryForInjection(data, 20)
 	long := acc.FormatMemoryForInjection(data, 0)
 	if len(short) >= len(long) {

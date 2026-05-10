@@ -10,11 +10,6 @@ import (
 	"eino-cli/backend/config"
 )
 
-// generalSubagentEnabled reports whether to expose the built-in subagent.
-func generalSubagentEnabled(rt RuntimeContext) bool {
-	return rt.SubagentEnabled
-}
-
 // buildNamedSubagents resolves each name to an agent profile and recursively
 // builds a deep agent. Failures are logged-and-skipped (partial > hard error).
 func buildNamedSubagents(

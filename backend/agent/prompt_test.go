@@ -52,7 +52,7 @@ func TestDeferredToolNamesFromConfig_NilWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
+func TestGetSystemPrompt_SkillsAndDeferredSectionsRendered(t *testing.T) {
 	root := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(root, "demo"), 0o755)
 	_ = os.WriteFile(filepath.Join(root, "demo", "SKILL.md"),
@@ -68,7 +68,7 @@ func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
 		},
 	}
 
-	out := ApplyPromptTemplate(RuntimeContext{AgentName: "default"}, nil, cfg, nil)
+	out := GetSystemPrompt(RuntimeContext{AgentName: "default"}, cfg, nil)
 
 	if !strings.Contains(out, "<available_skills>") {
 		t.Fatalf("available_skills section missing from prompt:\n%s", out)
@@ -81,11 +81,11 @@ func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
 	}
 }
 
-func TestApplyPromptTemplate_NilMemSkipsMemorySection(t *testing.T) {
+func TestGetSystemPrompt_NilMemSkipsMemorySection(t *testing.T) {
 	cfg := &config.Config{
 		Memory: config.Memory{Enabled: true, InjectionEnabled: true, MaxInjectionTokens: 1024},
 	}
-	out := ApplyPromptTemplate(RuntimeContext{AgentName: "default"}, nil, cfg, nil)
+	out := GetSystemPrompt(RuntimeContext{AgentName: "default"}, cfg, nil)
 	if strings.Contains(out, "<memory>") {
 		t.Fatalf("nil Mem should skip <memory> section, got:\n%s", out)
 	}

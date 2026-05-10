@@ -13,31 +13,24 @@ import (
 	memorystore "eino-cli/backend/memory/store"
 )
 
-// Soft caps for the prompt-side <memory> block; the underlying store keeps everything.
 const (
 	memoryMaxItems      = 32
 	memoryMinContentLen = 8
 )
 
-// memoryDataKey is the deerflow-parity payload returned by GetMemories.
 type memoryDataKey struct {
 	Memories []memorystore.Memory
 }
 
-// MemoryAccessor binds a memory store to the prompt + runtime memory hooks.
 type MemoryAccessor struct {
 	store *memorystore.Store
 }
 
-// NewMemoryAccessor binds a memory store; nil store yields a no-op accessor.
 func NewMemoryAccessor(store *memorystore.Store) *MemoryAccessor {
 	return &MemoryAccessor{store: store}
 }
 
-// PromptBlock renders the <memory>...</memory> system block, or "" when empty.
-// agentName is reserved for future per-agent partitioning; maxTokens is a
-// soft budget (1 token ≈ 4 chars); pass 0 to disable.
-func (a *MemoryAccessor) PromptBlock(agentName string, maxTokens int) string {
+func (a *MemoryAccessor) GetPromptBlock(agentName string, maxTokens int) string {
 	bullets := renderMemoryBullets(a.loadFiltered(), maxTokens)
 	if bullets == "" {
 		return ""
@@ -45,13 +38,6 @@ func (a *MemoryAccessor) PromptBlock(agentName string, maxTokens int) string {
 	return "<memory>\n" + bullets + "\n</memory>"
 }
 
-// GetMemories returns the deerflow-parity payload; agentName/userID are reserved.
-func (a *MemoryAccessor) GetMemories(agentName, userID string) any {
-	return memoryDataKey{Memories: a.loadFiltered()}
-}
-
-// FormatMemoryForInjection renders a memoryDataKey payload as a bullet list.
-// Most callers should use PromptBlock instead.
 func (a *MemoryAccessor) FormatMemoryForInjection(data any, maxTokens int) string {
 	payload, ok := data.(memoryDataKey)
 	if !ok {
@@ -60,7 +46,6 @@ func (a *MemoryAccessor) FormatMemoryForInjection(data any, maxTokens int) strin
 	return renderMemoryBullets(payload.Memories, maxTokens)
 }
 
-// loadFiltered loads from the store and applies the dedupe / size policy.
 func (a *MemoryAccessor) loadFiltered() []memorystore.Memory {
 	if a == nil || a.store == nil {
 		return nil
@@ -73,7 +58,6 @@ func (a *MemoryAccessor) loadFiltered() []memorystore.Memory {
 	return filterMemories(memories)
 }
 
-// Hooks returns the runtime-side MemoryHooks (Inject = prepend block, Extract = no-op).
 func (a *MemoryAccessor) Hooks() middlewares.MemoryHooks {
 	return middlewares.MemoryHooks{
 		Inject:  a.inject,
@@ -82,7 +66,7 @@ func (a *MemoryAccessor) Hooks() middlewares.MemoryHooks {
 }
 
 func (a *MemoryAccessor) inject(_ context.Context, msgs []*schema.Message) []*schema.Message {
-	block := a.PromptBlock("", 0)
+	block := a.GetPromptBlock("", 0)
 	if block == "" {
 		return msgs
 	}
@@ -94,9 +78,6 @@ func (a *MemoryAccessor) inject(_ context.Context, msgs []*schema.Message) []*sc
 
 func (a *MemoryAccessor) extract(_ context.Context, _ []*schema.Message) {}
 
-// FlushBeforeSummarization is the deerflow memory_flush_hook stub fired by
-// the summarization middleware after a summary is finalised. Errors are
-// logged-and-swallowed — failing memory flush must never block summarization.
 func (a *MemoryAccessor) FlushBeforeSummarization(
 	ctx context.Context,
 	before, after adk.ChatModelAgentState,
@@ -150,10 +131,8 @@ func renderMemoryBullets(memories []memorystore.Memory, maxTokens int) string {
 	return sb.String()
 }
 
-// filterMemories applies trim, MinContentLen, TaskMemoryPrefix skip,
-// content dedupe, turn-asc sort, and the MaxItems cap.
 func filterMemories(in []memorystore.Memory) []memorystore.Memory {
-	seen := make(map[string]struct{}, len(in))
+	seen := make(map[string]any, len(in))
 	out := make([]memorystore.Memory, 0, len(in))
 	for _, m := range in {
 		c := strings.TrimSpace(m.Content)

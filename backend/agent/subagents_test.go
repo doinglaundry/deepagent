@@ -9,18 +9,6 @@ import (
 
 func dummyConfig() *config.Config { return &config.Config{} }
 
-func TestGeneralSubagentEnabled(t *testing.T) {
-	rtOff := RuntimeContext{SubagentEnabled: false}
-	rtOn := RuntimeContext{SubagentEnabled: true}
-
-	if generalSubagentEnabled(rtOff) {
-		t.Errorf("expected disabled when rt.SubagentEnabled=false")
-	}
-	if !generalSubagentEnabled(rtOn) {
-		t.Errorf("expected enabled when rt.SubagentEnabled=true")
-	}
-}
-
 func TestBuildNamedSubagents_EmptyInput(t *testing.T) {
 	got, err := buildNamedSubagents(context.Background(), RuntimeContext{}, dummyConfig(), nil)
 	if err != nil {
