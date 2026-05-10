@@ -106,6 +106,11 @@ func GetChatModelMiddlewares(
 		}
 	}
 
+	// TodoReminder must run BEFORE Trace so the trace captures the raw
+	// state.Messages (with reminder already injected when applicable),
+	// keeping debug output an honest mirror of what the model sees.
+	middlewareList = append(middlewareList, middlewares.NewTodoReminder())
+
 	// Trace must run BEFORE Clarification so its After hook captures
 	// the raw assistant message before Clarification's in-place rewrite.
 	middlewareList = append(middlewareList, middlewares.NewTrace(rt.AgentName))

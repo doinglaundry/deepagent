@@ -45,6 +45,7 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 		reflect.TypeOf(&middlewares.DeferredTools{}),
 		reflect.TypeOf(&middlewares.SubagentLimit{}),
 		reflect.TypeOf(&middlewares.HITL{}),
+		reflect.TypeOf(&middlewares.TodoReminder{}),
 		reflect.TypeOf(&middlewares.Trace{}),
 		reflect.TypeOf(&middlewares.Clarification{}),
 	}
