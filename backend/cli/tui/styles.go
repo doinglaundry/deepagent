@@ -2,10 +2,7 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-// Theme is intentionally small for v1: a primary accent (used for
-// the logo, spinner and assistant prefix), a dim shade for
-// secondary text (cwd, footer, prompts), and a plain "user input"
-// emphasis. v2+ can pull these from a real theme struct.
+// Minimal v1 theme: primary accent + dim secondary + user emphasis.
 var (
 	primaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // magenta
 	accentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // blue
@@ -16,9 +13,7 @@ var (
 	assistantPrefixStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10")) // green
 	systemPrefixStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))           // orange
 
-	// Debug trace styling: faint body so debug blocks visually subordinate
-	// to the real conversation; bold markers in distinct hues for input vs
-	// output so the eye can pair them up.
+	// Debug trace styling: faint body, distinct bold markers for input vs output.
 	debugInputMarkerStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))  // light blue
 	debugOutputMarkerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207")) // light magenta
 	debugBodyStyle         = lipgloss.NewStyle().Faint(true)

@@ -17,18 +17,14 @@ import (
 	"eino-cli/backend/runtime/eino"
 )
 
-// Per-message body / tool-call argument caps used by the debug
-// formatters. Sized so a typical 2-4 KB system prompt fits whole on
-// the first turn but later turns don't push the input off-screen.
+// Per-message / tool-arg caps for the debug panel; sized so a 2-4 KB
+// system prompt fits on first turn but later turns stay on-screen.
 const (
 	debugBodyMaxBytes    = 4 << 10
 	debugToolArgMaxBytes = 1 << 10
 )
 
-// chatMessage is the TUI's view-side message record. It holds the
-// rendered (markdown-formatted, for assistants) string so View can
-// paste history into the viewport without re-rendering on every
-// keystroke.
+// chatMessage caches the markdown-rendered body so View doesn't re-render per keystroke.
 type chatMessage struct {
 	Role     string // "user" | "assistant" | "system" | "debug-input" | "debug-output" | "banner"
 	Content  string // raw text (or pre-rendered ANSI for "banner")
@@ -53,38 +49,28 @@ type Model struct {
 	cancel  context.CancelFunc
 
 	mdRenderer *glamour.TermRenderer
-	// mdStyle is the glamour style name ("dark" / "light"), detected
-	// once in New() before bubbletea takes over stdin. Caching it
-	// here keeps subsequent renderer rebuilds (on resize) from
-	// re-querying the terminal — those queries leak their OSC 11
-	// responses into textinput once we're in raw mode.
+	// mdStyle is detected once before bubbletea claims stdin; re-querying after
+	// raw-mode would leak the OSC 11 response into textinput.
 	mdStyle string
 	width   int
 	height  int
 	ready   bool
 
-	// pendingExit is set by the first Ctrl-C in idle state; a
-	// second Ctrl-C while it's set quits.
+	// pendingExit: first Ctrl-C in idle arms it, second Ctrl-C quits.
 	pendingExit bool
 
-	// lastErr surfaces the most recent runtime error in the
-	// streaming panel until it's cleared by the next submit.
 	lastErr error
 
-	// debug toggles inline display of model input/output for each
-	// LLM turn. Off by default; flipped via the /debug slash.
+	// debug toggles inline LLM input/output panels via /debug.
 	debug bool
 
-	// prog is the back-reference to the bubbletea Program, set by
-	// Run() in tui.go just before prog.Run(). Used to cross-goroutine
-	// Send debug events from the trace middleware.
+	// prog back-reference lets cross-goroutine consumers (Trace middleware)
+	// call prog.Send; wired in Run() right before prog.Run().
 	prog *tea.Program
 }
 
-// New builds a Model wired to the supplied runtime. Heavy
-// dependencies (config.Load, eino.BuildRuntime) live in
-// cmd/tui/main.go; this constructor is intentionally narrow so
-// tests can substitute a fake Runtime.
+// New builds a Model around rt; heavy wiring (config/runtime) stays in main
+// so tests can substitute a fake Runtime.
 func New(rt eino.Runtime) (*Model, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -103,10 +89,7 @@ func New(rt eino.Runtime) (*Model, error) {
 
 	vp := viewport.New(80, 10)
 
-	// Detect terminal background ONCE here, while stdin is still in
-	// cooked mode. After Run() hands stdin to bubbletea (raw mode),
-	// any OSC 11 query response would race with bubbletea's
-	// keypress parser and leak into textinput as visible bytes.
+	// Detect background ONCE in cooked mode; raw-mode queries leak OSC 11 bytes.
 	style := "dark"
 	if !lipgloss.HasDarkBackground() {
 		style = "light"
@@ -125,27 +108,18 @@ func New(rt eino.Runtime) (*Model, error) {
 }
 
 func (m *Model) Init() tea.Cmd {
-	// Spinner ticks are scheduled on demand from submit(); the
-	// chain self-terminates in the spinner.TickMsg branch of
-	// Update() once streaming flips false.
+	// Spinner ticks are scheduled on demand from submit().
 	return textinput.Blink
 }
 
-// renderMarkdown lazily builds (or rebuilds) the glamour renderer
-// for the current viewport width and converts content to ANSI.
-// On error it falls back to the raw text so the chat doesn't go
-// silent because of a markdown parse hiccup.
+// renderMarkdown lazily builds the glamour renderer; falls back to raw on error.
 func (m *Model) renderMarkdown(content string) string {
 	width := m.viewport.Width
 	if width <= 0 {
 		width = 80
 	}
 	if m.mdRenderer == nil {
-		// WithStandardStyle (not WithAutoStyle): the latter sends an
-		// OSC 11 query to the terminal at every renderer rebuild,
-		// and bubbletea's raw-mode input parser then misreads the
-		// response as keypresses. We resolved dark/light once in
-		// New() before bubbletea claimed stdin.
+		// WithStandardStyle (not Auto): Auto re-queries OSC 11 each rebuild.
 		r, err := glamour.NewTermRenderer(
 			glamour.WithStandardStyle(m.mdStyle),
 			glamour.WithWordWrap(width),
@@ -159,17 +133,11 @@ func (m *Model) renderMarkdown(content string) string {
 	if err != nil {
 		return content
 	}
-	// Glamour wraps output in a document margin: leading newline +
-	// per-line indent + trailing newline. Strip leading/trailing
-	// whitespace so the "⏺ " prefix sits flush against the first
-	// character on the same line; internal indentation between
-	// paragraphs is preserved.
+	// Trim glamour's document-margin newlines so the "⏺ " prefix sits flush.
 	return strings.TrimSpace(out)
 }
 
-// rebuildHistory regenerates the viewport's content string from
-// m.messages. Called whenever messages change or the window
-// resizes (markdown wraps to a new width).
+// rebuildHistory regenerates the viewport content from m.messages.
 func (m *Model) rebuildHistory() {
 	if len(m.messages) == 0 {
 		m.viewport.SetContent("")
@@ -200,17 +168,14 @@ func (m *Model) renderMessage(msg chatMessage) string {
 	case "debug-output":
 		return debugOutputMarkerStyle.Render("◀ ") + debugBodyStyle.Render(msg.Content)
 	case "banner":
-		// Already pre-rendered ANSI (figlet block letters + dim
-		// subtitle). Return verbatim — no prefix, no markdown.
+		// Pre-rendered ANSI; no prefix, no markdown.
 		return msg.Content
 	default:
 		return msg.Content
 	}
 }
 
-// pushMessage appends to history, pre-rendering markdown for
-// assistant messages so View doesn't pay the cost on each key
-// stroke.
+// pushMessage appends to history (pre-renders markdown for assistant).
 func (m *Model) pushMessage(role, content string) {
 	rendered := ""
 	if role == "assistant" {
@@ -224,8 +189,7 @@ func (m *Model) pushMessage(role, content string) {
 	m.rebuildHistory()
 }
 
-// abortStream cancels an in-flight runtime call, if any. Returns
-// true when there was an active stream to cancel.
+// abortStream cancels any in-flight runtime call; returns true if one was active.
 func (m *Model) abortStream() bool {
 	if !m.streaming {
 		return false
@@ -251,17 +215,8 @@ during a response to abort, or Ctrl-C twice from idle to quit.
 `, "`/clear`", "`/debug [on|off|toggle]`", "`/exit`", "`/quit`", "`/help`"))
 }
 
-// formatDebugInput renders a DebugBefore event into the plain-text
-// body that goes into a "debug-input" chatMessage. The format is
-// human-skim-friendly (per-message lines, optional tool_call sub-
-// lines) and bounded by debugBodyMaxBytes to keep one turn's snapshot
-// within roughly a screen.
-//
-// The [agentname] prefix on the header line keeps subagent events
-// distinguishable when they interleave with the lead agent's on the
-// same consumer (each agent has its own Trace + independent turn
-// counter, so without the prefix the user would see confusing
-// "two turn 1 events" sequences).
+// formatDebugInput renders a DebugBefore event; [agentname] prefix
+// disambiguates interleaved subagent / lead-agent turns.
 func formatDebugInput(ev middlewares.DebugEvent) string {
 	var sb strings.Builder
 	var totalBytes int
@@ -281,9 +236,7 @@ func formatDebugInput(ev middlewares.DebugEvent) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-// formatDebugOutput renders a DebugAfter event. By contract the event
-// carries exactly one message — the model's just-returned assistant
-// message — so we only ever print one body line plus its tool calls.
+// formatDebugOutput renders a DebugAfter event (one assistant message + tool calls).
 func formatDebugOutput(ev middlewares.DebugEvent) string {
 	if len(ev.Messages) == 0 {
 		return ""
@@ -302,10 +255,7 @@ func formatDebugOutput(ev middlewares.DebugEvent) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-// truncate clips s to at most n bytes (UTF-8 boundary–unaware: matches
-// the existing project convention of byte-counting for prompt budgets).
-// When clipped, it appends a "(…N more bytes)" tail so the reader knows
-// the snapshot was abridged.
+// truncate clips to n bytes (UTF-8 boundary unaware) with a "(…N more)" tail.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -313,8 +263,7 @@ func truncate(s string, n int) string {
 	return s[:n] + fmt.Sprintf(" …(%d more bytes)", len(s)-n)
 }
 
-// humanBytes formats a byte count as a short string ("1.2 KB", "456 B").
-// Only used for debug headers, so we don't need MB+.
+// humanBytes formats bytes as "1.2 KB" / "456 B" for debug headers.
 func humanBytes(n int) string {
 	if n < 1024 {
 		return fmt.Sprintf("%d B", n)

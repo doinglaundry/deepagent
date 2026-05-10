@@ -24,10 +24,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleDebug(msg)
 	case spinner.TickMsg:
 		if !m.streaming {
-			// Self-terminate the tick chain when nobody's
-			// watching: the spinner only renders during a
-			// streaming response.
-			return m, nil
+			return m, nil // self-terminate the tick chain
 		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
@@ -47,13 +44,7 @@ func (m *Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.width = msg.Width
 	m.height = msg.Height
 
-	// Layout budget (top-down):
-	//   header        (3 rows)
-	//   blank         (1 row)
-	//   viewport      (flex)
-	//   stream panel  (0-3 rows; reserved while streaming)
-	//   input         (3 rows incl. borders)
-	//   footer        (1 row)
+	// Layout budget: header(3) + blank(1) + viewport(flex) + stream(0-3) + input(3) + footer(1).
 	headerH := 3
 	streamH := 0
 	if m.streaming || m.lastErr != nil {
@@ -109,9 +100,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.submit(text)
 	}
 
-	// Default: feed the keypress to the input box (and the
-	// viewport, which handles PgUp/PgDn/arrows for scrolling
-	// when the input doesn't claim them).
+	// Feed key to input + viewport (viewport handles PgUp/PgDn/arrows when input doesn't claim them).
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -121,9 +110,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// submit dispatches the input text: built-in slash commands are
-// handled inline; anything else is sent to the runtime via
-// startStream and the chunk pump.
+// submit handles slash commands inline; otherwise streams via the runtime.
 func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	if cmd, handled := m.handleBuiltin(text); handled {
 		return m, cmd
@@ -145,9 +132,7 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitForChunk(ch), awaitDone, m.spin.Tick)
 }
 
-// handleDebug renders a DebugEvent received via prog.Send (from the
-// Trace middleware). Each event becomes one new message in scrollback,
-// styled distinctly so the eye can skim past when not interesting.
+// handleDebug renders a DebugEvent (from Trace middleware) as a scrollback message.
 func (m *Model) handleDebug(ev middlewares.DebugEvent) (tea.Model, tea.Cmd) {
 	switch ev.Phase {
 	case middlewares.DebugBefore:
@@ -181,8 +166,7 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 	return nil, false
 }
 
-// handleDebugCmd processes "/debug [on|off|toggle]". Empty arg toggles.
-// Always returns nil cmd; state mutation is in m.debug.
+// handleDebugCmd processes "/debug [on|off|toggle]"; empty arg toggles.
 func (m *Model) handleDebugCmd(text string) tea.Cmd {
 	arg := strings.TrimSpace(strings.TrimPrefix(text, "/debug"))
 	switch strings.ToLower(arg) {
@@ -206,7 +190,6 @@ func (m *Model) handleDebugCmd(text string) tea.Cmd {
 
 func (m *Model) handleChunk(msg chunkMsg) (tea.Model, tea.Cmd) {
 	m.streamBuf.WriteString(string(msg))
-	// Schedule the next read on the same channel.
 	return m, waitForChunk(m.chunkCh)
 }
 
@@ -217,9 +200,7 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 
 	if msg.err != nil {
 		m.lastErr = msg.err
-		// If we had any partial content, surface it as an
-		// assistant message so the user can see what got
-		// produced before the error / abort.
+		// Surface any partial content as an assistant message before the error.
 		if buf := strings.TrimSpace(m.streamBuf.String()); buf != "" {
 			m.pushMessage("assistant", buf)
 		}
@@ -228,9 +209,7 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Prefer the runtime's authoritative output over our
-	// chunk-accumulated buffer (the runtime collates the final
-	// message; chunks may include artefacts the runtime trims).
+	// Prefer the runtime's authoritative final output over the chunk buffer.
 	final := strings.TrimSpace(msg.output)
 	if final == "" {
 		final = strings.TrimSpace(m.streamBuf.String())

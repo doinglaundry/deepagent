@@ -9,9 +9,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// formatDebugInput must put the agent name in a [name] prefix on the
-// header line, ahead of the turn / message-count / size summary, so
-// interleaved subagent events are visually distinguishable.
+// formatDebugInput header must carry [name] prefix to disambiguate subagents.
 func TestFormatDebugInput_HasAgentPrefix(t *testing.T) {
 	ev := middlewares.DebugEvent{
 		AgentName: "DeerFlow",
@@ -48,19 +46,14 @@ func TestFormatDebugOutput_HasAgentPrefix(t *testing.T) {
 	}
 }
 
-// /help output must mention /debug — otherwise users can't discover
-// the toggle.
+// /help must mention /debug for discoverability.
 func TestBuiltinHelpMentionsDebug(t *testing.T) {
 	if !strings.Contains(builtinHelp(), "/debug") {
 		t.Errorf("builtinHelp() missing /debug entry:\n%s", builtinHelp())
 	}
 }
 
-// renderMessage for an "assistant" entry must not start with a
-// newline: the green ⏺ marker and the model's reply have to share the
-// first line, otherwise the chat looks like the model emitted an
-// empty turn followed by a body. Guards against glamour leaking its
-// document margin (leading "\n" / spaces) into the rendered field.
+// Assistant render must not start with newline: ⏺ marker and body share line 1.
 func TestRenderMessage_AssistantPrefixSameLine(t *testing.T) {
 	m := &Model{}
 	m.viewport.Width = 80
