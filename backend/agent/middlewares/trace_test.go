@@ -10,12 +10,12 @@ import (
 
 const testAgentName = "test-agent"
 
-// recordingConsumer collects DebugEvents for assertions (single-goroutine).
+// recordingConsumer collects TraceEvents for assertions (single-goroutine).
 type recordingConsumer struct {
-	events []DebugEvent
+	events []TraceEvent
 }
 
-func (c *recordingConsumer) Send(ev DebugEvent) {
+func (c *recordingConsumer) Send(ev TraceEvent) {
 	c.events = append(c.events, ev)
 }
 
@@ -51,7 +51,7 @@ func TestTrace_NoConsumerIsNoop(t *testing.T) {
 func TestTrace_SendsBeforeAndAfter(t *testing.T) {
 	tr := NewTrace(testAgentName)
 	rec := &recordingConsumer{}
-	ctx := WithDebugConsumer(context.Background(), rec)
+	ctx := WithTraceConsumer(context.Background(), rec)
 	state := &adk.ChatModelAgentState{Messages: makeMessages(3)}
 
 	if _, _, err := tr.BeforeModelRewriteState(ctx, state, nil); err != nil {
@@ -69,8 +69,8 @@ func TestTrace_SendsBeforeAndAfter(t *testing.T) {
 	if before.AgentName != testAgentName {
 		t.Errorf("Before: AgentName = %q, want %q", before.AgentName, testAgentName)
 	}
-	if before.Phase != DebugBefore {
-		t.Errorf("Before: Phase = %d, want DebugBefore (%d)", before.Phase, DebugBefore)
+	if before.Phase != TracePhaseBefore {
+		t.Errorf("Before: Phase = %d, want TracePhaseBefore (%d)", before.Phase, TracePhaseBefore)
 	}
 	if before.Turn != 1 {
 		t.Errorf("Before: Turn = %d, want 1", before.Turn)
@@ -87,8 +87,8 @@ func TestTrace_SendsBeforeAndAfter(t *testing.T) {
 	if after.AgentName != testAgentName {
 		t.Errorf("After: AgentName = %q, want %q", after.AgentName, testAgentName)
 	}
-	if after.Phase != DebugAfter {
-		t.Errorf("After: Phase = %d, want DebugAfter (%d)", after.Phase, DebugAfter)
+	if after.Phase != TracePhaseAfter {
+		t.Errorf("After: Phase = %d, want TracePhaseAfter (%d)", after.Phase, TracePhaseAfter)
 	}
 	if after.Turn != 1 {
 		t.Errorf("After: Turn = %d, want 1", after.Turn)
@@ -101,7 +101,7 @@ func TestTrace_SendsBeforeAndAfter(t *testing.T) {
 func TestTrace_TurnMonotonic(t *testing.T) {
 	tr := NewTrace(testAgentName)
 	rec := &recordingConsumer{}
-	ctx := WithDebugConsumer(context.Background(), rec)
+	ctx := WithTraceConsumer(context.Background(), rec)
 	state := &adk.ChatModelAgentState{Messages: makeMessages(1)}
 
 	for i := 0; i < 2; i++ {
@@ -127,7 +127,7 @@ func TestTrace_TurnMonotonic(t *testing.T) {
 func TestTrace_ResetTurn(t *testing.T) {
 	tr := NewTrace(testAgentName)
 	rec := &recordingConsumer{}
-	ctx := WithDebugConsumer(context.Background(), rec)
+	ctx := WithTraceConsumer(context.Background(), rec)
 	state := &adk.ChatModelAgentState{Messages: makeMessages(1)}
 
 	if _, _, err := tr.BeforeModelRewriteState(ctx, state, nil); err != nil {

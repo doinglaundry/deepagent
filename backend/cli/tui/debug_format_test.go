@@ -11,9 +11,9 @@ import (
 
 // formatDebugInput header must carry [name] prefix to disambiguate subagents.
 func TestFormatDebugInput_HasAgentPrefix(t *testing.T) {
-	ev := middlewares.DebugEvent{
+	ev := middlewares.TraceEvent{
 		AgentName: "DeerFlow",
-		Phase:     middlewares.DebugBefore,
+		Phase:     middlewares.TracePhaseBefore,
 		Turn:      3,
 		Messages: []*schema.Message{
 			schema.SystemMessage("you are a helpful assistant"),
@@ -31,9 +31,9 @@ func TestFormatDebugInput_HasAgentPrefix(t *testing.T) {
 }
 
 func TestFormatDebugOutput_HasAgentPrefix(t *testing.T) {
-	ev := middlewares.DebugEvent{
+	ev := middlewares.TraceEvent{
 		AgentName: "researcher",
-		Phase:     middlewares.DebugAfter,
+		Phase:     middlewares.TracePhaseAfter,
 		Turn:      1,
 		Messages: []*schema.Message{
 			schema.AssistantMessage("here you go", nil),

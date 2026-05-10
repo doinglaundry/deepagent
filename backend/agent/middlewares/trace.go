@@ -9,40 +9,40 @@ import (
 )
 
 const (
-	DebugBefore = iota + 1
-	DebugAfter
+	TracePhaseBefore = iota + 1
+	TracePhaseAfter
 )
 
-// DebugEvent is one half-turn snapshot. Before carries the full message
+// TraceEvent is one half-turn snapshot. Before carries the full message
 // slice; After carries just the new assistant message. Turn pairs them up.
-type DebugEvent struct {
+type TraceEvent struct {
 	AgentName string
 	Phase     int
 	Turn      int
 	Messages  []*schema.Message
 }
 
-// DebugConsumer is the receiving end of a Trace event stream.
-type DebugConsumer interface {
-	Send(DebugEvent)
+// TraceConsumer is the receiving end of a Trace event stream.
+type TraceConsumer interface {
+	Send(TraceEvent)
 }
 
-type debugConsumerKey struct{}
+type traceConsumerKey struct{}
 
-// WithDebugConsumer attaches a DebugConsumer to ctx; nil consumer is a no-op.
-func WithDebugConsumer(ctx context.Context, consumer DebugConsumer) context.Context {
+// WithTraceConsumer attaches a TraceConsumer to ctx; nil consumer is a no-op.
+func WithTraceConsumer(ctx context.Context, consumer TraceConsumer) context.Context {
 	if consumer == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, debugConsumerKey{}, consumer)
+	return context.WithValue(ctx, traceConsumerKey{}, consumer)
 }
 
-func getDebugConsumerFromContext(ctx context.Context) DebugConsumer {
-	c, _ := ctx.Value(debugConsumerKey{}).(DebugConsumer)
+func getTraceConsumerFromContext(ctx context.Context) TraceConsumer {
+	c, _ := ctx.Value(traceConsumerKey{}).(TraceConsumer)
 	return c
 }
 
-// Trace emits Before/After events to a DebugConsumer in ctx (no-op when none).
+// Trace emits Before/After events to a TraceConsumer in ctx (no-op when none).
 // MUST sit immediately before Clarification so it captures the raw assistant
 // message before Clarification rewrites it in-place.
 type Trace struct {
@@ -67,13 +67,13 @@ func (t *Trace) BeforeModelRewriteState(
 	state *adk.ChatModelAgentState,
 	_ *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
-	consumer := getDebugConsumerFromContext(ctx)
+	consumer := getTraceConsumerFromContext(ctx)
 	if consumer == nil || state == nil {
 		return ctx, state, nil
 	}
-	consumer.Send(DebugEvent{
+	consumer.Send(TraceEvent{
 		AgentName: t.agentName,
-		Phase:     DebugBefore,
+		Phase:     TracePhaseBefore,
 		Turn:      int(t.turn.Add(1)),
 		Messages:  append([]*schema.Message(nil), state.Messages...),
 	})
@@ -85,13 +85,13 @@ func (t *Trace) AfterModelRewriteState(
 	state *adk.ChatModelAgentState,
 	_ *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
-	consumer := getDebugConsumerFromContext(ctx)
+	consumer := getTraceConsumerFromContext(ctx)
 	if consumer == nil || state == nil || len(state.Messages) == 0 {
 		return ctx, state, nil
 	}
-	consumer.Send(DebugEvent{
+	consumer.Send(TraceEvent{
 		AgentName: t.agentName,
-		Phase:     DebugAfter,
+		Phase:     TracePhaseAfter,
 		Turn:      int(t.turn.Load()),
 		Messages:  []*schema.Message{state.Messages[len(state.Messages)-1]},
 	})

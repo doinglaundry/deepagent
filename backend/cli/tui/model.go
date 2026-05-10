@@ -221,9 +221,9 @@ during a response to abort, or Ctrl-C twice from idle to quit.
 `, "`/clear`", "`/debug [on|off|toggle]`", "`/plan [on|off|toggle]`", "`/exit`", "`/quit`", "`/help`"))
 }
 
-// formatDebugInput renders a DebugBefore event; [agentname] prefix
+// formatDebugInput renders a TracePhaseBefore event; [agentname] prefix
 // disambiguates interleaved subagent / lead-agent turns.
-func formatDebugInput(ev middlewares.DebugEvent) string {
+func formatDebugInput(ev middlewares.TraceEvent) string {
 	var sb strings.Builder
 	var totalBytes int
 	for _, msg := range ev.Messages {
@@ -242,8 +242,8 @@ func formatDebugInput(ev middlewares.DebugEvent) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-// formatDebugOutput renders a DebugAfter event (one assistant message + tool calls).
-func formatDebugOutput(ev middlewares.DebugEvent) string {
+// formatDebugOutput renders a TracePhaseAfter event (one assistant message + tool calls).
+func formatDebugOutput(ev middlewares.TraceEvent) string {
 	if len(ev.Messages) == 0 {
 		return ""
 	}

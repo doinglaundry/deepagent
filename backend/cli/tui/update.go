@@ -21,8 +21,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleChunk(msg)
 	case doneMsg:
 		return m.handleDone(msg)
-	case middlewares.DebugEvent:
-		return m.handleDebug(msg)
+	case middlewares.TraceEvent:
+		return m.handleTraceEvent(msg)
 	case spinner.TickMsg:
 		if !m.streaming {
 			return m, nil // self-terminate the tick chain
@@ -122,7 +122,7 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	m.streamBuf.Reset()
 	m.lastErr = nil
 
-	var consumer middlewares.DebugConsumer
+	var consumer middlewares.TraceConsumer
 	if m.debug && m.prog != nil {
 		consumer = teaProgramConsumer{p: m.prog}
 	}
@@ -133,12 +133,12 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitForChunk(ch), awaitDone, m.spin.Tick)
 }
 
-// handleDebug renders a DebugEvent (from Trace middleware) as a scrollback message.
-func (m *Model) handleDebug(ev middlewares.DebugEvent) (tea.Model, tea.Cmd) {
+// handleTraceEvent renders a TraceEvent (from Trace middleware) as a scrollback message.
+func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd) {
 	switch ev.Phase {
-	case middlewares.DebugBefore:
+	case middlewares.TracePhaseBefore:
 		m.pushMessage("debug-input", formatDebugInput(ev))
-	case middlewares.DebugAfter:
+	case middlewares.TracePhaseAfter:
 		m.pushMessage("debug-output", formatDebugOutput(ev))
 	}
 	return m, nil

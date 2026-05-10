@@ -19,21 +19,21 @@ type doneMsg struct {
 	err    error
 }
 
-// teaProgramConsumer adapts *tea.Program to middlewares.DebugConsumer; bubbletea
+// teaProgramConsumer adapts *tea.Program to middlewares.TraceConsumer; bubbletea
 // drops Sends silently after stop, so no panic / no block.
 type teaProgramConsumer struct{ p *tea.Program }
 
-func (c teaProgramConsumer) Send(ev middlewares.DebugEvent) {
+func (c teaProgramConsumer) Send(ev middlewares.TraceEvent) {
 	c.p.Send(ev)
 }
 
 // startStream runs ExecuteStream in a goroutine, returning the chunk channel,
 // a cancel func, and a tea.Cmd that resolves to doneMsg. consumer=nil disables tracing.
-func startStream(rt eino.Runtime, prompt string, consumer middlewares.DebugConsumer) (<-chan string, context.CancelFunc, tea.Cmd) {
+func startStream(rt eino.Runtime, prompt string, consumer middlewares.TraceConsumer) (<-chan string, context.CancelFunc, tea.Cmd) {
 	chunkCh := make(chan string, 64)
 	doneCh := make(chan doneMsg, 1)
 	ctx, cancel := context.WithCancel(context.Background())
-	ctx = middlewares.WithDebugConsumer(ctx, consumer)
+	ctx = middlewares.WithTraceConsumer(ctx, consumer)
 
 	go func() {
 		defer close(chunkCh)
