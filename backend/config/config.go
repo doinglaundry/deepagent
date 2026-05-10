@@ -59,6 +59,7 @@ func Load() (*Config, error) {
 			Name:         defaultAgentName,
 			Instruction:  defaultAgentInstruction,
 			MaxIteration: defaultAgentIterations,
+			Model:        defaultModel,
 		}
 	}
 
