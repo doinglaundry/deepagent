@@ -30,12 +30,12 @@ type DeepAgentRuntime struct {
 // NewDeepAgentRuntime builds the runtime context, the lead agent, and the
 // adk.Runner; history / checkpoint / streaming live here (REPL-owned).
 func NewDeepAgentRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
-	rt, err := agent.NewRuntimeContext(cfg, nil)
+	runtimeCtx, agentConfig, modelCfg, err := agent.NewRuntimeContext(cfg, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	leadAgent, trace, err := agent.MakeLeadAgent(ctx, rt, cfg)
+	leadAgent, trace, err := agent.MakeLeadAgent(ctx, runtimeCtx, cfg, agentConfig, modelCfg)
 	if err != nil {
 		return nil, fmt.Errorf("build lead agent: %w", err)
 	}

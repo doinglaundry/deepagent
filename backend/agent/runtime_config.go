@@ -17,9 +17,11 @@ type RuntimeContext struct {
 	HITLTools              []string
 }
 
-// NewRuntimeContext canonicalises rt: stamps defaults, validates the agent name,
-// resolves the chat model + ThinkingEnabled, then treats rt as immutable input.
-func NewRuntimeContext(cfg config.Config, seed *RuntimeContext) (RuntimeContext, error) {
+// NewRuntimeContext canonicalises rt and returns the resolved agent/model config.
+func NewRuntimeContext(
+	cfg config.Config,
+	seed *RuntimeContext,
+) (RuntimeContext, *config.AgentConfig, *config.ModelConfig, error) {
 	var rt RuntimeContext
 	if seed != nil {
 		rt = *seed
@@ -34,21 +36,21 @@ func NewRuntimeContext(cfg config.Config, seed *RuntimeContext) (RuntimeContext,
 
 	agentName, err := ValidateAgentName(rt.AgentName)
 	if err != nil {
-		return RuntimeContext{}, err
+		return RuntimeContext{}, nil, nil, err
 	}
 	rt.AgentName = agentName
 
 	agentConfig, err := GetAgentConfig(cfg, agentName)
 	if err != nil {
-		return RuntimeContext{}, fmt.Errorf("load agent profile %q: %w", agentName, err)
+		return RuntimeContext{}, nil, nil, fmt.Errorf("load agent profile %q: %w", agentName, err)
 	}
 
 	modelName, modelCfg, err := GetModelConfig(rt.ModelName, agentConfig, cfg)
 	if err != nil {
-		return RuntimeContext{}, err
+		return RuntimeContext{}, nil, nil, err
 	}
 	rt.ModelName = modelName
 	rt.ThinkingEnabled = getThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
 
-	return rt, nil
+	return rt, agentConfig, modelCfg, nil
 }

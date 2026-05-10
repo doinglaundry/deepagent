@@ -19,13 +19,9 @@ func MakeLeadAgent(
 	ctx context.Context,
 	rt RuntimeContext,
 	cfg config.Config,
+	agentConfig *config.AgentConfig,
+	modelCfg *config.ModelConfig,
 ) (adk.ResumableAgent, *middlewares.Trace, error) {
-	agentConfig, err := GetAgentConfig(cfg, rt.AgentName)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load agent profile %q: %w", rt.AgentName, err)
-	}
-	modelCfg := cfg.Models[rt.ModelName]
-
 	chatModel, err := buildChatModel(ctx, *modelCfg, rt.ThinkingEnabled, rt.ReasoningEffort)
 	if err != nil {
 		return nil, nil, err

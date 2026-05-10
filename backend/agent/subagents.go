@@ -53,7 +53,7 @@ func buildNamedSubagents(
 		subSeed.AgentName = name
 		subSeed.SubagentEnabled = false
 		subSeed.MaxConcurrentSubagents = 0
-		subRT, err := NewRuntimeContext(cfg, &subSeed)
+		subRT, agentConfig, modelCfg, err := NewRuntimeContext(cfg, &subSeed)
 		if err != nil {
 			slog.Warn(
 				"failed to finalize subagent runtime; skipping",
@@ -63,7 +63,7 @@ func buildNamedSubagents(
 			continue
 		}
 
-		sub, _, err := MakeLeadAgent(withSubagentBuild(ctx), subRT, cfg)
+		sub, _, err := MakeLeadAgent(withSubagentBuild(ctx), subRT, cfg, agentConfig, modelCfg)
 		if err != nil {
 			slog.Warn(
 				"failed to build subagent; skipping",
