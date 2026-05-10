@@ -1,19 +1,5 @@
-// Package skills implements the SKILL.md scanner used to populate the
-// <available_skills> section of the lead-agent system prompt. Mirrors
-// deerflow.skills.load_skills + the SKILL.md frontmatter parser:
-//
-//   - "public" + "custom" two-category layout, with custom overriding
-//     public on name collisions (deerflow's "later wins" semantics);
-//   - permissive parser at load time (loader.go) — strict frontmatter
-//     enforcement lives in validation.go for install/edit flows;
-//   - frontmatter parsed via gopkg.in/yaml.v3 so list/map fields
-//     (allowed-tools, metadata, ...) round-trip cleanly even though
-//     the loader only consumes name/description/license.
-//
-// This package is a leaf — it deliberately does NOT import the agent
-// package. agent.loadEnabledSkillsFromConfig converts skills.Skill into
-// agent.Skill, keeping the import graph one-way (agent → skills, never
-// the reverse).
+// Package skills scans SKILL.md files for the <available_skills> prompt section.
+// Permissive at load time; strict frontmatter enforcement lives in validation.go.
 package skills
 
 import (
@@ -27,11 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Skill is the on-disk representation of a SKILL.md entry. Mirrors
-// deerflow.skills.types.Skill: only name/description/SkillFile feed
-// the prompt (progressive-loading pattern — the agent uses read_file
-// to pull SKILL.md / references / templates / scripts on demand), the
-// rest is metadata for callers that manage skill lifecycle.
+// Skill is one SKILL.md entry; only Name/Description/SkillFile feed the prompt.
 type Skill struct {
 	Name         string
 	Description  string
@@ -40,23 +22,11 @@ type Skill struct {
 	SkillDir     string // absolute path to the skill's directory
 	SkillFile    string // absolute path to SKILL.md
 	RelativePath string // path relative to the category root
-	Enabled      bool   // populated by IsEnabled callers via the extensions config; loader leaves it true so a no-config caller still sees every skill
+	Enabled      bool   // loader leaves true; IsEnabled overlays the extensions config
 }
 
-// LoadFromPaths scans each search path for SKILL.md files and returns
-// the parsed list. Each path is interpreted in one of two ways:
-//
-//   - Category root: contains a "public/" and/or "custom/" subdir.
-//     Skills under each subdir inherit that category. Custom skills
-//     override same-named public skills (deerflow semantics).
-//   - Flat root: contains "<name>/SKILL.md" directly. Every skill
-//     is bucketed as "custom" so the agent treats it as editable.
-//
-// Missing paths are silently skipped — the prompt section degrades
-// to "" when nothing is found, mirroring deerflow. When the same
-// name appears across multiple input paths in flat mode, the first
-// occurrence wins (matches the historical TestLoadFromPaths_DedupAcrossPaths
-// contract).
+// LoadFromPaths scans each path for SKILL.md files (category-aware or flat).
+// custom shadows public on collisions; first occurrence wins across flat paths.
 func LoadFromPaths(paths []string) ([]Skill, error) {
 	out := []Skill{}
 	idxByName := map[string]int{}
@@ -88,20 +58,14 @@ func LoadFromPaths(paths []string) ([]Skill, error) {
 	return out, nil
 }
 
-// categoryRoot is one (path, category) entry produced by interpreting
-// a user-supplied path. canOverride is true for the "custom" leg of a
-// category-aware root so deerflow's "custom shadows public" semantics
-// holds.
+// categoryRoot: one (path, category) entry; canOverride enables custom-shadows-public.
 type categoryRoot struct {
 	path        string
 	category    string
 	canOverride bool
 }
 
-// categoryRoots decides whether the given path is a deerflow-style
-// category-aware root or a plain flat root. The decision is purely
-// structural — no flag, no config — so a single skills entry in
-// config.yaml can point at either layout.
+// categoryRoots picks category-aware vs flat layout structurally (no flag).
 func categoryRoots(resolved string) []categoryRoot {
 	publicRoot := filepath.Join(resolved, "public")
 	customRoot := filepath.Join(resolved, "custom")
@@ -153,11 +117,7 @@ func scanCategoryRoot(root, category string) ([]Skill, error) {
 	return out, nil
 }
 
-// parseSkillFile is the permissive load-time parser. It tolerates
-// frontmatter that yaml.v3 considers malformed (falls back to the
-// body for a description) so a single bad SKILL.md doesn't blow up
-// the whole prompt section. Strict validation is the install/edit
-// path's job (validation.go).
+// parseSkillFile is permissive: a malformed frontmatter falls back to body text.
 func parseSkillFile(path, dirName, category string) (Skill, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -186,10 +146,7 @@ func parseSkillFile(path, dirName, category string) (Skill, error) {
 	return skill, nil
 }
 
-// frontmatterFields is the subset the loader cares about. Other
-// allowed keys (allowed-tools, metadata, compatibility, version,
-// author) are accepted by yaml.v3 silently — the strict whitelist
-// lives in validation.AllowedFrontmatterFields.
+// frontmatterFields: loader-relevant subset; strict whitelist is in validation.go.
 type frontmatterFields struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
@@ -198,10 +155,8 @@ type frontmatterFields struct {
 
 func applyFrontmatter(skill *Skill, raw string) {
 	var fm frontmatterFields
-	// Tolerate malformed YAML at load time — caller falls back to
-	// the body for a description. Strict validation is elsewhere.
 	if err := yaml.Unmarshal([]byte(raw), &fm); err != nil {
-		return
+		return // tolerate malformed yaml; caller falls back to body
 	}
 	if v := strings.TrimSpace(fm.Name); v != "" {
 		skill.Name = v
@@ -214,10 +169,8 @@ func applyFrontmatter(skill *Skill, raw string) {
 	}
 }
 
-// splitFrontmatter extracts the YAML block between leading and
-// trailing "---" fences. Looks for "\n---" rather than a bare "---"
-// so frontmatter content containing "---" (e.g. inside a multi-line
-// string) doesn't get truncated.
+// splitFrontmatter extracts the YAML block between "---" fences; matches "\n---"
+// so embedded "---" inside a multi-line string isn't truncated.
 func splitFrontmatter(s string) (front, rest string, ok bool) {
 	const sep = "---"
 	if !strings.HasPrefix(s, sep) {
@@ -251,12 +204,7 @@ func dirExists(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-// IsEnabled mirrors deerflow's ExtensionsConfig.is_skill_enabled:
-// an explicit map entry wins; otherwise public/custom skills default
-// to enabled. Category exists as a parameter so future extensions
-// (e.g. a "core" category that ignores the map) can plug in without
-// signature churn — current behaviour treats public and custom
-// identically.
+// IsEnabled: explicit map entry wins; otherwise public/custom default to true.
 func IsEnabled(name, category string, enabled map[string]bool) bool {
 	if v, ok := enabled[name]; ok {
 		return v

@@ -95,11 +95,7 @@ func TestDefaultAPIKeyEnv(t *testing.T) {
 	}
 }
 
-// When yaml supplies neither api_key nor api_key_env, normalizeConfig
-// falls back to the provider's canonical env via defaultAPIKeyEnv.
-// The yaml loader resolves env-var indirection at decode time, so by
-// the time normalizeConfig runs, an empty mc.APIKey means "nobody
-// supplied a key anywhere" and the provider default takes over.
+// Empty APIKey at normalize time means yaml had no key; fall back to provider env.
 func TestNormalizeConfigFallsBackToProviderEnv(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-from-env")
 

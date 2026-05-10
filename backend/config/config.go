@@ -47,18 +47,8 @@ func Load() (Config, error) {
 	return normalized, nil
 }
 
-// normalizeConfig is the SOLE place where post-load invariants are
-// established. Every downstream caller (BuildRuntime, MakeLeadAgent,
-// the prompt assembler, the middleware chain) trusts the result, so
-// this is the only layer that needs to error out on a malformed cfg.
-//
-// Post-condition contract:
-//   - cfg.DefaultModel is non-empty and cfg.Models[cfg.DefaultModel]
-//     resolves to a non-nil ModelConfig with a populated APIKey.
-//   - cfg.DefaultAgent is non-empty.
-//   - cfg.Agents is non-nil and cfg.Agents[cfg.DefaultAgent] exists
-//     (a baseline AgentConfig is auto-injected when missing).
-//   - cfg.Skills.Paths includes $RootDir/backend/skills when present.
+// normalizeConfig is the sole place post-load invariants are enforced;
+// downstream code trusts the returned Config without re-validation.
 func normalizeConfig(cfg Config) (Config, error) {
 	defaultModel := strings.TrimSpace(cfg.DefaultModel)
 	modelCfg, ok := cfg.Models[defaultModel]

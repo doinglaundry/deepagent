@@ -23,25 +23,12 @@ type DeepAgentRuntime struct {
 	pendingCheckpointID string
 	history             []*schema.Message
 	maxHistoryTurns     int
-	// trace is the lead agent's debug-trace middleware. nil-safe:
-	// only used by ClearHistory to reset the per-turn counter so
-	// /clear restarts numbering at 1.
+	// trace is the lead agent's debug-trace; nil-safe; used only by ClearHistory.
 	trace *middlewares.Trace
 }
 
-// NewDeepAgentRuntime stands up the runtime context (cfg-seeded +
-// finalized in one call via agent.NewRuntimeContext), then delegates
-// the actual agent assembly to agent.MakeLeadAgent.
-//
-// cfg is trusted to satisfy the post-Load invariants (default model +
-// agent exist, Models / Agents maps populated). MakeLeadAgent treats
-// rt as immutable input and owns its own backend / shell / memory
-// accessor; this function adds nothing to that pipeline beyond the rt
-// stand-up and the surrounding adk.Runner wiring.
-//
-// We keep the runtime's history/checkpoint/streaming responsibilities
-// here because they belong to the eino-cli REPL, not to the agent
-// itself.
+// NewDeepAgentRuntime builds the runtime context, the lead agent, and the
+// adk.Runner; history / checkpoint / streaming live here (REPL-owned).
 func NewDeepAgentRuntime(ctx context.Context, cfg config.Config) (Runtime, error) {
 	rt, err := agent.NewRuntimeContext(cfg, nil)
 	if err != nil {

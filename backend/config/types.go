@@ -31,49 +31,24 @@ type DeferredToolEntry struct {
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 }
 
-// ToolSearchConfig gates the deferred-tool prompt section + the
-// DeferredTools middleware that filters those tools out of the active set.
+// ToolSearchConfig gates the deferred-tool prompt section and middleware filter.
 type ToolSearchConfig struct {
 	Enabled  bool                `json:"enabled"            yaml:"enabled"`
 	Deferred []DeferredToolEntry `json:"deferred,omitempty" yaml:"deferred,omitempty"`
 }
 
-// ACPAgentEntry captures the prompt-side metadata for an external ACP
-// agent (codex, claude_code, ...). The Description is what the LLM sees
-// when deciding whether to invoke the agent.
+// ACPAgentEntry: prompt-side description shown to the LLM for an external agent.
 type ACPAgentEntry struct {
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 }
 
-// ACPConfig holds the registered ACP agents whose mere presence flips on
-// the ACP prompt subsection.
+// ACPConfig: registered ACP agents; presence flips on the ACP prompt subsection.
 type ACPConfig struct {
 	Agents map[string]ACPAgentEntry `json:"agents,omitempty" yaml:"agents,omitempty"`
 }
 
-// Config is the application's single source of truth. It carries
-// two layers in one struct:
-//
-//   - Runtime fields populated by Load() from os.Getwd / env vars /
-//     built-in defaults. Tagged yaml:"-" so yaml.Unmarshal skips
-//     them and they survive a YAML decode.
-//
-//   - YAML fields populated by Config.UnmarshalYAML (defined in
-//     yaml.go) directly from yaml/config.yaml. Tags mirror the
-//     file's top-level keys one-for-one, so a typo on either side
-//     is immediately visible against the canonical declarations
-//     here.
-//
-// This replaces an older "Config + FileConfig" split. The split
-// existed because YAML's `models:` is a list while runtime needs
-// map[string]*ModelConfig. UnmarshalYAML now performs that
-// translation in-place via the alias trick (see yaml.go), so
-// downstream packages see exactly one config type.
-//
-// New top-level YAML sections only need to be declared here once
-// — UnmarshalYAML's alias handles them automatically. Sections
-// without a runtime consumer carry json:"-" so they don't leak
-// into JSON dumps.
+// Config is the single source of truth: yaml-tagged fields decode from
+// yaml/config.yaml; yaml:"-" fields are filled by Load() at runtime.
 type Config struct {
 	RootDir        string                 `json:"root_dir"        yaml:"-"`
 	PersistenceDir string                 `json:"persistence_dir" yaml:"-"`
@@ -84,9 +59,7 @@ type Config struct {
 	Agents         map[string]AgentConfig `json:"agents"          yaml:"-"`
 	ACP            ACPConfig              `json:"acp,omitempty"   yaml:"-"`
 
-	// Fields below this line are sourced from yaml/config.yaml. The
-	// order matches the file's top-level sections so a side-by-side
-	// read remains easy.
+	// Fields below mirror yaml/config.yaml's top-level sections in order.
 
 	DefaultModel   string                  `json:"default_model"           yaml:"default_model"`
 	ConfigVersion  int                     `json:"-"                       yaml:"config_version"`

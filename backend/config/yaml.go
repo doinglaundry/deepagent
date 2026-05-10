@@ -10,10 +10,8 @@ import (
 
 const defaultYAMLModel = "kimi"
 
-// ModelEntry is the wire shape for a single `models:` list item.
-// It carries legacy aliases (api_base, timeout) that the runtime
-// ModelConfig doesn't speak — loadFromYAML normalises those into
-// the canonical fields.
+// ModelEntry is the wire shape; legacy aliases (api_base/timeout) get
+// normalised into the canonical ModelConfig fields.
 type ModelEntry struct {
 	Name           string  `yaml:"name"`
 	Provider       string  `yaml:"provider"`
@@ -26,16 +24,8 @@ type ModelEntry struct {
 	TimeoutSeconds int     `yaml:"timeout_seconds"`
 }
 
-// The block below mirrors every top-level section of
-// yaml/config.yaml. Types are exported and live in this package
-// so the YAML structure has a single authoritative declaration —
-// no more `schema.*` vs `yaml*` parallel definitions. Sections
-// without a runtime consumer are still parsed so that:
-//   - the struct documents the file's full shape;
-//   - typo'd or unknown top-level keys are easy to track down
-//     against the canonical names declared here.
-// Once a section gains a real consumer, expose it through Load()
-// or the loader's return value.
+// The types below mirror every top-level section of yaml/config.yaml so the
+// file shape has one authoritative declaration. Unused sections still parse.
 
 type TokenUsage struct {
 	Enabled bool `yaml:"enabled"`
@@ -45,10 +35,7 @@ type ToolGroup struct {
 	Name string `yaml:"name"`
 }
 
-// Tool captures the heterogeneous `tools:` entries. Three fields
-// are universal (name/group/use); everything else (max_results,
-// timeout, api_key, search_type, ...) varies per tool so we
-// collect it into Extra via yaml's inline map convention.
+// Tool captures heterogeneous `tools:` entries; per-tool variants land in Extra.
 type Tool struct {
 	Name  string         `yaml:"name"`
 	Group string         `yaml:"group"`
@@ -68,10 +55,7 @@ type Title struct {
 	ModelName string `yaml:"model_name"`
 }
 
-// SummarizationThreshold backs both `trigger:` (a list) and
-// `keep:` (a single record). Value is float64 because legitimate
-// configs mix integer counts (tokens/messages) with fractional
-// ratios (`type: fraction, value: 0.8`).
+// SummarizationThreshold mixes integer counts and fractional ratios; hence float64.
 type SummarizationThreshold struct {
 	Type  string  `yaml:"type"`
 	Value float64 `yaml:"value"`
@@ -115,22 +99,9 @@ type Checkpointer struct {
 	ConnectionString string `yaml:"connection_string"`
 }
 
-// UnmarshalYAML bridges the one wire/runtime mismatch that prevents
-// Config from being a plain yaml.Unmarshal target: yaml's `models:`
-// is a list of ModelEntry (with legacy aliases like api_base /
-// timeout), but downstream wants map[string]*ModelConfig keyed by
-// name. We capture the list locally, then run normalizeModels.
-//
-// All other fields ride through unchanged via the alias trick:
-// `type alias Config` shares Config's underlying struct (and thus
-// its yaml tags) but strips this method, avoiding infinite
-// recursion. The inline-embedded alias decodes every yaml-tagged
-// Config field; only `models:` is intercepted by the override
-// below.
-//
-// Runtime fields on Config are tagged yaml:"-" and therefore
-// untouched by this method — Load() fills them in after the YAML
-// decode returns.
+// UnmarshalYAML intercepts `models:` (list → map); everything else flows through
+// the `type alias Config` trick to avoid infinite recursion. Runtime fields
+// (yaml:"-") stay zero and are filled by Load().
 func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 	type alias Config
 	aux := struct {
@@ -147,11 +118,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// loadFromYAML reads and decodes config.yaml into a fresh Config.
-// The decoder dispatches through Config.UnmarshalYAML, so the
-// returned value already has Models in runtime-shape; runtime-only
-// fields (RootDir, env-driven defaults) remain zero and get filled
-// by Load.
+// loadFromYAML decodes config.yaml; Models come back in runtime shape.
 func loadFromYAML(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -166,11 +133,8 @@ func loadFromYAML(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// normalizeModels turns the YAML wire shape ([]ModelEntry, with
-// legacy aliases like api_base / timeout) into the runtime shape
-// (map[string]*ModelConfig, keyed by name). When the YAML doesn't
-// declare any models, falls back to a built-in kimi default so the
-// rest of normalizeConfig has something to validate.
+// normalizeModels converts []ModelEntry → map[name]*ModelConfig; falls back
+// to a built-in kimi default when the YAML declares none.
 func normalizeModels(entries []ModelEntry) map[string]*ModelConfig {
 	if len(entries) == 0 {
 		return map[string]*ModelConfig{
@@ -197,18 +161,7 @@ func normalizeModels(entries []ModelEntry) map[string]*ModelConfig {
 		} else if m.APIBase != "" {
 			modelCfg.BaseURL = m.APIBase
 		}
-		// API-key resolution: env-var indirection is a load-time
-		// concern, so we resolve the env name to its actual value
-		// here and store the literal in modelCfg.APIKey. Downstream code
-		// only ever sees a literal credential.
-		//
-		// Precedence:
-		//   1. api_key_env: FOO    -> os.Getenv("FOO")
-		//   2. api_key: $FOO       -> os.Getenv("FOO")
-		//   3. api_key: <literal>  -> use as-is
-		// If neither field is set, modelCfg.APIKey is left empty and
-		// normalizeConfig falls back to the provider's canonical
-		// env via defaultAPIKeyEnv.
+		// API-key precedence: api_key_env → api_key:$VAR → literal.
 		switch {
 		case m.APIKeyEnv != "":
 			modelCfg.APIKey = os.Getenv(m.APIKeyEnv)
