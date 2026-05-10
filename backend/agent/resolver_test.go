@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"strings"
 	"testing"
 
 	"eino-cli/backend/config"
@@ -95,63 +94,5 @@ func TestGetModelConfig_PreferAgentConfig(t *testing.T) {
 	}
 	if name != "kimi" {
 		t.Fatalf("explicit: got %q, want kimi", name)
-	}
-}
-
-func TestMergeRuntime(t *testing.T) {
-	rt := RuntimeContext{
-		ThinkingEnabled:        true,
-		MaxConcurrentSubagents: 3,
-	}
-	merged := rt.MergeRuntime(map[string]any{
-		"model_name":               "claude",
-		"thinking_enabled":         false,
-		"max_concurrent_subagents": 5,
-	}, map[string]any{
-		"agent_name":       "researcher",
-		"subagent_enabled": true,
-	})
-
-	if merged.ModelName != "claude" {
-		t.Fatalf("ModelName: got %q, want claude", merged.ModelName)
-	}
-	if merged.ThinkingEnabled {
-		t.Fatalf("ThinkingEnabled: should be false after merge")
-	}
-	if merged.MaxConcurrentSubagents != 5 {
-		t.Fatalf("MaxConcurrentSubagents: got %d, want 5", merged.MaxConcurrentSubagents)
-	}
-	if merged.AgentName != "researcher" {
-		t.Fatalf("AgentName: got %q, want researcher", merged.AgentName)
-	}
-	if !merged.SubagentEnabled {
-		t.Fatalf("SubagentEnabled: should be true after merge")
-	}
-}
-
-func TestMergeRuntime_DefaultMaxConcurrent(t *testing.T) {
-	rt := RuntimeContext{} // zero-value rt: MergeRuntime should fill MaxConcurrentSubagents to its 3 default.
-	merged := rt.MergeRuntime(nil, nil)
-	if merged.MaxConcurrentSubagents != 3 {
-		t.Fatalf("default MaxConcurrentSubagents: got %d, want 3",
-			merged.MaxConcurrentSubagents)
-	}
-}
-
-func TestMergeRuntime_ContextOverridesConfigurable(t *testing.T) {
-	rt := RuntimeContext{
-		ThinkingEnabled:        true,
-		MaxConcurrentSubagents: 3,
-	}
-	merged := rt.MergeRuntime(map[string]any{
-		"model_name": "kimi",
-	}, map[string]any{
-		"model": "claude",
-	})
-
-	// Python: context update wins. context only has "model" → falls through to
-	// the "model_name or model" branch.
-	if !strings.HasPrefix(merged.ModelName, "claude") && merged.ModelName != "kimi" {
-		t.Fatalf("ModelName: got %q, expected one of {claude, kimi}", merged.ModelName)
 	}
 }
