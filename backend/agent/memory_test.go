@@ -150,3 +150,66 @@ func TestFormatMemoryForInjection_CorrectionWithSourceError(t *testing.T) {
 		t.Errorf("correction with sourceError should include avoid clause, got %q", got)
 	}
 }
+
+// Single-section render checks: empty sections must not surface a header at
+// all, even when other sections are populated. Catches regressions where a
+// renderer accidentally emits "User Context:\n" with no bullets.
+
+func TestFormatMemoryForInjection_OnlyUserSection(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.User.WorkContext = memorystore.Section{Summary: "Go backend dev"}
+
+	got := formatMemoryForInjection(data, 0)
+
+	if !strings.Contains(got, "User Context:") || !strings.Contains(got, "- Work: Go backend dev") {
+		t.Errorf("user section missing or malformed: %q", got)
+	}
+	if strings.Contains(got, "History:") {
+		t.Errorf("history header must not appear when history is empty: %q", got)
+	}
+	if strings.Contains(got, "Facts:") {
+		t.Errorf("facts header must not appear when facts are empty: %q", got)
+	}
+	if strings.Contains(got, "- Personal:") || strings.Contains(got, "- Current Focus:") {
+		t.Errorf("user sub-bullets for empty fields must not appear: %q", got)
+	}
+}
+
+func TestFormatMemoryForInjection_OnlyHistorySection(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.History.RecentMonths = memorystore.Section{Summary: "shipped a CLI rewrite"}
+
+	got := formatMemoryForInjection(data, 0)
+
+	if !strings.Contains(got, "History:") || !strings.Contains(got, "- Recent: shipped a CLI rewrite") {
+		t.Errorf("history section missing or malformed: %q", got)
+	}
+	if strings.Contains(got, "User Context:") {
+		t.Errorf("user header must not appear when user is empty: %q", got)
+	}
+	if strings.Contains(got, "Facts:") {
+		t.Errorf("facts header must not appear when facts are empty: %q", got)
+	}
+	if strings.Contains(got, "- Earlier:") || strings.Contains(got, "- Background:") {
+		t.Errorf("history sub-bullets for empty fields must not appear: %q", got)
+	}
+}
+
+func TestFormatMemoryForInjection_OnlyFactsSection(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.Facts = []memorystore.Fact{
+		{ID: "f1", Content: "prefers tabs", Category: "preference", Confidence: 0.9},
+	}
+
+	got := formatMemoryForInjection(data, 0)
+
+	if !strings.Contains(got, "Facts:") || !strings.Contains(got, "- [preference | 0.90] prefers tabs") {
+		t.Errorf("facts section missing or malformed: %q", got)
+	}
+	if strings.Contains(got, "User Context:") {
+		t.Errorf("user header must not appear when user is empty: %q", got)
+	}
+	if strings.Contains(got, "History:") {
+		t.Errorf("history header must not appear when history is empty: %q", got)
+	}
+}
