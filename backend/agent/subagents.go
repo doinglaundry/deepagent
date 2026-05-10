@@ -10,13 +10,9 @@ import (
 	"eino-cli/backend/config"
 )
 
-// generalSubagentEnabled reports whether the deep agent should expose the
-// built-in general-purpose subagent. Gated on rt.SubagentEnabled + recursion guard.
-func generalSubagentEnabled(ctx context.Context, rt RuntimeContext) bool {
-	if !rt.SubagentEnabled || isSubagentBuild(ctx) {
-		return false
-	}
-	return true
+// generalSubagentEnabled reports whether to expose the built-in subagent.
+func generalSubagentEnabled(rt RuntimeContext) bool {
+	return rt.SubagentEnabled
 }
 
 // subagentBuildKey caps MakeLeadAgent recursion at depth 1: the second-level
@@ -51,8 +47,6 @@ func buildNamedSubagents(
 		}
 		subSeed := rt
 		subSeed.AgentName = name
-		subSeed.SubagentEnabled = false
-		subSeed.MaxConcurrentSubagents = 0
 		subRT, agentConfig, modelCfg, err := NewRuntimeContext(cfg, &subSeed)
 		if err != nil {
 			slog.Warn(

@@ -22,6 +22,11 @@ func MakeLeadAgent(
 	agentConfig *config.AgentConfig,
 	modelCfg *config.ModelConfig,
 ) (adk.ResumableAgent, *middlewares.Trace, error) {
+	if isSubagentBuild(ctx) {
+		rt.SubagentEnabled = false
+		rt.MaxConcurrentSubagents = 0
+	}
+
 	chatModel, err := buildChatModel(ctx, *modelCfg, rt.ThinkingEnabled, rt.ReasoningEffort)
 	if err != nil {
 		return nil, nil, err
@@ -33,7 +38,7 @@ func MakeLeadAgent(
 
 	prompt := ApplyPromptTemplate(rt, agentConfig, cfg, mem)
 
-	withGeneral := generalSubagentEnabled(ctx, rt)
+	withGeneral := generalSubagentEnabled(rt)
 
 	handlers := GetChatModelMiddlewares(ctx, cfg, mem, rt)
 

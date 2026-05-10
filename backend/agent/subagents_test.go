@@ -13,15 +13,11 @@ func TestGeneralSubagentEnabled(t *testing.T) {
 	rtOff := RuntimeContext{SubagentEnabled: false}
 	rtOn := RuntimeContext{SubagentEnabled: true}
 
-	if generalSubagentEnabled(context.Background(), rtOff) {
+	if generalSubagentEnabled(rtOff) {
 		t.Errorf("expected disabled when rt.SubagentEnabled=false")
 	}
-	if !generalSubagentEnabled(context.Background(), rtOn) {
-		t.Errorf("expected enabled when rt.SubagentEnabled=true at depth 0")
-	}
-	nested := withSubagentBuild(context.Background())
-	if generalSubagentEnabled(nested, rtOn) {
-		t.Errorf("expected disabled inside a recursive subagent build")
+	if !generalSubagentEnabled(rtOn) {
+		t.Errorf("expected enabled when rt.SubagentEnabled=true")
 	}
 }
 
