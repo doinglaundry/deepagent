@@ -11,10 +11,6 @@ import (
 	"eino-cli/backend/config"
 )
 
-// -----------------------------------------------------------------------------
-// Types — minimal mirrors of the Python objects used by the prompt assembler.
-// -----------------------------------------------------------------------------
-
 // Skill mirrors deerflow.skills.Skill (only fields used by the prompt).
 type Skill struct {
 	Name        string
@@ -39,10 +35,6 @@ func SkillSet(names ...string) *AvailableSkills {
 	return &AvailableSkills{All: false, Names: append([]string(nil), names...)}
 }
 
-// -----------------------------------------------------------------------------
-// Internal helpers
-// -----------------------------------------------------------------------------
-
 func contains(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {
@@ -60,10 +52,6 @@ func availableSkillsAsSet(a *AvailableSkills) (allSkills bool, names []string) {
 	}
 	return false, a.Names
 }
-
-// -----------------------------------------------------------------------------
-// _build_subagent_section
-// -----------------------------------------------------------------------------
 
 // buildSubagentSection renders the orchestrator block; n is the per-turn task() cap.
 func buildSubagentSection(n int) string {
@@ -202,10 +190,6 @@ func buildSubagentSection(n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// -----------------------------------------------------------------------------
-// _get_memory_context
-// -----------------------------------------------------------------------------
-
 // getMemoryContext returns the <memory> block (with trailing newline)
 // or "" when memory injection is disabled or the accessor is nil.
 func getMemoryContext(agentName string, mem *MemoryAccessor, m config.Memory) string {
@@ -221,10 +205,6 @@ func getMemoryContext(agentName string, mem *MemoryAccessor, m config.Memory) st
 	}
 	return block + "\n"
 }
-
-// -----------------------------------------------------------------------------
-// get_skills_prompt_section
-// -----------------------------------------------------------------------------
 
 // GetSkillsPromptSection mirrors get_skills_prompt_section.
 func GetSkillsPromptSection(available *AvailableSkills, cfg config.Config, skillEvolutionEnabled bool) string {
@@ -309,10 +289,6 @@ func GetSkillsPromptSection(available *AvailableSkills, cfg config.Config, skill
 		"</skill_system>"
 }
 
-// -----------------------------------------------------------------------------
-// get_deferred_tools_prompt_section
-// -----------------------------------------------------------------------------
-
 // GetDeferredToolsPromptSection mirrors get_deferred_tools_prompt_section.
 func GetDeferredToolsPromptSection(cfg config.Config, toolSearchEnabled bool) string {
 	if !toolSearchEnabled {
@@ -324,10 +300,6 @@ func GetDeferredToolsPromptSection(cfg config.Config, toolSearchEnabled bool) st
 	}
 	return "<available-deferred-tools>\n" + strings.Join(names, "\n") + "\n</available-deferred-tools>"
 }
-
-// -----------------------------------------------------------------------------
-// _build_acp_section
-// -----------------------------------------------------------------------------
 
 // buildACPSection emits the static ACP block when at least one ACP agent is configured.
 func buildACPSection(cfg config.Config) string {
@@ -547,13 +519,7 @@ const systemPromptTemplateRaw = `
 // systemPromptTemplate is the runtime-resolved template (with § replaced by `).
 var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`")
 
-// -----------------------------------------------------------------------------
-// apply_prompt_template (entry point)
-// -----------------------------------------------------------------------------
-
-// ApplyPromptTemplate assembles the system prompt: resolves dynamic
-// sections, substitutes placeholders in systemPromptTemplate, and appends
-// the current-date footer.
+// ApplyPromptTemplate assembles the system prompt and appends the current-date footer.
 func ApplyPromptTemplate(rt RuntimeContext, agentCfg *config.AgentConfig, cfg config.Config, mem *MemoryAccessor) string {
 	memoryContext := getMemoryContext(rt.AgentName, mem, cfg.Memory)
 
@@ -577,7 +543,6 @@ func ApplyPromptTemplate(rt RuntimeContext, agentCfg *config.AgentConfig, cfg co
 	deferredToolsSection := GetDeferredToolsPromptSection(cfg, cfg.ToolSearch.Enabled)
 	acpSection := buildACPSection(cfg)
 
-	// {soul} is forward-compat for an eventual SOUL.md loader; substitute "" today.
 	replacer := strings.NewReplacer(
 		"{agent_name}", rt.AgentName,
 		"{soul}", "",
@@ -623,10 +588,8 @@ func loadEnabledSkillsFromConfig(cfg config.Config) []Skill {
 	return out
 }
 
-// DeferredToolNamesFromConfig returns names of tools that should be
-// advertised in the prompt's <available-deferred-tools> section AND
-// filtered out of the active toolbelt by the DeferredTools middleware.
-// Returns nil when no deferred tools are configured.
+// DeferredToolNamesFromConfig: tools advertised in the prompt and filtered out
+// of the active toolbelt by the DeferredTools middleware.
 func DeferredToolNamesFromConfig(cfg config.Config) []string {
 	if len(cfg.ToolSearch.Deferred) == 0 {
 		return nil

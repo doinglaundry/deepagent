@@ -1,11 +1,4 @@
-// Command eino-cli is a Bubbletea-based interactive chat
-// front-end on top of the eino.Runtime. Run it with `go run .`
-// from the repo root, or build a binary via `go build -o eino`.
-//
-// The package layout intentionally keeps the binary thin: this
-// file is just a wiring root. All UI lives in backend/cli/tui,
-// the agent stack lives in backend/agent + backend/runtime/eino,
-// and configuration loading lives in backend/config.
+// Command eino-cli is the Bubbletea chat front-end over eino.Runtime.
 package main
 
 import (
