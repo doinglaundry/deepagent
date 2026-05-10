@@ -21,23 +21,6 @@ func TestGeneralSubagentEnabled(t *testing.T) {
 	}
 }
 
-func TestSubagentBuildContextGuard(t *testing.T) {
-	ctx := context.Background()
-	if isSubagentBuild(ctx) {
-		t.Fatal("bare context should not be flagged")
-	}
-	flagged := withSubagentBuild(ctx)
-	if !isSubagentBuild(flagged) {
-		t.Fatal("withSubagentBuild context should be flagged")
-	}
-	if !isSubagentBuild(withSubagentBuild(flagged)) {
-		t.Fatal("nested withSubagentBuild should remain flagged")
-	}
-	if isSubagentBuild(ctx) {
-		t.Fatal("parent ctx must not have been mutated")
-	}
-}
-
 func TestBuildNamedSubagents_EmptyInput(t *testing.T) {
 	got, err := buildNamedSubagents(context.Background(), RuntimeContext{}, dummyConfig(), nil)
 	if err != nil {

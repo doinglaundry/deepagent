@@ -10,6 +10,7 @@ type ModelConfig struct {
 	SupportsThinking     bool   `json:"supports_thinking,omitempty"`
 	ThinkingBudgetTokens int    `json:"thinking_budget_tokens,omitempty"`
 	SupportsVision       bool   `json:"supports_vision,omitempty"`
+	ReasoningEffort      string `json:"reasoning_effort,omitempty"`
 }
 
 type AgentConfig struct {

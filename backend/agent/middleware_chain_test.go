@@ -11,9 +11,7 @@ import (
 
 func makeChainTestRT() RuntimeContext {
 	return RuntimeContext{
-		ThinkingEnabled:        true,
 		MaxConcurrentSubagents: 3,
-		ModelName:              "primary",
 		AgentName:              "default",
 	}
 }

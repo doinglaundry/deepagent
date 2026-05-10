@@ -37,62 +37,25 @@ func TestValidateAgentName(t *testing.T) {
 	}
 }
 
-func TestGetModelName(t *testing.T) {
+func TestGetModelConfig(t *testing.T) {
 	cfg := config.Config{
-		DefaultModel: "kimi",
 		Models: map[string]*config.ModelConfig{
-			"kimi":   {Name: "kimi", Provider: "kimi", Model: "moonshot-v1-8k"},
-			"claude": {Name: "claude", Provider: "claude", Model: "claude-sonnet-4-6"},
+			"kimi": {Name: "kimi", Provider: "kimi", Model: "moonshot-v1-8k"},
 		},
 	}
 
-	got, err := GetModelName("claude", cfg)
-	if err != nil || got != "claude" {
-		t.Fatalf("explicit model: got %q err=%v, want %q nil", got, err, "claude")
-	}
-
-	// Unknown name → fall back to default with warning, not error.
-	got, err = GetModelName("unknown", cfg)
-	if err != nil || got != "kimi" {
-		t.Fatalf("fallback: got %q err=%v, want %q nil", got, err, "kimi")
-	}
-
-	// Empty name → default.
-	got, err = GetModelName("", cfg)
-	if err != nil || got != "kimi" {
-		t.Fatalf("empty: got %q err=%v, want %q nil", got, err, "kimi")
-	}
-
-	// Empty config → error.
-	if _, err := GetModelName("kimi", config.Config{}); err == nil {
-		t.Fatalf("expected error on empty config")
-	}
-}
-
-func TestGetModelConfig_PreferAgentConfig(t *testing.T) {
-	cfg := config.Config{
-		DefaultModel: "kimi",
-		Models: map[string]*config.ModelConfig{
-			"kimi":   {Name: "kimi", Provider: "kimi", Model: "moonshot-v1-8k"},
-			"claude": {Name: "claude", Provider: "claude", Model: "claude-sonnet-4-6"},
-		},
-	}
-	agentConfig := &config.AgentConfig{Model: "claude"}
-
-	name, modelCfg, err := GetModelConfig("", agentConfig, cfg)
+	modelCfg, err := GetModelConfig("kimi", cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if name != "claude" || modelCfg == nil || modelCfg.Name != "claude" {
-		t.Fatalf("got name=%q modelCfg=%v, want claude", name, modelCfg)
+	if modelCfg == nil || modelCfg.Name != "kimi" {
+		t.Fatalf("got %v, want model with Name=kimi", modelCfg)
 	}
 
-	// Explicit request beats agent config.
-	name, _, err = GetModelConfig("kimi", agentConfig, cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if _, err := GetModelConfig("", cfg); err == nil {
+		t.Fatalf("expected error on empty model name")
 	}
-	if name != "kimi" {
-		t.Fatalf("explicit: got %q, want kimi", name)
+	if _, err := GetModelConfig("missing", cfg); err == nil {
+		t.Fatalf("expected error on unknown model name")
 	}
 }

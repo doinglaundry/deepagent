@@ -13,9 +13,7 @@ import (
 // and the Trace + Clarification tail in the documented order.
 func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 	rt := RuntimeContext{
-		ThinkingEnabled:        true,
 		MaxConcurrentSubagents: 3,
-		ModelName:              "primary",
 		AgentName:              "default",
 		SubagentEnabled:        true,
 		IsPlanMode:             true,
@@ -71,9 +69,7 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 // All gates OFF: only the always-on backbone survives.
 func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
 	rt := RuntimeContext{
-		ThinkingEnabled:        true,
 		MaxConcurrentSubagents: 3,
-		ModelName:              "primary",
 	}
 	cfg := config.Config{
 		Models: map[string]*config.ModelConfig{

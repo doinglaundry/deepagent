@@ -2,14 +2,13 @@ package agent
 
 import (
 	"eino-cli/backend/config"
-	"fmt"
+	"errors"
 )
 
 // RuntimeContext is the per-request runtime config threaded through MakeLeadAgent.
 type RuntimeContext struct {
-	ThinkingEnabled        bool
-	ReasoningEffort        string
-	ModelName              string
+	AgentConfig            *config.AgentConfig
+	ModelCfg               *config.ModelConfig
 	AgentName              string
 	IsPlanMode             bool
 	SubagentEnabled        bool
@@ -21,36 +20,47 @@ type RuntimeContext struct {
 func NewRuntimeContext(
 	cfg config.Config,
 	seed *RuntimeContext,
-) (RuntimeContext, *config.AgentConfig, *config.ModelConfig, error) {
-	var rt RuntimeContext
-	if seed != nil {
-		rt = *seed
-	} else {
-		rt = RuntimeContext{
-			ThinkingEnabled:        true,
-			MaxConcurrentSubagents: 3,
-			AgentName:              cfg.DefaultAgent,
-			ModelName:              cfg.DefaultModel,
-		}
-	}
+) (RuntimeContext, error) {
 
-	agentName, err := ValidateAgentName(rt.AgentName)
-	if err != nil {
-		return RuntimeContext{}, nil, nil, err
+	agentName := cfg.DefaultAgent
+	if seed != nil && IsValidAgentName(seed.AgentName) {
+		agentName = seed.AgentName
 	}
-	rt.AgentName = agentName
 
 	agentConfig, err := GetAgentConfig(cfg, agentName)
 	if err != nil {
-		return RuntimeContext{}, nil, nil, fmt.Errorf("load agent profile %q: %w", agentName, err)
+		return RuntimeContext{}, errors.New("load agent fail")
+	}
+	if agentConfig == nil {
+		return RuntimeContext{}, errors.New("load agent fail")
 	}
 
-	modelName, modelCfg, err := GetModelConfig(rt.ModelName, agentConfig, cfg)
+	modelCfg, err := GetModelConfig(agentConfig.Model, cfg)
 	if err != nil {
-		return RuntimeContext{}, nil, nil, err
+		return RuntimeContext{}, err
 	}
-	rt.ModelName = modelName
-	rt.ThinkingEnabled = getThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
 
-	return rt, agentConfig, modelCfg, nil
+	maxConcurrentSubagents := 3
+	if seed != nil && seed.MaxConcurrentSubagents > 0 {
+		maxConcurrentSubagents = seed.MaxConcurrentSubagents
+	}
+
+	isPlanMode := false //todo cli 传进来
+	if seed != nil && seed.IsPlanMode {
+		isPlanMode = true
+	}
+
+	SubagentEnabled := false
+	if seed != nil && seed.SubagentEnabled {
+		SubagentEnabled = true
+	}
+
+	return RuntimeContext{
+		AgentConfig:            agentConfig,
+		ModelCfg:               modelCfg,
+		AgentName:              agentName,
+		IsPlanMode:             isPlanMode,
+		SubagentEnabled:        SubagentEnabled,
+		MaxConcurrentSubagents: maxConcurrentSubagents,
+	}, nil
 }

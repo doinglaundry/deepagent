@@ -1,8 +1,8 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 
@@ -11,6 +11,10 @@ import (
 
 // agentNamePattern is the validation rule for agent_name: letters, digits, dash, underscore.
 var agentNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func IsValidAgentName(agentName string) bool {
+	return agentNamePattern.MatchString(strings.TrimSpace(agentName))
+}
 
 // ValidateAgentName returns the trimmed name (or "" for empty/default sentinel).
 // Returns error when the name contains illegal characters.
@@ -25,32 +29,15 @@ func ValidateAgentName(name string) (string, error) {
 	return trimmed, nil
 }
 
-// GetModelName returns requested if present in cfg.Models, else cfg.DefaultModel.
-// A non-empty-but-missing requested falls through with a Warn.
-func GetModelName(requested string, cfg config.Config) (string, error) {
-	defaultName := strings.TrimSpace(cfg.DefaultModel)
-	if defaultName == "" || cfg.Models[defaultName] == nil {
-		return "", fmt.Errorf("no chat models are configured: please configure at least one model in config.yaml")
+func GetModelConfig(modelName string, cfg config.Config) (*config.ModelConfig, error) {
+	if strings.TrimSpace(modelName) == "" {
+		return nil, errors.New("no model name provided")
 	}
 
-	requested = strings.TrimSpace(requested)
-	if requested != "" {
-		if cfg.Models[requested] != nil {
-			return requested, nil
-		}
-		slog.Warn("requested model not found, falling back to default",
-			"requested", requested, "default", defaultName)
+	modelConfig, exists := cfg.Models[modelName]
+	if !exists {
+		return nil, errors.New("no model config found")
 	}
-	return defaultName, nil
-}
 
-func GetModelConfig(modelName string, agentConfig *config.AgentConfig, cfg config.Config) (string, *config.ModelConfig, error) {
-	if modelName == "" && agentConfig != nil {
-		modelName = agentConfig.Model
-	}
-	name, err := GetModelName(modelName, cfg)
-	if err != nil {
-		return "", nil, err
-	}
-	return name, cfg.Models[name], nil
+	return modelConfig, nil
 }

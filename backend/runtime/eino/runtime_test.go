@@ -19,7 +19,7 @@ func TestNewDeepAgentRuntimeUnsupportedProvider(t *testing.T) {
 			"primary": {Name: "primary", Provider: "unknown", Model: "foo", APIKey: "test-key", TimeoutSeconds: 30},
 		},
 		Agents: map[string]config.AgentConfig{
-			"default": {Name: "deep-agent", Instruction: "You are a helpful assistant.", MaxIteration: 6},
+			"default": {Name: "deep-agent", Model: "primary", Instruction: "You are a helpful assistant.", MaxIteration: 6},
 		},
 	})
 	if err == nil {
@@ -44,7 +44,7 @@ func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
 			},
 		},
 		Agents: map[string]config.AgentConfig{
-			"default": {Name: "deep-agent", Instruction: "You are a helpful assistant.", MaxIteration: 6},
+			"default": {Name: "deep-agent", Model: "primary", Instruction: "You are a helpful assistant.", MaxIteration: 6},
 		},
 	}
 	runtime, err := NewDeepAgentRuntime(context.Background(), cfg)

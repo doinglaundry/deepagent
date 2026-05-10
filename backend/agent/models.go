@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -14,20 +13,6 @@ import (
 
 	"eino-cli/backend/config"
 )
-
-// getThinkingEnabled honours requested but downgrades to false (with a warn) when
-// the resolved model does not declare SupportsThinking.
-func getThinkingEnabled(requested bool, modelCfg *config.ModelConfig, modelName string) bool {
-	if !requested {
-		return false
-	}
-	if modelCfg != nil && modelCfg.SupportsThinking {
-		return true
-	}
-	slog.Warn("thinking enabled but model does not support it; downgrading",
-		"model", modelName)
-	return false
-}
 
 // buildSummaryChatModel returns the chat model used by the summarization
 // middleware (no thinking, no reasoning_effort). nil on any failure — a
@@ -41,7 +26,7 @@ func buildSummaryChatModel(
 		summaryModelName = cfg.DefaultModel
 	}
 	summaryModelCfg := cfg.Models[summaryModelName]
-	summaryModel, err := buildChatModel(ctx, *summaryModelCfg, false, "")
+	summaryModel, err := buildChatModel(ctx, summaryModelCfg)
 	if err != nil {
 		return nil
 	}
@@ -52,35 +37,33 @@ func buildSummaryChatModel(
 // only honoured by Claude; reasoningEffort is only honoured by OpenAI.
 func buildChatModel(
 	ctx context.Context,
-	cfg config.ModelConfig,
-	thinkingEnabled bool,
-	reasoningEffort string,
+	modelConfig *config.ModelConfig,
 ) (model.BaseChatModel, error) {
-	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
-	apiKey := strings.TrimSpace(cfg.APIKey)
-	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+	provider := strings.ToLower(strings.TrimSpace(modelConfig.Provider))
+	apiKey := strings.TrimSpace(modelConfig.APIKey)
+	timeout := time.Duration(modelConfig.TimeoutSeconds) * time.Second
 
 	switch provider {
 	case "claude", "anthropic":
-		return buildClaudeChatModel(ctx, cfg, apiKey, timeout, thinkingEnabled)
+		return buildClaudeChatModel(ctx, modelConfig, apiKey, timeout, modelConfig.SupportsThinking)
 	case "openai":
 		return openaimodel.NewChatModel(ctx, &openaimodel.ChatModelConfig{
 			APIKey:          apiKey,
-			Model:           strings.TrimSpace(cfg.Model),
-			BaseURL:         strings.TrimSpace(cfg.BaseURL),
+			Model:           strings.TrimSpace(modelConfig.Model),
+			BaseURL:         strings.TrimSpace(modelConfig.BaseURL),
 			Timeout:         timeout,
-			ReasoningEffort: parseReasoningEffort(reasoningEffort),
+			ReasoningEffort: parseReasoningEffort(modelConfig.ReasoningEffort),
 		})
 	case "kimi", "moonshot":
-		return buildKimiChatModel(ctx, cfg, apiKey, timeout)
+		return buildKimiChatModel(ctx, modelConfig, apiKey, timeout)
 	default:
-		return nil, fmt.Errorf("unsupported model provider %q", cfg.Provider)
+		return nil, fmt.Errorf("unsupported model provider %q", modelConfig.Provider)
 	}
 }
 
 func buildClaudeChatModel(
 	ctx context.Context,
-	cfg config.ModelConfig,
+	cfg *config.ModelConfig,
 	apiKey string,
 	timeout time.Duration,
 	thinkingEnabled bool,
@@ -115,7 +98,7 @@ func buildClaudeChatModel(
 
 func buildKimiChatModel(
 	ctx context.Context,
-	cfg config.ModelConfig,
+	cfg *config.ModelConfig,
 	apiKey string,
 	timeout time.Duration,
 ) (model.BaseChatModel, error) {

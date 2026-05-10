@@ -21,8 +21,6 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("get working directory: %w", err)
 	}
 
-	persistenceDir := filepath.Join(root, ".eino-cli")
-
 	configPath := filepath.Join(root, "yaml", "config.yaml")
 	cfg, err := loadFromYAML(configPath)
 	if err != nil {
@@ -30,6 +28,7 @@ func Load() (Config, error) {
 	}
 
 	cfg.RootDir = root
+	persistenceDir := filepath.Join(root, ".eino-cli")
 	cfg.PersistenceDir = persistenceDir
 	cfg.SessionsDir = filepath.Join(persistenceDir, "sessions")
 	cfg.MemoryDir = filepath.Join(persistenceDir, "memory")

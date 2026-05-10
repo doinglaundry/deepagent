@@ -19,15 +19,8 @@ func MakeLeadAgent(
 	ctx context.Context,
 	rt RuntimeContext,
 	cfg config.Config,
-	agentConfig *config.AgentConfig,
-	modelCfg *config.ModelConfig,
 ) (adk.ResumableAgent, *middlewares.Trace, error) {
-	if isSubagentBuild(ctx) {
-		rt.SubagentEnabled = false
-		rt.MaxConcurrentSubagents = 0
-	}
-
-	chatModel, err := buildChatModel(ctx, *modelCfg, rt.ThinkingEnabled, rt.ReasoningEffort)
+	chatModel, err := buildChatModel(ctx, rt.ModelCfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -36,7 +29,7 @@ func MakeLeadAgent(
 	shell := newLocalShell("")
 	mem := NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
 
-	prompt := ApplyPromptTemplate(rt, agentConfig, cfg, mem)
+	prompt := ApplyPromptTemplate(rt, rt.AgentConfig, cfg, mem)
 
 	withGeneral := generalSubagentEnabled(rt)
 
@@ -47,14 +40,14 @@ func MakeLeadAgent(
 		Description:            "Deep Agent",
 		ChatModel:              chatModel,
 		Instruction:            prompt,
-		MaxIteration:           defaultIterationLimit(agentConfig),
+		MaxIteration:           defaultIterationLimit(rt.AgentConfig),
 		WithoutGeneralSubAgent: !withGeneral,
 		WithoutWriteTodos:      false,
 		Middlewares:            GetAgentMiddleWares(rt),
 		Handlers:               handlers,
 	}
 
-	applyToolGroups(deepCfg, agentConfig, backend, shell)
+	applyToolGroups(deepCfg, rt.AgentConfig, backend, shell)
 
 	agentImpl, err := deep.New(ctx, deepCfg)
 	if err != nil {
