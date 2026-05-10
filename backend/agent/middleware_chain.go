@@ -4,21 +4,57 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
+
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
-
-	"github.com/cloudwego/eino/adk"
+	memorystore "eino-cli/backend/memory/store"
 )
 
-func GetChatModelMiddlewares(ctx context.Context, cfg *config.Config, mem *MemoryAccessor, rt RuntimeContext) (middlewareList []adk.ChatModelAgentMiddleware) {
+// GetChatModelMiddlewares assembles the chat-model middleware chain. Memory
+// store and updater are constructed here (and only here) so MakeLeadAgent
+// stays memory-agnostic; the same updater instance is shared between the
+// memory hook and the summarization flush hook so debounce state is honoured
+// across both code paths.
+func GetChatModelMiddlewares(
+	ctx context.Context,
+	cfg *config.Config,
+	rt RuntimeContext,
+	chatModel model.BaseChatModel,
+) (middlewareList []adk.ChatModelAgentMiddleware) {
 	middlewareList = []adk.ChatModelAgentMiddleware{
 		middlewares.NewAgentState(),
 		middlewares.NewTitle(),
 		middlewares.NewToolErrorHandling(),
 		middlewares.NewLoopDetection(),
 	}
+
+	// store/updater must be visible to both the memory branch and the
+	// summarization branch below; declaring them here keeps the wiring
+	// explicit. updater stays nil when memory is disabled, which the
+	// flush hook short-circuits on.
+	var (
+		store   *memorystore.Store
+		updater *MemoryUpdater
+	)
 	if cfg.Memory.Enabled {
-		middlewareList = append(middlewareList, middlewares.NewMemory(mem.Hooks()))
+		store = memorystore.NewStoreFromConfig(cfg)
+		updater = NewMemoryUpdater(store)
+
+		hooks := middlewares.MemoryHooks{
+			Inject: func(_ context.Context, msgs []*schema.Message) []*schema.Message {
+				return InjectMemory(store, cfg.Memory, rt.AgentName, msgs)
+			},
+			Extract: func(ctx context.Context, msgs []*schema.Message) {
+				err := updater.Run(ctx, chatModel, cfg.Memory, rt.AgentName, msgs, false)
+				if err != nil {
+					slog.Warn("memory update failed", "agent", rt.AgentName, "err", err)
+				}
+			},
+		}
+		middlewareList = append(middlewareList, middlewares.NewMemory(hooks))
 	}
 
 	if cfg.TokenUsage.Enabled {
@@ -41,6 +77,19 @@ func GetChatModelMiddlewares(ctx context.Context, cfg *config.Config, mem *Memor
 
 	if cfg.Summarization.Enabled {
 		summaryModel := buildSummaryChatModel(ctx, cfg)
+
+		// flushHook reuses the same updater instance as the memory hook so
+		// lastRunAt is shared; updater==nil (memory disabled) means there's
+		// nothing to flush, which the closure handles up front.
+		flushHook := func(ctx context.Context, before, _ adk.ChatModelAgentState) error {
+			if updater == nil {
+				return nil
+			}
+			flushCtx, cancel := context.WithTimeout(ctx, memoryFlushTimeout)
+			defer cancel()
+			return updater.Run(flushCtx, chatModel, cfg.Memory, rt.AgentName, before.Messages, true)
+		}
+
 		summaryMW, err := middlewares.NewSummarization(
 			ctx,
 			cfg.Summarization.Enabled,
@@ -48,7 +97,7 @@ func GetChatModelMiddlewares(ctx context.Context, cfg *config.Config, mem *Memor
 			0,
 			cfg.Summarization.SummaryPrompt,
 			summaryModel,
-			mem.FlushBeforeSummarization,
+			flushHook,
 		)
 		if err != nil {
 			slog.Warn("summarization disabled: build failed", "err", err)

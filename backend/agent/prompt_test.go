@@ -68,7 +68,7 @@ func TestGetSystemPrompt_SkillsAndDeferredSectionsRendered(t *testing.T) {
 		},
 	}
 
-	out := GetSystemPrompt(RuntimeContext{AgentName: "default"}, cfg, nil)
+	out := GetSystemPrompt(RuntimeContext{AgentName: "default"}, cfg)
 
 	if !strings.Contains(out, "<available_skills>") {
 		t.Fatalf("available_skills section missing from prompt:\n%s", out)
@@ -81,12 +81,13 @@ func TestGetSystemPrompt_SkillsAndDeferredSectionsRendered(t *testing.T) {
 	}
 }
 
-func TestGetSystemPrompt_NilMemSkipsMemorySection(t *testing.T) {
+func TestGetSystemPrompt_EmptyMemorySkipsBlock(t *testing.T) {
 	cfg := &config.Config{
-		Memory: config.Memory{Enabled: true, InjectionEnabled: true, MaxInjectionTokens: 1024},
+		RootDir: t.TempDir(),
+		Memory:  config.Memory{Enabled: true, InjectionEnabled: true, MaxInjectionTokens: 1024},
 	}
-	out := GetSystemPrompt(RuntimeContext{AgentName: "default"}, cfg, nil)
+	out := GetSystemPrompt(RuntimeContext{AgentName: "default"}, cfg)
 	if strings.Contains(out, "<memory>") {
-		t.Fatalf("nil Mem should skip <memory> section, got:\n%s", out)
+		t.Fatalf("empty store should skip <memory> section, got:\n%s", out)
 	}
 }

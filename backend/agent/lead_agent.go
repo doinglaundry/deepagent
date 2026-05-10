@@ -3,14 +3,12 @@ package agent
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
-	memorystore "eino-cli/backend/memory/store"
 )
 
 // MakeLeadAgent assembles the deep agent for rt.AgentName and returns the
@@ -28,11 +26,9 @@ func MakeLeadAgent(
 
 	backend := newLocalBackend("")
 	shell := newLocalShell("")
-	mem := NewMemoryAccessor(memorystore.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "memory")))
 
-	prompt := GetSystemPrompt(rt, cfg, mem)
-
-	handlers := GetChatModelMiddlewares(ctx, cfg, mem, rt)
+	prompt := GetSystemPrompt(rt, cfg)
+	handlers := GetChatModelMiddlewares(ctx, cfg, rt, chatModel)
 
 	deepCfg := &deep.Config{
 		Name:                   rt.AgentName,

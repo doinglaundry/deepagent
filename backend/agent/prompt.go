@@ -9,6 +9,7 @@ import (
 
 	"eino-cli/backend/agent/skills"
 	"eino-cli/backend/config"
+	memorystore "eino-cli/backend/memory/store"
 )
 
 // Skill mirrors deerflow.skills.Skill (only fields used by the prompt).
@@ -190,16 +191,13 @@ func buildSubagentSection(n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// getMemoryPrompt returns the <memory> block (with trailing newline)
-// or "" when memory injection is disabled or the accessor is nil.
-func getMemoryPrompt(agentName string, mem *MemoryAccessor, m config.Memory) string {
-	if mem == nil {
-		return ""
-	}
+// getMemoryPrompt returns the <memory> block (with trailing newline) or ""
+// when memory is disabled / injection-disabled / no data on disk for agentName.
+func getMemoryPrompt(agentName string, store *memorystore.Store, m config.Memory) string {
 	if !m.Enabled || !m.InjectionEnabled {
 		return ""
 	}
-	block := mem.GetPromptBlock(agentName, m.MaxInjectionTokens)
+	block := GetMemoryPromptBlock(store, agentName, m.MaxInjectionTokens)
 	if block == "" {
 		return ""
 	}
@@ -519,9 +517,12 @@ const systemPromptTemplateRaw = `
 // systemPromptTemplate is the runtime-resolved template (with § replaced by `).
 var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`")
 
-// GetSystemPrompt assembles the system prompt and appends the current-date footer.
-func GetSystemPrompt(rt RuntimeContext, cfg *config.Config, mem *MemoryAccessor) string {
-	memoryContext := getMemoryPrompt(rt.AgentName, mem, cfg.Memory)
+// GetSystemPrompt assembles the system prompt and appends the current-date
+// footer. The memory store is derived from cfg internally so callers don't
+// thread it through; Store is stateless, so per-call construction is cheap.
+func GetSystemPrompt(rt RuntimeContext, cfg *config.Config) string {
+	store := memorystore.NewStoreFromConfig(cfg)
+	memoryContext := getMemoryPrompt(rt.AgentName, store, cfg.Memory)
 
 	n := rt.MaxConcurrentSubagents
 	subagentSection := ""

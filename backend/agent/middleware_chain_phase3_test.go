@@ -32,7 +32,8 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 		},
 	}
 
-	chain := GetChatModelMiddlewares(context.Background(), cfg, NewMemoryAccessor(nil), rt)
+	cfg.RootDir = t.TempDir()
+	chain := GetChatModelMiddlewares(context.Background(), cfg, rt, nil)
 
 	wantOrder := []reflect.Type{
 		reflect.TypeOf(&middlewares.AgentState{}),
@@ -76,7 +77,7 @@ func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
 		},
 	}
 
-	chain := GetChatModelMiddlewares(context.Background(), cfg, NewMemoryAccessor(nil), rt)
+	chain := GetChatModelMiddlewares(context.Background(), cfg, rt, nil)
 	for _, mw := range chain {
 		switch mw.(type) {
 		case *middlewares.Memory,

@@ -1,70 +1,86 @@
 package agent
 
 import (
-	"context"
 	"strings"
 	"testing"
 
-	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
+	"eino-cli/backend/config"
 	memorystore "eino-cli/backend/memory/store"
 )
 
-// newSeededStore creates a memory store under t.TempDir() seeded with items.
-func newSeededStore(t *testing.T, items ...memorystore.Memory) *memorystore.Store {
+func seedStore(t *testing.T, agentName string, data memorystore.MemoryData) *memorystore.Store {
 	t.Helper()
-	store := memorystore.NewStore(t.TempDir())
-	for _, m := range items {
-		if err := store.Save(m); err != nil {
-			t.Fatalf("seed store: %v", err)
-		}
+	s := memorystore.NewStore(t.TempDir())
+	err := s.Save(agentName, data)
+	if err != nil {
+		t.Fatalf("seed store: %v", err)
 	}
-	return store
+	return s
 }
 
-func TestMemoryAccessor_PromptHooksRoundTrip(t *testing.T) {
-	store := newSeededStore(t,
-		memorystore.Memory{Key: "m1", Content: "user prefers tabs over spaces", TurnIndex: 1},
-		memorystore.Memory{Key: "m2", Content: "user lives in UTC+8", TurnIndex: 2},
-	)
-	acc := NewMemoryAccessor(store)
-	data := memoryDataKey{Memories: acc.loadFiltered()}
-	out := acc.FormatMemoryForInjection(data, 0)
-
-	if !strings.Contains(out, "user prefers tabs over spaces") {
-		t.Errorf("expected first memory in output, got %q", out)
-	}
-	if !strings.Contains(out, "user lives in UTC+8") {
-		t.Errorf("expected second memory in output, got %q", out)
+func TestGetMemoryPromptBlock_NilStore(t *testing.T) {
+	if got := GetMemoryPromptBlock(nil, "alice", 0); got != "" {
+		t.Errorf("nil store should yield empty block, got %q", got)
 	}
 }
 
-func TestMemoryAccessor_FilterDropsShortAndTaskPrefixed(t *testing.T) {
-	store := newSeededStore(t,
-		memorystore.Memory{Key: "ok", Content: "real preference about UTF-8", TurnIndex: 1},
-		memorystore.Memory{Key: "tiny", Content: "hi", TurnIndex: 2},
-		memorystore.Memory{Key: "task", Content: memorystore.TaskMemoryPrefix + "do x", TurnIndex: 3},
-	)
-	acc := NewMemoryAccessor(store)
-	data := memoryDataKey{Memories: acc.loadFiltered()}
-	if len(data.Memories) != 1 {
-		t.Fatalf("expected 1 memory after filter, got %d: %+v", len(data.Memories), data.Memories)
-	}
-	if data.Memories[0].Key != "ok" {
-		t.Errorf("expected the long entry to survive, got %s", data.Memories[0].Key)
+func TestGetMemoryPromptBlock_EmptyData(t *testing.T) {
+	s := memorystore.NewStore(t.TempDir())
+	if got := GetMemoryPromptBlock(s, "alice", 0); got != "" {
+		t.Errorf("empty store should yield empty block, got %q", got)
 	}
 }
 
-func TestMemoryAccessor_InjectPrependsSystemMessage(t *testing.T) {
-	store := newSeededStore(t,
-		memorystore.Memory{Key: "m1", Content: "user prefers concise answers", TurnIndex: 1},
-	)
-	acc := NewMemoryAccessor(store)
-	hooks := acc.Hooks()
+func TestGetMemoryPromptBlock_RendersUserAndFacts(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.User.WorkContext = memorystore.Section{Summary: "Go backend dev"}
+	data.Facts = []memorystore.Fact{
+		{ID: "fact_1", Content: "prefers tabs", Category: "preference", Confidence: 0.95},
+	}
+	s := seedStore(t, "alice", data)
+
+	got := GetMemoryPromptBlock(s, "alice", 0)
+	if !strings.HasPrefix(got, "<memory>\n") || !strings.HasSuffix(got, "\n</memory>") {
+		t.Fatalf("missing memory tags: %q", got)
+	}
+	if !strings.Contains(got, "User Context:") || !strings.Contains(got, "- Work: Go backend dev") {
+		t.Errorf("user section missing in block: %q", got)
+	}
+	if !strings.Contains(got, "Facts:") || !strings.Contains(got, "prefers tabs") {
+		t.Errorf("facts section missing in block: %q", got)
+	}
+}
+
+func TestInjectMemory_DisabledByConfig(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.User.WorkContext = memorystore.Section{Summary: "stuff"}
+	s := seedStore(t, "alice", data)
 
 	in := []*schema.Message{schema.UserMessage("hi")}
-	out := hooks.Inject(context.Background(), in)
+
+	cases := []config.Memory{
+		{Enabled: false, InjectionEnabled: true},
+		{Enabled: true, InjectionEnabled: false},
+	}
+	for _, cfg := range cases {
+		out := InjectMemory(s, cfg, "alice", in)
+		if len(out) != 1 || out[0].Role != schema.User {
+			t.Errorf("InjectMemory should pass through when disabled (%+v), got %d msgs", cfg, len(out))
+		}
+	}
+}
+
+func TestInjectMemory_PrependsSystemMessage(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.User.WorkContext = memorystore.Section{Summary: "Go backend dev"}
+	s := seedStore(t, "alice", data)
+
+	cfg := config.Memory{Enabled: true, InjectionEnabled: true, MaxInjectionTokens: 0}
+	in := []*schema.Message{schema.UserMessage("hi")}
+	out := InjectMemory(s, cfg, "alice", in)
+
 	if len(out) != 2 {
 		t.Fatalf("expected 2 messages after inject, got %d", len(out))
 	}
@@ -74,73 +90,63 @@ func TestMemoryAccessor_InjectPrependsSystemMessage(t *testing.T) {
 	if !strings.Contains(out[0].Content, "<memory>") || !strings.Contains(out[0].Content, "</memory>") {
 		t.Errorf("expected memory tags in injected message, got %q", out[0].Content)
 	}
-	if !strings.Contains(out[0].Content, "user prefers concise answers") {
+	if !strings.Contains(out[0].Content, "Go backend dev") {
 		t.Errorf("expected memory content in injected message, got %q", out[0].Content)
 	}
 }
 
-func TestMemoryAccessor_InjectIsNoOpWhenEmpty(t *testing.T) {
-	acc := NewMemoryAccessor(newSeededStore(t))
+func TestInjectMemory_NoOpWhenEmpty(t *testing.T) {
+	s := memorystore.NewStore(t.TempDir())
+	cfg := config.Memory{Enabled: true, InjectionEnabled: true}
 	in := []*schema.Message{schema.UserMessage("hi")}
-	out := acc.Hooks().Inject(context.Background(), in)
+	out := InjectMemory(s, cfg, "alice", in)
 	if len(out) != 1 {
-		t.Errorf("expected no inject for empty store, got %d msgs", len(out))
+		t.Errorf("expected pass-through for empty store, got %d", len(out))
 	}
 }
 
-func TestMemoryAccessor_NilStoreIsNoOp(t *testing.T) {
-	acc := NewMemoryAccessor(nil)
-	data := memoryDataKey{Memories: acc.loadFiltered()}
-	if acc.FormatMemoryForInjection(data, 0) != "" {
-		t.Errorf("expected empty format for nil store")
+func TestFormatMemoryForInjection_TruncatesUnderBudget(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.User.WorkContext = memorystore.Section{Summary: strings.Repeat("aaaa ", 50)}
+	data.Facts = []memorystore.Fact{
+		{ID: "f1", Content: strings.Repeat("xxxx ", 50), Category: "preference", Confidence: 0.9},
+		{ID: "f2", Content: strings.Repeat("yyyy ", 50), Category: "preference", Confidence: 0.8},
+		{ID: "f3", Content: strings.Repeat("zzzz ", 50), Category: "preference", Confidence: 0.7},
 	}
-	in := []*schema.Message{schema.UserMessage("hi")}
-	if got := acc.Hooks().Inject(context.Background(), in); len(got) != 1 {
-		t.Errorf("expected pass-through for nil store, got %d msgs", len(got))
-	}
-}
-
-// TestMemoryAccessor_FlushBeforeSummarization smoke-tests the memory_flush_hook
-// contract: nil store and real-store-empty-state both must return nil.
-func TestMemoryAccessor_FlushBeforeSummarization(t *testing.T) {
-	t.Run("nil store", func(t *testing.T) {
-		acc := NewMemoryAccessor(nil)
-		err := acc.FlushBeforeSummarization(context.Background(),
-			adk.ChatModelAgentState{}, adk.ChatModelAgentState{})
-		if err != nil {
-			t.Errorf("nil store should be a no-op, got err=%v", err)
-		}
-	})
-	t.Run("real store, empty state", func(t *testing.T) {
-		acc := NewMemoryAccessor(newSeededStore(t))
-		before := adk.ChatModelAgentState{
-			Messages: []*schema.Message{
-				schema.UserMessage("foo"),
-				schema.AssistantMessage("bar", nil),
-			},
-		}
-		after := adk.ChatModelAgentState{
-			Messages: []*schema.Message{
-				schema.SystemMessage("(summary)"),
-			},
-		}
-		if err := acc.FlushBeforeSummarization(context.Background(), before, after); err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-}
-
-func TestMemoryAccessor_FormatRespectsTokenBudget(t *testing.T) {
-	store := newSeededStore(t,
-		memorystore.Memory{Key: "a", Content: strings.Repeat("xxxxxxxxxx", 5), TurnIndex: 1},
-		memorystore.Memory{Key: "b", Content: strings.Repeat("yyyyyyyyyy", 5), TurnIndex: 2},
-		memorystore.Memory{Key: "c", Content: strings.Repeat("zzzzzzzzzz", 5), TurnIndex: 3},
-	)
-	acc := NewMemoryAccessor(store)
-	data := memoryDataKey{Memories: acc.loadFiltered()}
-	short := acc.FormatMemoryForInjection(data, 20)
-	long := acc.FormatMemoryForInjection(data, 0)
+	short := formatMemoryForInjection(data, 30)
+	long := formatMemoryForInjection(data, 0)
 	if len(short) >= len(long) {
 		t.Errorf("expected token budget to truncate output: short=%d long=%d", len(short), len(long))
+	}
+}
+
+func TestFormatMemoryForInjection_FactsSortedByConfidence(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.Facts = []memorystore.Fact{
+		{ID: "f1", Content: "low", Category: "preference", Confidence: 0.3},
+		{ID: "f2", Content: "high", Category: "preference", Confidence: 0.9},
+		{ID: "f3", Content: "mid", Category: "preference", Confidence: 0.6},
+	}
+	got := formatMemoryForInjection(data, 0)
+
+	highIdx := strings.Index(got, "high")
+	midIdx := strings.Index(got, "mid")
+	lowIdx := strings.Index(got, "low")
+	if highIdx < 0 || midIdx < 0 || lowIdx < 0 {
+		t.Fatalf("missing facts in output: %q", got)
+	}
+	if !(highIdx < midIdx && midIdx < lowIdx) {
+		t.Errorf("facts not in confidence order: high=%d mid=%d low=%d", highIdx, midIdx, lowIdx)
+	}
+}
+
+func TestFormatMemoryForInjection_CorrectionWithSourceError(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.Facts = []memorystore.Fact{
+		{ID: "f1", Content: "use spaces", Category: "correction", Confidence: 0.95, SourceError: "tabs caused failure"},
+	}
+	got := formatMemoryForInjection(data, 0)
+	if !strings.Contains(got, "(avoid: tabs caused failure)") {
+		t.Errorf("correction with sourceError should include avoid clause, got %q", got)
 	}
 }

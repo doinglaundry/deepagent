@@ -28,7 +28,7 @@ func makeChainTestCfg() *config.Config {
 // Default chain ends with Trace then Clarification (the rewriter must run
 // after Trace has captured the raw assistant message).
 func TestGetChatModelMiddlewares_DefaultOrder(t *testing.T) {
-	chain := GetChatModelMiddlewares(context.Background(), makeChainTestCfg(), NewMemoryAccessor(nil), makeChainTestRT())
+	chain := GetChatModelMiddlewares(context.Background(), makeChainTestCfg(), makeChainTestRT(), nil)
 
 	wantOrder := []reflect.Type{
 		reflect.TypeOf(&middlewares.AgentState{}),
@@ -58,7 +58,7 @@ func TestGetChatModelMiddlewares_DefaultOrder(t *testing.T) {
 func TestGetChatModelMiddlewares_SummarizationDisabled(t *testing.T) {
 	cfg := makeChainTestCfg()
 	cfg.Summarization = config.Summarization{Enabled: false}
-	chain := GetChatModelMiddlewares(context.Background(), cfg, NewMemoryAccessor(nil), makeChainTestRT())
+	chain := GetChatModelMiddlewares(context.Background(), cfg, makeChainTestRT(), nil)
 
 	for _, mw := range chain {
 		if reflect.TypeOf(mw).String() == "*summarization.middleware" {
