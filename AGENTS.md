@@ -33,6 +33,12 @@ yaml:"x"`）解决，不要并行 DTO。
 - **禁止私造缩写**：`usrCnt` / `procRslt` / `tmpVal` 一律展开。Go 通行
   短词（`ctx` / `err` / `cfg` / `fn` / `req` / `resp` / `i` / `ok`）
   保留 —— 已是行业默认词汇。可读性永远第一。
+- **函数名以动词开头**：`getX` / `buildX` / `applyX` / `parseX` /
+  `renderX` 等动词形式；不要 `pathFor`（介词）/ `validX`（形容词）/
+  `userInfo`（裸名词）这种。Effective Go 关于 "不加 Get 前缀" 的建议
+  在本仓库**不**采用 —— `getX` 是首选，跟语义对齐。例外：Go 标准惯
+  例 `NewX`（构造）；返回属性值的小 helper（`utcNowISO` /
+  `defaultIterationLimit`）可沿用名词。
 - 重命名扫到底：所有调用点、注释、测试在同一个 commit 里改完。半截
   重命名只会留下考古地层。
 
