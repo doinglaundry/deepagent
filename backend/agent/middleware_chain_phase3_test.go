@@ -24,7 +24,6 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "kimi", SupportsVision: true},
 		},
-		MemoryDir:  t.TempDir(),
 		Memory:     config.Memory{Enabled: true},
 		TokenUsage: config.TokenUsage{Enabled: true},
 		ToolSearch: config.ToolSearchConfig{

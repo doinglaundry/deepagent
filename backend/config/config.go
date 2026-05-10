@@ -28,11 +28,7 @@ func Load() (Config, error) {
 	}
 
 	cfg.RootDir = root
-	persistenceDir := filepath.Join(root, ".eino-cli")
-	cfg.PersistenceDir = persistenceDir
-	cfg.SessionsDir = filepath.Join(persistenceDir, "sessions")
-	cfg.MemoryDir = filepath.Join(persistenceDir, "memory")
-	cfg.CheckpointDir = filepath.Join(persistenceDir, "checkpoints")
+	cfg.CheckpointDir = filepath.Join(root, ".eino-cli", "checkpoints")
 
 	normalized, err := normalizeConfig(*cfg)
 	if err != nil {
@@ -110,11 +106,9 @@ func defaultAPIKeyEnv(provider string) string {
 }
 
 func ensureDirs(cfg Config) error {
-	for _, dir := range []string{cfg.PersistenceDir, cfg.SessionsDir, cfg.MemoryDir, cfg.CheckpointDir} {
-		err := os.MkdirAll(dir, 0o755)
-		if err != nil {
-			return fmt.Errorf("create persistence directory %s: %w", dir, err)
-		}
+	err := os.MkdirAll(cfg.CheckpointDir, 0o755)
+	if err != nil {
+		return fmt.Errorf("create persistence directory %s: %w", cfg.CheckpointDir, err)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
@@ -27,7 +28,7 @@ func MakeLeadAgent(
 
 	backend := newLocalBackend("")
 	shell := newLocalShell("")
-	mem := NewMemoryAccessor(memorystore.NewStore(cfg.MemoryDir))
+	mem := NewMemoryAccessor(memorystore.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "memory")))
 
 	prompt := ApplyPromptTemplate(rt, rt.AgentConfig, cfg, mem)
 

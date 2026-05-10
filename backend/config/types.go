@@ -52,9 +52,6 @@ type ACPConfig struct {
 // yaml/config.yaml; yaml:"-" fields are filled by Load() at runtime.
 type Config struct {
 	RootDir        string                 `json:"root_dir"        yaml:"-"`
-	PersistenceDir string                 `json:"persistence_dir" yaml:"-"`
-	SessionsDir    string                 `json:"sessions_dir"    yaml:"-"`
-	MemoryDir      string                 `json:"memory_dir"      yaml:"-"`
 	CheckpointDir  string                 `json:"checkpoint_dir"  yaml:"-"`
 	DefaultAgent   string                 `json:"default_agent"   yaml:"-"`
 	Agents         map[string]AgentConfig `json:"agents"          yaml:"-"`
