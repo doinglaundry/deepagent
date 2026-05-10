@@ -8,10 +8,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// TestHITL_DenyRemovesGatedCallAndAppendsToolMessage verifies the Phase-6
-// control flow: when the approval callback returns false, the gated tool
-// call is removed from the assistant message and a synthetic tool result
-// is appended so the next model turn knows the outcome.
 func TestHITL_DenyRemovesGatedCallAndAppendsToolMessage(t *testing.T) {
 	mw := NewHITL([]string{"shell.execute"}, func(_ context.Context, _ string, _ string) bool {
 		return false
@@ -49,8 +45,6 @@ func TestHITL_DenyRemovesGatedCallAndAppendsToolMessage(t *testing.T) {
 	}
 }
 
-// TestHITL_ApproveLeavesCallsAlone verifies an approved call passes
-// through unchanged and no synthetic tool message is appended.
 func TestHITL_ApproveLeavesCallsAlone(t *testing.T) {
 	mw := NewHITL([]string{"shell.execute"}, func(_ context.Context, _ string, _ string) bool {
 		return true
@@ -75,8 +69,6 @@ func TestHITL_ApproveLeavesCallsAlone(t *testing.T) {
 	}
 }
 
-// TestHITL_NonGatedCallsBypassCallback ensures tools outside the allowlist
-// never trigger the approval callback (non-gated tools always pass).
 func TestHITL_NonGatedCallsBypassCallback(t *testing.T) {
 	called := false
 	mw := NewHITL([]string{"shell.execute"}, func(_ context.Context, _ string, _ string) bool {

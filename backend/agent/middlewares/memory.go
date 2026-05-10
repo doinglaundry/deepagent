@@ -8,25 +8,15 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// MemoryHooks is the host-supplied surface for memory injection /
-// extraction. These mirror the Python protocol used by
-// deerflow.agents.middlewares.memory_middleware.
+// MemoryHooks is the host surface for memory injection / extraction.
+// Inject runs once on the first model turn per Run; Extract runs
+// asynchronously after each turn (return quickly).
 type MemoryHooks struct {
-	// Inject is called on the first model turn per Run with the existing
-	// message history. Implementations should prepend a system / user
-	// "<memory>...</memory>" block (or no-op when there's nothing to inject)
-	// and return the rewritten slice.
-	Inject func(ctx context.Context, messages []*schema.Message) []*schema.Message
-
-	// Extract is called after each model turn so the host can mine new
-	// long-term facts asynchronously. Returning quickly is recommended.
+	Inject  func(ctx context.Context, messages []*schema.Message) []*schema.Message
 	Extract func(ctx context.Context, messages []*schema.Message)
 }
 
-// Memory mirrors deerflow.agents.middlewares.memory_middleware. Phase 3
-// ships the hook surface — wire MemoryHooks.Inject / Extract from the
-// runtime layer once a real memory store is plugged in. Without hooks
-// attached the middleware is a no-op.
+// Memory injects a <memory> block on the first turn and fires Extract after each turn.
 type Memory struct {
 	*adk.BaseChatModelAgentMiddleware
 
@@ -36,8 +26,7 @@ type Memory struct {
 	injected bool
 }
 
-// NewMemory returns a Memory middleware. Attach when AppConfig.Memory.Enabled
-// is true; pass MemoryHooks for the host-side data plane.
+// NewMemory returns a Memory middleware; attach when AppConfig.Memory.Enabled.
 func NewMemory(hooks MemoryHooks) *Memory {
 	return &Memory{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},

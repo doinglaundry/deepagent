@@ -9,13 +9,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 )
 
-// AgentState mirrors deerflow.agents.middlewares.agent_state_middleware.
-// It tracks lifecycle counters (turn count, tool-call count, model-call
-// count) so other middlewares and the REPL can observe how the agent is
-// progressing without scraping the message stream themselves.
-//
-// Phase 2 surfaces the counters via Snapshot(); subsequent phases hook the
-// values into session metadata and trace tags.
+// AgentState tracks lifecycle counters (model-call, tool-call) for observers.
 type AgentState struct {
 	*adk.BaseChatModelAgentMiddleware
 

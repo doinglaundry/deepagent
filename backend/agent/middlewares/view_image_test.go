@@ -10,9 +10,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// stubFetcher is a minimal ImageFetcher used to drive the middleware
-// without touching the filesystem. ReadImage is invoked at most once per
-// path, and its return triple is fully controlled by the test.
+// stubFetcher is a minimal ImageFetcher used to drive the middleware in tests.
 type stubFetcher struct {
 	data    []byte
 	mime    string
@@ -30,10 +28,8 @@ func (s *stubFetcher) ReadImage(_ context.Context, path string) ([]byte, string,
 	return s.data, s.mime, nil
 }
 
-// makeStateWithToolCall builds a ChatModelAgentState that mirrors the
-// shape eino's afterToolCalls node hands to AfterToolCallsRewriteState:
-// an assistant message with ToolCalls, followed by Tool messages whose
-// ToolCallID matches.
+// makeStateWithToolCall builds the assistant + tool-result state shape that
+// eino's afterToolCalls node hands to AfterToolCallsRewriteState.
 func makeStateWithToolCall(callID, name, args, toolResult string) (*adk.ChatModelAgentState, *adk.ToolCallsContext) {
 	state := &adk.ChatModelAgentState{
 		Messages: []*schema.Message{
@@ -53,9 +49,6 @@ func makeStateWithToolCall(callID, name, args, toolResult string) (*adk.ChatMode
 	return state, toolCallsCtx
 }
 
-// TestViewImage_AppendsMultimodalUserMessage is the happy-path test:
-// view_image produces an extra User message with an image part and the
-// originating Tool message gets its content rewritten to a placeholder.
 func TestViewImage_AppendsMultimodalUserMessage(t *testing.T) {
 	fetcher := &stubFetcher{data: []byte{0x89, 'P', 'N', 'G'}, mime: "image/png"}
 	mw := NewViewImage(fetcher)
@@ -95,10 +88,6 @@ func TestViewImage_AppendsMultimodalUserMessage(t *testing.T) {
 	}
 }
 
-// TestViewImage_FetcherErrorIsSoftSkip verifies a fetcher error is
-// logged + tolerated: no User message is appended, the original Tool
-// message stays untouched. The model can interpret the tool's error
-// text on the next iteration.
 func TestViewImage_FetcherErrorIsSoftSkip(t *testing.T) {
 	mw := NewViewImage(&stubFetcher{err: errors.New("boom")})
 	state, toolCallsCtx := makeStateWithToolCall("c1", "view_image", `{"path":"x.png"}`, "original tool result")
@@ -114,9 +103,6 @@ func TestViewImage_FetcherErrorIsSoftSkip(t *testing.T) {
 	}
 }
 
-// TestViewImage_NoFetcher_NoOp confirms the middleware degrades to
-// logging-only when no fetcher is wired (back-compat with the Phase-3
-// skeleton).
 func TestViewImage_NoFetcher_NoOp(t *testing.T) {
 	mw := NewViewImage(nil)
 	state, toolCallsCtx := makeStateWithToolCall("c1", "view_image", `{"path":"x.png"}`, "tool result")
@@ -129,9 +115,6 @@ func TestViewImage_NoFetcher_NoOp(t *testing.T) {
 	}
 }
 
-// TestViewImage_OtherToolsBypass confirms the middleware leaves
-// non-view_image calls alone. Zero false positives is critical because
-// every iteration runs through this hook.
 func TestViewImage_OtherToolsBypass(t *testing.T) {
 	fetcher := &stubFetcher{data: []byte("img"), mime: "image/png"}
 	mw := NewViewImage(fetcher)
@@ -148,8 +131,6 @@ func TestViewImage_OtherToolsBypass(t *testing.T) {
 	}
 }
 
-// TestViewImage_MaxBytesExceededIsSoftSkip ensures the size cap drops
-// the image without erroring out the run.
 func TestViewImage_MaxBytesExceededIsSoftSkip(t *testing.T) {
 	mw := NewViewImage(&stubFetcher{data: []byte("aaaaaa"), mime: "image/png"})
 	mw.MaxBytes = 1

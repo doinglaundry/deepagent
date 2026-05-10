@@ -18,16 +18,9 @@ const (
 	defaultLoopWindowSize    = 20
 )
 
-// LoopDetection mirrors
-// deerflow.agents.middlewares.loop_detection_middleware. It hashes each
-// assistant message's tool calls (name + args) into a sliding window and:
-//   - logs a warning when the same hash appears WarnThreshold+ times.
-//   - clears tool_calls when the hash hits HardLimit, forcing the agent to
-//     produce a text response instead of looping forever.
-//
-// Phase 1 ships the in-memory single-thread variant. The full LRU per-thread
-// tracking lands in Phase 2 alongside the rest of the "always-on"
-// middlewares.
+// LoopDetection hashes each assistant's tool_calls into a sliding window:
+// at WarnThreshold it warns; at HardLimit it strips tool_calls so the
+// agent must produce a text-only reply.
 type LoopDetection struct {
 	*adk.BaseChatModelAgentMiddleware
 
@@ -73,7 +66,6 @@ func (m *LoopDetection) AfterModelRewriteState(
 	case count >= m.HardLimit:
 		m.Logger.Warn("loop detection: hard limit hit, stripping tool_calls",
 			"hash", hash, "count", count)
-		// Force the model into a text-only response next turn.
 		last.ToolCalls = nil
 	case count >= m.WarnThreshold:
 		m.warnOnce(hash, count)

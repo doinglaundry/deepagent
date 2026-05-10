@@ -8,26 +8,16 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// SubagentLimit mirrors the Python soft-limit guard documented in the
-// lead-agent prompt: "MAX N task calls per response. Excess calls are
-// silently discarded by the system." We enforce that on the assistant
-// message itself by truncating ToolCalls before they fan out to execution.
+// SubagentLimit truncates parallel task() tool calls to MaxParallel per turn.
 type SubagentLimit struct {
 	*adk.BaseChatModelAgentMiddleware
 
-	// TaskToolName is the conventional name of the subagent dispatch tool;
-	// defaults to "task" to match the deerflow prompt.
 	TaskToolName string
-
-	// MaxParallel caps the number of concurrent task() calls per turn.
-	// Phase 1 default was 3; AppConfig surfaces an override.
-	MaxParallel int
-
-	Logger *slog.Logger
+	MaxParallel  int
+	Logger       *slog.Logger
 }
 
-// NewSubagentLimit returns a SubagentLimit middleware. Only attach when
-// RuntimeContext.SubagentEnabled is true.
+// NewSubagentLimit returns a SubagentLimit middleware (default MaxParallel=3).
 func NewSubagentLimit(maxParallel int) *SubagentLimit {
 	if maxParallel <= 0 {
 		maxParallel = 3

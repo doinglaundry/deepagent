@@ -10,20 +10,11 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// Title mirrors deerflow.agents.middlewares.title_middleware. Once per
-// thread, when the very first user message is seen, it triggers an async
-// title generation. The generated title is exposed via OnTitleResolved so
-// the host can persist it into session metadata.
-//
-// Phase 2 ships the detection + dedup machinery only; the actual model call
-// and storage hookup land alongside the session-store refactor in Phase 3
-// (the existing eino-cli session.Store does not yet have a Title field).
+// Title fires OnFirstUserMessage at most once per thread when the first
+// user message arrives — used by hosts to kick off async title generation.
 type Title struct {
 	*adk.BaseChatModelAgentMiddleware
 
-	// OnFirstUserMessage is invoked at most once per thread the first time a
-	// user message is observed. It receives the raw user message content;
-	// implementations should kick off async title generation.
 	OnFirstUserMessage func(ctx context.Context, content string)
 
 	Logger *slog.Logger
@@ -32,8 +23,7 @@ type Title struct {
 	visited bool
 }
 
-// NewTitle returns a Title middleware that simply logs the first-user-message
-// event. Wire OnFirstUserMessage to plug in the actual title generation.
+// NewTitle returns a Title middleware; wire OnFirstUserMessage to enable.
 func NewTitle() *Title {
 	return &Title{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
@@ -55,7 +45,6 @@ func (m *Title) BeforeModelRewriteState(
 		m.mu.Unlock()
 		return ctx, state, nil
 	}
-	// Mark as visited optimistically so concurrent calls don't double-fire.
 	m.visited = true
 	m.mu.Unlock()
 

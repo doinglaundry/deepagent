@@ -10,8 +10,7 @@ import (
 
 const testAgentName = "test-agent"
 
-// recordingConsumer collects DebugEvents for assertions. Single-goroutine
-// tests so no synchronization needed.
+// recordingConsumer collects DebugEvents for assertions (single-goroutine).
 type recordingConsumer struct {
 	events []DebugEvent
 }
@@ -28,8 +27,6 @@ func makeMessages(n int) []*schema.Message {
 	return msgs
 }
 
-// Without a consumer in ctx, both hooks must be no-ops: no panic, state
-// returned unchanged.
 func TestTrace_NoConsumerIsNoop(t *testing.T) {
 	tr := NewTrace(testAgentName)
 	state := &adk.ChatModelAgentState{Messages: makeMessages(3)}
@@ -51,9 +48,6 @@ func TestTrace_NoConsumerIsNoop(t *testing.T) {
 	}
 }
 
-// With a consumer attached, Before fires with the full slice (snapshot,
-// not aliased) and After fires with only the last message. Both events
-// must carry the AgentName the Trace was constructed with.
 func TestTrace_SendsBeforeAndAfter(t *testing.T) {
 	tr := NewTrace(testAgentName)
 	rec := &recordingConsumer{}
@@ -84,9 +78,6 @@ func TestTrace_SendsBeforeAndAfter(t *testing.T) {
 	if len(before.Messages) != 3 {
 		t.Errorf("Before: len(Messages) = %d, want 3", len(before.Messages))
 	}
-	// Verify the snapshot is decoupled from state.Messages. Mutating the
-	// original slice header (append) must not bleed into the captured
-	// event.
 	state.Messages = append(state.Messages, schema.UserMessage("extra"))
 	if len(before.Messages) != 3 {
 		t.Errorf("Before: snapshot aliased to state.Messages; len now %d", len(before.Messages))
@@ -107,8 +98,6 @@ func TestTrace_SendsBeforeAndAfter(t *testing.T) {
 	}
 }
 
-// Across two Before/After cycles, Turn increments on each Before and is
-// reused by the matching After.
 func TestTrace_TurnMonotonic(t *testing.T) {
 	tr := NewTrace(testAgentName)
 	rec := &recordingConsumer{}
@@ -135,8 +124,6 @@ func TestTrace_TurnMonotonic(t *testing.T) {
 	}
 }
 
-// ResetTurn rewinds the counter so the next Before observes Turn=1
-// again, even after prior turns have advanced it.
 func TestTrace_ResetTurn(t *testing.T) {
 	tr := NewTrace(testAgentName)
 	rec := &recordingConsumer{}
@@ -170,9 +157,6 @@ func TestTrace_ResetTurn(t *testing.T) {
 	}
 }
 
-// FindTrace locates the *Trace in a middleware slice regardless of
-// position, returns nil for slices that don't contain one, and is
-// nil-safe on an empty / nil input.
 func TestFindTrace(t *testing.T) {
 	tr := NewTrace(testAgentName)
 

@@ -8,10 +8,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// TestClarification_RewritesAssistantMessage verifies the Phase-6 control
-// flow: when the model emits ask_clarification(question="..."), the
-// middleware clears ToolCalls and replaces Content with the question so
-// the deep-agent loop terminates the turn naturally.
 func TestClarification_RewritesAssistantMessage(t *testing.T) {
 	mw := NewClarification()
 	var capturedQ string
@@ -53,8 +49,6 @@ func TestClarification_RewritesAssistantMessage(t *testing.T) {
 	}
 }
 
-// TestClarification_NoOpForOtherTools confirms the middleware leaves
-// non-clarification tool calls alone (zero false positives).
 func TestClarification_NoOpForOtherTools(t *testing.T) {
 	mw := NewClarification()
 	state := &adk.ChatModelAgentState{
@@ -77,8 +71,6 @@ func TestClarification_NoOpForOtherTools(t *testing.T) {
 	}
 }
 
-// TestClarification_FallbackForUnparsedArgs ensures the user always sees
-// something even when JSON parsing fails or the question key is missing.
 func TestClarification_FallbackForUnparsedArgs(t *testing.T) {
 	mw := NewClarification()
 	state := &adk.ChatModelAgentState{

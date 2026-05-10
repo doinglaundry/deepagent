@@ -9,11 +9,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// TokenUsage mirrors deerflow.agents.middlewares.token_usage_middleware. It
-// accumulates per-call prompt/completion token counts read from the model's
-// response metadata. The deerflow Python version pushes the totals into a
-// session-level counter; here we expose Snapshot() so the host can decide
-// where to store them.
+// TokenUsage accumulates per-call prompt/completion tokens; expose via Snapshot().
 type TokenUsage struct {
 	*adk.BaseChatModelAgentMiddleware
 
@@ -31,8 +27,7 @@ type TokenUsageStats struct {
 	Calls            int
 }
 
-// NewTokenUsage returns a TokenUsage middleware. Attach it via BuildChain
-// when AppConfig.TokenUsage.Enabled is true.
+// NewTokenUsage returns a TokenUsage middleware; attach when AppConfig.TokenUsage.Enabled.
 func NewTokenUsage() *TokenUsage {
 	return &TokenUsage{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
@@ -84,9 +79,7 @@ type usageRecord struct {
 	prompt, completion, total int64
 }
 
-// extractUsage probes the message for ResponseMeta-style usage data. eino's
-// schema.Message exposes a *ResponseMeta with Usage, but message providers
-// can also stash usage into Extra. We try both spots.
+// extractUsage probes ResponseMeta.Usage first, then msg.Extra prompt/completion/total.
 func extractUsage(msg *schema.Message) usageRecord {
 	var rec usageRecord
 	if msg == nil {

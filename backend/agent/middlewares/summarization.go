@@ -9,31 +9,13 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
-// SummarizationMemoryFlushHook is invoked exactly once per summarization
-// trigger, after the model has produced a summary and before the
-// middleware returns. Hosts plug the memory subsystem in here to
-// persist any pending memories before the original messages are
-// compacted out — mirrors deerflow's `memory_flush_hook` callback wired
-// into `BeforeSummarization` (Python) or `Callback` (here).
-//
-// The hook receives the snapshot of agent state both before and after
-// summarization so memory implementations can inspect what's about to
-// be discarded. Errors are surfaced as warnings only — failing memory
-// flush should never block summarization itself.
+// SummarizationMemoryFlushHook fires once per summarization trigger, after
+// the summary is finalised. Errors are surfaced as warnings only — flushing
+// memory must never block summarization.
 type SummarizationMemoryFlushHook func(ctx context.Context, before, after adk.ChatModelAgentState) error
 
-// NewSummarization wraps eino/adk/middlewares/summarization.New with our
-// own defaults: trigger at 190k tokens or 200 messages, no transcript
-// file (we inject one once the sandbox layer can guarantee a writable
-// path).
-//
-// The host calls this with primitive parameters so middlewares stays a
-// leaf package and never imports agent (which would create a cycle).
-// memoryFlush is optional; when nil, no Callback is registered and the
-// middleware behaves as before.
-//
-// Returns (nil, nil) when enabled is false — the caller should simply
-// skip appending the result to the chain in that case.
+// NewSummarization wraps eino's summarization middleware with eino-cli defaults
+// (190k token / 200-message trigger). Returns (nil, nil) when enabled is false.
 func NewSummarization(
 	ctx context.Context,
 	enabled bool,

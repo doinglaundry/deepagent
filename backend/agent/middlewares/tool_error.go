@@ -1,7 +1,4 @@
-// Package middlewares contains ChatModelAgent middlewares ported from
-// deerflow.agents.middlewares. Each middleware embeds
-// *adk.BaseChatModelAgentMiddleware so it only overrides the hooks it cares
-// about.
+// Package middlewares contains ChatModelAgent middlewares for the lead agent.
 package middlewares
 
 import (
@@ -13,20 +10,14 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 )
 
-// ToolErrorHandling mirrors
-// deerflow.agents.middlewares.tool_error_handling_middleware. It catches
-// errors thrown by tool execution and converts them into a readable string
-// returned to the model — preserving the agent loop instead of bubbling the
-// error up and aborting the run. This is the Python equivalent of swallowing
-// exceptions in wrap_invokable_tool_call and emitting a ToolMessage with the
-// error text.
+// ToolErrorHandling converts tool-call errors into a string ToolMessage so the
+// agent loop continues instead of aborting the run.
 type ToolErrorHandling struct {
 	*adk.BaseChatModelAgentMiddleware
 	Logger *slog.Logger
 }
 
-// NewToolErrorHandling returns a ToolErrorHandling middleware ready for use
-// in deep.Config.Handlers.
+// NewToolErrorHandling returns a ToolErrorHandling middleware.
 func NewToolErrorHandling() *ToolErrorHandling {
 	return &ToolErrorHandling{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},

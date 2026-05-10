@@ -12,56 +12,26 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// ImageFetcher is the data-plane dependency for the ViewImage middleware.
-// It is declared here (rather than in the agent package) because the
-// agent package imports this one — declaring it upstream would form a
-// cycle. The agent package satisfies it via an inline imageFetcherFunc
-// adapter closing over readImage.
+// ImageFetcher is the data-plane dependency for ViewImage. Declared here
+// to avoid an import cycle (agent imports this package).
 type ImageFetcher interface {
 	ReadImage(ctx context.Context, path string) ([]byte, string, error)
 }
 
-// ViewImage mirrors deerflow.agents.middlewares.view_image_middleware.
-//
-// Real Phase-7 behaviour: when the model calls `view_image(path="…")`,
-// the middleware reads the image bytes via the sandbox and APPENDS a
-// User message carrying a base64-encoded image part to state.Messages.
-// The next model turn sees:
-//
-//   <assistant ToolCalls=[view_image(path)]>
-//   <tool result="image attached as next user message">
-//   <user UserInputMultiContent=[text: "(image)" , image: <bytes>]>
-//
-// The original tool message is rewritten to a short placeholder so the
-// model isn't confused by raw bytes / paths inside its tool output.
-//
-// Only attach when the active model has SupportsVision=true.
+// ViewImage handles `view_image(path)` tool calls: fetches the bytes,
+// appends a multimodal User message with the image, and rewrites the
+// matching tool result to a short placeholder.
 type ViewImage struct {
 	*adk.BaseChatModelAgentMiddleware
 
-	// ViewImageToolName is the conventional tool name agents call to
-	// fetch an image; defaults to "view_image" matching the deerflow
-	// prompt.
 	ViewImageToolName string
-
-	// Fetcher is the binary-data source. Required.
-	Fetcher ImageFetcher
-
-	// MaxBytes caps the size of any single image. 0 disables the cap;
-	// negative is treated as 0. The middleware logs a warning and skips
-	// (without erroring) when an image exceeds the cap.
-	MaxBytes int64
-
-	// Detail controls the detail hint sent to the model. Defaults to
-	// schema.ImageURLDetailAuto.
-	Detail schema.ImageURLDetail
-
-	Logger *slog.Logger
+	Fetcher           ImageFetcher
+	MaxBytes          int64
+	Detail            schema.ImageURLDetail
+	Logger            *slog.Logger
 }
 
-// NewViewImage returns a ViewImage middleware. Pass a non-nil fetcher;
-// without one the middleware degrades to a logging skeleton (the
-// previous Phase-3 behaviour).
+// NewViewImage returns a ViewImage middleware (8 MiB cap, auto detail).
 func NewViewImage(fetcher ImageFetcher) *ViewImage {
 	return &ViewImage{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
@@ -82,15 +52,12 @@ func (m *ViewImage) AfterToolCallsRewriteState(
 		return ctx, state, nil
 	}
 
-	// Find the assistant message that issued these tool calls. It is the
-	// last assistant message before the appended tool results.
 	assistantIdx := lastAssistantWithToolCalls(state.Messages)
 	if assistantIdx < 0 {
 		return ctx, state, nil
 	}
 	assistant := state.Messages[assistantIdx]
 
-	// Pre-index tool calls by ID for argument lookup.
 	argsByID := make(map[string]string, len(assistant.ToolCalls))
 	for _, c := range assistant.ToolCalls {
 		argsByID[c.ID] = c.Function.Arguments
@@ -121,8 +88,6 @@ func (m *ViewImage) AfterToolCallsRewriteState(
 				"path", path, "size", len(data), "limit", m.MaxBytes)
 			continue
 		}
-		// Replace the matching tool result with a short placeholder so
-		// the model's context isn't polluted with paths / sizes.
 		rewriteToolMessage(state.Messages, call.CallID,
 			fmt.Sprintf("(image %q attached as next user message)", path))
 
@@ -143,9 +108,7 @@ func (m *ViewImage) AfterToolCallsRewriteState(
 		return ctx, state, nil
 	}
 
-	// Prepend a small text part so the model sees a captioned input
-	// rather than a bare image. This matches Anthropic's recommended
-	// usage pattern for vision-capable models.
+	// Prepend a caption so vision models see a labeled input (Anthropic recommends this).
 	header := schema.MessageInputPart{
 		Type: schema.ChatMessagePartTypeText,
 		Text: "(image attachment from view_image tool)",
@@ -159,8 +122,8 @@ func (m *ViewImage) AfterToolCallsRewriteState(
 	return ctx, state, nil
 }
 
-// lastAssistantWithToolCalls returns the index of the most recent
-// assistant message whose ToolCalls is non-empty, or -1.
+// lastAssistantWithToolCalls returns the index of the most recent assistant
+// message with non-empty ToolCalls, or -1.
 func lastAssistantWithToolCalls(msgs []*schema.Message) int {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
@@ -174,8 +137,8 @@ func lastAssistantWithToolCalls(msgs []*schema.Message) int {
 	return -1
 }
 
-// rewriteToolMessage finds the most recent Tool message with the given
-// ToolCallID and replaces its Content. No-op if none found.
+// rewriteToolMessage replaces the Content of the most recent Tool message
+// with the given ToolCallID; no-op if none found.
 func rewriteToolMessage(msgs []*schema.Message, callID, content string) {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
@@ -189,10 +152,7 @@ func rewriteToolMessage(msgs []*schema.Message, callID, content string) {
 	}
 }
 
-// parseViewImageArgs extracts the "path" field from the JSON arguments.
-// Mirrors clarification.go's parseClarificationArgs in spirit; falls
-// back to the raw string when JSON parsing fails so misconfigured tool
-// schemas don't silently lose the path.
+// parseViewImageArgs extracts path/file_path/url from JSON args.
 func parseViewImageArgs(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return ""
