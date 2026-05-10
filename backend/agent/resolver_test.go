@@ -102,7 +102,6 @@ func TestMergeRuntime(t *testing.T) {
 	rt := RuntimeContext{
 		ThinkingEnabled:        true,
 		MaxConcurrentSubagents: 3,
-		Metadata:               map[string]any{},
 	}
 	merged := rt.MergeRuntime(map[string]any{
 		"model_name":               "claude",
@@ -137,16 +136,12 @@ func TestMergeRuntime_DefaultMaxConcurrent(t *testing.T) {
 		t.Fatalf("default MaxConcurrentSubagents: got %d, want 3",
 			merged.MaxConcurrentSubagents)
 	}
-	if merged.Metadata == nil {
-		t.Fatalf("Metadata should be initialized")
-	}
 }
 
 func TestMergeRuntime_ContextOverridesConfigurable(t *testing.T) {
 	rt := RuntimeContext{
 		ThinkingEnabled:        true,
 		MaxConcurrentSubagents: 3,
-		Metadata:               map[string]any{},
 	}
 	merged := rt.MergeRuntime(map[string]any{
 		"model_name": "kimi",

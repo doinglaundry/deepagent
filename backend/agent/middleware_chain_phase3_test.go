@@ -15,7 +15,6 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 	rt := RuntimeContext{
 		ThinkingEnabled:        true,
 		MaxConcurrentSubagents: 3,
-		Metadata:               map[string]any{},
 		ModelName:              "primary",
 		AgentName:              "default",
 		SubagentEnabled:        true,
@@ -74,7 +73,6 @@ func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
 	rt := RuntimeContext{
 		ThinkingEnabled:        true,
 		MaxConcurrentSubagents: 3,
-		Metadata:               map[string]any{},
 		ModelName:              "primary",
 	}
 	cfg := config.Config{

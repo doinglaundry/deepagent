@@ -15,7 +15,6 @@ type RuntimeContext struct {
 	SubagentEnabled        bool
 	MaxConcurrentSubagents int
 	HITLTools              []string
-	Metadata               map[string]any
 }
 
 // NewRuntimeContext canonicalises rt: stamps defaults (when seed is nil),
@@ -29,7 +28,6 @@ func NewRuntimeContext(cfg config.Config, seed *RuntimeContext) (RuntimeContext,
 		rt = RuntimeContext{
 			ThinkingEnabled:        true,
 			MaxConcurrentSubagents: 3,
-			Metadata:               map[string]any{},
 			AgentName:              cfg.DefaultAgent,
 			ModelName:              cfg.DefaultModel,
 		}
@@ -53,24 +51,6 @@ func NewRuntimeContext(cfg config.Config, seed *RuntimeContext) (RuntimeContext,
 	rt.ModelName = modelName
 	rt.ThinkingEnabled = getThinkingEnabled(rt.ThinkingEnabled, modelCfg, modelName)
 
-	resolvedName := fallback(rt.AgentName, "default")
-	resolvedModel := fallback(rt.ModelName, "default")
-
-	if rt.Metadata == nil {
-		rt.Metadata = map[string]any{}
-	}
-	rt.Metadata["agent_name"] = resolvedName
-	rt.Metadata["model_name"] = resolvedModel
-	rt.Metadata["thinking_enabled"] = rt.ThinkingEnabled
-	rt.Metadata["reasoning_effort"] = rt.ReasoningEffort
-	rt.Metadata["is_plan_mode"] = rt.IsPlanMode
-	rt.Metadata["subagent_enabled"] = rt.SubagentEnabled
-	if agentConfig != nil {
-		rt.Metadata["tool_groups"] = agentConfig.ToolGroups
-		if agentConfig.Skills != nil {
-			rt.Metadata["available_skills"] = agentConfig.Skills
-		}
-	}
 	return rt, nil
 }
 
@@ -109,9 +89,6 @@ func (rt RuntimeContext) MergeRuntime(configurable, context map[string]any) Runt
 	}
 	if rt.MaxConcurrentSubagents <= 0 {
 		rt.MaxConcurrentSubagents = 3
-	}
-	if rt.Metadata == nil {
-		rt.Metadata = map[string]any{}
 	}
 	return rt
 }
