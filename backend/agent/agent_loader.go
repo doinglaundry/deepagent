@@ -7,7 +7,7 @@ import (
 	"eino-cli/backend/config"
 )
 
-func GetAgentConfig(cfg config.Config, name string) (*config.AgentConfig, error) {
+func GetAgentConfig(cfg *config.Config, name string) (*config.AgentConfig, error) {
 	name, err := ValidateAgentName(name)
 	if err != nil {
 		return nil, err

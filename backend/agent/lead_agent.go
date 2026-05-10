@@ -19,7 +19,7 @@ import (
 func MakeLeadAgent(
 	ctx context.Context,
 	rt RuntimeContext,
-	cfg config.Config,
+	cfg *config.Config,
 ) (adk.ResumableAgent, *middlewares.Trace, error) {
 	chatModel, err := buildChatModel(ctx, rt.ModelCfg)
 	if err != nil {

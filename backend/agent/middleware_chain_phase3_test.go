@@ -20,7 +20,7 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 		HITLTools:              []string{"shell"},
 	}
 
-	cfg := config.Config{
+	cfg := &config.Config{
 		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "kimi", SupportsVision: true},
 		},
@@ -70,7 +70,7 @@ func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
 	rt := RuntimeContext{
 		MaxConcurrentSubagents: 3,
 	}
-	cfg := config.Config{
+	cfg := &config.Config{
 		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "kimi", SupportsVision: false},
 		},

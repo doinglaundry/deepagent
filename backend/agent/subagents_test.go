@@ -7,7 +7,7 @@ import (
 	"eino-cli/backend/config"
 )
 
-func dummyConfig() config.Config { return config.Config{} }
+func dummyConfig() *config.Config { return &config.Config{} }
 
 func TestGeneralSubagentEnabled(t *testing.T) {
 	rtOff := RuntimeContext{SubagentEnabled: false}

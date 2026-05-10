@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewDeepAgentRuntimeUnsupportedProvider(t *testing.T) {
-	runtime, err := NewDeepAgentRuntime(context.Background(), config.Config{
+	runtime, err := NewDeepAgentRuntime(context.Background(), &config.Config{
 		DefaultModel: "primary",
 		DefaultAgent: "default",
 		Models: map[string]*config.ModelConfig{
@@ -31,7 +31,7 @@ func TestNewDeepAgentRuntimeUnsupportedProvider(t *testing.T) {
 }
 
 func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
-	cfg := config.Config{
+	cfg := &config.Config{
 		DefaultModel: "primary",
 		DefaultAgent: "default",
 		Models: map[string]*config.ModelConfig{

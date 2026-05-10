@@ -19,7 +19,7 @@ import (
 // misconfigured summary model must never block the lead agent.
 func buildSummaryChatModel(
 	ctx context.Context,
-	cfg config.Config,
+	cfg *config.Config,
 ) model.BaseChatModel {
 	summaryModelName := strings.TrimSpace(cfg.Summarization.ModelName)
 	if summaryModelName == "" {

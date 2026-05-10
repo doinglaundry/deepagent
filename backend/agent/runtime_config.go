@@ -18,7 +18,7 @@ type RuntimeContext struct {
 
 // NewRuntimeContext canonicalises rt and returns the resolved agent/model config.
 func NewRuntimeContext(
-	cfg config.Config,
+	cfg *config.Config,
 	seed *RuntimeContext,
 ) (RuntimeContext, error) {
 

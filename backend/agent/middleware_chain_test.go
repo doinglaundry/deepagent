@@ -16,8 +16,8 @@ func makeChainTestRT() RuntimeContext {
 	}
 }
 
-func makeChainTestCfg() config.Config {
-	return config.Config{
+func makeChainTestCfg() *config.Config {
+	return &config.Config{
 		DefaultModel: "primary",
 		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "kimi"},

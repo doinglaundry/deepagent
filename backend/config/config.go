@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,38 +16,35 @@ const (
 	defaultAgentIterations  = 6
 )
 
-func Load() (Config, error) {
+func Load() (*Config, error) {
 	root, err := os.Getwd()
 	if err != nil {
-		return Config{}, fmt.Errorf("get working directory: %w", err)
+		log.Fatalf("get root: %v", err)
 	}
 
-	configPath := filepath.Join(root, "yaml", "config.yaml")
-	cfg, err := loadFromYAML(configPath)
+	cfg, err := loadFromYAML(filepath.Join(root, "yaml", "config.yaml"))
 	if err != nil {
-		return Config{}, fmt.Errorf("load yaml config: %w", err)
+		return nil, fmt.Errorf("load yaml config: %w", err)
 	}
 
 	cfg.RootDir = root
 
-	normalized, err := normalizeConfig(*cfg)
-	if err != nil {
-		return Config{}, err
+	defaultModel := strings.TrimSpace(cfg.DefaultModel)
+	if defaultModel == "" {
+		return nil, fmt.Errorf("default model is empty")
 	}
 
-	return normalized, nil
-}
-
-// normalizeConfig is the sole place post-load invariants are enforced;
-// downstream code trusts the returned Config without re-validation.
-func normalizeConfig(cfg Config) (Config, error) {
-	defaultModel := strings.TrimSpace(cfg.DefaultModel)
 	modelCfg, ok := cfg.Models[defaultModel]
 	if !ok || modelCfg == nil {
-		return cfg, errors.New("default model not found")
+		return nil, errors.New("default model not found")
 	}
+
 	if modelCfg.APIKey == "" {
 		modelCfg.APIKey = os.Getenv(defaultAPIKeyEnv(modelCfg.Provider))
+	}
+
+	if !isModelConfigValid(modelCfg) {
+		return nil, fmt.Errorf("invalid default model: %s", defaultModel)
 	}
 
 	if strings.TrimSpace(cfg.DefaultAgent) == "" {
@@ -64,9 +62,32 @@ func normalizeConfig(cfg Config) (Config, error) {
 		}
 	}
 
-	cfg.Skills = appendDefaultSkillsPath(cfg.RootDir, cfg.Skills)
+	cfg.Skills = appendDefaultSkillsPath(root, cfg.Skills)
 
 	return cfg, nil
+}
+
+func isModelConfigValid(modelCfg *ModelConfig) bool {
+	if modelCfg == nil {
+		return false
+	}
+	if strings.TrimSpace(modelCfg.Name) == "" {
+		return false
+	}
+
+	if strings.TrimSpace(modelCfg.Provider) == "" {
+		return false
+	}
+
+	if strings.TrimSpace(modelCfg.Model) == "" {
+		return false
+	}
+
+	if strings.TrimSpace(modelCfg.BaseURL) == "" {
+		return false
+	}
+
+	return true
 }
 
 func appendDefaultSkillsPath(rootDir string, skillsCfg SkillsConfig) SkillsConfig {
@@ -99,4 +120,3 @@ func defaultAPIKeyEnv(provider string) string {
 		return "ANTHROPIC_API_KEY"
 	}
 }
-

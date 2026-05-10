@@ -10,7 +10,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 )
 
-func GetChatModelMiddlewares(ctx context.Context, cfg config.Config, mem *MemoryAccessor, rt RuntimeContext) (middlewareList []adk.ChatModelAgentMiddleware) {
+func GetChatModelMiddlewares(ctx context.Context, cfg *config.Config, mem *MemoryAccessor, rt RuntimeContext) (middlewareList []adk.ChatModelAgentMiddleware) {
 	middlewareList = []adk.ChatModelAgentMiddleware{
 		middlewares.NewAgentState(),
 		middlewares.NewTitle(),

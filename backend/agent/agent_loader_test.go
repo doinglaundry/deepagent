@@ -7,7 +7,7 @@ import (
 )
 
 func TestGetAgentConfig_HappyPath(t *testing.T) {
-	cfg := config.Config{
+	cfg := &config.Config{
 		Agents: map[string]config.AgentConfig{
 			"writer": {
 				Name:       "writer",
@@ -26,7 +26,7 @@ func TestGetAgentConfig_HappyPath(t *testing.T) {
 }
 
 func TestGetAgentConfig_NameFallsBackToKey(t *testing.T) {
-	cfg := config.Config{
+	cfg := &config.Config{
 		Agents: map[string]config.AgentConfig{
 			"writer": {Model: "kimi"},
 		},
@@ -41,7 +41,7 @@ func TestGetAgentConfig_NameFallsBackToKey(t *testing.T) {
 }
 
 func TestGetAgentConfig_EmptyNameIsSoftMiss(t *testing.T) {
-	cfg := config.Config{Agents: map[string]config.AgentConfig{}}
+	cfg := &config.Config{Agents: map[string]config.AgentConfig{}}
 	agentConfig, err := GetAgentConfig(cfg, "")
 	if err != nil {
 		t.Fatalf("expected no error for empty name, got %v", err)
@@ -52,7 +52,7 @@ func TestGetAgentConfig_EmptyNameIsSoftMiss(t *testing.T) {
 }
 
 func TestGetAgentConfig_RaisesOnMissingAgent(t *testing.T) {
-	cfg := config.Config{Agents: map[string]config.AgentConfig{}}
+	cfg := &config.Config{Agents: map[string]config.AgentConfig{}}
 	agentConfig, err := GetAgentConfig(cfg, "ghost")
 	if err == nil {
 		t.Fatalf("expected error for missing agent, got profile=%+v", agentConfig)
@@ -63,7 +63,7 @@ func TestGetAgentConfig_RaisesOnMissingAgent(t *testing.T) {
 }
 
 func TestGetAgentConfig_RejectsInvalidName(t *testing.T) {
-	cfg := config.Config{Agents: map[string]config.AgentConfig{}}
+	cfg := &config.Config{Agents: map[string]config.AgentConfig{}}
 	_, err := GetAgentConfig(cfg, "../etc/passwd")
 	if err == nil {
 		t.Fatal("expected error for invalid agent name")

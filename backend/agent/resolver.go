@@ -29,7 +29,7 @@ func ValidateAgentName(name string) (string, error) {
 	return trimmed, nil
 }
 
-func GetModelConfig(modelName string, cfg config.Config) (*config.ModelConfig, error) {
+func GetModelConfig(modelName string, cfg *config.Config) (*config.ModelConfig, error) {
 	if strings.TrimSpace(modelName) == "" {
 		return nil, errors.New("no model name provided")
 	}

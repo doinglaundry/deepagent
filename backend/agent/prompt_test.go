@@ -19,7 +19,7 @@ func TestLoadEnabledSkillsFromConfig_FromPaths(t *testing.T) {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
 
-	cfg := config.Config{
+	cfg := &config.Config{
 		Skills: config.SkillsConfig{Paths: []string{root}},
 	}
 	got := loadEnabledSkillsFromConfig(cfg)
@@ -32,16 +32,16 @@ func TestLoadEnabledSkillsFromConfig_FromPaths(t *testing.T) {
 }
 
 func TestLoadEnabledSkillsFromConfig_NoPaths(t *testing.T) {
-	if got := loadEnabledSkillsFromConfig(config.Config{}); got != nil {
+	if got := loadEnabledSkillsFromConfig(&config.Config{}); got != nil {
 		t.Fatalf("empty config should yield nil skill list, got %+v", got)
 	}
 }
 
 func TestDeferredToolNamesFromConfig_NilWhenEmpty(t *testing.T) {
-	if got := DeferredToolNamesFromConfig(config.Config{}); got != nil {
+	if got := DeferredToolNamesFromConfig(&config.Config{}); got != nil {
 		t.Fatal("expected nil slice when no deferred tools configured")
 	}
-	cfg := config.Config{
+	cfg := &config.Config{
 		ToolSearch: config.ToolSearchConfig{
 			Deferred: []config.DeferredToolEntry{{Name: "fancy_search"}},
 		},
@@ -58,7 +58,7 @@ func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(root, "demo", "SKILL.md"),
 		[]byte("---\nname: demo\ndescription: Demo skill.\n---\n"), 0o644)
 
-	cfg := config.Config{
+	cfg := &config.Config{
 		Skills: config.SkillsConfig{Paths: []string{root}},
 		ToolSearch: config.ToolSearchConfig{
 			Enabled: true,
@@ -82,7 +82,7 @@ func TestApplyPromptTemplate_SkillsAndDeferredSectionsRendered(t *testing.T) {
 }
 
 func TestApplyPromptTemplate_NilMemSkipsMemorySection(t *testing.T) {
-	cfg := config.Config{
+	cfg := &config.Config{
 		Memory: config.Memory{Enabled: true, InjectionEnabled: true, MaxInjectionTokens: 1024},
 	}
 	out := ApplyPromptTemplate(RuntimeContext{AgentName: "default"}, nil, cfg, nil)

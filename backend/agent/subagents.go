@@ -20,7 +20,7 @@ func generalSubagentEnabled(rt RuntimeContext) bool {
 func buildNamedSubagents(
 	ctx context.Context,
 	rt RuntimeContext,
-	cfg config.Config,
+	cfg *config.Config,
 	names []string,
 ) ([]adk.Agent, error) {
 	if len(names) == 0 {

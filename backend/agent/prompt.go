@@ -207,7 +207,7 @@ func getMemoryContext(agentName string, mem *MemoryAccessor, m config.Memory) st
 }
 
 // GetSkillsPromptSection mirrors get_skills_prompt_section.
-func GetSkillsPromptSection(available *AvailableSkills, cfg config.Config, skillEvolutionEnabled bool) string {
+func GetSkillsPromptSection(available *AvailableSkills, cfg *config.Config, skillEvolutionEnabled bool) string {
 	skills := loadEnabledSkillsFromConfig(cfg)
 
 	if len(skills) == 0 && !skillEvolutionEnabled {
@@ -290,7 +290,7 @@ func GetSkillsPromptSection(available *AvailableSkills, cfg config.Config, skill
 }
 
 // GetDeferredToolsPromptSection mirrors get_deferred_tools_prompt_section.
-func GetDeferredToolsPromptSection(cfg config.Config, toolSearchEnabled bool) string {
+func GetDeferredToolsPromptSection(cfg *config.Config, toolSearchEnabled bool) string {
 	if !toolSearchEnabled {
 		return ""
 	}
@@ -302,7 +302,7 @@ func GetDeferredToolsPromptSection(cfg config.Config, toolSearchEnabled bool) st
 }
 
 // buildACPSection emits the static ACP block when at least one ACP agent is configured.
-func buildACPSection(cfg config.Config) string {
+func buildACPSection(cfg *config.Config) string {
 	if len(cfg.ACP.Agents) == 0 {
 		return ""
 	}
@@ -520,7 +520,7 @@ const systemPromptTemplateRaw = `
 var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`")
 
 // ApplyPromptTemplate assembles the system prompt and appends the current-date footer.
-func ApplyPromptTemplate(rt RuntimeContext, agentCfg *config.AgentConfig, cfg config.Config, mem *MemoryAccessor) string {
+func ApplyPromptTemplate(rt RuntimeContext, agentCfg *config.AgentConfig, cfg *config.Config, mem *MemoryAccessor) string {
 	memoryContext := getMemoryContext(rt.AgentName, mem, cfg.Memory)
 
 	n := rt.MaxConcurrentSubagents
@@ -564,7 +564,7 @@ var promptLogger = slog.Default()
 
 // loadEnabledSkillsFromConfig scans cfg.Skills.Paths for SKILL.md files and
 // returns the enabled skills as the prompt-side Skill type. Errors yield nil.
-func loadEnabledSkillsFromConfig(cfg config.Config) []Skill {
+func loadEnabledSkillsFromConfig(cfg *config.Config) []Skill {
 	if len(cfg.Skills.Paths) == 0 {
 		return nil
 	}
@@ -590,7 +590,7 @@ func loadEnabledSkillsFromConfig(cfg config.Config) []Skill {
 
 // DeferredToolNamesFromConfig: tools advertised in the prompt and filtered out
 // of the active toolbelt by the DeferredTools middleware.
-func DeferredToolNamesFromConfig(cfg config.Config) []string {
+func DeferredToolNamesFromConfig(cfg *config.Config) []string {
 	if len(cfg.ToolSearch.Deferred) == 0 {
 		return nil
 	}

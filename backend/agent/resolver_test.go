@@ -38,7 +38,7 @@ func TestValidateAgentName(t *testing.T) {
 }
 
 func TestGetModelConfig(t *testing.T) {
-	cfg := config.Config{
+	cfg := &config.Config{
 		Models: map[string]*config.ModelConfig{
 			"kimi": {Name: "kimi", Provider: "kimi", Model: "moonshot-v1-8k"},
 		},
