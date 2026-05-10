@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
@@ -61,13 +60,6 @@ func MakeLeadAgent(
 		return nil, nil, fmt.Errorf("build deep agent: %w", err)
 	}
 	return agentImpl, middlewares.FindTrace(handlers), nil
-}
-
-func fallback(value, def string) string {
-	if strings.TrimSpace(value) == "" {
-		return def
-	}
-	return value
 }
 
 func skillsFromProfile(p *config.AgentConfig) *AvailableSkills {
