@@ -14,7 +14,7 @@ import (
 // builds a deep agent. Failures are logged-and-skipped (partial > hard error).
 func buildNamedSubagents(
 	ctx context.Context,
-	rt RuntimeContext,
+	rt *RuntimeContext,
 	cfg *config.Config,
 	names []string,
 ) ([]adk.Agent, error) {
@@ -27,10 +27,11 @@ func buildNamedSubagents(
 		if name == "" {
 			continue
 		}
-		subSeed := rt
-		subSeed.AgentName = name
-		subRT, err := NewRuntimeContext(cfg, &subSeed)
-		if err != nil {
+		// Clone (not value copy) — RuntimeContext is now shared by pointer;
+		// without Clone, subagent setters would alias the parent's HITLTools
+		// slice and any future setter writes would leak across the fork.
+		subRT := rt.Clone()
+		if err := subRT.SetAgentName(cfg, name); err != nil {
 			slog.Warn(
 				"failed to finalize subagent runtime; skipping",
 				"agent", name,

@@ -39,7 +39,7 @@ func TestMemory_E2E_AfterModelHookWritesPerAgentFile(t *testing.T) {
 			FactConfidenceThreshold: 0.5,
 		},
 	}
-	rt := RuntimeContext{
+	rt := &RuntimeContext{
 		AgentName:              "alice",
 		MaxConcurrentSubagents: 3,
 	}
@@ -118,7 +118,7 @@ func TestMemory_E2E_DisabledLeavesChainAndDiskUntouched(t *testing.T) {
 		},
 		Memory: config.Memory{Enabled: false},
 	}
-	rt := RuntimeContext{AgentName: "alice", MaxConcurrentSubagents: 3}
+	rt := &RuntimeContext{AgentName: "alice", MaxConcurrentSubagents: 3}
 
 	chat := &fakeChatModel{response: "{}"}
 	chain := GetChatModelMiddlewares(context.Background(), cfg, rt, chat)

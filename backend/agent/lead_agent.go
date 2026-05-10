@@ -16,7 +16,7 @@ import (
 // uses to reset the turn counter on /clear; the *Trace may be nil.
 func MakeLeadAgent(
 	ctx context.Context,
-	rt RuntimeContext,
+	rt *RuntimeContext,
 	cfg *config.Config,
 ) (adk.ResumableAgent, *middlewares.Trace, error) {
 	chatModel, err := buildChatModel(ctx, rt.ModelCfg)

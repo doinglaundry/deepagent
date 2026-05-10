@@ -21,7 +21,7 @@ import (
 func GetChatModelMiddlewares(
 	ctx context.Context,
 	cfg *config.Config,
-	rt RuntimeContext,
+	rt *RuntimeContext,
 	chatModel model.BaseChatModel,
 ) (middlewareList []adk.ChatModelAgentMiddleware) {
 	middlewareList = []adk.ChatModelAgentMiddleware{
@@ -113,7 +113,7 @@ func GetChatModelMiddlewares(
 	return
 }
 
-func GetAgentMiddleWares(rt RuntimeContext) (res []adk.AgentMiddleware) {
+func GetAgentMiddleWares(rt *RuntimeContext) (res []adk.AgentMiddleware) {
 	res = make([]adk.AgentMiddleware, 0)
 	if rt.IsPlanMode {
 		res = append(res, middlewares.NewTodo())

@@ -20,11 +20,11 @@
 | 工具实现 | **复用 eino prebuilt `write_todos`**,不另造 | 名字、入参 schema、session 写入都对得上 deer-flow,不要重复发明 |
 | 触发条件 | **plan mode 开关 + 一律开 tool**(默认 on,不再受 `IsPlanMode` 守门) | 跟 deer-flow 早期版本一致;eino 的 `WithoutWriteTodos` 默认就是 false,无需改 |
 | Plan mode 提示 | **只有 plan mode 时把 `<plan_mode>` system prompt 追加** | 当前 `middlewares/todo.go` 已是这个模型,继续沿用 |
-| Plan mode 入口 | **新增 `/plan [on/off/toggle]` REPL slash 命令** + `RuntimeContext.IsPlanMode` | yaml 里那个被注释的 `is_plan_mode` 这一期不解锁,会跟 model/agent 多源决策耦合 |
+| Plan mode 入口 | **新增 `/plan [on/off/toggle]` REPL slash 命令** → `(*RuntimeContext).SetPlanMode(...)` 改字段 → `DeepAgentRuntime` 用新值重建 lead agent | `seed *RuntimeContext` 这条路本期不走;切 plan mode 不应该牵动整条 `NewRuntimeContext`(重新解析 agent / model)。yaml 里那个被注释的 `is_plan_mode` 这一期不解锁,跟 `/plan` 多源耦合 |
 | Reminder | **summarization 后 todos 还在 session 但 history 里看不到 write_todos 时,注入 reminder 系统消息** | deer-flow 用 `HumanMessage(name="todo_reminder")`,Go 这边走 `schema.SystemMessage` 即可 |
 | Premature-exit guard | **本期不做** | eino ReAct 主图 `chatModel → ToolCalls? → END` 没有 deer-flow 的 `jump_to: "model"` 等价钩子,强行实现要改图。降级方案见 §4.4 |
 | 多次 `write_todos` 并行 | **本期不做** | eino 现版没看到 model 同一轮会并发吐多个相同 tool call,先观察。LangChain 那边的 guard 可后续补 |
-| TUI 渲染 | **`/clear` 已有的 hook 之外,加一个 todo 面板**: `Trace` 在 AfterModel 之后回读 `SessionKeyTodos`,作为新的 `DebugEvent` 兄弟事件流出来 | 一句话:不要新发明事件管道,沿用现有的 `Trace → DebugConsumer` |
+| TUI 渲染 | **顶部加一个 todo 面板**: `Trace` 在 AfterModel 之后回读 `SessionKeyTodos`,作为新的 `TraceEvent` phase 流出来。**默认折叠态单行**(`▶ Todos x/y · ...`),`/todos` 切换展开;completed 项走 lipgloss `Strikethrough` 划掉。`/clear` 时清面板 | 一句话:不要新发明事件管道,沿用现有的 `Trace → DebugConsumer`(连带把名字改对成 `TraceConsumer`,见 §4.5.0)|
 | 持久化 | **仅依赖 eino session(checkpoint 自带)**;不写文件 | todos 跟 message history 是同一份 thread state;失去 thread 就该失去 todos,符合"per-task plan"的语义 |
 
 ---
@@ -222,7 +222,7 @@ deer-flow 的 `_create_todo_list_middleware(is_plan_mode)`:
 
 ---
 
-## 4. LLM 仓实现方案
+## 4. LLM 实现方案
 
 整体思路:**最小增量,顺着现有 trace / clarification / debug 那套写法**。新增的代码体量预计 ~150 行。
 
@@ -244,51 +244,260 @@ deer-flow 的 `_create_todo_list_middleware(is_plan_mode)`:
                                  (2) 看 state.Messages 里最后一次 write_todos AssistantMessage 还在不在
                                  (3) 不在 → state.Messages 头部插一条 SystemMessage 提醒(类比 deer-flow 的 todo_reminder)
 
-TUI 渲染                         → middlewares.Trace.AfterModelRewriteState 现存逻辑里多 emit 一个 DebugEvent{Phase: DebugTodos, ...}
+TUI 渲染                         → middlewares.Trace.AfterModelRewriteState 现存逻辑里多 emit 一个 TraceEvent{Phase: TracePhaseTodos, ...}
                                  → tui/update.go 收事件 → 顶部画一个折叠面板("To-dos: 1/4 completed")
 ```
 
 ### 4.2 Plan mode 入口
 
-#### 4.2.1 RuntimeContext 接通
+设计取向(三连贯,缺一不可):
 
-`runtime_config.go` 已经有字段,只是 seed 没传。改两行:
+1. **plan mode 切换是单字段开关,不应该回流到 `NewRuntimeContext` 重跑整条解析**(那条路要重新做 agent / model lookup、补默认值,白白做工)。所以让 `*RuntimeContext` 自己暴露一组 setter,`DeepAgentRuntime` 持有指针并在 setter 后**只重建 lead agent / runner / trace**。
 
-```48:51:backend/agent/runtime_config.go
-isPlanMode := false //todo cli 传进来
-if seed != nil && seed.IsPlanMode {
-    isPlanMode = true
-}
-```
+2. **顺手把 `NewRuntimeContext` 的 `seed *RuntimeContext` 参数也去掉**——目前 seed 干两件事:(1) 让 caller 注入 `IsPlanMode` / `SubagentEnabled` / `MaxConcurrentSubagents` 这类开关;(2) 让 subagent fork 用 `subSeed.AgentName = name` 触发对新 agent 的重新解析。两件事都走 setter 更显式:**字段改写**用 `SetXxx`,**重新解析**用 `SetAgentName`(唯一会内部跑 `GetAgentConfig` + `GetModelConfig` 的 setter)。删 seed 之后 `NewRuntimeContext(cfg)` 干脆只产一份"用 `cfg.DefaultAgent` 解析出来的基线",caller 拿到后按需 setter。
 
-→
+3. **`RuntimeContext` 全程用 `*RuntimeContext`,不再 by-value 传递**。`NewRuntimeContext` 返回 `*RuntimeContext`;`MakeLeadAgent` / `GetSystemPrompt` / `GetChatModelMiddlewares` / `GetAgentMiddleWares` / `buildNamedSubagents` 五个函数的 `rt` 入参全改 `*RuntimeContext`。理由:既然引入了一组 setter,by-value semantics(每个 caller 一份独立 copy)只会让"我调了 setter 但 lead agent 看到的还是旧值"这种困惑变多;指针下单一所有者(`DeepAgentRuntime` 持有,其他人借用),语义干净。代价是 fork 子 agent 必须显式 `Clone()`(§4.2.5),不能再靠 value copy 隐式继承——这正好对得上"显式优于隐式"。
+
+#### 4.2.1 `RuntimeContext`: 删 seed 参数,改用一组 setter
+
+##### (a) 字段哪些需要 setter
+
+| 字段 | 需要 setter? | 备注 |
+|---|---|---|
+| `AgentConfig` | ❌ | 内部产物,由 `SetAgentName` 间接更新;直接暴露 setter 会让两份相关字段失同步 |
+| `ModelCfg` | ❌ | 同上 |
+| `AgentName` | ✅ `SetAgentName(cfg, name) error` | **特殊**:同时刷新 `AgentConfig` / `ModelCfg`;失败时三个字段都不动(原子) |
+| `IsPlanMode` | ✅ `SetPlanMode(plan bool)` | 单字段写 |
+| `SubagentEnabled` | ✅ `SetSubagentEnabled(enabled bool)` | 单字段写 |
+| `MaxConcurrentSubagents` | ✅ `SetMaxConcurrentSubagents(n int)` | 单字段写;`n <= 0` 视作"用默认 3",setter 内部 normalise(对应原 `NewRuntimeContext` 里 `> 0` 才覆盖的语义) |
+| `HITLTools` | ✅ `SetHITLTools(tools []string)` | 整片替换;详见(d)slice alias 警告 |
+
+##### (b) 新的 `NewRuntimeContext`
+
+签名变两处(去 seed + 返回指针):
 
 ```go
-isPlanMode := false
-if seed != nil {
-    isPlanMode = seed.IsPlanMode
-}
+// 旧
+func NewRuntimeContext(cfg *config.Config, seed *RuntimeContext) (RuntimeContext, error)
+
+// 新
+func NewRuntimeContext(cfg *config.Config) (*RuntimeContext, error)
 ```
 
-(把 `//todo` 注释删了,seed 一定是有意覆盖,无需"truthy override"语义。)
-
-#### 4.2.2 `DeepAgentRuntime` 接受 seed
-
-`backend/runtime/eino/deep_runtime.go:33` 现在硬编码 `agent.NewRuntimeContext(cfg, nil)`,改成可选 seed:
+实现简化为:
 
 ```go
-type Options struct {
-    PlanMode bool
-}
+// NewRuntimeContext returns a baseline *RuntimeContext resolved from
+// cfg.DefaultAgent. Callers that want to override AgentName / plan mode /
+// subagent settings call SetXxx on the returned pointer.
+//
+// Returns *RuntimeContext (not value) because callers are expected to mutate
+// it via setters; by-value would silently make those mutations local-only.
+// See §4.2.1 (d) for the ownership rules.
+func NewRuntimeContext(cfg *config.Config) (*RuntimeContext, error) {
+    agentName := cfg.DefaultAgent
 
-func NewDeepAgentRuntime(ctx context.Context, cfg *config.Config, opts Options) (Runtime, error) {
-    seed := &agent.RuntimeContext{IsPlanMode: opts.PlanMode}
-    runtimeCtx, err := agent.NewRuntimeContext(cfg, seed)
-    ...
+    agentConfig, err := GetAgentConfig(cfg, agentName)
+    if err != nil || agentConfig == nil {
+        return nil, errors.New("load agent fail")
+    }
+    modelCfg, err := GetModelConfig(agentConfig.Model, cfg)
+    if err != nil {
+        return nil, err
+    }
+
+    return &RuntimeContext{
+        AgentConfig:            agentConfig,
+        ModelCfg:               modelCfg,
+        AgentName:              agentName,
+        MaxConcurrentSubagents: 3, // baseline default; SetMaxConcurrentSubagents can override
+    }, nil
 }
 ```
 
-`Options` 故意只装 plan mode 一个字段——目前不需要别的。如果 caller 不关心,可以传 `Options{}`。
+(其它字段——`IsPlanMode`、`SubagentEnabled`、`HITLTools`——都用类型零值,显式默认 off / nil。)
+
+**消费端签名同步**:
+
+| 函数 | 旧 | 新 |
+|---|---|---|
+| `MakeLeadAgent` | `(ctx, rt RuntimeContext, cfg)` | `(ctx, rt *RuntimeContext, cfg)` |
+| `GetSystemPrompt` | `(rt RuntimeContext, cfg)` | `(rt *RuntimeContext, cfg)` |
+| `GetChatModelMiddlewares` | `(ctx, cfg, rt RuntimeContext, chatModel)` | `(ctx, cfg, rt *RuntimeContext, chatModel)` |
+| `GetAgentMiddleWares` | `(rt RuntimeContext)` | `(rt *RuntimeContext)` |
+| `buildNamedSubagents` | `(ctx, rt RuntimeContext, cfg, names)` | `(ctx, rt *RuntimeContext, cfg, names)` |
+
+测试 callsite(`middleware_chain_test.go` / `middleware_chain_phase3_test.go` / `memory_e2e_test.go` / `prompt_test.go` / `subagents_test.go`)里 `RuntimeContext{...}` 字面量统一加 `&` 变 `&RuntimeContext{...}`——一次性 grep + replace 即可。
+
+##### (c) Setter 代码骨架
+
+全部加在 `backend/agent/runtime_config.go` 文件尾,顺序按字段重要性排:
+
+```go
+// SetAgentName switches the agent and re-resolves AgentConfig / ModelCfg so
+// the three related fields stay in sync. On failure none of the three is
+// modified. cfg is passed in (rather than stored on RuntimeContext) so the
+// struct stays "data-only" — callers always have cfg in scope at this point
+// (DeepAgentRuntime keeps a reference; subagent fork is handed cfg as an arg).
+func (rt *RuntimeContext) SetAgentName(cfg *config.Config, name string) error {
+    agentConfig, err := GetAgentConfig(cfg, name)
+    if err != nil || agentConfig == nil {
+        return errors.New("load agent fail")
+    }
+    modelCfg, err := GetModelConfig(agentConfig.Model, cfg)
+    if err != nil {
+        return err
+    }
+    // Atomic swap: only after both lookups succeed do we mutate fields.
+    rt.AgentName = name
+    rt.AgentConfig = agentConfig
+    rt.ModelCfg = modelCfg
+    return nil
+}
+
+// SetPlanMode flips IsPlanMode in place. Callers must guarantee no other
+// goroutine is reading rt while this runs — DeepAgentRuntime owns that
+// guarantee via its own mu, and lead agent code never holds onto rt after
+// MakeLeadAgent returns (see §4.2.1 (e) invariants).
+func (rt *RuntimeContext) SetPlanMode(plan bool)              { rt.IsPlanMode = plan }
+func (rt *RuntimeContext) SetSubagentEnabled(enabled bool)    { rt.SubagentEnabled = enabled }
+
+// n <= 0 falls back to the baseline 3, matching the old NewRuntimeContext
+// "only > 0 overrides" semantics so callers can SetMaxConcurrentSubagents(0)
+// to mean "reset to default".
+func (rt *RuntimeContext) SetMaxConcurrentSubagents(n int) {
+    if n <= 0 {
+        n = 3
+    }
+    rt.MaxConcurrentSubagents = n
+}
+
+// SetHITLTools replaces the slice. The setter takes ownership of the passed
+// slice; callers must not mutate it after handing it over (avoids aliasing
+// bugs across forks — see §4.2.5).
+func (rt *RuntimeContext) SetHITLTools(tools []string) { rt.HITLTools = tools }
+```
+
+##### (d) 所有权与 fork 模型(指针时代的注意点)
+
+全程指针之后,RuntimeContext 不再有"自动 frozen snapshot"——它就是一份共享状态。规则:
+
+- **单一所有者**:`DeepAgentRuntime` 是 RuntimeContext 的所有者,持有 `*RuntimeContext` 字段并对其字段写入(通过 `SetPlanMode` 等 setter)。所有写都在 `r.mu` 内完成。
+- **借用者只读不写**:`MakeLeadAgent` / `GetSystemPrompt` / `GetChatModelMiddlewares` / `GetAgentMiddleWares` 这些消费方拿到 `*RuntimeContext` 后**只读字段**,从不调 setter。这条规则靠 code review + §6 测试守(没有编译期保护;Go 没有 const ref)。
+- **lead agent 不长期持有指针**:`MakeLeadAgent` 在构造时把 rt 字段需要的值**全部抽出来烧死**——`IsPlanMode` 烧到 system prompt 文本和 middleware 决策里、`AgentName` 烧到 `Trace.agentName` 和 `deep.Config.Name`、`AgentConfig` 烧到 tool group 解析、`ModelCfg` 烧到 `buildChatModel` 的入参。**lead agent 内部任何 callback 都不再访问 `*RuntimeContext`**。这是为什么 `SetPlanMode` 必须重建 lead agent——光改 rt 字段对已构造的 lead agent 没有任何作用,反过来,正因为 lead agent 不持有 rt 引用,setter 改字段对正在跑的 lead agent 也是零干扰。
+- **fork 子 agent 必须显式 `Clone`**:由于 RuntimeContext 是共享指针,`subRT := rt` 只是 copy 指针——两个 fork 共享同一份字段,任意一边 setter 都污染对方。subagent fork(§4.2.5)用 `rt.Clone()` 拿一份独立副本,clone 内部对 `HITLTools` slice 做拷贝避免 alias。
+
+`Clone` 方法定义(放在 `runtime_config.go` setter 旁边):
+
+```go
+// Clone returns an independent copy of rt suitable for forking subagents.
+// HITLTools slice is deep-copied because subsequent SetHITLTools on either
+// side would otherwise alias through the shared backing array (§4.2.5
+// explains the alias risk in detail). AgentConfig / ModelCfg pointers are
+// shared on purpose — they're effectively immutable lookup results owned
+// by *config.Config; SetAgentName replaces the pointer, never mutates the
+// pointee.
+func (rt *RuntimeContext) Clone() *RuntimeContext {
+    clone := *rt
+    if rt.HITLTools != nil {
+        clone.HITLTools = append([]string(nil), rt.HITLTools...)
+    }
+    return &clone
+}
+```
+
+##### (e) 不变量(写进文档,不改代码强制)
+
+- **唯一写者**:只有 `DeepAgentRuntime.SetXxx` 系列(目前只 `SetPlanMode`,以后可能更多)在 `r.mu` 内调 `*RuntimeContext` 上的 setter。其它代码一律视 `*RuntimeContext` 为只读。
+- **`AgentName` / `AgentConfig` / `ModelCfg` 三字段的一致性靠 `SetAgentName` 唯一入口维护**;别在外部直接给这三个字段赋值。
+- **`SetAgentName` 是唯一会失败的 setter**;其它单字段 setter 都没有错误返回——单字段写没什么可错的。
+- **lead agent 构造完即与 rt 解耦**:这是允许 setter 在 lead agent 还活着的时候改 rt 而不引起 race 的根本原因。这条若被破坏(比如以后某个 middleware 决定持有 `*RuntimeContext` 在 callback 里读),整套并发模型崩塌——必须同步加锁或退回 by-value snapshot。
+
+#### 4.2.2 `DeepAgentRuntime` 持有 `*RuntimeContext` 并暴露 `SetPlanMode`
+
+```go
+type DeepAgentRuntime struct {
+    cfg                 *config.Config        // 新增:SetPlanMode 重建 lead agent 时要它
+    rt                  *agent.RuntimeContext // 新增:DeepAgentRuntime 是 rt 的唯一所有者,字段写仅通过 SetPlanMode (持 mu)
+    modelName           string
+    runner              *adk.Runner
+    mu                  sync.Mutex
+    pendingCheckpointID string
+    history             []*schema.Message
+    maxHistoryTurns     int
+    trace               *middlewares.Trace
+}
+
+// 现状:NewDeepAgentRuntime(ctx, cfg) 一气构造完。改完后保持同签名,
+// NewRuntimeContext 已经返回 *RuntimeContext(§4.2.1.b),直接持有即可。
+func NewDeepAgentRuntime(ctx context.Context, cfg *config.Config) (Runtime, error) {
+    rt, err := agent.NewRuntimeContext(cfg) // §4.2.1: 不再接 seed,返回 *RuntimeContext
+    if err != nil { return nil, err }
+
+    leadAgent, trace, err := agent.MakeLeadAgent(ctx, rt, cfg)
+    if err != nil { return nil, fmt.Errorf("build lead agent: %w", err) }
+
+    store := checkpoint.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "checkpoints"))
+    runner := adk.NewRunner(ctx, adk.RunnerConfig{
+        Agent:           leadAgent,
+        EnableStreaming: true,
+        CheckPointStore: store,
+    })
+
+    return &DeepAgentRuntime{
+        cfg:             cfg,
+        rt:              rt, // 单一所有者,后续 SetPlanMode 在 mu 内改它
+        modelName:       cfg.DefaultModel,
+        runner:          runner,
+        maxHistoryTurns: 20,
+        trace:           trace,
+    }, nil
+}
+
+// SetPlanMode 只在锁内做三件事:改字段、重建 lead agent、换 runner/trace。
+// history 不清:plan mode 切换不该把对话上下文也烧掉,语义上应当跟
+// /debug toggle 一致(只换 agent 行为,不洗 history)。
+func (r *DeepAgentRuntime) SetPlanMode(ctx context.Context, plan bool) error {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    if r.rt.IsPlanMode == plan {
+        return nil // no-op,不浪费一次 lead agent 重建
+    }
+    r.rt.SetPlanMode(plan)
+
+    leadAgent, trace, err := agent.MakeLeadAgent(ctx, r.rt, r.cfg)
+    if err != nil {
+        // 失败时回滚字段,免得 rt 与 lead agent 对不上
+        r.rt.SetPlanMode(!plan)
+        return fmt.Errorf("rebuild lead agent for plan mode %v: %w", plan, err)
+    }
+    store := checkpoint.NewStore(filepath.Join(r.cfg.RootDir, ".eino-cli", "checkpoints"))
+    r.runner = adk.NewRunner(ctx, adk.RunnerConfig{
+        Agent:           leadAgent,
+        EnableStreaming: true,
+        CheckPointStore: store,
+    })
+    r.trace = trace
+    return nil
+}
+```
+
+> 跟原方案(A 走 `Options{PlanMode}` + seed 重跑 NewRuntimeContext)的实质差别:
+> - **不重新解析 agent / model**:RuntimeContext 已经持有 `AgentConfig` / `ModelCfg`,不必再过一次 `GetAgentConfig` / `GetModelConfig`。
+> - **`NewDeepAgentRuntime` 签名不变**:CLI 启动入口零改动,默认 plan mode 关。
+> - **history 不洗**:之前 §4.2.3 写过"plan mode 切换 → ClearHistory",现在去掉,理由见上面注释。如果实测发现 model 拿带旧 plan mode preamble 的 history 跑新 plan mode 时表现错乱,再加。
+
+并发约束:
+
+| 场景 | 安全性 |
+|---|---|
+| 用户输入中,无 stream 在跑 | TUI 调 `SetPlanMode` 加 `r.mu`,完成后释放;下一次 `ExecuteStream` 进来时拿到的是新 runner |
+| Stream 跑到一半用户输 `/plan on` | TUI 调 `SetPlanMode` 等 `r.mu`(`ExecuteStream` 已经在 `r.mu.Unlock()` 之后跑 stream,不持锁),立刻拿到锁、改字段、换 runner。**当前进行中的 turn 用旧 runner 跑完,下一次 `ExecuteStream` 拿新 runner**。语义跟 deer-flow per-request RunnableConfig 等价(per-turn 切换) |
+| 两个 goroutine 同时 `SetPlanMode` | 串行化(mu),最后赢家定 |
+
+`r.runner` 字段的读写都在 `r.mu` 内(`ExecuteStream` 当前的 read 也得包进锁,见下条);MakeLeadAgent 的 rebuild 失败时回滚字段保持 invariant。
+
+> 顺手要改的小坑:`ExecuteStream` 当前在 `r.mu.Unlock()` 之后才读 `r.runner`,SetPlanMode 加进来后这是 race。改法:`ExecuteStream` 进来后在锁内 `runner := r.runner`(value copy 一份),再释放锁去跑 stream。这一步本来在原方案 A 里也要做,只是写文档时漏了。
 
 #### 4.2.3 `/plan` slash 命令
 
@@ -299,23 +508,51 @@ deer-flow 是把 plan mode 塞进每次 RunnableConfig,前端控制。CLI 这边
 case "plan":
     return m.handlePlanCmd(text), true
 
-// handlePlanCmd: 解析 on/off/toggle,调 m.rt.SetPlanMode(...) → 内部
-//  1. 重新跑 NewRuntimeContext(seed= IsPlanMode=...)
-//  2. agent.MakeLeadAgent 重建 lead agent + trace
-//  3. 重置 adk.Runner(沿用 NewDeepAgentRuntime 里的 runner 构造)
-//  4. ClearHistory()(避免拿旧 plan mode 下的 history 喂新 agent)
-// 在面板顶部 push 一行系统消息: "plan = on / off"
+// handlePlanCmd: 解析 on/off/toggle,调 m.rt.SetPlanMode(ctx, ...)。
+// 成功后 push 一行系统消息: "plan = on / off"。
+// 出错就 push "plan toggle failed: <err>",老 plan mode 已被 SetPlanMode
+// 内部回滚,UI 状态不动。
 ```
 
 实现侧改动:
-- `backend/runtime/eino/deep_runtime.go` 暴露 `SetPlanMode(plan bool) error` 方法,内部加锁重建 `runner` / `trace`。
-- `backend/cli/tui/model.go` 在 `builtinHelp` 里加 `/plan [on|off|toggle]` 一行。
-
-> 这个能力的代价是 **重启一个 agent + 失去当前 history**——这是 plan mode 的语义(进入 plan mode = 开始一个新规划的 task),不是 bug。文档里要明确写。
+- `backend/cli/tui/model.go` 在 `builtinHelp` 里加 `/plan [on|off|toggle]` 一行;`Model` 字段加 `planMode bool`(纯展示状态,真值在 runtime)。
+- `backend/runtime/eino/deep_runtime.go` 暴露的 `SetPlanMode(ctx, plan bool) error` 见 §4.2.2。
 
 #### 4.2.4 yaml 字段(本期不做)
 
 `yaml/config.yaml` 里有个被注释掉的 `is_plan_mode: false`,deer-flow 那边走 RunnableConfig 而非 yaml,**留它注释着即可**;真正激活的话会跟 `/plan` 命令的优先级、跟 `agent.yaml` 的 plan mode 字段(如果以后加)产生多源决策矛盾。这一期只走 `/plan`。
+
+#### 4.2.5 Subagent fork callsite 改动
+
+`backend/agent/subagents.go:30-32` 现在的写法依赖 seed:
+
+```30:32:backend/agent/subagents.go
+subSeed := rt
+subSeed.AgentName = name
+subRT, err := NewRuntimeContext(cfg, &subSeed)
+```
+
+意图是"copy 父 rt → 改 AgentName → 让 NewRuntimeContext 重新解析 AgentConfig / ModelCfg"。删 seed + 全程指针之后改成两步:**`Clone()` 拿独立副本,再调 `SetAgentName` 触发重新解析**:
+
+```go
+subRT := rt.Clone()                                       // 独立副本(HITLTools 已 deep copy,见 §4.2.1.d)
+if err := subRT.SetAgentName(cfg, name); err != nil {     // 重新解析 AgentConfig / ModelCfg
+    slog.Warn("failed to finalize subagent runtime; skipping",
+        "agent", name,
+        "err", err,
+    )
+    continue
+}
+
+sub, _, err := MakeLeadAgent(ctx, subRT, cfg)
+```
+
+要点:
+
+- **必须 `Clone()` 不能直接 `subRT := rt`**:全程指针后,`subRT := rt` 只是 copy 指针,subagent 的 setter 会污染父 rt——典型的 alias bug。Clone 给出独立副本,父子互不影响。
+- **`Clone` 已处理 HITLTools alias**:slice 在 Clone 内部已经 `append([]string(nil), ...)` 拷贝,subagent 后续如果调 `SetHITLTools` 不会回改父。`AgentConfig` / `ModelCfg` 是共享指针目标,但它们是 `*config.Config` 拥有的不可变 lookup 结果,没人会去 mutate 指针目标本身,共享是安全的。
+- **`SetAgentName` 失败时 `subRT` 三字段都不动**(§4.2.1.c 的原子性),立刻 `continue` 跳过这个 subagent,subRT 走出作用域被 GC。
+- **取消旧写法的隐藏行为**:原来 seed 里 `HITLTools` 字段没被 `NewRuntimeContext` 读、`IsPlanMode` 走 `if seed.IsPlanMode` 的 truthy override(false 不能覆盖 true),都是隐藏规则。新写法 Clone 直接复制所有字段,显式可控。
 
 ### 4.3 Reminder middleware(`middlewares/todo_reminder.go`)
 
@@ -437,45 +674,76 @@ return compose.END, nil
 
 ### 4.5 TUI 渲染
 
-#### 4.5.1 选哪条管道传 todos
+#### 4.5.0 前置:解决 `DebugConsumer` 跟 `m.debug` 的语义错位
 
-两个候选:
-- **A. 复用 Trace + DebugConsumer**: 现有 `Trace.AfterModelRewriteState` 里多读一次 session,Send 一个新 phase 的 `DebugEvent`,TUI 在 `update.go` 里多一个 case。
-- B. 独立的 `TodoConsumer` + 自己一套 ctx-based 注入。
+照搬当前管道(`Trace` + `DebugConsumer`)有个隐含 bug:**当前 consumer 只在 `/debug on` 时才挂**,debug 没开 → ctx 上没 consumer → `Trace` 里所有 `consumer.Send` 调用直接 short-circuit,新加的 todo 事件根本不会到 TUI。
 
-选 **A**:
-- 复用现有 ctx 注入路径(`WithDebugConsumer`),不用再发明一个;
-- TUI 那边的事件 dispatch 是同一个 channel,顺序天然对齐 BeforeModel/AfterModel;
-- 改动量最小。
+```124:127:backend/cli/tui/update.go
+var consumer middlewares.DebugConsumer
+if m.debug && m.prog != nil {
+    consumer = teaProgramConsumer{p: m.prog}
+}
+```
 
-具体改动:
+```32:38:backend/agent/middlewares/debug.go
+func WithDebugConsumer(ctx context.Context, consumer DebugConsumer) context.Context {
+    if consumer == nil {
+        return ctx
+    }
+    return context.WithValue(ctx, debugConsumerKey{}, consumer)
+}
+```
+
+两件事其实是正交的:`Trace` 是个**事件采集器**,always-on(每 turn Before/After 都跑);`DebugConsumer` 这个名字 + 当前的挂载条件**把"采集事件"和"渲染 debug UI"耦合到了同一个布尔 `m.debug` 上**。多一类 todo 事件之后,这个耦合就不成立了——todos 应该在 plan-mode 下永远显示,不受 `/debug` 守门。
+
+| 维度 | 现状 | 多 todo 之后的需求 |
+|---|---|---|
+| Trace 跑不跑 | 永远跑(BeforeModel/AfterModel 钩子注册了) | 不变 |
+| Consumer 挂不挂 | 只在 `m.debug` 时挂 | **永远挂**(否则 todos 收不到) |
+| 渲染 Before/After trace | `m.debug` 决定 | 不变 |
+| 渲染 Todo 面板 | — | **不受 `m.debug` 守门** |
+
+修法分两步,各自独立的 commit:
+
+- **Step 1(纯重命名,行为零变更)**:`DebugConsumer` / `DebugEvent` / `WithDebugConsumer` / `DebugBefore` / `DebugAfter` / `getDebugConsumerFromContext` / `debugConsumerKey` 全改成 `Trace*` 同形态;`backend/agent/middlewares/debug.go`(已经放的就是 `Trace` middleware)文件名也改 `trace.go`,`debug_test.go` → `trace_test.go`。`m.debug bool`、`/debug` 命令、`formatDebugInput` / `formatDebugOutput`、`pushMessage("debug-input", ...)` 这些**保留不动**——它们确实是 debug-only,不是 trace 事件管道的一部分。
+- **Step 2(行为变更)**:加 `TracePhaseTodos`、改 `startStream` 永远挂 consumer、`handleTraceEvent` 里 Before/After 受 `m.debug` 守门、Todos 永远渲染。这一步即下面 4.5.1 / 4.5.2。
+
+> 这两步必须分两个 commit,不能合一起——AGENTS.md "纯重命名 ≠ 行为变更"是死规矩;合并后 review 没法用一句话讲清 diff。
+
+#### 4.5.1 加 `TracePhaseTodos` 事件 + 让 consumer 永远挂
+
+(基于 Step 1 已经把名字改干净的前提)
+
+事件结构扩字段:
 
 ```go
-// backend/agent/middlewares/debug.go 新增 phase 常量
+// backend/agent/middlewares/trace.go 新增 phase 常量
 const (
-    DebugBefore = iota + 1
-    DebugAfter
-    DebugTodos
+    TracePhaseBefore = iota + 1
+    TracePhaseAfter
+    TracePhaseTodos
 )
 
-type DebugEvent struct {
+type TraceEvent struct {
     AgentName string
     Phase     int
     Turn      int
     Messages  []*schema.Message
-    Todos     []deep.TODO  // only set when Phase == DebugTodos
+    Todos     []deep.TODO  // only set when Phase == TracePhaseTodos
 }
 ```
 
-`Trace.AfterModelRewriteState` 末尾追加:
+> 注意:`Todos` 字段只在 `TracePhaseTodos` 时填,其它两个 phase 留空——这跟 `Messages` 字段在不同 phase 语义不同(Before 是 full slice、After 是 single delta)是一样的,struct 同一份按 phase 解释,符合 AGENTS.md "struct 装数据,不为单一字段炸新结构"。
+
+`Trace.AfterModelRewriteState` 末尾追加(在已有 `TracePhaseAfter` Send 之后):
 
 ```go
 if raw, ok := adk.GetSessionValue(ctx, deep.SessionKeyTodos); ok {
     todos, _ := raw.([]deep.TODO)
     if len(todos) > 0 {
-        consumer.Send(DebugEvent{
+        consumer.Send(TraceEvent{
             AgentName: t.agentName,
-            Phase:     DebugTodos,
+            Phase:     TracePhaseTodos,
             Turn:      int(t.turn.Load()),
             Todos:     todos,
         })
@@ -483,36 +751,109 @@ if raw, ok := adk.GetSessionValue(ctx, deep.SessionKeyTodos); ok {
 }
 ```
 
-> 注意:`Todos` 字段只在 `DebugTodos` 时填,其它两个 phase 留空——这跟 `Messages` 字段在不同 phase 语义不同(Before 是 full slice、After 是 single delta)是一样的,struct 同一份按 phase 解释,符合
-> AGENTS.md 的"struct 装数据,不为单一字段炸新结构"。
+`startStream` 调用点不再受 `m.debug` 守门:
+
+```go
+// backend/cli/tui/update.go (旧)
+var consumer middlewares.DebugConsumer
+if m.debug && m.prog != nil {
+    consumer = teaProgramConsumer{p: m.prog}
+}
+
+// backend/cli/tui/update.go (新)
+var consumer middlewares.TraceConsumer
+if m.prog != nil {
+    consumer = teaProgramConsumer{p: m.prog}
+}
+```
+
+代价:每个 turn 多发 1–2 次 trace 事件给 TUI(在 `m.debug == false` 时被 handler 丢掉)。`m.prog == nil` 这条 nil 守留着,`prog` 只在 main 启完 bubbletea 之后才被填,启动早期消息要走老路;这条 invariant 不变。
 
 #### 4.5.2 渲染
 
-`backend/cli/tui/update.go` 的 `case middlewares.DebugAfter:` 旁边再加一个:
+`backend/cli/tui/update.go` 的 `(*Model).handleTraceEvent` 按 phase 过滤,Before/After 受 `m.debug` 守、Todos 不受:
 
 ```go
-case middlewares.DebugTodos:
-    m.todos = ev.Todos          // 缓存最新一份
+func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd) {
+    switch ev.Phase {
+    case middlewares.TracePhaseBefore:
+        if m.debug {
+            m.pushMessage("debug-input", formatDebugInput(ev))
+        }
+    case middlewares.TracePhaseAfter:
+        if m.debug {
+            m.pushMessage("debug-output", formatDebugOutput(ev))
+        }
+    case middlewares.TracePhaseTodos:
+        m.todos = ev.Todos // 永远更新缓存,与 m.debug 无关
+    }
     return m, nil
+}
 ```
 
-`backend/cli/tui/view.go` 在主消息列表上方画一个紧凑列表(高度固定 1 行 header + 最多 5 行 todos):
+`Model` 字段加一行 `todos []deep.TODO`(零值 = 不画面板)。
 
-```
-─── Todos (2/5) ─────────────────────────
-  ✓ Read deer-flow source
-  ✓ Compare with eino prebuilt
-  → Write reminder middleware       (in_progress)
-  ○ Wire /plan slash command
-  ○ Update tests
-─────────────────────────────────────────
+`backend/cli/tui/view.go` 在主消息列表上方画一个紧凑面板。**两态视图,默认折叠**——避免长 todo list 把 chat 区挤死:
+
+##### 展开态(候选 A) — 跟 scrollback 平铺,无边框
+
+```text
+  Todos · 2/5  ▰▰▰▱▱
+
+  ✓  R̶e̶a̶d̶ ̶d̶e̶e̶r̶-̶f̶l̶o̶w̶ ̶s̶o̶u̶r̶c̶e̶
+  ✓  C̶o̶m̶p̶a̶r̶e̶ ̶w̶i̶t̶h̶ ̶e̶i̶n̶o̶ ̶p̶r̶e̶b̶u̶i̶l̶t̶
+  ◐  Write reminder middleware       in_progress
+  ○  Wire /plan slash command
+  ○  Update tests
 ```
 
-折叠/展开靠回车或 `/todos` slash 命令(同 `/debug` 模式)——视图细节不锁,UX 调到舒服为止。
+##### 折叠态(候选 D) — 单行,只显示当前 in_progress
+
+```text
+▶ Todos 2/5 · in_progress: Write reminder middleware
+```
+
+折叠态规则:
+- 显示进度 `<done>/<total>` + 当前 in_progress 项的 `Content`(若有);
+- 如果没 in_progress 项(全 pending 或全 completed),退化成 `▶ Todos 2/5 · 3 pending` / `▶ Todos 5/5 · all done`;
+- 单行强制截断,超过宽度用 `…` 省略。
+
+##### 配色 + 状态符号(展开/折叠共用)
+
+| 元素 | 符号 | lipgloss style(加到 `styles.go`) |
+|---|---|---|
+| `completed` | `✓` | `todoCompletedStyle = dimStyle.Strikethrough(true).Foreground(lipgloss.Color("10"))` (绿 + 删除线 + faint) |
+| `in_progress` | `◐` | `todoInProgressStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))` (橙加粗) |
+| `pending` | `○` | `todoPendingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))` (浅灰) |
+| 标题 `Todos` | — | `headerTitleStyle`(已有,magenta bold) |
+| 进度条已填 | `▰` | `todoBarFilledStyle = accentStyle`(已有 blue) |
+| 进度条未填 | `▱` | `todoBarEmptyStyle = dimStyle`(已有) |
+| 折叠 prefix | `▶` | `headerTitleStyle`(magenta) |
+| 状态标签 `in_progress` | — | `dimStyle` |
+
+> **删除线终端兼容性**: lipgloss `Strikethrough(true)` 走 ANSI SGR 9。iTerm2 / Apple Terminal / Alacritty / kitty / WezTerm / VS Code 内置 / Windows Terminal 都支持。极少数老 tmux 转发链路会丢 SGR 9,降级表现是"completed 项只剩 dim + 绿色,没划线"——可读性不受损,不需要专门 fallback。
+
+##### 折叠/展开切换
+
+- **触发**:`/todos` slash 命令(`/todos` 不带参 = toggle,`/todos open` / `/todos close` 显式)。沿用现有 `/debug` 一致的 verb 模型,不引入新键绑定 keymap(键绑定逻辑改 model.go 太重,而且会跟 textinput 的 keymap 打架)。
+- **状态字段**:`Model.todoExpanded bool`,默认 `false`(折叠)。
+- **空 todos 时不渲染**: `len(m.todos) == 0` → 两个态都不画(连 prefix 都不留),让 chat 区没有视觉残留。
+
+##### Model 字段汇总
+
+```go
+type Model struct {
+    // ...existing fields...
+    todos         []deep.TODO  // 由 TracePhaseTodos 写入
+    todoExpanded  bool         // /todos toggle 切;默认 false (折叠态)
+}
+```
+
+`/clear` 时除了清 history,还要 `m.todos = nil` + `m.todoExpanded = false`(否则切 thread 后旧面板还挂着——todos 跟 thread state 一起活,视图缓存得跟着死)。
 
 ### 4.6 前端 / API(N/A)
 
-仓里目前只有 TUI,没有 web 前端;deer-flow §2.6 那段 React 组件不在我们的范围。如果以后接 web,直接从 trace stream 同一管道把 `DebugTodos` 事件转 SSE 即可,本期不留接口。
+仓里目前只有 TUI,没有 web 前端;deer-flow §2.6 那段 React 组件不在我们的范围。如果以后接 web,直接从 trace stream 同一管道把 `TracePhaseTodos` 事件转 SSE 即可,本期不留接口。
 
 ---
 
@@ -520,15 +861,68 @@ case middlewares.DebugTodos:
 
 > 参考 AGENTS.md "Commit 粒度":纯重命名 / 摘中间层 / 加新功能 各拆开。
 
-### Commit 1 — `runtime: thread plan-mode seed end-to-end`
+### Commit 1 — `runtime: drop seed, switch RuntimeContext to *RuntimeContext + setters`
 
-文件:
-- `backend/agent/runtime_config.go`(去掉 `//todo` 注释,seed 直接覆盖)
-- `backend/runtime/eino/deep_runtime.go`(`NewDeepAgentRuntime` 增加 `Options{PlanMode bool}` 参数;新增 `SetPlanMode(bool)` 方法;内部 mutex + 重建 `runner` / `trace`)
-- `backend/cli/main.go` / TUI 入口(传 `Options{}` 占位,行为不变)
-- 更新对应 `_test.go`
+> 这次 commit 同时做三件结构性改动(删 seed + 加一组 setter + RuntimeContext 全程指针化),它们必须同步——任何一边单独改都会让另一边的 callsite 编译不过。**没有跨文件的纯重命名**,签名变更跟测试改动绑死,合一个 commit 不违 AGENTS.md "纯重命名 ≠ 行为变更"。
 
-验证:`go build ./... && go test ./agent/... ./runtime/...` 全绿,plan mode 行为没变(seed 仍可空)。
+#### 类型与签名变更总览
+
+| 位置 | 旧 | 新 |
+|---|---|---|
+| `NewRuntimeContext` | `(cfg, seed) (RuntimeContext, error)` | `(cfg) (*RuntimeContext, error)` |
+| `MakeLeadAgent` | `(ctx, rt RuntimeContext, cfg)` | `(ctx, rt *RuntimeContext, cfg)` |
+| `GetSystemPrompt` | `(rt RuntimeContext, cfg)` | `(rt *RuntimeContext, cfg)` |
+| `GetChatModelMiddlewares` | `(ctx, cfg, rt RuntimeContext, chatModel)` | `(ctx, cfg, rt *RuntimeContext, chatModel)` |
+| `GetAgentMiddleWares` | `(rt RuntimeContext)` | `(rt *RuntimeContext)` |
+| `buildNamedSubagents` | `(ctx, rt RuntimeContext, cfg, names)` | `(ctx, rt *RuntimeContext, cfg, names)` |
+| `(*RuntimeContext)` 方法新增 | — | `Clone()` / `SetAgentName(cfg, name) error` / `SetPlanMode` / `SetSubagentEnabled` / `SetMaxConcurrentSubagents` / `SetHITLTools` |
+
+`NewDeepAgentRuntime` 签名零改动(`(ctx, cfg)`),CLI 启动入口零改动。
+
+#### 文件清单
+
+**生产代码**
+
+- `backend/agent/runtime_config.go`
+  - 删 `NewRuntimeContext` 的 `seed *RuntimeContext` 参数;返回类型 `RuntimeContext` → `*RuntimeContext`(成功路径返回 `&RuntimeContext{...}`,失败返回 `nil, err`)。
+  - 函数体简化为只解析 `cfg.DefaultAgent` 的基线 + `MaxConcurrentSubagents = 3`(其它字段类型零值)。
+  - 新增 6 个方法:`Clone() *RuntimeContext` / `SetAgentName(cfg, name) error` / `SetPlanMode` / `SetSubagentEnabled` / `SetMaxConcurrentSubagents` / `SetHITLTools`(代码骨架见 §4.2.1.c + §4.2.1.d 的 `Clone`)。
+- `backend/agent/lead_agent.go`
+  - `MakeLeadAgent(rt RuntimeContext, ...)` → `(rt *RuntimeContext, ...)`;函数体内 `rt.X` 字段访问写法不变(指针自动解引)。
+- `backend/agent/prompt.go`
+  - `GetSystemPrompt(rt RuntimeContext, cfg)` → `(rt *RuntimeContext, cfg)`。
+- `backend/agent/middleware_chain.go`
+  - `GetChatModelMiddlewares` / `GetAgentMiddleWares` 签名 `RuntimeContext` → `*RuntimeContext`。
+- `backend/agent/subagents.go`
+  - `buildNamedSubagents` 签名 `RuntimeContext` → `*RuntimeContext`。
+  - body 改成 `subRT := rt.Clone(); subRT.SetAgentName(cfg, name)` 两步(详见 §4.2.5)。
+- `backend/runtime/eino/deep_runtime.go`
+  - `NewRuntimeContext(cfg, nil)` → `NewRuntimeContext(cfg)`,直接拿 `*RuntimeContext`。
+  - `DeepAgentRuntime` 字段加 `cfg *config.Config` 和 `rt *agent.RuntimeContext`,**持有可变 RuntimeContext 单一所有者**。
+  - `ExecuteStream` 在 `r.mu` 内 snapshot `r.runner` 一份指针,修原本 read-without-lock 的 race。
+  - 新增 `SetPlanMode(ctx, plan bool) error`:no-op 短路 / 改字段 / 重建 lead agent + runner / trace / 失败回滚字段(详见 §4.2.2)。
+
+**测试代码**
+
+- 新增 `backend/agent/runtime_config_test.go`
+  - `(*RuntimeContext).SetPlanMode` / `SetSubagentEnabled` / `SetMaxConcurrentSubagents`(含 `n <= 0` 走 default 3) / `SetHITLTools` 的字段写入断言。
+  - `(*RuntimeContext).SetAgentName` 三件事:成功路径(三字段同步刷新)、agent 不存在路径(三字段全不动)、model 不存在路径(三字段全不动)。
+  - `Clone` 三件事:基本字段相等、`HITLTools` 修改不互相污染、`AgentConfig` / `ModelCfg` 指针共享(故意,因为不可变)。
+- `backend/runtime/eino/runtime_test.go`
+  - `DeepAgentRuntime.SetPlanMode` 三态:no-op / 真切换(`r.runner` 指针变了)/ rebuild 失败回滚 `r.rt.IsPlanMode`。
+  - `-race` 用例:一个 goroutine 反复 `SetPlanMode`,另一个反复 `ExecuteStream` 一个会立刻拒掉的 prompt(空串),期望 race detector 干净。
+- 旧测试 callsite 一律加 `&`(机械修改,无逻辑变化):
+  - `backend/agent/middleware_chain_test.go`(`return RuntimeContext{...}` → `return &RuntimeContext{...}`)
+  - `backend/agent/middleware_chain_phase3_test.go`(2 处)
+  - `backend/agent/memory_e2e_test.go`(2 处)
+  - `backend/agent/prompt_test.go`(2 处)
+  - `backend/agent/subagents_test.go`(2 处:`RuntimeContext{}` → `&RuntimeContext{}`)
+
+#### 验证
+
+- `go build ./...` 全绿——指针化是机械传染,任何 callsite 漏改都会编译不过,这点 Go 编译器代我们守住。
+- `go test -race ./backend/agent/... ./backend/runtime/...` 全绿。
+- 手动跑无 `/plan` 时行为跟之前一致。
 
 ### Commit 2 — `cli: add /plan slash command`
 
@@ -550,15 +944,76 @@ case middlewares.DebugTodos:
 
 验证:用 §6.1 的 unit test。
 
-### Commit 4 — `tui: render todo panel from trace stream`
+### Commit 4 — `middlewares: rename DebugConsumer/DebugEvent → TraceConsumer/TraceEvent`
+
+> 纯重命名 + 文件 rename。**零行为变更**,跑测试前后输出比特一致。AGENTS.md "纯重命名 ≠ 行为变更" 要求独立 commit;这是给 Commit 5 让路——todo 事件不是 debug 事件,DebugConsumer 这名字撑不下去。
+
+文件 rename:
+- `backend/agent/middlewares/debug.go` → `backend/agent/middlewares/trace.go`
+- `backend/agent/middlewares/debug_test.go` → `backend/agent/middlewares/trace_test.go`
+
+符号 rename(全仓 grep + replace,确保 callsite 一次扫到底):
+- `DebugConsumer` → `TraceConsumer`
+- `DebugEvent` → `TraceEvent`
+- `WithDebugConsumer` → `WithTraceConsumer`
+- `getDebugConsumerFromContext` → `getTraceConsumerFromContext`
+- `debugConsumerKey{}` → `traceConsumerKey{}`
+- `DebugBefore` → `TracePhaseBefore`
+- `DebugAfter` → `TracePhaseAfter`
+- `(*Model).handleDebug` → `(*Model).handleTraceEvent`(dispatcher 不再是 debug-only;`update.go:23` 的 type switch case 类型同步改 `middlewares.TraceEvent`)
+- `teaProgramConsumer.Send(ev DebugEvent)` 入参类型同步
+
+涉及文件(都是机械替换):
+- `backend/agent/middlewares/trace.go`(原 debug.go)
+- `backend/agent/middlewares/trace_test.go`(原 debug_test.go)
+- `backend/cli/tui/stream.go`
+- `backend/cli/tui/update.go`
+- `backend/cli/tui/model.go`(`formatDebugInput(ev middlewares.DebugEvent)` 入参类型)
+- `backend/cli/tui/debug_format_test.go`(测试体里 `middlewares.DebugEvent` / `middlewares.DebugBefore` / `middlewares.DebugAfter` 引用更新;**文件名保留**——它就是测 debug 渲染格式的)
+
+**保留不动**(确实是 debug-only,不属于 trace 事件管道):
+- `m.debug bool` 用户开关、`/debug` slash 命令、`handleDebugCmd`
+- `formatDebugInput` / `formatDebugOutput`
+- `pushMessage("debug-input", ...)` / `"debug-output"` tag 字符串
+- `debug_format_test.go` 文件名、`TestBuiltinHelpMentionsDebug` 测试名
+- `styles.go:16` "Debug trace styling" 注释
+
+验证:`go build ./... && go test ./...` 全绿,且 diff `go test -v ./...` 输出与 Commit 3 末态完全一致(没有任何新测试,纯改名)。
+
+### Commit 5 — `tui: always attach trace consumer & render todo panel`
+
+> 把原方案的"Commit 4 — todo 面板"和"§4.5.0 挂载时机改动"合在一起。Step 2(行为变更)。
 
 文件:
-- `backend/agent/middlewares/debug.go`(新增 `DebugTodos` 常量 + `DebugEvent.Todos` 字段)
-- `backend/agent/middlewares/debug_test.go`(覆盖 Trace 在 sessionvalue 存在时 emit todos 事件)
-- `backend/cli/tui/update.go` / `view.go`(新增 case + 渲染)
-- `backend/cli/tui/model.go`(`Model.todos []deep.TODO`)
+- `backend/agent/middlewares/trace.go`(新增 `TracePhaseTodos` 常量 + `TraceEvent.Todos` 字段;`Trace.AfterModelRewriteState` 末尾 emit todos 事件)
+- `backend/agent/middlewares/trace_test.go`(覆盖 SessionKeyTodos 存在 / 不存在 / 空 slice 三态)
+- `backend/cli/tui/stream.go`(无改动——签名已经是 `TraceConsumer`)
+- `backend/cli/tui/update.go`:
+  - `startStream` 调用点去掉 `m.debug` 守门(只留 `m.prog != nil` nil 守)
+  - `handleTraceEvent` 三 case:Before / After 受 `m.debug` 守门,Todos 永远缓存
+  - `handleBuiltin` 的 `/clear` 分支增加 `m.todos = nil` + `m.todoExpanded = false`
+  - `handleBuiltin` 加 `case "todos"` → `handleTodosCmd(text)`(toggle / `open` / `close` 三态,跟 `/debug` 同模型)
+  - `builtinHelp` 文案补 `/todos` 行
+- `backend/cli/tui/view.go`:
+  - 在 banner 与 message scrollback 之间加 `renderTodoPanel(m)` 段
+  - 折叠态(`!m.todoExpanded`)→ 单行 `▶ Todos x/y · ...`(§4.5.2 候选 D)
+  - 展开态(`m.todoExpanded`)→ 多行块(§4.5.2 候选 A)
+  - `len(m.todos) == 0` 直接返回 `""`,不占行
+- `backend/cli/tui/styles.go` 加 5 个新 style:`todoCompletedStyle` / `todoInProgressStyle` / `todoPendingStyle` / `todoBarFilledStyle` / `todoBarEmptyStyle`(配色见 §4.5.2 表)
+- `backend/cli/tui/model.go`:`Model` 新增字段 `todos []deep.TODO` 和 `todoExpanded bool`
+- 新增 `backend/cli/tui/todo_render_test.go`,覆盖:
+  - `m.debug == false` 时 `TracePhaseTodos` 事件仍能更新 `m.todos`
+  - `/clear` 后 `m.todos == nil` 且 `m.todoExpanded == false`
+  - `/todos` toggle:`false → true → false`,`/todos open` 强开,`/todos close` 强关
+  - `renderTodoPanel`:折叠态包含当前 in_progress Content;展开态包含 `▰` 进度填充和 `▱` 空白格;completed 项渲染输出含 SGR 9 转义(`\x1b[9m`),证明 strikethrough 真的应用了
+  - `len(m.todos) == 0` 时 `renderTodoPanel` 返回空串
+  - 单行折叠态遇超长 in_progress Content 截断为 `…`
 
-验证:开 TUI 跑一个多步任务,看顶部 todo 面板实时更新。
+验证:
+- 开 TUI **不开 `/debug`**,`/plan on`,跑多步任务 → 折叠态 todo 面板出现在顶部并随 model 调用 `write_todos` 实时更新(关键回归点,这就是 §4.5.0 修的洞)。
+- `/todos` 切到展开态,看到 ✓ 项划掉(strikethrough)。
+- `/debug on` 后 Before/After trace 仍正常显示,跟 todo 面板互不干扰。
+- `/clear` 后面板消失。
 
 > **不在本期**: parallel `write_todos` guard / premature-exit guard / yaml `is_plan_mode` 解锁 / web 前端管道。理由见 §0 表 + §4.4。
 
@@ -580,33 +1035,62 @@ case middlewares.DebugTodos:
 
 ### 6.2 `runtime_config_test.go`(扩 1 用例)
 
-`NewRuntimeContext(cfg, &RuntimeContext{IsPlanMode: true})` → 返回的 RuntimeContext.IsPlanMode == true。
+`(*RuntimeContext).SetPlanMode(true)` → 字段确实变 true;再 `SetPlanMode(false)` → 回到 false。仅断言字段行为,不涉锁。
 
 ### 6.3 `deep_runtime_test.go`(新增)
 
-`SetPlanMode` 不并发安全是 bug:跑 100 个 goroutine 各调一次 `SetPlanMode(rand)`,期望 race detector 干净 + 最终 plan mode 是最后一次写入的值。
+| 用例 | 期望 |
+|---|---|
+| `SetPlanMode(true)` 后 `r.rt.IsPlanMode == true`,且 `r.runner` / `r.trace` 指针变了(说明 lead agent 真的 rebuild 过) | OK |
+| `SetPlanMode(true)` 两次连续调用,第二次走 no-op 分支(`r.runner` 指针不变) | OK |
+| 让 `MakeLeadAgent` mock 出错 → `SetPlanMode` 返回错误,且 `r.rt.IsPlanMode` 回滚 | OK |
+| `-race`: 一个 goroutine 反复 `SetPlanMode(true/false)`,另一个 goroutine 反复 `ExecuteStream` 一个会立刻拒绝的 prompt(不真正进 LLM) → race detector 干净 | OK |
 
 ### 6.4 TUI 集成测试
 
-跟 `debug_format_test.go` 同形态,断言 `/help` 包含 `/plan`,`handlePlanCmd("/plan on")` 后 `m.planMode == true`,`handlePlanCmd("/plan off")` 反之。
+跟 `debug_format_test.go` 同形态:
+- 断言 `/help` 包含 `/plan` 和 `/todos` 两行
+- `handlePlanCmd("/plan on")` 后 `m.planMode == true`,`handlePlanCmd("/plan off")` 反之
+- `handleTodosCmd("/todos")` toggle `m.todoExpanded`(false→true→false)
+- `handleTodosCmd("/todos open")` 强开;`handleTodosCmd("/todos close")` 强关
+- `handleTodosCmd` 在 `m.todos == nil` 时不报错(允许在没 todos 时切,后续来事件再生效)
 
-### 6.5 手动验证清单
+### 6.5 `todo_render_test.go`(新增)
+
+| 用例 | 期望 |
+|---|---|
+| `len(m.todos) == 0` 调 `renderTodoPanel(m)` | 返回 `""` |
+| `todoExpanded == false`,有 1 in_progress | 输出单行,含 `▶ Todos`、`x/y`、in_progress Content |
+| `todoExpanded == false`,全 pending | 输出 `... · N pending` |
+| `todoExpanded == false`,全 completed | 输出 `... · all done` |
+| `todoExpanded == false`,Content 超长 | 末尾 `…` 截断,总宽 ≤ 终端宽 |
+| `todoExpanded == true`,有 completed 项 | 输出含 SGR 9 转义 `\x1b[9m`(strikethrough 真生效)|
+| `todoExpanded == true`,3 completed / 5 total | 进度条含 3 个 `▰` 和 2 个 `▱` |
+| `m.debug == false` 时投递 `TracePhaseTodos` 事件 | `handleTraceEvent` 后 `m.todos` 已更新(关键回归 — §4.5.0 修的洞)|
+| `/clear` 后 | `m.todos == nil` 且 `m.todoExpanded == false` |
+
+### 6.6 手动验证清单
 
 启 TUI(默认 OFF):
-- [ ] `/plan on` 后系统消息 `plan = on`,history 清空。
+- [ ] `/plan on` 后系统消息 `plan = on`,history **保留**(plan mode 切换不洗 history,见 §4.2.2)。
 - [ ] 输入"refactor 三个文件" → model 应该调 `write_todos` 并把 status 标 in_progress。
-- [ ] 顶部 todo 面板出现。
-- [ ] 完成第一项后 model 调一次 `write_todos`,面板第一项 ✓。
+- [ ] 顶部出现折叠态 todo 单行 `▶ Todos x/y · in_progress: ...`(默认折叠,§4.5.2 候选 D)。
+- [ ] `/todos` 切到展开态,看到分项列表;completed 项有删除线(终端不支持时退化为 dim+绿,可读性不损)。
+- [ ] 完成第一项后 model 调一次 `write_todos`,面板第一项变 ✓ 并被划掉(展开态)/ 折叠态 in_progress 跳到下一项。
+- [ ] `/todos close` 强收回折叠态。
+- [ ] **不开 `/debug` 时 todo 面板照样实时更新**(§4.5.0 修的洞,关键回归点)。
 - [ ] 强行制造长 history(repeated `/help` + 长 prompt 凑量)直到 summarization 触发,继续追问 → reminder 应被注入(开 `/debug` 看 BeforeModel 头一条 SystemMessage)。
-- [ ] `/plan off` → 系统消息 `plan = off`,history 清空,新对话不再有 plan-mode preamble。
+- [ ] `/plan off` → 系统消息 `plan = off`;新对话不再有 plan-mode preamble(可对比 system prompt diff)。
+- [ ] `/plan` 流式跑到一半时输入 → 当前 turn 用旧 plan mode 跑完,下一次输入起用新 plan mode。
+- [ ] `/clear` 后 todo 面板消失,折叠态也复位。
 
 ---
 
 ## 7. 跟 `AGENTS.md` 对齐说明
 
-- **结构体只装数据**:`DebugEvent.Todos` 只多一个字段不新建子类型;`TodoReminder` 只持有 `BaseChatModelAgentMiddleware` 嵌入,无业务字段;`Options{PlanMode bool}` 单字段就一个。
+- **结构体只装数据 + 简单 setter**:`TraceEvent.Todos` 只多一个字段不新建子类型;`TodoReminder` 只持有 `BaseChatModelAgentMiddleware` 嵌入,无业务字段;`(*RuntimeContext).SetPlanMode` 只改字段、不持锁(锁的责任在 `DeepAgentRuntime.mu`,职责单一)。
 - **少压调用栈**:Reminder middleware 一层、Trace 一层、TUI handler 一层——总深度 ≤ 4。
-- **少传数据**:不为 reminder 单独做一个 config 子结构;不抽 `TodoConsumer` 单独的 ctx-key,复用 DebugConsumer。
+- **少传数据**:不为 reminder 单独做一个 config 子结构;不抽 `TodoConsumer` 单独的 ctx-key,复用 `TraceConsumer`(改名前是 `DebugConsumer`,见 §4.5.0 + Commit 4)。
 - **注释只回答 why**:每个新文件最多一段顶层 doc + 一两行讲"为什么 SystemMessage 而非 HumanMessage""为什么 reminder 在 Trace 之前"。
 - **Commit 粒度**:Runtime 接通 / slash 命令 / reminder middleware / TUI 渲染 各一个 commit,diff 一句话讲清。
 - **变量命名以动词开头**:`hasWriteTodosCall` / `renderTodoReminder` / `getTodosFromSession`(如果抽出去的话)。
@@ -618,10 +1102,10 @@ case middlewares.DebugTodos:
 LLM 仓:
 - `backend/agent/middlewares/todo.go`(已有 plan mode preamble)
 - `backend/agent/middleware_chain.go`(挂载点)
-- `backend/agent/runtime_config.go`(IsPlanMode 字段)
-- `backend/runtime/eino/deep_runtime.go`(seed 接通点)
+- `backend/agent/runtime_config.go`(IsPlanMode 字段 + `SetPlanMode` 方法)
+- `backend/runtime/eino/deep_runtime.go`(持有 `*RuntimeContext` + `SetPlanMode` 重建 lead agent)
 - `backend/cli/tui/update.go` / `model.go` / `view.go`(slash 命令 + 面板)
-- `backend/agent/middlewares/debug.go`(DebugEvent 扩展点)
+- `backend/agent/middlewares/trace.go`(TraceEvent 扩展点;Commit 4 之前叫 `debug.go`)
 
 eino prebuilt:
 - `adk/prebuilt/deep/deep.go`(`newWriteTodos`、`SessionKeyTodos`)

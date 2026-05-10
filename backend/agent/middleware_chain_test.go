@@ -9,8 +9,8 @@ import (
 	"eino-cli/backend/config"
 )
 
-func makeChainTestRT() RuntimeContext {
-	return RuntimeContext{
+func makeChainTestRT() *RuntimeContext {
+	return &RuntimeContext{
 		MaxConcurrentSubagents: 3,
 		AgentName:              "default",
 	}

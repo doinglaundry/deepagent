@@ -12,7 +12,7 @@ import (
 // All gates ON: gated middlewares interleave between always-on prefix
 // and the Trace + Clarification tail in the documented order.
 func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
-	rt := RuntimeContext{
+	rt := &RuntimeContext{
 		MaxConcurrentSubagents: 3,
 		AgentName:              "default",
 		SubagentEnabled:        true,
@@ -68,7 +68,7 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 
 // All gates OFF: only the always-on backbone survives.
 func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
-	rt := RuntimeContext{
+	rt := &RuntimeContext{
 		MaxConcurrentSubagents: 3,
 	}
 	cfg := &config.Config{

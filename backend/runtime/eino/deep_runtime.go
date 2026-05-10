@@ -18,6 +18,11 @@ import (
 )
 
 type DeepAgentRuntime struct {
+	// cfg / rt are the inputs needed to rebuild the lead agent when
+	// SetPlanMode flips a runtime field; DeepAgentRuntime is the sole
+	// owner of *RuntimeContext, all mutations go through setters under mu.
+	cfg                 *config.Config
+	rt                  *agent.RuntimeContext
 	modelName           string
 	runner              *adk.Runner
 	mu                  sync.Mutex
@@ -31,12 +36,12 @@ type DeepAgentRuntime struct {
 // NewDeepAgentRuntime builds the runtime context, the lead agent, and the
 // adk.Runner; history / checkpoint / streaming live here (REPL-owned).
 func NewDeepAgentRuntime(ctx context.Context, cfg *config.Config) (Runtime, error) {
-	runtimeCtx, err := agent.NewRuntimeContext(cfg, nil)
+	rt, err := agent.NewRuntimeContext(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	leadAgent, trace, err := agent.MakeLeadAgent(ctx, runtimeCtx, cfg)
+	leadAgent, trace, err := agent.MakeLeadAgent(ctx, rt, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build lead agent: %w", err)
 	}
@@ -49,6 +54,8 @@ func NewDeepAgentRuntime(ctx context.Context, cfg *config.Config) (Runtime, erro
 	})
 
 	return &DeepAgentRuntime{
+		cfg:             cfg,
+		rt:              rt,
 		modelName:       cfg.DefaultModel,
 		runner:          runner,
 		maxHistoryTurns: 20,
@@ -66,6 +73,8 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 		return Result{}, fmt.Errorf("prompt is required")
 	}
 
+	// Snapshot runner under the same lock that protects history + r.runner,
+	// so SetPlanMode swapping r.runner doesn't race with ExecuteStream.
 	r.mu.Lock()
 	if len(r.history) > r.maxHistoryTurns*2 {
 		r.history = r.history[len(r.history)-r.maxHistoryTurns*2:]
@@ -73,10 +82,11 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 	msgs := make([]*schema.Message, len(r.history)+1)
 	copy(msgs, r.history)
 	msgs[len(msgs)-1] = schema.UserMessage(prompt)
+	runner := r.runner
 	r.mu.Unlock()
 
 	checkpointID := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
-	iter := r.runner.Run(ctx, msgs, adk.WithCheckPointID(checkpointID))
+	iter := runner.Run(ctx, msgs, adk.WithCheckPointID(checkpointID))
 	summary, err := collectAgentEventsWithSink(iter, onChunk)
 	if err != nil {
 		return Result{}, err
@@ -98,6 +108,36 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 	r.mu.Unlock()
 
 	return SuccessResult(summary.Output), nil
+}
+
+// SetPlanMode flips IsPlanMode and rebuilds the lead agent + runner so the
+// new system prompt and middleware list take effect on the next turn. No-op
+// when the value is unchanged. On rebuild failure rt is rolled back so the
+// existing runner / trace stay coherent. history is intentionally preserved
+// — switching plan mode shouldn't wipe conversation context.
+func (r *DeepAgentRuntime) SetPlanMode(ctx context.Context, plan bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rt.IsPlanMode == plan {
+		return nil
+	}
+
+	r.rt.SetPlanMode(plan)
+
+	leadAgent, trace, err := agent.MakeLeadAgent(ctx, r.rt, r.cfg)
+	if err != nil {
+		r.rt.SetPlanMode(!plan)
+		return fmt.Errorf("rebuild lead agent for plan mode %v: %w", plan, err)
+	}
+
+	store := checkpoint.NewStore(filepath.Join(r.cfg.RootDir, ".eino-cli", "checkpoints"))
+	r.runner = adk.NewRunner(ctx, adk.RunnerConfig{
+		Agent:           leadAgent,
+		EnableStreaming: true,
+		CheckPointStore: store,
+	})
+	r.trace = trace
+	return nil
 }
 
 func (r *DeepAgentRuntime) ClearHistory() {

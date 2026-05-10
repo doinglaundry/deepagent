@@ -520,7 +520,7 @@ var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"
 // GetSystemPrompt assembles the system prompt and appends the current-date
 // footer. The memory store is derived from cfg internally so callers don't
 // thread it through; Store is stateless, so per-call construction is cheap.
-func GetSystemPrompt(rt RuntimeContext, cfg *config.Config) string {
+func GetSystemPrompt(rt *RuntimeContext, cfg *config.Config) string {
 	store := memorystore.NewStoreFromConfig(cfg)
 	memoryContext := getMemoryPrompt(rt.AgentName, store, cfg.Memory)
 
