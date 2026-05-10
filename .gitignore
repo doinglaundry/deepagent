@@ -1,3 +1,4 @@
 .eino-cli/
 .claude/worktrees/
 .idea/
+/yaml/extensions_config.example.json
