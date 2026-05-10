@@ -3,6 +3,7 @@ package eino
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -40,7 +41,7 @@ func NewDeepAgentRuntime(ctx context.Context, cfg config.Config) (Runtime, error
 		return nil, fmt.Errorf("build lead agent: %w", err)
 	}
 
-	store := checkpoint.NewStore(cfg.CheckpointDir)
+	store := checkpoint.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "checkpoints"))
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{
 		Agent:           leadAgent,
 		EnableStreaming: true,
