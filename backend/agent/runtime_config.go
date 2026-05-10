@@ -56,9 +56,9 @@ func NewRuntimeContext(
 	}
 
 	return RuntimeContext{
+		AgentName:              agentName,
 		AgentConfig:            agentConfig,
 		ModelCfg:               modelCfg,
-		AgentName:              agentName,
 		IsPlanMode:             isPlanMode,
 		SubagentEnabled:        SubagentEnabled,
 		MaxConcurrentSubagents: maxConcurrentSubagents,

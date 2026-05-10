@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 
 	"eino-cli/backend/config"
@@ -17,10 +17,11 @@ func GetAgentConfig(cfg *config.Config, name string) (*config.AgentConfig, error
 	}
 	agentCfg, ok := cfg.Agents[name]
 	if !ok {
-		return nil, fmt.Errorf("agent %q not found in cfg.Agents", name)
+		return nil, errors.New("agent not found in cfg.Agents")
 	}
-	agentCfg.Name = nameOrFallback(agentCfg.Name, name)
-	agentCfg.Model = strings.TrimSpace(agentCfg.Model)
+	if agentCfg.Name != name {
+		return nil, errors.New("agent found in cfg.Agents but its name is different")
+	}
 	return &agentCfg, nil
 }
 

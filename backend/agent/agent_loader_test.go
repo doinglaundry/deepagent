@@ -25,18 +25,18 @@ func TestGetAgentConfig_HappyPath(t *testing.T) {
 	}
 }
 
-func TestGetAgentConfig_NameFallsBackToKey(t *testing.T) {
+func TestGetAgentConfig_RejectsMismatchedName(t *testing.T) {
 	cfg := &config.Config{
 		Agents: map[string]config.AgentConfig{
-			"writer": {Model: "kimi"},
+			"writer": {Name: "deep-agent", Model: "kimi"},
 		},
 	}
 	agentConfig, err := GetAgentConfig(cfg, "writer")
-	if err != nil || agentConfig == nil {
-		t.Fatalf("expected inline lookup, got (%+v, %v)", agentConfig, err)
+	if err == nil {
+		t.Fatalf("expected error for key/Name mismatch, got %+v", agentConfig)
 	}
-	if agentConfig.Name != "writer" {
-		t.Errorf("Name = %q, want writer", agentConfig.Name)
+	if agentConfig != nil {
+		t.Errorf("expected nil profile alongside error, got %+v", agentConfig)
 	}
 }
 

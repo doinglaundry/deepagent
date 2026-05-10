@@ -11,7 +11,6 @@ import (
 
 const (
 	defaultAgentKey         = "default"
-	defaultAgentName        = "deep-agent"
 	defaultAgentInstruction = "You are a helpful assistant. You have access to filesystem tools (read files, list directories, search file contents, write and edit files) and a shell for running commands. Use these tools proactively to answer questions and complete tasks. For internet access, use the shell tool to run curl commands."
 	defaultAgentIterations  = 6
 )
@@ -34,16 +33,16 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("default model is empty")
 	}
 
-	modelCfg, ok := cfg.Models[defaultModel]
-	if !ok || modelCfg == nil {
+	defaultModelCfg, ok := cfg.Models[defaultModel]
+	if !ok || defaultModelCfg == nil {
 		return nil, errors.New("default model not found")
 	}
 
-	if modelCfg.APIKey == "" {
-		modelCfg.APIKey = os.Getenv(defaultAPIKeyEnv(modelCfg.Provider))
+	if defaultModelCfg.APIKey == "" {
+		defaultModelCfg.APIKey = os.Getenv(GetAPIEnvKey(defaultModelCfg.Provider))
 	}
 
-	if !isModelConfigValid(modelCfg) {
+	if !isModelConfigValid(defaultModelCfg) {
 		return nil, fmt.Errorf("invalid default model: %s", defaultModel)
 	}
 
@@ -56,7 +55,7 @@ func Load() (*Config, error) {
 	}
 	if _, ok := cfg.Agents[cfg.DefaultAgent]; !ok {
 		cfg.Agents[cfg.DefaultAgent] = AgentConfig{
-			Name:         defaultAgentName,
+			Name:         cfg.DefaultAgent,
 			Instruction:  defaultAgentInstruction,
 			MaxIteration: defaultAgentIterations,
 			Model:        defaultModel,
@@ -109,7 +108,7 @@ func appendDefaultSkillsPath(rootDir string, skillsCfg SkillsConfig) SkillsConfi
 	return skillsCfg
 }
 
-func defaultAPIKeyEnv(provider string) string {
+func GetAPIEnvKey(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "claude", "anthropic":
 		return "ANTHROPIC_API_KEY"
