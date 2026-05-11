@@ -29,15 +29,17 @@ func TestRenderMessage_AssistantContinuationIndent(t *testing.T) {
 	}
 }
 
-// User messages must NOT get the continuation indent — only assistant
-// replies do, because only they own a multi-cell prefix glyph.
+// User messages must NOT get the assistant-style 2-cell continuation
+// indent — only assistant replies do, because only they own a multi-cell
+// prefix glyph to align under. The user echo block has its own 1-cell
+// background padding for the card "shadow" look, which is fine.
 func TestRenderMessage_UserContinuationNotIndented(t *testing.T) {
 	m := &Model{}
 	out := m.renderMessage(chatMessage{
 		Role:    "user",
 		Content: "first line\nsecond line",
 	})
-	if !strings.Contains(out, "\nsecond line") {
-		t.Errorf("user continuation must remain flush at column 0; got:\n%q", out)
+	if strings.Contains(out, "\n  second line") {
+		t.Errorf("user continuation must not borrow the assistant indent; got:\n%q", out)
 	}
 }

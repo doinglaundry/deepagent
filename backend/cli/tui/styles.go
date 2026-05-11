@@ -13,6 +13,16 @@ var (
 	assistantPrefixStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10")) // green
 	systemPrefixStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))           // orange
 
+	// User echo block: subtle grey background + bright text so the user's
+	// own line reads as a card pressed into the scroll, distinct from the
+	// assistant body which floats prefix-only. lipgloss renders Background
+	// across the whole logical line (including the prefix glyph), which is
+	// what gives the "shadow" effect.
+	userBlockStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")).
+			Background(lipgloss.Color("236")).
+			Padding(0, 1)
+
 	// Debug trace styling: faint body, distinct bold markers for input vs output.
 	debugInputMarkerStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))  // light blue
 	debugOutputMarkerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207")) // light magenta

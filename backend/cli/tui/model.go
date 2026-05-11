@@ -12,6 +12,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/ansi"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
@@ -137,18 +139,22 @@ func (m *Model) Init() tea.Cmd {
 }
 
 // renderMarkdown lazily builds the glamour renderer; falls back to raw on error.
-// The wrap width reserves 2 cells for the "⏺ " prefix that renderMessage adds
-// outside glamour's awareness — otherwise wrapped continuation lines (which
-// renderMessage indents by 2) would overflow viewport.Width.
+// Width reserves 2 cells for the "⏺ " prefix that renderMessage adds
+// outside glamour's awareness — otherwise wrapped continuation lines
+// (which renderMessage indents by 2) would overflow viewport.Width.
 func (m *Model) renderMarkdown(content string) string {
 	width := m.viewport.Width - 2
 	if width <= 0 {
 		width = 80
 	}
 	if m.mdRenderer == nil {
-		// WithStandardStyle (not Auto): Auto re-queries OSC 11 each rebuild.
+		// Custom style with Document.Margin zeroed: glamour's stock
+		// dark/light styles indent every paragraph by 2 cells, which
+		// pushed our "⏺ " prefix three cells away from its body. With
+		// margin = 0 the body sits flush against the prefix, matching
+		// the "❯ " user-line spacing.
 		r, err := glamour.NewTermRenderer(
-			glamour.WithStandardStyle(m.mdStyle),
+			glamour.WithStyles(noMarginStyle(m.mdStyle)),
 			glamour.WithWordWrap(width),
 		)
 		if err != nil {
@@ -160,8 +166,27 @@ func (m *Model) renderMarkdown(content string) string {
 	if err != nil {
 		return content
 	}
-	// Trim glamour's document-margin newlines so the "⏺ " prefix sits flush.
+	// Glamour still emits document-level leading/trailing newlines even
+	// with margin=0; trim them so the prefix lands on the first body line.
 	return strings.TrimSpace(out)
+}
+
+// noMarginStyle clones glamour's standard "dark" / "light" style with
+// Document.Margin forced to zero. Anything outside that pair falls back
+// to ASCIIStyleConfig (mirrors glamour's getDefaultStyle resolution).
+func noMarginStyle(name string) ansi.StyleConfig {
+	var cfg ansi.StyleConfig
+	switch name {
+	case "light":
+		cfg = styles.LightStyleConfig
+	case "dark", "auto", "":
+		cfg = styles.DarkStyleConfig
+	default:
+		cfg = styles.ASCIIStyleConfig
+	}
+	zero := uint(0)
+	cfg.Document.Margin = &zero
+	return cfg
 }
 
 // rebuildHistory regenerates the viewport content from m.messages.
@@ -185,7 +210,11 @@ func (m *Model) rebuildHistory() {
 func (m *Model) renderMessage(msg chatMessage) string {
 	switch msg.Role {
 	case "user":
-		return userPrefixStyle.Render("❯ ") + msg.Content
+		// Render the whole "❯ <content>" line through userBlockStyle so
+		// the background extends across the prefix glyph too. Without
+		// wrapping the prefix the background would start mid-line and
+		// look like a stray highlight.
+		return userBlockStyle.Render(userPrefixStyle.Render("❯ ") + msg.Content)
 	case "assistant":
 		body := msg.Rendered
 		if body == "" {
