@@ -130,6 +130,19 @@ func (m *Model) todoPanelHeight() int {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Popup-active keys claim priority. With the menu up, Up/Down,
+	// Tab, Esc and Enter all mean things specific to the popup; falling
+	// through to textinput would (a) hide-move the cursor invisibly and
+	// (b) submit half-typed command names. Enter is special: the popup
+	// rewrites input to the full /<name> and returns handled=false so
+	// the outer KeyEnter below picks it up and runs submit normally
+	// (one path through submit, not two).
+	if m.popupShown() {
+		if cmd, handled := m.handlePopupKey(msg); handled {
+			return m, cmd
+		}
+	}
+
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		if m.abortStream() {
@@ -166,11 +179,83 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Feed key to input + viewport (viewport handles PgUp/PgDn/arrows when input doesn't claim them).
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
+	prevValue := m.input.Value()
 	m.input, cmd = m.input.Update(msg)
 	cmds = append(cmds, cmd)
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
+
+	// Re-derive popup state on any value edge so backspacing past "/"
+	// or typing "/" mid-edit collapses / opens the menu and rebalances
+	// chrome height before the next View.
+	if m.input.Value() != prevValue {
+		m.onInputChanged()
+	}
 	return m, tea.Batch(cmds...)
+}
+
+// popupShown is the runtime equivalent of "shouldShowPopup AND has
+// matches"; keyboard routing gates on this.
+func (m *Model) popupShown() bool {
+	return m.popupHeight() > 0
+}
+
+// onInputChanged runs after any keypress that mutated the input value.
+// Clamps popupSel into the (possibly shrunken) match range and asks
+// the layout to rebalance — popup growth/shrink shifts the viewport
+// budget, and missing this leaves the input box at the wrong y.
+func (m *Model) onInputChanged() {
+	matches := filterCommands(commands, m.input.Value())
+	if m.popupSel < 0 || m.popupSel >= len(matches) {
+		m.popupSel = 0
+	}
+	m.recomputeLayout()
+}
+
+// handlePopupKey routes keys while the popup is visible. Returns
+// (cmd, true) when the popup owned the key. KeyEnter intentionally
+// returns (nil, false) after rewriting input so the outer KeyEnter
+// runs submit through its single code path.
+func (m *Model) handlePopupKey(msg tea.KeyMsg) (tea.Cmd, bool) {
+	matches := filterCommands(commands, m.input.Value())
+	if len(matches) == 0 {
+		return nil, false // defensive: popupShown implied >0 above
+	}
+	switch msg.Type {
+	case tea.KeyUp, tea.KeyCtrlP:
+		m.popupSel = (m.popupSel - 1 + len(matches)) % len(matches)
+		return nil, true
+	case tea.KeyDown, tea.KeyCtrlN:
+		m.popupSel = (m.popupSel + 1) % len(matches)
+		return nil, true
+	case tea.KeyTab:
+		m.acceptPopup(matches[m.popupSel])
+		m.onInputChanged()
+		return nil, true
+	case tea.KeyEnter:
+		m.acceptPopup(matches[m.popupSel])
+		m.onInputChanged()
+		// Fall through to outer KeyEnter so submit() handles dispatch.
+		// Returning (nil, false) is the contract the caller looks at.
+		return nil, false
+	case tea.KeyEsc:
+		// Esc collapses the popup by emptying input; the outer ESC chain
+		// (abort / clear) only kicks in on the *next* Esc press, when
+		// the popup is no longer in the way.
+		m.input.SetValue("")
+		m.onInputChanged()
+		return nil, true
+	}
+	return nil, false
+}
+
+// acceptPopup replaces the entire input with "/<name>" and parks the
+// cursor at end-of-line. No trailing space: zero-arg commands let the
+// user hit Enter immediately, and arg-taking commands let the user
+// type ' on' themselves — uniformity beats clever-spacing.
+func (m *Model) acceptPopup(c slashCommand) {
+	m.input.SetValue("/" + c.Name)
+	m.input.CursorEnd()
 }
 
 // submit handles slash commands inline; otherwise streams via the runtime.
