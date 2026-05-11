@@ -99,6 +99,27 @@ type Checkpointer struct {
 	ConnectionString string `yaml:"connection_string"`
 }
 
+// ErrorHandling gates the LLM-call wrapper that classifies transport errors,
+// retries transient/busy with capped exponential backoff, and trips a circuit
+// breaker after N consecutive failures. Enabled is the master switch — when
+// false, the wrapper is skipped and the raw model error propagates.
+type ErrorHandling struct {
+	Enabled        bool                 `yaml:"enabled"`
+	Retry          RetryConfig          `yaml:"retry"`
+	CircuitBreaker CircuitBreakerConfig `yaml:"circuit_breaker"`
+}
+
+type RetryConfig struct {
+	MaxAttempts int `yaml:"max_attempts"`
+	BaseDelayMS int `yaml:"base_delay_ms"`
+	CapDelayMS  int `yaml:"cap_delay_ms"`
+}
+
+type CircuitBreakerConfig struct {
+	FailureThreshold int `yaml:"failure_threshold"`
+	RecoverySeconds  int `yaml:"recovery_seconds"`
+}
+
 // UnmarshalYAML intercepts `models:` (list → map); everything else flows through
 // the `type alias Config` trick to avoid infinite recursion. Runtime fields
 // (yaml:"-") stay zero and are filled by Load().
