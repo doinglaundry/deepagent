@@ -406,29 +406,9 @@ const systemPromptTemplateRaw = `
 
 {subagent_section}
 
-<working_directory existed="true">
-  You have access to three directories for file operations:
-  - **uploads**: files uploaded by the user (read-only, automatically listed in context)
-  - **workspace**: your working area for temporary and intermediate files
-  - **outputs**: final deliverables — anything you want the user to receive must go here
+<root>{root_dir}</root>
 
-  Use these alias paths with the §read_file§, §write_file§, §ls§, and §view_image§ tools:
-  - uploads → §uploads/<filename>§
-  - workspace → §workspace/<filename>§
-  - outputs → §outputs/<filename>§
-  - relative paths (e.g. §README.md§) default to §workspace/§
-
-  **File Management:**
-  - Uploaded files are automatically listed in the <uploaded_files> section before each request
-  - Use §read_file§ to read uploaded files using their paths from the list
-  - For PDF, PPT, Excel, and Word files, converted Markdown versions (*.md) are available alongside originals
-  - Do all temporary work in the workspace directory
-  - Prefer alias paths (§workspace/...§, §uploads/...§, §outputs/...§) in tool calls
-  - Absolute filesystem paths are also supported when explicitly provided by the user
-  - Never use legacy §/mnt/user-data/...§ paths
-  - Final deliverables must be saved to the outputs directory and presented using §present_files§ tool
 {acp_section}
-</working_directory>
 
 <response_style>
   - Clear and Concise: Avoid over-formatting unless requested
@@ -554,6 +534,7 @@ func GetSystemPrompt(rt *RuntimeContext, cfg *config.Config) string {
 		"{subagent_section}", subagentSection,
 		"{subagent_reminder}", subagentReminder,
 		"{acp_section}", acpSection,
+		"{root_dir}", cfg.RootDir,
 	)
 	prompt := replacer.Replace(systemPromptTemplate)
 
