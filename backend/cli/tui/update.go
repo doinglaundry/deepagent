@@ -68,11 +68,17 @@ func (m *Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 // current panel states (stream + todo). Called from handleResize and from
 // any handler that flips a panel-affecting flag (todos / todoExpanded /
 // streaming). Cheap enough to run on every relevant edge.
+//
+// viewport.Height shrinks to fit the actual content so the input box sits
+// flush under the last message instead of being padded to the screen
+// bottom with blank lines (Claude Code-style "input glued to content").
+// Once content exceeds the available budget the height is clamped and
+// viewport starts scrolling normally.
 func (m *Model) recomputeLayout() {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	// Layout budget: header(3) + blank(1) + viewport(flex) + stream(0-3)
+	// Layout budget: header(3) + blank(1) + viewport(flex) + stream(0-1)
 	// + todoPanel(0..N) + input(3) + footer(1).
 	headerH := 3
 	streamH := 0
@@ -84,12 +90,24 @@ func (m *Model) recomputeLayout() {
 	footerH := 1
 	chrome := headerH + 1 + streamH + todoH + inputH + footerH
 
-	vpH := m.height - chrome
-	if vpH < 3 {
-		vpH = 3
+	vpMax := m.height - chrome
+	if vpMax < 3 {
+		vpMax = 3
 	}
 	m.viewport.Width = m.width
-	m.viewport.Height = vpH
+
+	// Fit-to-content: shrink down to actual line count when below max,
+	// otherwise clamp at max and let viewport scroll. TotalLineCount
+	// reflects whatever was last SetContent'd, so callers that mutate
+	// content (rebuildHistory) must invoke recomputeLayout afterwards.
+	want := m.viewport.TotalLineCount()
+	if want < 1 {
+		want = 1
+	}
+	if want > vpMax {
+		want = vpMax
+	}
+	m.viewport.Height = want
 	m.input.Width = m.width - 4
 }
 

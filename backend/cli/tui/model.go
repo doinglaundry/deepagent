@@ -165,16 +165,20 @@ func (m *Model) renderMarkdown(content string) string {
 }
 
 // rebuildHistory regenerates the viewport content from m.messages.
+// Content changes also retrigger recomputeLayout so the viewport's height
+// shrinks/grows to match — without this the input would stay glued to
+// the screen bottom even when there's only a banner on screen.
 func (m *Model) rebuildHistory() {
 	if len(m.messages) == 0 {
 		m.viewport.SetContent("")
-		return
+	} else {
+		parts := make([]string, 0, len(m.messages)*2)
+		for _, msg := range m.messages {
+			parts = append(parts, m.renderMessage(msg))
+		}
+		m.viewport.SetContent(strings.Join(parts, "\n\n"))
 	}
-	parts := make([]string, 0, len(m.messages)*2)
-	for _, msg := range m.messages {
-		parts = append(parts, m.renderMessage(msg))
-	}
-	m.viewport.SetContent(strings.Join(parts, "\n\n"))
+	m.recomputeLayout()
 	m.viewport.GotoBottom()
 }
 
