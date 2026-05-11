@@ -25,6 +25,10 @@ func (m *Model) View() string {
 		sb.WriteString("\n")
 		sb.WriteString(todoPanel)
 	}
+	if popup := m.renderPopup(); popup != "" {
+		sb.WriteString("\n")
+		sb.WriteString(popup)
+	}
 	sb.WriteString("\n")
 	sb.WriteString(m.renderInput())
 	sb.WriteString("\n")

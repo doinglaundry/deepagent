@@ -47,6 +47,21 @@ var (
 	headerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
 	footerStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
+	// Slash-command popup. The selected row reuses userBlockStyle's grey
+	// background so "filled grey block = focus" stays consistent. Bold
+	// is held off the row style and applied via popupNameStyle alone —
+	// lipgloss flattens nested SGR runs, and double-styling Bold inside
+	// a Background span has historically truncated the background here
+	// (same pitfall as userBlockStyle).
+	popupNameStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
+	popupArgsStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	popupDescStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	popupRowStyle    = lipgloss.NewStyle().PaddingLeft(2)
+	popupSelectedRow = lipgloss.NewStyle().
+				Background(lipgloss.Color("236")).
+				Foreground(lipgloss.Color("15")).
+				PaddingLeft(2).PaddingRight(1)
+
 	inputBorderStyle = lipgloss.NewStyle().
 				BorderStyle(lipgloss.NormalBorder()).
 				BorderTop(true).BorderBottom(true).

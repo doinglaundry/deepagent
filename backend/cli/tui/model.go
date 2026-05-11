@@ -75,6 +75,13 @@ type Model struct {
 	// pendingExit: first Ctrl-C in idle arms it, second Ctrl-C quits.
 	pendingExit bool
 
+	// popupSel is the selected row inside the currently-visible slash-
+	// command candidate set. Visibility itself is derived from
+	// m.input.Value() each render (see shouldShowPopup / filterCommands)
+	// to avoid a second source of truth. Reset / clamped by
+	// onInputChanged on any input edit.
+	popupSel int
+
 	lastErr error
 
 	// debug toggles inline LLM input/output panels via /debug.

@@ -79,16 +79,17 @@ func (m *Model) recomputeLayout() {
 		return
 	}
 	// Layout budget: header(3) + blank(1) + viewport(flex) + stream(0-1)
-	// + todoPanel(0..N) + input(3) + footer(1).
+	// + todoPanel(0..N) + popup(0..popupMaxRows+1) + input(3) + footer(1).
 	headerH := 3
 	streamH := 0
 	if m.streaming || m.lastErr != nil {
 		streamH = 1 // single-line thinking indicator (was 3 with preview)
 	}
 	todoH := m.todoPanelHeight()
+	popupH := m.popupHeight()
 	inputH := 3
 	footerH := 1
-	chrome := headerH + 1 + streamH + todoH + inputH + footerH
+	chrome := headerH + 1 + streamH + todoH + popupH + inputH + footerH
 
 	vpMax := m.height - chrome
 	if vpMax < 3 {
