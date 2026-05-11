@@ -18,6 +18,10 @@ var (
 	debugOutputMarkerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207")) // light magenta
 	debugBodyStyle         = lipgloss.NewStyle().Faint(true)
 
+	// Thinking indicator: bright magenta "✶", bold-white verb, dim tag.
+	thinkingMarkerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	thinkingPresentStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+
 	// Todo panel styling. Strikethrough on completed items uses ANSI SGR 9;
 	// terminals that drop SGR 9 (some old tmux forwards) fall back to
 	// dim+green which is still readable.

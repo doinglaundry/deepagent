@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,8 +28,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.streaming {
 			return m, nil // self-terminate the tick chain
 		}
+		// Spinner is no longer rendered (the thinking indicator owns
+		// the line), but its 100ms tick still drives elapsed-second
+		// refresh — cheaper than spinning up a dedicated tea.Tick.
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
+		m.elapsed = time.Since(m.streamStart).Round(time.Second)
 		return m, cmd
 	}
 
@@ -72,7 +77,7 @@ func (m *Model) recomputeLayout() {
 	headerH := 3
 	streamH := 0
 	if m.streaming || m.lastErr != nil {
-		streamH = 3
+		streamH = 1 // single-line thinking indicator (was 3 with preview)
 	}
 	todoH := m.todoPanelHeight()
 	inputH := 3
@@ -150,6 +155,13 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	m.streaming = true
 	m.streamBuf.Reset()
 	m.lastErr = nil
+
+	// Pick a verb pair once per turn; the present form drives the live
+	// indicator and the past form lands in scrollback when handleDone
+	// surfaces a thinking-summary above the threshold.
+	m.verbPresent, m.verbPast = pickVerb()
+	m.streamStart = time.Now()
+	m.elapsed = 0
 
 	// Always attach the trace consumer regardless of m.debug: the Todos
 	// phase fires on every after-model hook with active todos and must

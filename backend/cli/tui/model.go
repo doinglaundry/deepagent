@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -45,6 +46,16 @@ type Model struct {
 	messages  []chatMessage
 	streaming bool
 	streamBuf strings.Builder
+
+	// Thinking-indicator state for the active streaming turn.
+	// streamStart anchors elapsed; verbPresent / verbPast are picked
+	// once per submit() so the live indicator ("Moonwalking…") and the
+	// completion summary ("Moonwalked for 6s") share the same verb.
+	// All four are zeroed when handleDone fires.
+	streamStart time.Time
+	elapsed     time.Duration
+	verbPresent string
+	verbPast    string
 
 	chunkCh <-chan string
 	cancel  context.CancelFunc

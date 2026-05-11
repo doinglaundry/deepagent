@@ -144,36 +144,26 @@ func (m *Model) renderHeader() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, "  ", left)
 }
 
+// renderStreamPanel shows a single-line thinking indicator while a turn is
+// in flight. The previous behaviour streamed dim partial output below a
+// spinner; we dropped that because (a) half-rendered code fences and
+// markdown looked broken, and (b) the indicator-only layout reads as a
+// more decisive "the model is working" without competing for attention
+// with the input box. m.streamBuf is still populated for handleDone's
+// error fallback path — just no longer rendered here.
 func (m *Model) renderStreamPanel() string {
 	if m.streaming {
-		body := strings.TrimSpace(m.streamBuf.String())
-		spin := m.spin.View()
-		header := fmt.Sprintf("%s %s", spin, accentStyle.Render("Thinking..."))
-		if body == "" {
-			return header
-		}
-		// While streaming we render plain text (no markdown) for
-		// speed and to avoid half-rendered code fences. The final
-		// message is re-rendered as markdown in handleDone.
-		body = truncateForStream(body, m.viewport.Width, 6)
-		return lipgloss.JoinVertical(lipgloss.Left, header, dimStyle.Render(body))
+		secs := int(m.elapsed.Seconds())
+		return fmt.Sprintf("%s %s %s",
+			thinkingMarkerStyle.Render("✶"),
+			thinkingPresentStyle.Render(m.verbPresent+"…"),
+			dimStyle.Render(fmt.Sprintf("(%ds · thinking)", secs)),
+		)
 	}
 	if m.lastErr != nil {
 		return errorStyle.Render(fmt.Sprintf("error: %s", m.lastErr))
 	}
 	return ""
-}
-
-// truncateForStream keeps the streaming preview to the most
-// recent N lines so the streaming panel doesn't push the input
-// off-screen on long replies.
-func truncateForStream(s string, width, maxLines int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) <= maxLines {
-		return s
-	}
-	tail := lines[len(lines)-maxLines:]
-	return "…\n" + strings.Join(tail, "\n")
 }
 
 func (m *Model) renderInput() string {
