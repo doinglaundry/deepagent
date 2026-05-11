@@ -126,8 +126,11 @@ func (m *Model) Init() tea.Cmd {
 }
 
 // renderMarkdown lazily builds the glamour renderer; falls back to raw on error.
+// The wrap width reserves 2 cells for the "⏺ " prefix that renderMessage adds
+// outside glamour's awareness — otherwise wrapped continuation lines (which
+// renderMessage indents by 2) would overflow viewport.Width.
 func (m *Model) renderMarkdown(content string) string {
-	width := m.viewport.Width
+	width := m.viewport.Width - 2
 	if width <= 0 {
 		width = 80
 	}
@@ -173,6 +176,11 @@ func (m *Model) renderMessage(msg chatMessage) string {
 		if body == "" {
 			body = msg.Content
 		}
+		// Indent continuation lines so they sit under the "⏺ " prefix.
+		// glamour word-wraps but the wrapped lines start at column 0;
+		// without this, the second line visually leaves the message
+		// block.
+		body = strings.ReplaceAll(body, "\n", "\n  ")
 		return assistantPrefixStyle.Render("⏺ ") + body
 	case "system":
 		return systemPrefixStyle.Render("• ") + msg.Content
