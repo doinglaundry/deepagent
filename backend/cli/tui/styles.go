@@ -15,9 +15,9 @@ var (
 
 	// User echo block: subtle grey background + bright text so the user's
 	// own line reads as a card pressed into the scroll, distinct from the
-	// assistant body which floats prefix-only. lipgloss renders Background
-	// across the whole logical line (including the prefix glyph), which is
-	// what gives the "shadow" effect.
+	// assistant body which floats prefix-only. The whole "❯ <content>"
+	// span is rendered through this style in one shot (no nested Render),
+	// so the Background ANSI run doesn't get truncated by an inner reset.
 	userBlockStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("15")).
 			Background(lipgloss.Color("236")).

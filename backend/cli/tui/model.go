@@ -11,6 +11,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	xansi "github.com/charmbracelet/x/ansi"
+
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
@@ -168,7 +170,13 @@ func (m *Model) renderMarkdown(content string) string {
 	}
 	// Glamour still emits document-level leading/trailing newlines even
 	// with margin=0; trim them so the prefix lands on the first body line.
-	return strings.TrimSpace(out)
+	out = strings.TrimSpace(out)
+	// Glamour delegates wrapping to muesli/reflow, which splits on ASCII
+	// whitespace. CJK runs have no spaces, so a paragraph of Chinese stays
+	// as one long line and the viewport truncates it at MaxWidth (no soft
+	// wrap on overflow). Re-wrap with an ANSI-aware grapheme wrapper that
+	// hard-breaks long runs — width matches the renderer's WordWrap budget.
+	return xansi.Wrap(out, width, " ")
 }
 
 // noMarginStyle clones glamour's standard "dark" / "light" style with
@@ -210,11 +218,13 @@ func (m *Model) rebuildHistory() {
 func (m *Model) renderMessage(msg chatMessage) string {
 	switch msg.Role {
 	case "user":
-		// Render the whole "❯ <content>" line through userBlockStyle so
-		// the background extends across the prefix glyph too. Without
-		// wrapping the prefix the background would start mid-line and
-		// look like a stray highlight.
-		return userBlockStyle.Render(userPrefixStyle.Render("❯ ") + msg.Content)
+		// Render prefix + content as a single styled span. Nesting
+		// userPrefixStyle.Render(...) inside emits a reset (ESC[0m)
+		// after the prefix which clears the outer Background — that's
+		// why the "shadow" was invisible on the previous attempt. One
+		// Render call → one Background span that survives across the
+		// whole logical line.
+		return userBlockStyle.Render("❯ " + msg.Content)
 	case "assistant":
 		body := msg.Rendered
 		if body == "" {
