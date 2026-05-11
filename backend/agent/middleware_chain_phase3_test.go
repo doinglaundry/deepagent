@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"eino-cli/backend/agent/middlewares"
@@ -39,6 +40,7 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 		reflect.TypeOf(&middlewares.AgentState{}),
 		reflect.TypeOf(&middlewares.Title{}),
 		reflect.TypeOf(&middlewares.ToolErrorHandling{}),
+		nil, // patchtoolcalls.middleware — unexported, matched by string below
 		reflect.TypeOf(&middlewares.LoopDetection{}),
 		reflect.TypeOf(&middlewares.Memory{}),
 		reflect.TypeOf(&middlewares.TokenUsage{}),
@@ -53,7 +55,14 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 		t.Fatalf("len(chain) = %d, want %d", len(chain), len(wantOrder))
 	}
 	for i, want := range wantOrder {
-		if got := reflect.TypeOf(chain[i]); got != want {
+		got := reflect.TypeOf(chain[i])
+		if want == nil {
+			if !strings.Contains(got.String(), "patchtoolcalls") {
+				t.Fatalf("slot %d: got %v, want patchtoolcalls middleware", i, got)
+			}
+			continue
+		}
+		if got != want {
 			t.Fatalf("slot %d: got %v, want %v", i, got, want)
 		}
 	}

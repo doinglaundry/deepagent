@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/adk/middlewares/patchtoolcalls"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
@@ -24,10 +25,16 @@ func GetChatModelMiddlewares(
 	rt *RuntimeContext,
 	chatModel model.BaseChatModel,
 ) (middlewareList []adk.ChatModelAgentMiddleware) {
+	// patchtoolcalls inserts placeholder Tool messages for any dangling
+	// tool_call id (e.g. cancelled mid-flight) so the next model turn sees
+	// a well-formed history. Upstream New never returns a non-nil error.
+	patchToolCalls, _ := patchtoolcalls.New(ctx, nil)
+
 	middlewareList = []adk.ChatModelAgentMiddleware{
 		middlewares.NewAgentState(),
 		middlewares.NewTitle(),
 		middlewares.NewToolErrorHandling(),
+		patchToolCalls,
 		middlewares.NewLoopDetection(),
 	}
 
