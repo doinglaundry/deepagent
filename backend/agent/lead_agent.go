@@ -23,6 +23,7 @@ func MakeLeadAgent(
 	if err != nil {
 		return nil, nil, err
 	}
+	chatModel = wrapErrorHandling(chatModel, cfg.ErrorHandling)
 
 	backend := newLocalBackend("")
 	shell := newLocalShell("")

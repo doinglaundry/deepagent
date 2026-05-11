@@ -1,0 +1,288 @@
+package agent
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
+
+	"eino-cli/backend/config"
+)
+
+// errorHandlingModel wraps a BaseChatModel to:
+//   - classify transport errors into 5 buckets (quota/auth/transient/busy/generic)
+//   - retry transient/busy with capped exponential backoff
+//   - surface terminal failures as an Assistant message so the deep-agent
+//     loop ends gracefully instead of bubbling err up to abort the run
+//   - fast-fail via a circuit breaker after N consecutive failures
+//
+// Mirrors deer-flow's LLMErrorHandlingMiddleware in shape. The whole feature
+// is gated by config.ErrorHandling.Enabled; when disabled, wrapErrorHandling
+// returns the inner model unchanged.
+
+type errorReason string
+
+const (
+	reasonQuota     errorReason = "quota"
+	reasonAuth      errorReason = "auth"
+	reasonTransient errorReason = "transient"
+	reasonBusy      errorReason = "busy"
+	reasonGeneric   errorReason = "generic"
+)
+
+type errorHandlingModel struct {
+	inner       model.BaseChatModel
+	maxAttempts int
+	baseDelay   time.Duration
+	capDelay    time.Duration
+	cb          *circuitBreaker
+}
+
+type circuitBreaker struct {
+	threshold int
+	recovery  time.Duration
+
+	mu            sync.Mutex
+	state         cbState
+	failures      int
+	openUntil     time.Time
+	probeInFlight bool
+}
+
+type cbState string
+
+const (
+	cbClosed   cbState = "closed"
+	cbHalfOpen cbState = "half_open"
+	cbOpen     cbState = "open"
+)
+
+// wrapErrorHandling returns inner wrapped with retry / circuit-breaker /
+// fallback. Returns inner unchanged when the feature is disabled or retry
+// has zero attempts — saves an allocation + virtual dispatch on the hot path.
+func wrapErrorHandling(inner model.BaseChatModel, cfg config.ErrorHandling) model.BaseChatModel {
+	if !cfg.Enabled || cfg.Retry.MaxAttempts <= 0 {
+		return inner
+	}
+	return &errorHandlingModel{
+		inner:       inner,
+		maxAttempts: cfg.Retry.MaxAttempts,
+		baseDelay:   time.Duration(cfg.Retry.BaseDelayMS) * time.Millisecond,
+		capDelay:    time.Duration(cfg.Retry.CapDelayMS) * time.Millisecond,
+		cb: &circuitBreaker{
+			threshold: cfg.CircuitBreaker.FailureThreshold,
+			recovery:  time.Duration(cfg.CircuitBreaker.RecoverySeconds) * time.Second,
+			state:     cbClosed,
+		},
+	}
+}
+
+func (e *errorHandlingModel) Generate(
+	ctx context.Context,
+	input []*schema.Message,
+	opts ...model.Option,
+) (*schema.Message, error) {
+	if e.cb.shouldFastFail() {
+		return circuitOpenMessage(), nil
+	}
+
+	var (
+		out    *schema.Message
+		err    error
+		reason errorReason
+	)
+	for attempt := 1; attempt <= e.maxAttempts; attempt++ {
+		out, err = e.inner.Generate(ctx, input, opts...)
+		if err == nil {
+			e.cb.recordSuccess()
+			return out, nil
+		}
+		reason = classifyError(err)
+		if reason != reasonTransient && reason != reasonBusy {
+			break
+		}
+		if attempt == e.maxAttempts {
+			break
+		}
+		sleepDuration := getBackoffDuration(e.baseDelay, e.capDelay, attempt)
+		slog.Warn("LLM call failed; will retry",
+			"reason", reason, "attempt", attempt, "max", e.maxAttempts,
+			"sleep_ms", sleepDuration.Milliseconds(), "err", err)
+		if waitErr := sleepCtx(ctx, sleepDuration); waitErr != nil {
+			err = waitErr
+			break
+		}
+	}
+
+	e.cb.recordFailure()
+	slog.Warn("LLM call failed; surfacing fallback assistant message",
+		"reason", reason, "err", err)
+	return getFallbackMessage(reason, err), nil
+}
+
+// Stream is implemented on top of Generate: the wrapper's value is in retry
+// + fallback control, both of which only make sense once a full response is
+// in hand. The returned reader emits the fallback (or success) message as a
+// single element, which is what eino's downstream consumers already handle.
+func (e *errorHandlingModel) Stream(
+	ctx context.Context,
+	input []*schema.Message,
+	opts ...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	msg, err := e.Generate(ctx, input, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return schema.StreamReaderFromArray([]*schema.Message{msg}), nil
+}
+
+// classifyError maps err to a coarse retry/fallback decision. Keyword tables
+// mirror deer-flow's middleware (both English and Chinese terms are kept
+// because provider SDKs in this codebase surface either).
+func classifyError(err error) errorReason {
+	if err == nil {
+		return reasonGeneric
+	}
+	detail := strings.ToLower(err.Error())
+	switch {
+	case containsAny(detail, quotaKeywords):
+		return reasonQuota
+	case containsAny(detail, authKeywords):
+		return reasonAuth
+	case containsAny(detail, transientKeywords):
+		return reasonTransient
+	case containsAny(detail, busyKeywords):
+		return reasonBusy
+	}
+	return reasonGeneric
+}
+
+// Quota must be checked before busy: quota errors usually carry HTTP 429 too,
+// and "insufficient_quota" should not be auto-retried.
+var (
+	quotaKeywords = []string{
+		"insufficient_quota", "insufficient quota",
+		"exceeded your current quota", "usage limit",
+		"billing", "rate limit exceeded",
+		"配额", "额度",
+	}
+	authKeywords = []string{
+		"unauthorized", " 401", " 403",
+		"invalid api key", "incorrect api key", "permission denied",
+		"鉴权", "未授权", "无权限",
+	}
+	transientKeywords = []string{
+		" 500", " 502", " 503", " 504",
+		"timeout", "deadline exceeded",
+		"connection reset", "connection refused",
+		"服务不可用", "网关",
+	}
+	busyKeywords = []string{
+		" 429", "too many requests",
+		"model is overloaded", "rate_limit_reached",
+		"服务繁忙", "请稍后",
+	}
+)
+
+func containsAny(s string, needles []string) bool {
+	for _, kw := range needles {
+		if strings.Contains(s, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// getBackoffDuration returns the sleep duration before the next retry.
+// attempt is 1-based; sleep doubles each attempt and is capped at capDelay.
+func getBackoffDuration(baseDelay, capDelay time.Duration, attempt int) time.Duration {
+	return min(baseDelay<<(attempt-1), capDelay)
+}
+
+// sleepCtx blocks for d while honouring ctx cancellation, so Ctrl-C during
+// backoff does not force the user to wait the full sleep.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// getFallbackMessage surfaces a terminal LLM failure as an Assistant message
+// (ToolCalls nil) so the deep-agent loop ends cleanly instead of bubbling err.
+func getFallbackMessage(reason errorReason, err error) *schema.Message {
+	return &schema.Message{
+		Role:    schema.Assistant,
+		Content: getFallbackText(reason, err),
+	}
+}
+
+func getFallbackText(reason errorReason, err error) string {
+	switch reason {
+	case reasonQuota:
+		return "LLM provider rejected the request: account quota / billing problem. Please check the provider account and try again."
+	case reasonAuth:
+		return "LLM provider rejected the request: authentication or access is invalid. Please check the provider credentials and try again."
+	case reasonBusy, reasonTransient:
+		return "LLM provider is temporarily unavailable after multiple retries. Please wait a moment and continue the conversation."
+	}
+	if err != nil {
+		return "LLM request failed: " + err.Error()
+	}
+	return "LLM request failed."
+}
+
+func circuitOpenMessage() *schema.Message {
+	return &schema.Message{
+		Role:    schema.Assistant,
+		Content: "LLM provider is currently unavailable due to continuous failures. Circuit breaker is engaged to protect the system. Please wait a moment before trying again.",
+	}
+}
+
+// shouldFastFail reports whether the breaker is currently OPEN (deny-all)
+// or HALF_OPEN with an in-flight probe already running. Transitioning OPEN
+// → HALF_OPEN on time happens inside this method to keep the state machine
+// in one place.
+func (cb *circuitBreaker) shouldFastFail() bool {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	if cb.state == cbOpen {
+		if time.Now().Before(cb.openUntil) {
+			return true
+		}
+		cb.state = cbHalfOpen
+		cb.probeInFlight = false
+	}
+	if cb.state == cbHalfOpen {
+		if cb.probeInFlight {
+			return true
+		}
+		cb.probeInFlight = true
+	}
+	return false
+}
+
+func (cb *circuitBreaker) recordSuccess() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.failures = 0
+	cb.probeInFlight = false
+	cb.state = cbClosed
+}
+
+func (cb *circuitBreaker) recordFailure() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.failures++
+	cb.probeInFlight = false
+	if cb.failures >= cb.threshold {
+		cb.state = cbOpen
+		cb.openUntil = time.Now().Add(cb.recovery)
+	}
+}
