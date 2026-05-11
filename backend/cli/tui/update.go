@@ -122,6 +122,15 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pendingExit = true
 		m.pushMessage("system", "Press Ctrl-C again to quit, or type /exit.")
 		return m, nil
+	case tea.KeyEsc:
+		// Streaming → ESC aborts the in-flight call. Idle → clear the
+		// input so the user gets a fresh prompt instead of mid-typed
+		// garbage (mirrors Ctrl-U in most shells).
+		if m.abortStream() {
+			return m, nil
+		}
+		m.input.SetValue("")
+		return m, nil
 	case tea.KeyEnter:
 		if m.streaming {
 			return m, nil

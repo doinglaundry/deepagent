@@ -172,9 +172,12 @@ func (m *Model) renderInput() string {
 
 func (m *Model) renderFooter() string {
 	left := footerStyle.Render(m.modelName)
-	hint := "Enter to send · /help for commands · Ctrl-C to abort/quit"
+	// Streaming shows a single actionable hint; idle is the meta-hint
+	// "you can type / for commands". Old footer concatenated three
+	// hints, which read as a tutorial banner.
+	hint := "/help · ctrl-c to quit"
 	if m.streaming {
-		hint = "Streaming... · Ctrl-C to abort"
+		hint = "esc to interrupt"
 	}
 	right := footerStyle.Render(hint)
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
