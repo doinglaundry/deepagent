@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/runtime/eino"
@@ -68,6 +69,13 @@ type Model struct {
 	// /plan toggle; the authoritative state lives on RuntimeContext, this
 	// is only the view-side cache that /plan keeps in sync.
 	planMode bool
+
+	// todos is the latest in-flight todo list, written by every
+	// TracePhaseTodos event regardless of m.debug. Empty → no panel.
+	todos []deep.TODO
+	// todoExpanded toggles the panel between collapsed (single-line) and
+	// expanded (full list) layouts; flipped by /todos.
+	todoExpanded bool
 
 	// prog back-reference lets cross-goroutine consumers (Trace middleware)
 	// call prog.Send; wired in Run() right before prog.Run().
@@ -212,13 +220,14 @@ func builtinHelp() string {
 - %s — clear the in-memory conversation history
 - %s — show / hide the model's exact input & output per turn
 - %s — toggle plan mode (auto-decompose multi-step tasks via write_todos)
+- %s — expand / collapse the todo panel
 - %s — exit the TUI session
 - %s — exit the TUI session
 - %s — show this help
 
 Anything else is sent to the model as a prompt. Press Ctrl-C
 during a response to abort, or Ctrl-C twice from idle to quit.
-`, "`/clear`", "`/debug [on|off|toggle]`", "`/plan [on|off|toggle]`", "`/exit`", "`/quit`", "`/help`"))
+`, "`/clear`", "`/debug [on|off|toggle]`", "`/plan [on|off|toggle]`", "`/todos [open|close|toggle]`", "`/exit`", "`/quit`", "`/help`"))
 }
 
 // formatDebugInput renders a TracePhaseBefore event; [agentname] prefix

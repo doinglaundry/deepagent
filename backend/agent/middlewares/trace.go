@@ -5,21 +5,27 @@ import (
 	"sync/atomic"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/schema"
 )
 
 const (
 	TracePhaseBefore = iota + 1
 	TracePhaseAfter
+	TracePhaseTodos
 )
 
 // TraceEvent is one half-turn snapshot. Before carries the full message
-// slice; After carries just the new assistant message. Turn pairs them up.
+// slice; After carries just the new assistant message; Todos carries the
+// session-key-todos snapshot when present. Turn pairs Before with After.
+// Same struct, different fields filled per phase — same pattern as
+// Messages already meaning "full slice" vs "single delta" by phase.
 type TraceEvent struct {
 	AgentName string
 	Phase     int
 	Turn      int
 	Messages  []*schema.Message
+	Todos     []deep.TODO // only set when Phase == TracePhaseTodos
 }
 
 // TraceConsumer is the receiving end of a Trace event stream.
@@ -95,6 +101,22 @@ func (t *Trace) AfterModelRewriteState(
 		Turn:      int(t.turn.Load()),
 		Messages:  []*schema.Message{state.Messages[len(state.Messages)-1]},
 	})
+
+	// Piggy-back the current todo snapshot onto the same After hook —
+	// emitting it here (rather than in the write_todos tool) keeps the
+	// TUI in sync after Summarisation / interrupt-resume rebuilds where
+	// the tool wouldn't fire again. Empty / missing → skip silently.
+	if raw, ok := adk.GetSessionValue(ctx, deep.SessionKeyTodos); ok {
+		todos, _ := raw.([]deep.TODO)
+		if len(todos) > 0 {
+			consumer.Send(TraceEvent{
+				AgentName: t.agentName,
+				Phase:     TracePhaseTodos,
+				Turn:      int(t.turn.Load()),
+				Todos:     todos,
+			})
+		}
+	}
 	return ctx, state, nil
 }
 

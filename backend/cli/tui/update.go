@@ -45,24 +45,7 @@ func (m *Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.width = msg.Width
 	m.height = msg.Height
 
-	// Layout budget: header(3) + blank(1) + viewport(flex) + stream(0-3) + input(3) + footer(1).
-	headerH := 3
-	streamH := 0
-	if m.streaming || m.lastErr != nil {
-		streamH = 3
-	}
-	inputH := 3
-	footerH := 1
-	chrome := headerH + 1 + streamH + inputH + footerH
-
-	vpH := msg.Height - chrome
-	if vpH < 3 {
-		vpH = 3
-	}
-	m.viewport.Width = msg.Width
-	m.viewport.Height = vpH
-
-	m.input.Width = msg.Width - 4 // account for prompt + padding
+	m.recomputeLayout()
 
 	// Rebuild markdown at new width so wrapping is correct.
 	m.mdRenderer = nil
@@ -74,6 +57,52 @@ func (m *Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.rebuildHistory()
 	m.ready = true
 	return m, nil
+}
+
+// recomputeLayout sizes viewport / input from m.width / m.height and the
+// current panel states (stream + todo). Called from handleResize and from
+// any handler that flips a panel-affecting flag (todos / todoExpanded /
+// streaming). Cheap enough to run on every relevant edge.
+func (m *Model) recomputeLayout() {
+	if m.width <= 0 || m.height <= 0 {
+		return
+	}
+	// Layout budget: header(3) + blank(1) + viewport(flex) + stream(0-3)
+	// + todoPanel(0..N) + input(3) + footer(1).
+	headerH := 3
+	streamH := 0
+	if m.streaming || m.lastErr != nil {
+		streamH = 3
+	}
+	todoH := m.todoPanelHeight()
+	inputH := 3
+	footerH := 1
+	chrome := headerH + 1 + streamH + todoH + inputH + footerH
+
+	vpH := m.height - chrome
+	if vpH < 3 {
+		vpH = 3
+	}
+	m.viewport.Width = m.width
+	m.viewport.Height = vpH
+	m.input.Width = m.width - 4
+}
+
+// todoPanelHeight matches what renderTodoPanel actually emits:
+//
+//	0 lines when len(todos) == 0
+//	1 line when collapsed
+//	2 + len(todos) lines when expanded (header + blank + one line per todo)
+//
+// Drift between this and the renderer would silently misalign chrome.
+func (m *Model) todoPanelHeight() int {
+	if len(m.todos) == 0 {
+		return 0
+	}
+	if !m.todoExpanded {
+		return 1
+	}
+	return 2 + len(m.todos)
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -122,8 +151,13 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	m.streamBuf.Reset()
 	m.lastErr = nil
 
+	// Always attach the trace consumer regardless of m.debug: the Todos
+	// phase fires on every after-model hook with active todos and must
+	// reach the TUI even when /debug is off. Before/After phases are
+	// filtered out by handleTraceEvent on the consume side, so the only
+	// cost of "always-on" is one extra channel send per turn.
 	var consumer middlewares.TraceConsumer
-	if m.debug && m.prog != nil {
+	if m.prog != nil {
 		consumer = teaProgramConsumer{p: m.prog}
 	}
 
@@ -133,13 +167,28 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitForChunk(ch), awaitDone, m.spin.Tick)
 }
 
-// handleTraceEvent renders a TraceEvent (from Trace middleware) as a scrollback message.
+// handleTraceEvent dispatches a TraceEvent. Before/After are pure debug
+// surfaces and stay gated by m.debug; Todos updates the panel cache
+// unconditionally — the panel is a first-class TUI affordance, not a
+// debug aid.
 func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd) {
 	switch ev.Phase {
 	case middlewares.TracePhaseBefore:
-		m.pushMessage("debug-input", formatDebugInput(ev))
+		if m.debug {
+			m.pushMessage("debug-input", formatDebugInput(ev))
+		}
 	case middlewares.TracePhaseAfter:
-		m.pushMessage("debug-output", formatDebugOutput(ev))
+		if m.debug {
+			m.pushMessage("debug-output", formatDebugOutput(ev))
+		}
+	case middlewares.TracePhaseTodos:
+		prevH := m.todoPanelHeight()
+		m.todos = ev.Todos
+		// Only relayout when the panel's height actually changes; avoids
+		// a viewport reflow on every status flip within an unchanged list.
+		if m.todoPanelHeight() != prevH {
+			m.recomputeLayout()
+		}
 	}
 	return m, nil
 }
@@ -156,11 +205,22 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		m.messages = freshMessages()
 		m.rebuildHistory()
 		m.rt.ClearHistory()
+		// Todos live as long as the conversation thread does; clearing
+		// history without clearing the panel would leave a stale list
+		// referencing tasks the model no longer remembers.
+		hadTodos := len(m.todos) > 0
+		m.todos = nil
+		m.todoExpanded = false
+		if hadTodos {
+			m.recomputeLayout()
+		}
 		return nil, true
 	case "debug":
 		return m.handleDebugCmd(text), true
 	case "plan":
 		return m.handlePlanCmd(text), true
+	case "todos":
+		return m.handleTodosCmd(text), true
 	case "help":
 		m.pushMessage("user", text)
 		m.pushMessage("assistant", builtinHelp())
@@ -208,6 +268,34 @@ func boolWord(b bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+// handleTodosCmd processes "/todos [open|close|toggle]"; empty arg toggles.
+// "open" / "close" use those words (not on/off) to match the visual model
+// (a panel is open or closed, not on or off).
+func (m *Model) handleTodosCmd(text string) tea.Cmd {
+	arg := strings.TrimSpace(strings.TrimPrefix(text, "/todos"))
+	prevH := m.todoPanelHeight()
+	switch strings.ToLower(arg) {
+	case "", "toggle":
+		m.todoExpanded = !m.todoExpanded
+	case "open":
+		m.todoExpanded = true
+	case "close":
+		m.todoExpanded = false
+	default:
+		m.pushMessage("system", "usage: /todos [open|close|toggle]")
+		return nil
+	}
+	if m.todoPanelHeight() != prevH {
+		m.recomputeLayout()
+	}
+	state := "closed"
+	if m.todoExpanded {
+		state = "open"
+	}
+	m.pushMessage("system", fmt.Sprintf("todos panel = %s", state))
+	return nil
 }
 
 // handleDebugCmd processes "/debug [on|off|toggle]"; empty arg toggles.

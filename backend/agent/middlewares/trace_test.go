@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -154,6 +155,25 @@ func TestTrace_ResetTurn(t *testing.T) {
 		if got := rec.events[i].Turn; got != want {
 			t.Errorf("event[%d].Turn = %d, want %d (post-reset turn should restart at 1)", i, got, want)
 		}
+	}
+}
+
+// TracePhaseTodos must be a distinct phase value so consumers can switch
+// on it without colliding with Before / After. AfterModelRewriteState
+// only emits it when adk session has SessionKeyTodos with a non-empty
+// slice; the no-session ctx path is already covered by
+// TestTrace_SendsBeforeAndAfter (which asserts exactly 2 events).
+func TestTraceEvent_TodosFieldRoundtrip(t *testing.T) {
+	if TracePhaseBefore == TracePhaseTodos || TracePhaseAfter == TracePhaseTodos {
+		t.Fatalf("TracePhaseTodos must be distinct from Before/After (%d vs %d/%d)",
+			TracePhaseTodos, TracePhaseBefore, TracePhaseAfter)
+	}
+	ev := TraceEvent{
+		Phase: TracePhaseTodos,
+		Todos: []deep.TODO{{Content: "x", Status: "pending"}},
+	}
+	if ev.Phase != TracePhaseTodos || len(ev.Todos) != 1 {
+		t.Fatalf("TraceEvent.Todos not round-tripping: %+v", ev)
 	}
 }
 

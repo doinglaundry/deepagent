@@ -46,13 +46,16 @@ func TestFormatDebugOutput_HasAgentPrefix(t *testing.T) {
 	}
 }
 
-// /help must mention /debug + /plan for discoverability.
+// /help must mention /debug + /plan + /todos for discoverability.
 func TestBuiltinHelpMentionsDebug(t *testing.T) {
 	if !strings.Contains(builtinHelp(), "/debug") {
 		t.Errorf("builtinHelp() missing /debug entry:\n%s", builtinHelp())
 	}
 	if !strings.Contains(builtinHelp(), "/plan") {
 		t.Errorf("builtinHelp() missing /plan entry:\n%s", builtinHelp())
+	}
+	if !strings.Contains(builtinHelp(), "/todos") {
+		t.Errorf("builtinHelp() missing /todos entry:\n%s", builtinHelp())
 	}
 }
 

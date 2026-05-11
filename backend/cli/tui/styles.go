@@ -18,6 +18,15 @@ var (
 	debugOutputMarkerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207")) // light magenta
 	debugBodyStyle         = lipgloss.NewStyle().Faint(true)
 
+	// Todo panel styling. Strikethrough on completed items uses ANSI SGR 9;
+	// terminals that drop SGR 9 (some old tmux forwards) fall back to
+	// dim+green which is still readable.
+	todoCompletedStyle  = lipgloss.NewStyle().Faint(true).Strikethrough(true).Foreground(lipgloss.Color("10")) // green + strike + faint
+	todoInProgressStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))                     // orange bold
+	todoPendingStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                                // light grey
+	todoBarFilledStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))                                 // accent blue
+	todoBarEmptyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))                                // dim
+
 	headerTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
 	footerStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
