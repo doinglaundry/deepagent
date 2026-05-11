@@ -338,6 +338,10 @@ func (m *Model) handleChunk(msg chunkMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
+	// Snapshot elapsed BEFORE flipping streaming off so a slow handleDone
+	// doesn't drift the summary downward.
+	elapsed := time.Since(m.streamStart).Round(time.Second)
+
 	m.streaming = false
 	m.cancel = nil
 	m.chunkCh = nil
@@ -350,6 +354,8 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		}
 		m.pushMessage("system", fmt.Sprintf("error: %s", msg.err))
 		m.streamBuf.Reset()
+		// Error path skips the thinking-summary — the error line is
+		// already enough noise; "Verbed for 3s" on top reads as gloating.
 		return m, nil
 	}
 
@@ -361,6 +367,16 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 	if final != "" {
 		m.pushMessage("assistant", final)
 	}
+
+	// Short turns (< summaryThreshold) don't warrant a "for 0s" summary —
+	// visual noise without info. The 2s line is a single point of tuning
+	// — if user feedback says even 2s is too chatty, raise the bar here.
+	const summaryThreshold = 2 * time.Second
+	if elapsed >= summaryThreshold && m.verbPast != "" {
+		m.pushMessage("thinking-summary",
+			fmt.Sprintf("%s for %ds", m.verbPast, int(elapsed.Seconds())))
+	}
+
 	m.streamBuf.Reset()
 	return m, nil
 }

@@ -21,6 +21,9 @@ var (
 	// Thinking indicator: bright magenta "✶", bold-white verb, dim tag.
 	thinkingMarkerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
 	thinkingPresentStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	// Scrollback summary "✻ Verbed for Ns": faint magenta so it reads as
+	// a closed chapter rather than competing with the next prompt.
+	thinkingSummaryStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("13"))
 
 	// Todo panel styling. Strikethrough on completed items uses ANSI SGR 9;
 	// terminals that drop SGR 9 (some old tmux forwards) fall back to

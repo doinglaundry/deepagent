@@ -28,7 +28,7 @@ const (
 
 // chatMessage caches the markdown-rendered body so View doesn't re-render per keystroke.
 type chatMessage struct {
-	Role     string // "user" | "assistant" | "system" | "debug-input" | "debug-output" | "banner"
+	Role     string // "user" | "assistant" | "system" | "debug-input" | "debug-output" | "thinking-summary" | "banner"
 	Content  string // raw text (or pre-rendered ANSI for "banner")
 	Rendered string // post-markdown, for assistant only
 }
@@ -199,6 +199,10 @@ func (m *Model) renderMessage(msg chatMessage) string {
 		return debugInputMarkerStyle.Render("▶ ") + debugBodyStyle.Render(msg.Content)
 	case "debug-output":
 		return debugOutputMarkerStyle.Render("◀ ") + debugBodyStyle.Render(msg.Content)
+	case "thinking-summary":
+		// One-line scrollback artefact: "✻ Verbed for Ns". No bold,
+		// no indent — the dim magenta keeps it adjacent-but-quiet.
+		return thinkingSummaryStyle.Render("✻ " + msg.Content)
 	case "banner":
 		// Pre-rendered ANSI; no prefix, no markdown.
 		return msg.Content
