@@ -19,6 +19,10 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	// 把 cfg.LogLevel 装到 slog 默认 handler 上,Debug 才能真正出来。
+	// 必须在任何 agent / runtime 起来之前调,确保后续 slog.* 都走同一份配置。
+	config.SetLogLevel(cfg)
+
 	//构建runtime
 	runtime, err := eino.NewDeepAgentRuntime(context.Background(), cfg)
 	if err != nil {
