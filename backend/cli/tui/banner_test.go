@@ -104,6 +104,19 @@ func TestRenderWelcomeCard_BoxedAtWideWidth(t *testing.T) {
 	}
 }
 
+// Terminals wider than bannerMaxWidth must NOT stretch the card to fill
+// — past the natural content width the right column just bleeds empty
+// space. Cap at bannerMaxWidth and leave the rest of the terminal blank.
+func TestRenderWelcomeCard_ClampsAboveMaxWidth(t *testing.T) {
+	got := renderWelcomeCard(200, "kimi", "/tmp")
+	lines := strings.Split(got, "\n")
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w != bannerMaxWidth {
+			t.Errorf("line %d width = %d, want %d (clamp): %q", i, w, bannerMaxWidth, line)
+		}
+	}
+}
+
 // Narrow-terminal path falls back to vertical glyph + info layout — no
 // box-drawing corners — so we can spot accidental "boxed-everywhere"
 // regressions.

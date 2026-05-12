@@ -165,6 +165,13 @@ func getRow(rows []string, i, width int) string {
 
 const (
 	bannerMinWidth = 80
+	// bannerMaxWidth caps the card so it stops growing past the point where
+	// content has anything to fill the right column with. Calibrated to
+	// 7 (chrome) + bannerLeftMax (48) + 65 (= "• " + the longest release
+	// note that fits on one line) = 120. Past this, the card just sits
+	// left-aligned in the wider terminal — empty trailing right-column
+	// space is the symptom we're cutting (see #review-banner-at-160w).
+	bannerMaxWidth = 120
 	bannerLeftMin  = 32
 	bannerLeftMax  = 48
 	bannerMaxNotes = 3
@@ -182,8 +189,11 @@ const (
 // bannerMinWidth so the helpers never get into a negative-padding spiral
 // when called from a test that forgets to clamp.
 func renderWelcomeCard(width int, modelName, cwd string) string {
-	if width < bannerMinWidth {
+	switch {
+	case width < bannerMinWidth:
 		width = bannerMinWidth
+	case width > bannerMaxWidth:
+		width = bannerMaxWidth
 	}
 	leftW, rightW := chooseColumnWidths(width)
 
