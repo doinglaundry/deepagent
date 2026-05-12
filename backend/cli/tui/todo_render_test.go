@@ -122,7 +122,7 @@ func TestTodoPanelHeight_MatchesRenderer(t *testing.T) {
 // Trace events with TracePhaseTodos must update m.todos even when
 // m.debug is off — the panel is independent of the debug toggle.
 func TestHandleTraceEvent_TodosUpdateWhenDebugOff(t *testing.T) {
-	m := &Model{debug: false, messages: freshMessages()}
+	m := &Model{debug: false, messages: freshMessages(0, "", "")}
 	ev := middlewares.TraceEvent{
 		Phase: middlewares.TracePhaseTodos,
 		Todos: sampleTodos(),
@@ -136,7 +136,7 @@ func TestHandleTraceEvent_TodosUpdateWhenDebugOff(t *testing.T) {
 // Conversely Before/After events must be dropped when m.debug is off
 // (no debug-input / debug-output rows pushed into the scrollback).
 func TestHandleTraceEvent_BeforeAfterGatedByDebug(t *testing.T) {
-	m := &Model{debug: false, messages: freshMessages()}
+	m := &Model{debug: false, messages: freshMessages(0, "", "")}
 	startLen := len(m.messages)
 	_, _ = m.handleTraceEvent(middlewares.TraceEvent{Phase: middlewares.TracePhaseBefore})
 	_, _ = m.handleTraceEvent(middlewares.TraceEvent{Phase: middlewares.TracePhaseAfter})
@@ -146,7 +146,7 @@ func TestHandleTraceEvent_BeforeAfterGatedByDebug(t *testing.T) {
 }
 
 func TestHandleTodosCmd_Toggle(t *testing.T) {
-	m := &Model{todos: sampleTodos(), messages: freshMessages()}
+	m := &Model{todos: sampleTodos(), messages: freshMessages(0, "", "")}
 
 	m.handleTodosCmd("/todos")
 	if !m.todoExpanded {
@@ -159,7 +159,7 @@ func TestHandleTodosCmd_Toggle(t *testing.T) {
 }
 
 func TestHandleTodosCmd_ExplicitOpenClose(t *testing.T) {
-	m := &Model{todos: sampleTodos(), messages: freshMessages()}
+	m := &Model{todos: sampleTodos(), messages: freshMessages(0, "", "")}
 
 	m.handleTodosCmd("/todos open")
 	if !m.todoExpanded {
@@ -176,7 +176,7 @@ func TestHandleTodosCmd_ExplicitOpenClose(t *testing.T) {
 }
 
 func TestHandleTodosCmd_BadArg(t *testing.T) {
-	m := &Model{todos: sampleTodos(), messages: freshMessages()}
+	m := &Model{todos: sampleTodos(), messages: freshMessages(0, "", "")}
 	m.handleTodosCmd("/todos banana")
 	last := m.messages[len(m.messages)-1]
 	if last.Role != "system" || !strings.Contains(last.Content, "usage:") {

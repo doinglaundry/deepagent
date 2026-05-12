@@ -137,7 +137,7 @@ func New(rt eino.Runtime) (*Model, error) {
 		input:     ti,
 		viewport:  vp,
 		spin:      sp,
-		messages:  freshMessages(),
+		messages:  freshMessages(0, rt.Name(), cwd),
 		mdStyle:   style,
 	}, nil
 }

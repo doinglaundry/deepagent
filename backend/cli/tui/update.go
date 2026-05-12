@@ -52,10 +52,17 @@ func (m *Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 
 	m.recomputeLayout()
 
-	// Rebuild markdown at new width so wrapping is correct.
+	// Rebuild markdown at new width so wrapping is correct. Banner is
+	// pre-rendered (verbatim in renderMessage), so a width change has to
+	// re-bake its content here too — otherwise a session that started
+	// narrow would stay on the compact fallback forever even after the
+	// user maximises the window (boxed form expects width >= 80).
 	m.mdRenderer = nil
 	for i := range m.messages {
-		if m.messages[i].Role == "assistant" {
+		switch m.messages[i].Role {
+		case "banner":
+			m.messages[i].Content = renderBanner(m.width, m.modelName, m.cwd)
+		case "assistant":
 			m.messages[i].Rendered = m.renderMarkdown(m.messages[i].Content)
 		}
 	}
@@ -327,7 +334,7 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 	case "exit", "quit":
 		return tea.Quit, true
 	case "clear":
-		m.messages = freshMessages()
+		m.messages = freshMessages(m.width, m.modelName, m.cwd)
 		m.rebuildHistory()
 		m.rt.ClearHistory()
 		// Todos live as long as the conversation thread does; clearing

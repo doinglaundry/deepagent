@@ -40,7 +40,7 @@ func (f *fakePlanRuntime) SetPlanMode(ctx context.Context, plan bool) error {
 func newPlanModel(rt eino.Runtime) *Model {
 	return &Model{
 		rt:       rt,
-		messages: freshMessages(),
+		messages: freshMessages(0, "", ""),
 	}
 }
 
