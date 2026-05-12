@@ -93,6 +93,18 @@ if strings.TrimSpace(ac.Name) == "" {
 - "摘掉中间层" + "重连消费方" → 各占一个 commit。
 - 每个 commit 的 diff 要能用一句话说清。
 
+## yaml/config.yaml 改动
+
+`yaml/config.yaml` **不入 git**(里面常含本地 API key / 临时调试值)。
+git 看不到它的 shape 变化,所以任何 **shape 改动** —— 加段、加字段、改名、
+删字段、默认值语义变化 —— 都**必须**在 `yaml/CHANGELOG.md`(入 git)里追加
+一条记录,带完整 yaml 片段 + Go 端读取位置,方便别的机器同步 config.yaml。
+不写 CHANGELOG = Go 代码读不到的死配置,跟没写一样。
+
+Agent 直接编辑 `yaml/config.yaml` 前先看一眼 `git status`:如果 working tree
+已经有别人未提交的本地改动,**不要顺手 commit**,只在 CHANGELOG 里登记自己
+那段就够了 —— 用户拿 CHANGELOG 同步,自己 yaml 文件不动。
+
 ## Agent 工作纪律
 
 面向 LLM Agent 的执行守则。**这套规则向"谨慎"倾斜，不向"速度"倾斜；
