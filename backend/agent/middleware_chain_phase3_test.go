@@ -39,6 +39,7 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 	wantOrder := []reflect.Type{
 		reflect.TypeOf(&middlewares.AgentState{}),
 		reflect.TypeOf(&middlewares.Title{}),
+		reflect.TypeOf(&middlewares.ToolCallObservability{}),
 		reflect.TypeOf(&middlewares.ToolErrorHandling{}),
 		nil, // patchtoolcalls.middleware — unexported, matched by string below
 		reflect.TypeOf(&middlewares.LoopDetection{}),

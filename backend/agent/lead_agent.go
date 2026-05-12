@@ -6,8 +6,10 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
+	"github.com/cloudwego/eino/compose"
 
 	"eino-cli/backend/agent/middlewares"
+	"eino-cli/backend/agent/tools"
 	"eino-cli/backend/config"
 )
 
@@ -25,9 +27,6 @@ func MakeLeadAgent(
 	}
 	chatModel = wrapErrorHandling(chatModel, cfg.ErrorHandling)
 
-	backend := newLocalBackend("")
-	shell := newLocalShell("")
-
 	prompt := GetSystemPrompt(rt, cfg)
 	handlers := GetChatModelMiddlewares(ctx, cfg, rt, chatModel)
 
@@ -41,9 +40,12 @@ func MakeLeadAgent(
 		WithoutWriteTodos:      false,
 		Middlewares:            GetAgentMiddleWares(rt),
 		Handlers:               handlers,
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools: tools.BuildBuiltinTools(cfg.RootDir),
+			},
+		},
 	}
-
-	applyToolGroups(deepCfg, rt.AgentConfig, backend, shell)
 
 	agentImpl, err := deep.New(ctx, deepCfg)
 	if err != nil {

@@ -33,6 +33,7 @@ func GetChatModelMiddlewares(
 	middlewareList = []adk.ChatModelAgentMiddleware{
 		middlewares.NewAgentState(),
 		middlewares.NewTitle(),
+		middlewares.NewToolCallObservability(cfg.ToolObservability.Enabled),
 		middlewares.NewToolErrorHandling(),
 		patchToolCalls,
 		middlewares.NewLoopDetection(),

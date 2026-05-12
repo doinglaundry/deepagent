@@ -31,6 +31,13 @@ type TokenUsage struct {
 	Enabled bool `yaml:"enabled"`
 }
 
+// ToolObservability gates the ToolCallObservability middleware (§5 of
+// rebuild_builtin_tools spec). Disabled → middleware short-circuits to a
+// no-op endpoint passthrough, zero per-call overhead.
+type ToolObservability struct {
+	Enabled bool `yaml:"enabled"`
+}
+
 type ToolGroup struct {
 	Name string `yaml:"name"`
 }

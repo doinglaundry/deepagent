@@ -34,14 +34,13 @@ func (m *ToolErrorHandling) WrapInvokableToolCall(
 	if tCtx != nil {
 		name = tCtx.Name
 	}
-	wrapped := func(ctx context.Context, args string, opts ...tool.Option) (string, error) {
-		out, err := endpoint(ctx, args, opts...)
+	return func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		out, err := endpoint(ctx, argumentsInJSON, opts...)
 		if err != nil {
 			m.Logger.Warn("tool call failed; converting to ToolMessage",
 				"tool", name, "err", err)
 			return fmt.Sprintf("Error executing tool %q: %s", name, err.Error()), nil
 		}
 		return out, nil
-	}
-	return wrapped, nil
+	}, nil
 }
