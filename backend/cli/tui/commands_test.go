@@ -15,7 +15,7 @@ func TestShouldShowPopup(t *testing.T) {
 		{"/", true},
 		{"/cl", true},
 		{"/clear", true},
-		{"/plan on", false},     // space → arg region
+		{"/debug on", false},    // space → arg region
 		{"hello /clear", false}, // slash not at column 0
 		{"/clear\t", false},     // tab counts as whitespace too
 	}

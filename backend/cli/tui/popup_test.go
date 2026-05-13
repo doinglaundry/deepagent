@@ -23,10 +23,10 @@ func TestRenderPopup_HiddenWhenNoSlash(t *testing.T) {
 }
 
 // Once the user types a space, focus has moved into the argument
-// region — the menu hides so /plan / /debug / /todos can take their
+// region — the menu hides so /debug / /todos can take their
 // on/off/open/close without competing with name suggestions.
 func TestRenderPopup_HiddenWhenInArgRegion(t *testing.T) {
-	m := newModelForPopup("/plan on")
+	m := newModelForPopup("/debug on")
 	if got := m.renderPopup(); got != "" {
 		t.Errorf("popup must hide once a space is typed; got %q", got)
 	}
@@ -65,7 +65,7 @@ func TestRenderPopup_PrefixFilters(t *testing.T) {
 // together across the full state space — hidden / shown / overflow are
 // all exercised through the cases.
 func TestPopupHeight_MatchesRenderLineCount(t *testing.T) {
-	cases := []string{"/", "/de", "/zzz", "hello", "/plan on", ""}
+	cases := []string{"/", "/de", "/zzz", "hello", "/debug on", ""}
 	for _, value := range cases {
 		m := newModelForPopup(value)
 		out := m.renderPopup()

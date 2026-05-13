@@ -87,11 +87,6 @@ type Model struct {
 	// debug toggles inline LLM input/output panels via /debug.
 	debug bool
 
-	// planMode mirrors the runtime's plan-mode flag for /help status and
-	// /plan toggle; the authoritative state lives on RuntimeContext, this
-	// is only the view-side cache that /plan keeps in sync.
-	planMode bool
-
 	// todos is the latest in-flight todo list, written by every
 	// TracePhaseTodos event regardless of m.debug. Empty → no panel.
 	todos []deep.TODO
@@ -292,7 +287,6 @@ func builtinHelp() string {
 **Built-in commands**
 - %s — clear the in-memory conversation history
 - %s — show / hide the model's exact input & output per turn
-- %s — toggle plan mode (auto-decompose multi-step tasks via write_todos)
 - %s — expand / collapse the todo panel
 - %s — exit the TUI session
 - %s — exit the TUI session
@@ -300,7 +294,7 @@ func builtinHelp() string {
 
 Anything else is sent to the model as a prompt. Press Ctrl-C
 during a response to abort, or Ctrl-C twice from idle to quit.
-`, "`/clear`", "`/debug [on|off|toggle]`", "`/plan [on|off|toggle]`", "`/todos [open|close|toggle]`", "`/exit`", "`/quit`", "`/help`"))
+`, "`/clear`", "`/debug [on|off|toggle]`", "`/todos [open|close|toggle]`", "`/exit`", "`/quit`", "`/help`"))
 }
 
 // formatDebugInput renders a TracePhaseBefore event; [agentname] prefix

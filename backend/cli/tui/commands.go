@@ -22,7 +22,6 @@ var commands = []slashCommand{
 	{Name: "debug", Args: "[on|off|toggle]", Desc: "show / hide the model's exact input & output per turn"},
 	{Name: "exit", Desc: "exit the TUI session"},
 	{Name: "help", Desc: "show this help"},
-	{Name: "plan", Args: "[on|off|toggle]", Desc: "toggle plan mode"},
 	{Name: "quit", Desc: "exit the TUI session"},
 	{Name: "todos", Args: "[open|close|toggle]", Desc: "expand / collapse the todo panel"},
 }

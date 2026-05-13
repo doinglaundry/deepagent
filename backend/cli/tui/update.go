@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -349,8 +348,6 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		return nil, true
 	case "debug":
 		return m.handleDebugCmd(text), true
-	case "plan":
-		return m.handlePlanCmd(text), true
 	case "todos":
 		return m.handleTodosCmd(text), true
 	case "help":
@@ -359,47 +356,6 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		return nil, true
 	}
 	return nil, false
-}
-
-// handlePlanCmd processes "/plan [on|off|toggle]"; empty arg toggles.
-// On state change it asks the runtime to flip plan mode (which rebuilds
-// the lead agent under the runtime's lock). On rebuild failure the
-// view-side flag stays in sync with the runtime's rollback so
-// successive /plan commands aren't operating on a lie.
-func (m *Model) handlePlanCmd(text string) tea.Cmd {
-	arg := strings.TrimSpace(strings.TrimPrefix(text, "/plan"))
-	target := m.planMode
-	switch strings.ToLower(arg) {
-	case "", "toggle":
-		target = !m.planMode
-	case "on":
-		target = true
-	case "off":
-		target = false
-	default:
-		m.pushMessage("system", "usage: /plan [on|off|toggle]")
-		return nil
-	}
-
-	if target == m.planMode {
-		m.pushMessage("system", fmt.Sprintf("plan = %s", boolWord(m.planMode)))
-		return nil
-	}
-
-	if err := m.rt.SetPlanMode(context.Background(), target); err != nil {
-		m.pushMessage("system", fmt.Sprintf("plan toggle failed: %s", err))
-		return nil
-	}
-	m.planMode = target
-	m.pushMessage("system", fmt.Sprintf("plan = %s", boolWord(m.planMode)))
-	return nil
-}
-
-func boolWord(b bool) string {
-	if b {
-		return "on"
-	}
-	return "off"
 }
 
 // handleTodosCmd processes "/todos [open|close|toggle]"; empty arg toggles.

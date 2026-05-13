@@ -18,9 +18,8 @@ import (
 )
 
 type DeepAgentRuntime struct {
-	// cfg is the only input we hold onto so SetPlanMode can rebuild the
-	// lead agent; every other knob is now a function argument to
-	// agent.MakeLeadAgent rather than a stashed RuntimeContext field.
+	// cfg is kept for ClearHistory's checkpoint path; every other knob
+	// is a function argument to agent.MakeLeadAgent at construction time.
 	cfg                 *config.Config
 	modelName           string
 	runner              *adk.Runner
@@ -100,30 +99,6 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 	r.mu.Unlock()
 
 	return SuccessResult(summary.Output), nil
-}
-
-// SetPlanMode flips IsPlanMode and rebuilds the lead agent + runner so the
-// new system prompt and middleware list take effect on the next turn. No-op
-// when the value is unchanged. On rebuild failure rt is rolled back so the
-// existing runner / trace stay coherent. history is intentionally preserved
-// — switching plan mode shouldn't wipe conversation context.
-func (r *DeepAgentRuntime) SetPlanMode(ctx context.Context, plan bool) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	leadAgent, trace, err := agent.MakeLeadAgent(ctx, "default", plan, true, r.cfg)
-	if err != nil {
-		return fmt.Errorf("rebuild lead agent for plan mode %v: %w", plan, err)
-	}
-
-	store := checkpoint.NewStore(filepath.Join(r.cfg.RootDir, ".eino-cli", "checkpoints"))
-	r.runner = adk.NewRunner(ctx, adk.RunnerConfig{
-		Agent:           leadAgent,
-		EnableStreaming: true,
-		CheckPointStore: store,
-	})
-	r.trace = trace
-	return nil
 }
 
 func (r *DeepAgentRuntime) ClearHistory() {
