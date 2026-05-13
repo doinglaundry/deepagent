@@ -360,6 +360,7 @@ func builtinHelp() string {
 - %s — clear the in-memory conversation history
 - %s — show / hide the model's exact input & output per turn
 - %s — expand / collapse the todo panel
+- %s — restart the agent service
 - %s — exit the TUI session
 - %s — exit the TUI session
 - %s — show this help
@@ -367,7 +368,7 @@ func builtinHelp() string {
 Anything else is sent to the model as a prompt. Press Ctrl-C
 during a response to abort, Ctrl-O to expand the latest tool block,
 or Ctrl-C twice from idle to quit.
-`, "`/bootstrap`", "`/clear`", "`/debug [on|off|toggle]`", "`/todos [open|close|toggle]`", "`/exit`", "`/quit`", "`/help`"))
+`, "`/bootstrap`", "`/clear`", "`/debug [on|off|toggle]`", "`/todos [open|close|toggle]`", "`/reload`", "`/exit`", "`/quit`", "`/help`"))
 }
 
 // formatDebugInput renders a TracePhaseBefore event; [agentname] prefix

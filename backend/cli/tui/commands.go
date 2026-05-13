@@ -24,6 +24,7 @@ var commands = []slashCommand{
 	{Name: "exit", Desc: "exit the TUI session"},
 	{Name: "help", Desc: "show this help"},
 	{Name: "quit", Desc: "exit the TUI session"},
+	{Name: "reload", Desc: "restart the agent service"},
 	{Name: "todos", Args: "[open|close|toggle]", Desc: "expand / collapse the todo panel"},
 }
 

@@ -25,6 +25,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleBootstrapReply(msg)
 	case bootstrapSavedMsg:
 		return m.handleBootstrapSaved(msg)
+	case reloadDoneMsg:
+		return m.handleReloadDone(msg)
 	case approvalRequest:
 		return m.handleApprovalRequest(msg)
 	case middlewares.TraceEvent:
@@ -460,27 +462,15 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 	case "exit", "quit":
 		return tea.Quit, true
 	case "clear":
-		m.messages = freshMessages(m.width, m.modelName, m.cwd)
-		m.toolBlocks = nil
-		m.lastSeenMsgCount = 0
-		m.toolBlockSeq = 0
-		m.footerHint = ""
-		m.rebuildHistory()
+		m.resetConversationView()
 		m.rt.ClearHistory()
-		// Todos live as long as the conversation thread does; clearing
-		// history without clearing the panel would leave a stale list
-		// referencing tasks the model no longer remembers.
-		hadTodos := len(m.todos) > 0
-		m.todos = nil
-		m.todoExpanded = false
-		if hadTodos {
-			m.recomputeLayout()
-		}
 		return nil, true
 	case "debug":
 		return m.handleDebugCmd(text), true
 	case "bootstrap":
 		return m.handleBootstrapCmd(), true
+	case "reload":
+		return m.handleReloadCmd(), true
 	case "todos":
 		return m.handleTodosCmd(text), true
 	case "help":
