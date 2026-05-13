@@ -30,11 +30,14 @@ import (
 const (
 	debugBodyMaxBytes    = 4 << 10
 	debugToolArgMaxBytes = 1 << 10
+
+	defaultToolPreviewLines = 5
+	defaultToolArgsMaxChars = 60
 )
 
 // chatMessage caches the markdown-rendered body so View doesn't re-render per keystroke.
 type chatMessage struct {
-	Role     string // "user" | "assistant" | "system" | "debug-input" | "debug-output" | "thinking-summary" | "banner"
+	Role     string // "user" | "assistant" | "system" | "debug-input" | "debug-output" | "thinking-summary" | "tool-block" | "banner"
 	Content  string // raw text (or pre-rendered ANSI for "banner")
 	Rendered string // post-markdown, for assistant only
 }
@@ -90,6 +93,14 @@ type Model struct {
 	// debug toggles inline LLM input/output panels via /debug.
 	debug bool
 
+	toolBlocks        []*toolBlock
+	toolBlocksEnabled bool
+	lastSeenMsgCount  int
+	toolBlockSeq      int
+	toolPreviewLines  int
+	toolArgsMaxChars  int
+	footerHint        string
+
 	bootstrap *bootstrap.Session
 
 	// hitlQueue holds pending HITL approval requests in FIFO order;
@@ -124,6 +135,7 @@ func New(rt eino.Runtime, cfgs ...*config.Config) (*Model, error) {
 	if len(cfgs) > 0 {
 		cfg = cfgs[0]
 	}
+	toolBlocksEnabled, toolPreviewLines, toolArgsMaxChars := toolBlockSettings(cfg)
 
 	ti := textinput.New()
 	ti.Placeholder = "Ask anything... (/help for commands)"
@@ -144,16 +156,38 @@ func New(rt eino.Runtime, cfgs ...*config.Config) (*Model, error) {
 	}
 
 	return &Model{
-		rt:        rt,
-		cfg:       cfg,
-		cwd:       cwd,
-		modelName: rt.Name(),
-		input:     ti,
-		viewport:  vp,
-		spin:      sp,
-		messages:  freshMessages(0, rt.Name(), cwd),
-		mdStyle:   style,
+		rt:                rt,
+		cfg:               cfg,
+		cwd:               cwd,
+		modelName:         rt.Name(),
+		input:             ti,
+		viewport:          vp,
+		spin:              sp,
+		messages:          freshMessages(0, rt.Name(), cwd),
+		mdStyle:           style,
+		toolBlocksEnabled: toolBlocksEnabled,
+		toolPreviewLines:  toolPreviewLines,
+		toolArgsMaxChars:  toolArgsMaxChars,
 	}, nil
+}
+
+func toolBlockSettings(cfg *config.Config) (enabled bool, previewLines int, argsMaxChars int) {
+	enabled = true
+	previewLines = defaultToolPreviewLines
+	argsMaxChars = defaultToolArgsMaxChars
+	if cfg == nil {
+		return enabled, previewLines, argsMaxChars
+	}
+	if cfg.ToolBlocks.Configured() {
+		enabled = cfg.ToolBlocks.Enabled
+	}
+	if cfg.ToolBlocks.PreviewLines > 0 {
+		previewLines = cfg.ToolBlocks.PreviewLines
+	}
+	if cfg.ToolBlocks.ArgsMaxChars > 0 {
+		argsMaxChars = cfg.ToolBlocks.ArgsMaxChars
+	}
+	return enabled, previewLines, argsMaxChars
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -263,6 +297,16 @@ func (m *Model) renderMessage(msg chatMessage) string {
 		return debugInputMarkerStyle.Render("▶ ") + debugBodyStyle.Render(msg.Content)
 	case "debug-output":
 		return debugOutputMarkerStyle.Render("◀ ") + debugBodyStyle.Render(msg.Content)
+	case "tool-block":
+		id, ok := parseToolPlaceholder(msg.Content)
+		if !ok {
+			return msg.Content
+		}
+		block := m.findToolBlockByID(id)
+		if block == nil {
+			return ""
+		}
+		return renderToolBlock(block, m.toolPreviewLines)
 	case "thinking-summary":
 		// One-line scrollback artefact: "✻ Verbed for Ns". No bold,
 		// no indent — the dim magenta keeps it adjacent-but-quiet.
@@ -317,7 +361,8 @@ func builtinHelp() string {
 - %s — show this help
 
 Anything else is sent to the model as a prompt. Press Ctrl-C
-during a response to abort, or Ctrl-C twice from idle to quit.
+during a response to abort, Ctrl-O to expand the latest tool block,
+or Ctrl-C twice from idle to quit.
 `, "`/bootstrap`", "`/clear`", "`/debug [on|off|toggle]`", "`/todos [open|close|toggle]`", "`/exit`", "`/quit`", "`/help`"))
 }
 

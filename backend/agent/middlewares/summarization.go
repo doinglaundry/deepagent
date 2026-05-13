@@ -31,20 +31,20 @@ func NewSummarization(
 		return nil, fmt.Errorf("summarization enabled but no chat model provided")
 	}
 
-	trig := &summarization.TriggerCondition{
+	condition := &summarization.TriggerCondition{
 		ContextTokens:   190000,
 		ContextMessages: 200,
 	}
 	if contextTokens > 0 {
-		trig.ContextTokens = contextTokens
+		condition.ContextTokens = contextTokens
 	}
 	if contextMessages > 0 {
-		trig.ContextMessages = contextMessages
+		condition.ContextMessages = contextMessages
 	}
 
 	cfg := &summarization.Config{
 		Model:           summaryModel,
-		Trigger:         trig,
+		Trigger:         condition,
 		UserInstruction: userInstruction,
 	}
 	if memoryFlush != nil {

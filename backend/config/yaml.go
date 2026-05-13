@@ -40,6 +40,28 @@ type ToolObservability struct {
 	Enabled bool `yaml:"enabled"`
 }
 
+type ToolBlocks struct {
+	Enabled      bool `yaml:"enabled"`
+	PreviewLines int  `yaml:"preview_lines"`
+	ArgsMaxChars int  `yaml:"args_max_chars"`
+	configured   bool
+}
+
+func (tb *ToolBlocks) UnmarshalYAML(value *yaml.Node) error {
+	type rawToolBlocks ToolBlocks
+	var raw rawToolBlocks
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*tb = ToolBlocks(raw)
+	tb.configured = true
+	return nil
+}
+
+func (tb ToolBlocks) Configured() bool {
+	return tb.configured
+}
+
 type ToolGroup struct {
 	Name string `yaml:"name"`
 }

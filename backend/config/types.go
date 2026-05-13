@@ -63,6 +63,7 @@ type Config struct {
 	LogLevel          string                  `json:"-"                       yaml:"log_level"`
 	TokenUsage        TokenUsage              `json:"-"                       yaml:"token_usage"`
 	ToolObservability ToolObservability       `json:"-"                       yaml:"tool_observability"`
+	ToolBlocks        ToolBlocks              `json:"-"                       yaml:"tool_blocks"`
 	Models            map[string]*ModelConfig `json:"models"                  yaml:"-"` // built from the YAML list via UnmarshalYAML + normalizeModels
 	ToolGroups        []ToolGroup             `json:"-"                       yaml:"tool_groups"`
 	Tools             []Tool                  `json:"-"                       yaml:"tools"`

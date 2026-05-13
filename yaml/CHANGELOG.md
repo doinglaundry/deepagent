@@ -71,3 +71,29 @@ hitl_tools: []
 - `backend/agent/middleware_chain.go` `SubagentLimit` middleware 用 `effectiveMaxSubagents(cfg)`,`HITL` middleware 用 `cfg.HITLTools`(原来读 `RuntimeContext.HITLTools`,本次 refactor 砍掉了那条间接路径,搬来 cfg)。
 
 背景:`specs/20260513-cut-runtimecontext/design.md`。
+
+---
+
+## 2026-05-13: tool_blocks section
+
+新增段,在 `tool_observability` 下面、`models` 上面:
+
+```yaml
+# ============================================================================
+# Tool Output Blocks
+# ============================================================================
+# Show tool calls/results in the TUI scrollback as folded blocks.
+# Missing section → enabled with preview_lines=5 and args_max_chars=60.
+# Set enabled: false to hide these blocks while keeping /debug available.
+tool_blocks:
+  enabled: true
+  preview_lines: 5
+  args_max_chars: 60
+```
+
+驱动:
+- `backend/config/types.go` 加 `Config.ToolBlocks`。
+- `backend/config/yaml.go` 加 `ToolBlocks` yaml schema。
+- `backend/cli/tui` 读取该段控制工具输出 block 的开关、预览行数和 header args 截断长度。
+
+背景:`specs/20260512-tool-output-folding/design.md`。

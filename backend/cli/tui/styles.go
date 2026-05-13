@@ -28,6 +28,12 @@ var (
 	debugOutputMarkerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207")) // light magenta
 	debugBodyStyle         = lipgloss.NewStyle().Faint(true)
 
+	// Tool blocks are user-facing scrollback, quieter than assistant text
+	// but more structured than debug dumps.
+	toolHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
+	toolBodyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	toolFooterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+
 	// Thinking indicator: bright magenta "✶", bold-white verb, dim tag.
 	thinkingMarkerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
 	thinkingPresentStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))

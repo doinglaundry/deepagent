@@ -29,6 +29,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleApprovalRequest(msg)
 	case middlewares.TraceEvent:
 		return m.handleTraceEvent(msg)
+	case footerHintExpiredMsg:
+		m.footerHint = ""
+		return m, nil
 	case spinner.TickMsg:
 		if !m.streaming {
 			return m, nil // self-terminate the tick chain
@@ -202,6 +205,15 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Reset()
 		m.pendingExit = false
 		return m.submit(text)
+	}
+	if msg.String() == "ctrl+o" {
+		if block := m.latestCollapsibleToolBlock(); block != nil {
+			block.collapsed = !block.collapsed
+			m.rebuildHistory()
+			return m, nil
+		}
+		m.footerHint = "nothing to expand"
+		return m, expireFooterHint(3 * time.Second)
 	}
 
 	// Feed key to input + viewport (viewport handles PgUp/PgDn/arrows when input doesn't claim them).
@@ -404,16 +416,24 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitForChunk(ch), awaitDone, m.spin.Tick)
 }
 
-// handleTraceEvent dispatches a TraceEvent. Before/After are pure debug
-// surfaces and stay gated by m.debug; Todos updates the panel cache
-// unconditionally — the panel is a first-class TUI affordance, not a
-// debug aid.
+// handleTraceEvent dispatches a TraceEvent. Before powers debug input dumps
+// plus user-facing tool blocks; After stays debug-only. Todos updates the
+// panel cache unconditionally — the panel is a first-class TUI affordance,
+// not a debug aid.
 func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd) {
 	switch ev.Phase {
 	case middlewares.TracePhaseBefore:
 		if m.debug {
 			m.pushMessage("debug-input", formatDebugInput(ev))
 		}
+		if m.toolBlocksEnabled {
+			blocks := extractNewToolBlocks(ev.Messages, m.lastSeenMsgCount, &m.toolBlockSeq, m.toolArgsMaxChars)
+			for _, block := range blocks {
+				m.toolBlocks = append(m.toolBlocks, block)
+				m.pushMessage("tool-block", toolPlaceholder(block.id))
+			}
+		}
+		m.lastSeenMsgCount = len(ev.Messages)
 	case middlewares.TracePhaseAfter:
 		if m.debug {
 			m.pushMessage("debug-output", formatDebugOutput(ev))
@@ -440,6 +460,10 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		return tea.Quit, true
 	case "clear":
 		m.messages = freshMessages(m.width, m.modelName, m.cwd)
+		m.toolBlocks = nil
+		m.lastSeenMsgCount = 0
+		m.toolBlockSeq = 0
+		m.footerHint = ""
 		m.rebuildHistory()
 		m.rt.ClearHistory()
 		// Todos live as long as the conversation thread does; clearing

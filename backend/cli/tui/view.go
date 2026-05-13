@@ -198,6 +198,8 @@ func (m *Model) renderFooter() string {
 	hint := "/help · ctrl-c to quit"
 	if m.streaming {
 		hint = "esc to interrupt"
+	} else if m.footerHint != "" {
+		hint = m.footerHint
 	}
 	right := footerStyle.Render(hint)
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
