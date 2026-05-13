@@ -85,7 +85,7 @@ func GetChatModelMiddlewares(
 	}
 
 	if len(cfg.HITLTools) > 0 {
-		middlewareList = append(middlewareList, middlewares.NewHITL(cfg.HITLTools, defaultHITLApproval))
+		middlewareList = append(middlewareList, middlewares.NewHITL(cfg.HITLTools, HITLApprover))
 	}
 
 	if cfg.Summarization.Enabled {
