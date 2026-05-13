@@ -18,11 +18,10 @@ import (
 )
 
 type DeepAgentRuntime struct {
-	// cfg / rt are the inputs needed to rebuild the lead agent when
-	// SetPlanMode flips a runtime field; DeepAgentRuntime is the sole
-	// owner of *RuntimeContext, all mutations go through setters under mu.
+	// cfg is the only input we hold onto so SetPlanMode can rebuild the
+	// lead agent; every other knob is now a function argument to
+	// agent.MakeLeadAgent rather than a stashed RuntimeContext field.
 	cfg                 *config.Config
-	rt                  *agent.RuntimeContext
 	modelName           string
 	runner              *adk.Runner
 	mu                  sync.Mutex
@@ -33,29 +32,22 @@ type DeepAgentRuntime struct {
 	trace *middlewares.Trace
 }
 
-// NewDeepAgentRuntime builds the runtime context, the lead agent, and the
-// adk.Runner; history / checkpoint / streaming live here (REPL-owned).
+// NewDeepAgentRuntime builds the lead agent and the adk.Runner; history /
+// checkpoint / streaming live here (REPL-owned).
 func NewDeepAgentRuntime(ctx context.Context, cfg *config.Config) (Runtime, error) {
-	rt, err := agent.NewRuntimeContext(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	leadAgent, trace, err := agent.MakeLeadAgent(ctx, rt, cfg)
+	leadAgent, trace, err := agent.MakeLeadAgent(ctx, "default", false, true, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build lead agent: %w", err)
 	}
 
-	store := checkpoint.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "checkpoints"))
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{
 		Agent:           leadAgent,
 		EnableStreaming: true,
-		CheckPointStore: store,
+		CheckPointStore: checkpoint.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "checkpoints")),
 	})
 
 	return &DeepAgentRuntime{
 		cfg:             cfg,
-		rt:              rt,
 		modelName:       cfg.DefaultModel,
 		runner:          runner,
 		maxHistoryTurns: 20,
@@ -118,15 +110,9 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 func (r *DeepAgentRuntime) SetPlanMode(ctx context.Context, plan bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.rt.IsPlanMode == plan {
-		return nil
-	}
 
-	r.rt.SetPlanMode(plan)
-
-	leadAgent, trace, err := agent.MakeLeadAgent(ctx, r.rt, r.cfg)
+	leadAgent, trace, err := agent.MakeLeadAgent(ctx, "default", plan, true, r.cfg)
 	if err != nil {
-		r.rt.SetPlanMode(!plan)
 		return fmt.Errorf("rebuild lead agent for plan mode %v: %w", plan, err)
 	}
 

@@ -12,9 +12,13 @@ import (
 
 // buildNamedSubagents resolves each name to an agent profile and recursively
 // builds a deep agent. Failures are logged-and-skipped (partial > hard error).
+//
+// Subagents always run with IsPlanMode=false and IsSubagentEnabled=false:
+// only the lead orchestrator may plan or fork further subagents, so a
+// subagent that itself spawns subagents (and one of THOSE plans) is a
+// fanout / scope confusion we explicitly reject.
 func buildNamedSubagents(
 	ctx context.Context,
-	rt *RuntimeContext,
 	cfg *config.Config,
 	names []string,
 ) ([]adk.Agent, error) {
@@ -22,25 +26,12 @@ func buildNamedSubagents(
 		return nil, nil
 	}
 	out := make([]adk.Agent, 0, len(names))
-	for _, raw := range names {
-		name := strings.TrimSpace(raw)
+	for _, agentName := range names {
+		name := strings.TrimSpace(agentName)
 		if name == "" {
 			continue
 		}
-		// Clone (not value copy) — RuntimeContext is now shared by pointer;
-		// without Clone, subagent setters would alias the parent's HITLTools
-		// slice and any future setter writes would leak across the fork.
-		subRT := rt.Clone()
-		if err := subRT.SetAgentName(cfg, name); err != nil {
-			slog.Warn(
-				"failed to finalize subagent runtime; skipping",
-				"agent", name,
-				"err", err,
-			)
-			continue
-		}
-
-		sub, _, err := MakeLeadAgent(ctx, subRT, cfg)
+		sub, _, err := MakeLeadAgent(ctx, name, false, false, cfg)
 		if err != nil {
 			slog.Warn(
 				"failed to build subagent; skipping",
