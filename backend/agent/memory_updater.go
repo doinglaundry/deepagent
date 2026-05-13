@@ -92,6 +92,13 @@ func (u *MemoryUpdater) Run(
 	if resp == nil {
 		return nil
 	}
+	// Empty content = LLM had nothing to add for this turn (or transient
+	// blip). Same shape as the convo-empty branch above: planned skip, no
+	// debounce advance, retry next turn. Avoids spurious "parse update:
+	// unexpected end of JSON input" warnings.
+	if strings.TrimSpace(resp.Content) == "" {
+		return nil
+	}
 
 	payload, err := parseUpdatePayload(resp.Content)
 	if err != nil {

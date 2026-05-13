@@ -187,6 +187,31 @@ func TestMemoryUpdater_LLMErrorReturnsErrAndDoesNotAdvance(t *testing.T) {
 	}
 }
 
+// Empty (or whitespace-only) LLM content is a planned skip, not a parse
+// error: no error returned, lastRunAt does not advance (so next turn retries),
+// and the store is left untouched.
+func TestMemoryUpdater_EmptyResponseIsPlannedSkip(t *testing.T) {
+	updater, store := newUpdaterAndStore(t)
+
+	for _, resp := range []string{"", "   ", "\n\t\n"} {
+		chat := &fakeChatModel{response: resp}
+		err := updater.Run(context.Background(), chat, enabledMemoryCfg(), "alice", basicConversation(), false)
+		if err != nil {
+			t.Errorf("response=%q: empty content should be silent skip, got %v", resp, err)
+		}
+		if !updater.lastRunAt.IsZero() {
+			t.Errorf("response=%q: lastRunAt must not advance, got %v", resp, updater.lastRunAt)
+		}
+		if chat.calls != 1 {
+			t.Errorf("response=%q: LLM should still be called once, got %d", resp, chat.calls)
+		}
+		got, _ := store.Load("alice")
+		if got.User.WorkContext.Summary != "" {
+			t.Errorf("response=%q: store should be untouched, got %+v", resp, got)
+		}
+	}
+}
+
 func TestApplyUpdate_ShouldUpdateFalseLeavesSectionAlone(t *testing.T) {
 	current := memorystore.GetEmptyMemoryData()
 	current.User.WorkContext = memorystore.Section{Summary: "old", UpdatedAt: "2026-01-01T00:00:00Z"}
