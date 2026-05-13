@@ -13,14 +13,6 @@ import (
 // All gates ON: gated middlewares interleave between always-on prefix
 // and the Trace + Clarification tail in the documented order.
 func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
-	rt := &RuntimeContext{
-		MaxConcurrentSubagents: 3,
-		AgentName:              "default",
-		SubagentEnabled:        true,
-		IsPlanMode:             true,
-		HITLTools:              []string{"shell"},
-	}
-
 	cfg := &config.Config{
 		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "kimi", SupportsVision: true},
@@ -31,10 +23,12 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 			Enabled:  true,
 			Deferred: []config.DeferredToolEntry{{Name: "big-tool"}},
 		},
+		HITLTools:              []string{"shell"},
+		MaxConcurrentSubagents: 3,
 	}
 
 	cfg.RootDir = t.TempDir()
-	chain := GetChatModelMiddlewares(context.Background(), cfg, rt, nil)
+	chain := GetChatModelMiddlewares(context.Background(), "default", true, cfg, nil)
 
 	wantOrder := []reflect.Type{
 		reflect.TypeOf(&middlewares.AgentState{}),
@@ -68,7 +62,7 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 		}
 	}
 
-	agentMWs := GetAgentMiddleWares(rt)
+	agentMWs := GetAgentMiddleWares(true)
 	if len(agentMWs) != 1 {
 		t.Fatalf("expected 1 AgentMiddleware (Todo), got %d", len(agentMWs))
 	}
@@ -79,16 +73,13 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 
 // All gates OFF: only the always-on backbone survives.
 func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
-	rt := &RuntimeContext{
-		MaxConcurrentSubagents: 3,
-	}
 	cfg := &config.Config{
 		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "kimi", SupportsVision: false},
 		},
 	}
 
-	chain := GetChatModelMiddlewares(context.Background(), cfg, rt, nil)
+	chain := GetChatModelMiddlewares(context.Background(), "default", false, cfg, nil)
 	for _, mw := range chain {
 		switch mw.(type) {
 		case *middlewares.Memory,
@@ -100,7 +91,7 @@ func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
 		}
 	}
 
-	if got := len(GetAgentMiddleWares(rt)); got != 0 {
+	if got := len(GetAgentMiddleWares(false)); got != 0 {
 		t.Fatalf("expected no AgentMiddlewares without plan mode, got %d", got)
 	}
 }

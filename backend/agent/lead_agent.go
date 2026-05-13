@@ -18,27 +18,36 @@ import (
 // uses to reset the turn counter on /clear; the *Trace may be nil.
 func MakeLeadAgent(
 	ctx context.Context,
-	rt *RuntimeContext,
+	agentName string,
+	IsPlanMode bool,
+	IsSubagentEnabled bool,
 	cfg *config.Config,
 ) (adk.ResumableAgent, *middlewares.Trace, error) {
-	chatModel, err := buildChatModel(ctx, rt.ModelCfg)
+
+	agentConfig := cfg.Agents[agentName]
+
+	modelName := agentConfig.Model
+
+	modelConfig := cfg.Models[modelName]
+
+	chatModel, err := buildChatModel(ctx, modelConfig)
 	if err != nil {
 		return nil, nil, err
 	}
+
 	chatModel = wrapErrorHandling(chatModel, cfg.ErrorHandling)
 
-	prompt := GetSystemPrompt(rt, cfg)
-	handlers := GetChatModelMiddlewares(ctx, cfg, rt, chatModel)
+	handlers := GetChatModelMiddlewares(ctx, agentName, IsSubagentEnabled, cfg, chatModel)
 
 	deepCfg := &deep.Config{
-		Name:                   rt.AgentName,
+		Name:                   agentName,
 		Description:            "Deep Agent",
 		ChatModel:              chatModel,
-		Instruction:            prompt,
-		MaxIteration:           defaultIterationLimit(rt.AgentConfig),
-		WithoutGeneralSubAgent: !rt.SubagentEnabled,
+		Instruction:            GetSystemPrompt(agentName, IsSubagentEnabled, cfg),
+		MaxIteration:           defaultIterationLimit(agentConfig),
+		WithoutGeneralSubAgent: !IsSubagentEnabled,
 		WithoutWriteTodos:      false,
-		Middlewares:            GetAgentMiddleWares(rt),
+		Middlewares:            GetAgentMiddleWares(IsPlanMode),
 		Handlers:               handlers,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{

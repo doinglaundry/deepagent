@@ -39,11 +39,6 @@ func TestMemory_E2E_AfterModelHookWritesPerAgentFile(t *testing.T) {
 			FactConfidenceThreshold: 0.5,
 		},
 	}
-	rt := &RuntimeContext{
-		AgentName:              "alice",
-		MaxConcurrentSubagents: 3,
-	}
-
 	resp := mustMarshal(t, updatePayload{
 		User: map[string]sectionUpdate{
 			"workContext": {Summary: "Go backend dev", ShouldUpdate: true},
@@ -54,7 +49,7 @@ func TestMemory_E2E_AfterModelHookWritesPerAgentFile(t *testing.T) {
 	})
 	chat := &fakeChatModel{response: resp}
 
-	chain := GetChatModelMiddlewares(context.Background(), cfg, rt, chat)
+	chain := GetChatModelMiddlewares(context.Background(), "alice", false, cfg, chat)
 
 	var memMW *middlewares.Memory
 	for _, mw := range chain {
@@ -118,10 +113,8 @@ func TestMemory_E2E_DisabledLeavesChainAndDiskUntouched(t *testing.T) {
 		},
 		Memory: config.Memory{Enabled: false},
 	}
-	rt := &RuntimeContext{AgentName: "alice", MaxConcurrentSubagents: 3}
-
 	chat := &fakeChatModel{response: "{}"}
-	chain := GetChatModelMiddlewares(context.Background(), cfg, rt, chat)
+	chain := GetChatModelMiddlewares(context.Background(), "alice", false, cfg, chat)
 
 	for _, mw := range chain {
 		if _, ok := mw.(*middlewares.Memory); ok {

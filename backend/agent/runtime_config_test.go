@@ -15,7 +15,7 @@ func setterTestCfg() *config.Config {
 			"primary":   {Name: "primary", Provider: "kimi"},
 			"secondary": {Name: "secondary", Provider: "kimi"},
 		},
-		Agents: map[string]config.AgentConfig{
+		Agents: map[string]*config.AgentConfig{
 			"default": {Name: "default", Model: "primary", MaxIteration: 6},
 			"alt":     {Name: "alt", Model: "secondary", MaxIteration: 6},
 		},
@@ -120,7 +120,7 @@ func TestRuntimeContext_SetAgentName_AgentMissing_KeepsPreviousState(t *testing.
 
 func TestRuntimeContext_SetAgentName_ModelMissing_KeepsPreviousState(t *testing.T) {
 	cfg := setterTestCfg()
-	cfg.Agents["bad"] = config.AgentConfig{Name: "bad", Model: "no-such-model", MaxIteration: 6}
+	cfg.Agents["bad"] = &config.AgentConfig{Name: "bad", Model: "no-such-model", MaxIteration: 6}
 	rt, _ := NewRuntimeContext(cfg)
 	prevName, prevAgent, prevModel := rt.AgentName, rt.AgentConfig, rt.ModelCfg
 

@@ -21,8 +21,9 @@ import (
 // across both code paths.
 func GetChatModelMiddlewares(
 	ctx context.Context,
+	agentName string,
+	isSubagentEnabled bool,
 	cfg *config.Config,
-	rt *RuntimeContext,
 	chatModel model.BaseChatModel,
 ) (middlewareList []adk.ChatModelAgentMiddleware) {
 	// patchtoolcalls inserts placeholder Tool messages for any dangling
@@ -53,12 +54,12 @@ func GetChatModelMiddlewares(
 
 		hooks := middlewares.MemoryHooks{
 			Inject: func(_ context.Context, msgs []*schema.Message) []*schema.Message {
-				return InjectMemory(store, cfg.Memory, rt.AgentName, msgs)
+				return InjectMemory(store, cfg.Memory, agentName, msgs)
 			},
 			Extract: func(ctx context.Context, msgs []*schema.Message) {
-				err := updater.Run(ctx, chatModel, cfg.Memory, rt.AgentName, msgs, false)
+				err := updater.Run(ctx, chatModel, cfg.Memory, agentName, msgs, false)
 				if err != nil {
-					slog.Warn("memory update failed", "agent", rt.AgentName, "err", err)
+					slog.Warn("memory update failed", "agent", agentName, "err", err)
 				}
 			},
 		}
@@ -75,12 +76,16 @@ func GetChatModelMiddlewares(
 		}
 	}
 
-	if rt.SubagentEnabled {
-		middlewareList = append(middlewareList, middlewares.NewSubagentLimit(rt.MaxConcurrentSubagents))
+	// SubagentLimit caps the number of parallel `task` calls the model
+	// can fire in a single turn. The cap MUST match the number the
+	// system prompt advertises (see effectiveMaxSubagents) — drift
+	// between prompt and runtime is a class of bug we're closing here.
+	if isSubagentEnabled {
+		middlewareList = append(middlewareList, middlewares.NewSubagentLimit(effectiveMaxSubagents(cfg)))
 	}
 
-	if len(rt.HITLTools) > 0 {
-		middlewareList = append(middlewareList, middlewares.NewHITL(rt.HITLTools, defaultHITLApproval))
+	if len(cfg.HITLTools) > 0 {
+		middlewareList = append(middlewareList, middlewares.NewHITL(cfg.HITLTools, defaultHITLApproval))
 	}
 
 	if cfg.Summarization.Enabled {
@@ -95,7 +100,7 @@ func GetChatModelMiddlewares(
 			}
 			flushCtx, cancel := context.WithTimeout(ctx, memoryFlushTimeout)
 			defer cancel()
-			return updater.Run(flushCtx, chatModel, cfg.Memory, rt.AgentName, before.Messages, true)
+			return updater.Run(flushCtx, chatModel, cfg.Memory, agentName, before.Messages, true)
 		}
 
 		summaryMW, err := middlewares.NewSummarization(
@@ -121,14 +126,14 @@ func GetChatModelMiddlewares(
 
 	// Trace must run BEFORE Clarification so its After hook captures
 	// the raw assistant message before Clarification's in-place rewrite.
-	middlewareList = append(middlewareList, middlewares.NewTrace(rt.AgentName))
+	middlewareList = append(middlewareList, middlewares.NewTrace(agentName))
 	middlewareList = append(middlewareList, middlewares.NewClarification())
 	return
 }
 
-func GetAgentMiddleWares(rt *RuntimeContext) (res []adk.AgentMiddleware) {
+func GetAgentMiddleWares(IsPlanMode bool) (res []adk.AgentMiddleware) {
 	res = make([]adk.AgentMiddleware, 0)
-	if rt.IsPlanMode {
+	if IsPlanMode {
 		res = append(res, middlewares.NewTodo())
 	}
 	return
