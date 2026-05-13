@@ -15,7 +15,6 @@ import (
 // appended so the next model turn sees the denial.
 type HITL struct {
 	*adk.BaseChatModelAgentMiddleware
-
 	Tools            map[string]struct{}
 	ApprovalCallback func(ctx context.Context, toolName, args string) bool
 	Logger           *slog.Logger
@@ -47,17 +46,17 @@ func (m *HITL) AfterModelRewriteState(
 	if state == nil || len(state.Messages) == 0 || len(m.Tools) == 0 {
 		return ctx, state, nil
 	}
-	last := state.Messages[len(state.Messages)-1]
-	if last == nil || last.Role != schema.Assistant || len(last.ToolCalls) == 0 {
+	lastMsg := state.Messages[len(state.Messages)-1]
+	if lastMsg == nil || lastMsg.Role != schema.Assistant || len(lastMsg.ToolCalls) == 0 {
 		return ctx, state, nil
 	}
 
-	kept := make([]schema.ToolCall, 0, len(last.ToolCalls))
+	kept := make([]schema.ToolCall, 0, len(lastMsg.ToolCalls))
 	deniedMessages := make([]*schema.Message, 0)
 	denied := 0
 
-	for _, call := range last.ToolCalls {
-		if _, gated := m.Tools[call.Function.Name]; !gated {
+	for _, call := range lastMsg.ToolCalls {
+		if _, exists := m.Tools[call.Function.Name]; !exists {
 			kept = append(kept, call)
 			continue
 		}
@@ -86,9 +85,9 @@ func (m *HITL) AfterModelRewriteState(
 		return ctx, state, nil
 	}
 
-	last.ToolCalls = kept
-	if len(kept) == 0 && strings.TrimSpace(last.Content) == "" {
-		last.Content = "(tool execution denied by user — the agent will respond without invoking the requested tools)"
+	lastMsg.ToolCalls = kept
+	if len(kept) == 0 && strings.TrimSpace(lastMsg.Content) == "" {
+		lastMsg.Content = "(tool execution denied by user — the agent will respond without invoking the requested tools)"
 	}
 
 	state.Messages = append(state.Messages, deniedMessages...)

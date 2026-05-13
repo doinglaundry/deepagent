@@ -35,7 +35,7 @@ const (
 )
 
 type errorHandlingModel struct {
-	inner       model.BaseChatModel
+	m           model.BaseChatModel
 	maxAttempts int
 	baseDelay   time.Duration
 	capDelay    time.Duration
@@ -64,12 +64,12 @@ const (
 // wrapErrorHandling returns inner wrapped with retry / circuit-breaker /
 // fallback. Returns inner unchanged when the feature is disabled or retry
 // has zero attempts — saves an allocation + virtual dispatch on the hot path.
-func wrapErrorHandling(inner model.BaseChatModel, cfg config.ErrorHandling) model.BaseChatModel {
+func wrapErrorHandling(m model.BaseChatModel, cfg config.ErrorHandling) model.BaseChatModel {
 	if !cfg.Enabled || cfg.Retry.MaxAttempts <= 0 {
-		return inner
+		return m
 	}
 	return &errorHandlingModel{
-		inner:       inner,
+		m:           m,
 		maxAttempts: cfg.Retry.MaxAttempts,
 		baseDelay:   time.Duration(cfg.Retry.BaseDelayMS) * time.Millisecond,
 		capDelay:    time.Duration(cfg.Retry.CapDelayMS) * time.Millisecond,
@@ -96,7 +96,7 @@ func (e *errorHandlingModel) Generate(
 		reason errorReason
 	)
 	for attempt := 1; attempt <= e.maxAttempts; attempt++ {
-		out, err = e.inner.Generate(ctx, input, opts...)
+		out, err = e.m.Generate(ctx, input, opts...)
 		if err == nil {
 			e.cb.recordSuccess()
 			return out, nil
