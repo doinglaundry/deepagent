@@ -24,6 +24,20 @@ func TestRenderStreamPanel_DuringStreamingContainsVerbAndElapsed(t *testing.T) {
 	}
 }
 
+func TestRenderStreamPanel_DuringBootstrapLoadingContainsVerb(t *testing.T) {
+	m := &Model{
+		bootstrapLoading: true,
+		verbPresent:      "Moonwalking",
+		elapsed:          2 * time.Second,
+	}
+	got := m.renderStreamPanel()
+	for _, want := range []string{"✶", "Moonwalking…", "2s", "thinking"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("bootstrap indicator missing %q; got: %q", want, got)
+		}
+	}
+}
+
 // Idle (not streaming, no error) → panel must be empty so the layout
 // frees the line for viewport / todo panel use.
 func TestRenderStreamPanel_IdleEmpty(t *testing.T) {

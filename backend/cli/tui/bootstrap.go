@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -36,7 +37,7 @@ func (m *Model) handleBootstrapCmd() tea.Cmd {
 	}
 	m.bootstrap = session
 	m.pushMessage("system", "Starting SOUL bootstrap. Type /cancel to abort.")
-	return m.nextBootstrapReply("")
+	return m.startBootstrapLoading(m.nextBootstrapReply(""))
 }
 
 func (m *Model) submitBootstrap(text string) (tea.Model, tea.Cmd) {
@@ -50,7 +51,7 @@ func (m *Model) submitBootstrap(text string) (tea.Model, tea.Cmd) {
 		return m, m.saveBootstrapDraft()
 	}
 	m.pushMessage("user", text)
-	return m, m.nextBootstrapReply(text)
+	return m, m.startBootstrapLoading(m.nextBootstrapReply(text))
 }
 
 func (m *Model) nextBootstrapReply(input string) tea.Cmd {
@@ -63,6 +64,8 @@ func (m *Model) nextBootstrapReply(input string) tea.Cmd {
 }
 
 func (m *Model) handleBootstrapReply(msg bootstrapReplyMsg) (tea.Model, tea.Cmd) {
+	m.bootstrapLoading = false
+	m.recomputeLayout()
 	if msg.err != nil {
 		m.pushMessage("system", fmt.Sprintf("bootstrap: %v", msg.err))
 		return m, nil
@@ -73,6 +76,16 @@ func (m *Model) handleBootstrapReply(msg bootstrapReplyMsg) (tea.Model, tea.Cmd)
 	}
 	m.pushMessage("assistant", content)
 	return m, nil
+}
+
+func (m *Model) startBootstrapLoading(cmd tea.Cmd) tea.Cmd {
+	m.bootstrapLoading = true
+	m.lastErr = nil
+	m.verbPresent, _ = pickVerb()
+	m.streamStart = time.Now()
+	m.elapsed = 0
+	m.recomputeLayout()
+	return tea.Batch(cmd, m.spin.Tick)
 }
 
 func (m *Model) saveBootstrapDraft() tea.Cmd {

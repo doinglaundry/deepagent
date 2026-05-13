@@ -33,7 +33,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.footerHint = ""
 		return m, nil
 	case spinner.TickMsg:
-		if !m.streaming {
+		if !m.streaming && !m.bootstrapLoading {
 			return m, nil // self-terminate the tick chain
 		}
 		// Spinner is no longer rendered (the thinking indicator owns
@@ -97,7 +97,7 @@ func (m *Model) recomputeLayout() {
 	// + todoPanel(0..N) + popup(0..popupMaxRows+1) + input(3) + footer(1).
 	headerH := 3
 	streamH := 0
-	if m.streaming || m.lastErr != nil {
+	if m.streaming || m.bootstrapLoading || m.lastErr != nil {
 		streamH = 1 // single-line thinking indicator (was 3 with preview)
 	}
 	todoH := m.todoPanelHeight()
@@ -195,7 +195,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		return m, nil
 	case tea.KeyEnter:
-		if m.streaming {
+		if m.streaming || m.bootstrapLoading {
 			return m, nil
 		}
 		text := strings.TrimSpace(m.input.Value())
@@ -390,6 +390,7 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 
 	m.pushMessage("user", text)
 	m.streaming = true
+	m.bootstrapLoading = false
 	m.streamBuf.Reset()
 	m.lastErr = nil
 

@@ -33,6 +33,12 @@ func TestHandleBootstrapCmdStartsMode(t *testing.T) {
 	if m.bootstrap == nil {
 		t.Fatal("bootstrap session not started")
 	}
+	if !m.bootstrapLoading {
+		t.Fatal("bootstrap should show loading indicator while waiting for first reply")
+	}
+	if m.verbPresent == "" {
+		t.Fatal("bootstrap loading should pick a thinking verb")
+	}
 }
 
 func TestSubmitBootstrapCancel(t *testing.T) {
