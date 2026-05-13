@@ -87,6 +87,15 @@ type Model struct {
 	// debug toggles inline LLM input/output panels via /debug.
 	debug bool
 
+	// hitlQueue holds pending HITL approval requests in FIFO order;
+	// hitlQueue[0] is what the prompt renders. The agent goroutine
+	// blocks on each request's reply channel until handleKey picks a
+	// y/n decision (or handleDone drains the queue when the stream
+	// aborts). Multiple parallel subagents can queue concurrent
+	// requests — bubbletea serialises Update calls so the queue's
+	// only writer is Update itself.
+	hitlQueue []approvalRequest
+
 	// todos is the latest in-flight todo list, written by every
 	// TracePhaseTodos event regardless of m.debug. Empty → no panel.
 	todos []deep.TODO
@@ -271,6 +280,9 @@ func (m *Model) pushMessage(role, content string) {
 }
 
 // abortStream cancels any in-flight runtime call; returns true if one was active.
+// Drains m.hitlQueue too: cancelling ctx is what drives the approver's
+// ctx-done branch, but the visual queue still has stale rows; drop them
+// here so the prompt panel disappears in the same frame.
 func (m *Model) abortStream() bool {
 	if !m.streaming {
 		return false
@@ -278,6 +290,7 @@ func (m *Model) abortStream() bool {
 	if m.cancel != nil {
 		m.cancel()
 	}
+	m.drainApprovals()
 	return true
 }
 

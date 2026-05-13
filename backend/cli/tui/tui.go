@@ -33,6 +33,12 @@ func Run(rt eino.Runtime) error {
 		tea.WithOutput(os.Stdout),
 	)
 	m.prog = prog
+	// Route HITL approvals through this prog before any agent runs;
+	// the default stdin scanner would deadlock against bubbletea's
+	// alt-screen owning stdin/stdout. Safe to leave installed for the
+	// process lifetime — eino-tui owns the terminal until prog.Run
+	// returns and the process exits.
+	installTUIApproval(prog)
 	_, err = prog.Run()
 	return err
 }

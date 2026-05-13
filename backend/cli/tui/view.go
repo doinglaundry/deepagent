@@ -25,6 +25,10 @@ func (m *Model) View() string {
 		sb.WriteString("\n")
 		sb.WriteString(todoPanel)
 	}
+	if approvalPanel := m.renderApprovalPanel(); approvalPanel != "" {
+		sb.WriteString("\n")
+		sb.WriteString(approvalPanel)
+	}
 	if popup := m.renderPopup(); popup != "" {
 		sb.WriteString("\n")
 		sb.WriteString(popup)
@@ -34,6 +38,18 @@ func (m *Model) View() string {
 	sb.WriteString("\n")
 	sb.WriteString(m.renderFooter())
 	return sb.String()
+}
+
+// renderApprovalPanel returns the empty string when no HITL request is
+// pending; otherwise renders the front of m.hitlQueue. recomputeLayout
+// reserves approvalPromptHeight cells (+ separator) when the queue is
+// non-empty — keep the rendered line count in lockstep with that
+// reservation or the input box drifts.
+func (m *Model) renderApprovalPanel() string {
+	if len(m.hitlQueue) == 0 {
+		return ""
+	}
+	return renderApprovalPrompt(m.hitlQueue[0], m.width)
 }
 
 // renderTodoPanel returns the empty string when there are no todos so the

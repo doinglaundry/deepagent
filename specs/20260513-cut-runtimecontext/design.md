@@ -311,3 +311,34 @@ func installTUIApproval() {
 - **不**做"多 agent 切换"功能(`Runtime.SetAgentName` 类的 setter)。`DefaultAgent` 字段保留但仅作为常量,`Agents` map 结构保留但只装一条 default —— 留给未来如果真的需要多 agent profile,届时再扩,不为 YAGNI 做事。
 - **不**重做 TUI 的 `ApprovalPrompt` 视觉形态。本 spec 只给出 `installTUIApproval()` 注入骨架,完整 UX 走 follow-up spec。
 - **不**给 `RuntimeContext` 写"墓志铭" doc。删就删,`AGENTS.md` 风格里没有 deprecation graveyard。
+
+---
+
+## 11. 实施回顾 — TUI `installTUIApproval` 落地
+
+§6.3 的骨架在落地时改了几处,记录原因:
+
+| 项 | 骨架 | 实际 | 原因 |
+|---|---|---|---|
+| 跨 goroutine 通道 | 包级 `pendingApprovals = make(chan approvalRequest)`,unbuffered | `prog.Send(approvalRequest{...})` 直接走 bubbletea 自己的 msg 队列 | 骨架的全局 channel 是第二个状态源,跟 bubbletea 的 msg loop 重复。`prog.Send` 已经是 non-blocking + 内部缓冲,直接用就行,少一个全局 var,少一个"接收者还没起来" race window。 |
+| 两次 select | install 时 `select { case <-pendingApprovals: ... case <-ctx.Done() }` 之后再 `select { case <-decision: ... case <-ctx.Done() }` | 只剩一次 `select { case <-reply: ... case <-ctx.Done() }`(`prog.Send` 不阻塞,无需在发送侧防死) | 同上,`prog.Send` non-blocking 是前提 |
+| 字段名 | `name` / `decision` | `toolName` / `reply` | `name` 跟 Go 的 `slashCommand.Name` 等多处重名;`decision` 跟"做决策的动作"混淆。`reply` 直接表态"返回值通道",grep 更准。 |
+| Model 状态 | `awaitingApproval *approvalRequest`(单指针) | `hitlQueue []approvalRequest`(FIFO 队列) | 子 agent 也挂了 HITL middleware(同一份 `cfg.HITLTools`),并发 subagent 触发的 gated 调用会同时 `prog.Send` 多条;单指针会被覆盖,FIFO slice 是 boring-correct 的修法 |
+| 决策键 | `Enter 'y'/'n'` | `y` / `n` 即时,`Enter` / `Esc` / `Ctrl-C` 全部映射为 deny,`Ctrl-C` 额外让外层 abort 接管 | stdin scanner 的契约就是"非 y/yes 一律 deny",视觉对齐;`Esc` / `Enter` 本来在 TUI 里就是"取消 / 默认动作"语义 |
+| 决策传递 | "把 decision 写回 channel 后 close" | 写回 buffered=1,不 close | close 后再读会持续返回零值 + ok=false,语义噪音。Buffer=1 + select default 让重复 resolve 也无害(虽然代码不会触发) |
+| TUI 调用点 | `New()` 里 | `Run()` 里,`tea.NewProgram` 之后,`prog.Run()` 之前 | `New()` 没有 `*tea.Program`(那时 prog 还没构造);`Run()` 是唯一同时持有 m 和 prog 的位置 |
+| layout chrome | spec 没说 | `recomputeLayout` 加 `approvalH = approvalPromptHeight + 1`(panel 3 行 + View 自插的分隔 `\n`),跟 todo / popup 同模式 | View 在每个非空 panel 前会写一个 `\n`,layout 必须把那一行也算进 chrome,否则 input 框上抬 1 行 |
+| 清场 | spec 没说 | `abortStream` / `handleDone` 都调 `drainApprovals()`(只清 UI,不发 reply);依赖 approver 的 `<-ctx.Done()` 分支返回 false | 发 reply 跟 ctx-done 二选一会跟 select 的非确定性打架;让 ctx 当唯一兜底,UI 端只负责把视图清掉 |
+
+**落地清单**:
+- 新文件 `backend/cli/tui/hitl.go` —— `approvalRequest` msg / `installTUIApproval(prog)` / `renderApprovalPrompt(...)` / 三个 lipgloss style
+- `backend/cli/tui/model.go` —— `Model.hitlQueue []approvalRequest` 字段,`abortStream` 调 `drainApprovals`
+- `backend/cli/tui/update.go` —— `Update` 加 `approvalRequest` case,`handleKey` 加最优先级 hitl 拦截,新增 `handleApprovalRequest` / `handleApprovalKey` / `resolveApproval` / `drainApprovals`,`recomputeLayout` 预算加 `approvalH`,`handleDone` 调 `drainApprovals`
+- `backend/cli/tui/view.go` —— `View()` 在 todo / popup 之间插 `renderApprovalPanel()`
+- `backend/cli/tui/tui.go` —— `prog := tea.NewProgram(...)` 之后立刻 `installTUIApproval(prog)`
+- 新文件 `backend/cli/tui/hitl_test.go` —— 覆盖 enqueue / y / n / Enter / Esc / Ctrl-C fall-through / unrelated key / FIFO / drain / pending blocks unrelated input
+
+**仍未做**(下一个 follow-up):
+- 多行 args 的 word-wrap 渲染(当前是单行截断,长 args 会丢细节,但够用)
+- 审批面板的 ESC=cancel-and-not-deny 区分(目前 ESC 等同 deny,跟 stdin scanner 对齐)
+- 给被 deny 的 tool 一个用户可见的 "(denied: <tool>)" system 行(目前只有 middleware 内部的 slog.Warn,屏幕上看不到)

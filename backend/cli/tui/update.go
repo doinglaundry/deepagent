@@ -21,6 +21,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleChunk(msg)
 	case doneMsg:
 		return m.handleDone(msg)
+	case approvalRequest:
+		return m.handleApprovalRequest(msg)
 	case middlewares.TraceEvent:
 		return m.handleTraceEvent(msg)
 	case spinner.TickMsg:
@@ -93,9 +95,13 @@ func (m *Model) recomputeLayout() {
 	}
 	todoH := m.todoPanelHeight()
 	popupH := m.popupHeight()
+	approvalH := 0
+	if len(m.hitlQueue) > 0 {
+		approvalH = approvalPromptHeight + 1 // prompt + one separator newline View() inserts
+	}
 	inputH := 3
 	footerH := 1
-	chrome := headerH + 1 + streamH + todoH + popupH + inputH + footerH
+	chrome := headerH + 1 + streamH + todoH + popupH + approvalH + inputH + footerH
 
 	vpMax := m.height - chrome
 	if vpMax < 3 {
@@ -136,6 +142,18 @@ func (m *Model) todoPanelHeight() int {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// HITL approval beats everything else when active: the agent
+	// goroutine is blocked on the front request's reply chan, so any
+	// keystroke that isn't an explicit y/n/Enter/Esc/Ctrl-C is dropped
+	// (no input echo, no popup nav, no submit). This keeps the user's
+	// next keystroke unambiguously a decision.
+	if len(m.hitlQueue) > 0 {
+		if cmd, handled := m.handleApprovalKey(msg); handled {
+			return m, cmd
+		}
+		return m, nil
+	}
+
 	// Popup-active keys claim priority. With the menu up, Up/Down,
 	// Tab, Esc and Enter all mean things specific to the popup; falling
 	// through to textinput would (a) hide-move the cursor invisibly and
@@ -204,6 +222,87 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // matches"; keyboard routing gates on this.
 func (m *Model) popupShown() bool {
 	return m.popupHeight() > 0
+}
+
+// handleApprovalRequest enqueues a HITL request from the agent
+// goroutine and rebalances chrome so the prompt panel actually has
+// reserved cells in the next View. The Queue is a slice rather than
+// a single pointer because parallel subagents (each with HITL
+// middleware mounted) can theoretically fire concurrent gated calls;
+// FIFO is the boring-correct ordering.
+func (m *Model) handleApprovalRequest(req approvalRequest) (tea.Model, tea.Cmd) {
+	m.hitlQueue = append(m.hitlQueue, req)
+	m.recomputeLayout()
+	return m, nil
+}
+
+// handleApprovalKey routes keys while the front of m.hitlQueue is
+// awaiting a decision. Returns (cmd, true) when the key was an actual
+// decision; (nil, false) when the key isn't part of the y/n alphabet
+// and Ctrl-C should fall through to the abort-stream chain.
+//
+// Decision contract:
+//   - y / Y               → approve  (true)
+//   - n / N / Enter / Esc → deny     (false; matches the stdin scanner
+//     default of "EOF or anything not literally y/yes denies")
+//   - Ctrl-C              → deny + signal the outer abort-stream chain
+//     so the entire turn unwinds, not just this one tool
+func (m *Model) handleApprovalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
+	switch msg.Type {
+	case tea.KeyEnter, tea.KeyEsc:
+		m.resolveApproval(false)
+		return nil, true
+	case tea.KeyCtrlC:
+		m.resolveApproval(false)
+		// Fall through so the outer KeyCtrlC handler can abort the
+		// streaming turn (cancels agent ctx → no further approver
+		// calls hit prog.Send).
+		return nil, false
+	case tea.KeyRunes:
+		switch strings.ToLower(string(msg.Runes)) {
+		case "y":
+			m.resolveApproval(true)
+			return nil, true
+		case "n":
+			m.resolveApproval(false)
+			return nil, true
+		}
+	}
+	return nil, false
+}
+
+// resolveApproval sends the decision to the front request's reply chan,
+// pops the queue, and asks layout to rebalance. Send is non-blocking
+// because reply is buffered=1; if for some reason nobody reads it (the
+// approver's ctx already fired), the buffer absorbs the value and GC
+// cleans up.
+func (m *Model) resolveApproval(approved bool) {
+	if len(m.hitlQueue) == 0 {
+		return
+	}
+	front := m.hitlQueue[0]
+	select {
+	case front.reply <- approved:
+	default:
+		// Reply channel already had a value (impossible by contract:
+		// only resolveApproval writes), or the receiver vanished. Either
+		// way, we drop and continue — the queue must move forward.
+	}
+	m.hitlQueue = m.hitlQueue[1:]
+	m.recomputeLayout()
+}
+
+// drainApprovals abandons every pending approval without sending a
+// decision. Used by handleDone / abortStream when the streaming turn
+// ends — the approver's ctx-done branch (which the installer's select
+// also watches) returns false, so we don't have to send anything; we
+// just need to clear the UI state.
+func (m *Model) drainApprovals() {
+	if len(m.hitlQueue) == 0 {
+		return
+	}
+	m.hitlQueue = nil
+	m.recomputeLayout()
 }
 
 // onInputChanged runs after any keypress that mutated the input value.
@@ -421,6 +520,12 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 	m.streaming = false
 	m.cancel = nil
 	m.chunkCh = nil
+	// Stream done = no more approver calls coming. Anything still in
+	// the queue is from a turn that just unwound (cancellation or hard
+	// failure); the approver's ctx-done branch already returned false
+	// for them, so the reply chans are orphaned safely. Drop the rows
+	// so the prompt panel doesn't linger past the turn.
+	m.drainApprovals()
 
 	if msg.err != nil {
 		m.lastErr = msg.err
