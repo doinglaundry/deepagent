@@ -13,8 +13,14 @@ import (
 
 func main() {
 
+	// 获取根目录
+	root, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("get root: %v", err)
+	}
+
 	// 获取配置
-	cfg, err := config.Load()
+	cfg, err := config.Load(root)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}

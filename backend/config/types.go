@@ -51,29 +51,42 @@ type ACPConfig struct {
 // Config is the single source of truth: yaml-tagged fields decode from
 // yaml/config.yaml; yaml:"-" fields are filled by Load() at runtime.
 type Config struct {
-	RootDir        string                 `json:"root_dir"        yaml:"-"`
-	DefaultAgent   string                 `json:"default_agent"   yaml:"-"`
-	Agents         map[string]AgentConfig `json:"agents"          yaml:"-"`
-	ACP            ACPConfig              `json:"acp,omitempty"   yaml:"-"`
+	RootDir      string                  `json:"root_dir"        yaml:"-"`
+	DefaultAgent string                  `json:"default_agent"   yaml:"-"`
+	Agents       map[string]*AgentConfig `json:"agents"          yaml:"-"`
+	ACP          ACPConfig               `json:"acp,omitempty"   yaml:"-"`
 
 	// Fields below mirror yaml/config.yaml's top-level sections in order.
 
-	DefaultModel   string                  `json:"default_model"           yaml:"default_model"`
-	ConfigVersion  int                     `json:"-"                       yaml:"config_version"`
-	LogLevel       string                  `json:"-"                       yaml:"log_level"`
-	TokenUsage     TokenUsage              `json:"-"                       yaml:"token_usage"`
-	ToolObservability ToolObservability    `json:"-"                       yaml:"tool_observability"`
-	Models         map[string]*ModelConfig `json:"models"                  yaml:"-"` // built from the YAML list via UnmarshalYAML + normalizeModels
-	ToolGroups     []ToolGroup             `json:"-"                       yaml:"tool_groups"`
-	Tools          []Tool                  `json:"-"                       yaml:"tools"`
-	ToolSearch     ToolSearchConfig        `json:"tool_search,omitempty"   yaml:"tool_search"`
-	Uploads        Uploads                 `json:"-"                       yaml:"uploads"`
-	Skills         SkillsConfig            `json:"skills,omitempty"        yaml:"skills"`
-	Title          Title                   `json:"-"                       yaml:"title"`
-	Summarization  Summarization           `json:"-"                       yaml:"summarization"`
-	Memory         Memory                  `json:"-"                       yaml:"memory"`
-	ErrorHandling  ErrorHandling           `json:"-"                       yaml:"error_handling"`
-	AgentsAPI      AgentsAPI               `json:"-"                       yaml:"agents_api"`
-	SkillEvolution SkillEvolution          `json:"-"                       yaml:"skill_evolution"`
-	CheckPointer   Checkpointer            `json:"-" yaml:"checkpointer"`
+	DefaultModel      string                  `json:"default_model"           yaml:"default_model"`
+	ConfigVersion     int                     `json:"-"                       yaml:"config_version"`
+	LogLevel          string                  `json:"-"                       yaml:"log_level"`
+	TokenUsage        TokenUsage              `json:"-"                       yaml:"token_usage"`
+	ToolObservability ToolObservability       `json:"-"                       yaml:"tool_observability"`
+	Models            map[string]*ModelConfig `json:"models"                  yaml:"-"` // built from the YAML list via UnmarshalYAML + normalizeModels
+	ToolGroups        []ToolGroup             `json:"-"                       yaml:"tool_groups"`
+	Tools             []Tool                  `json:"-"                       yaml:"tools"`
+	ToolSearch        ToolSearchConfig        `json:"tool_search,omitempty"   yaml:"tool_search"`
+	Uploads           Uploads                 `json:"-"                       yaml:"uploads"`
+	Skills            SkillsConfig            `json:"skills,omitempty"        yaml:"skills"`
+	Title             Title                   `json:"-"                       yaml:"title"`
+	Summarization     Summarization           `json:"-"                       yaml:"summarization"`
+	Memory            Memory                  `json:"-"                       yaml:"memory"`
+	ErrorHandling     ErrorHandling           `json:"-"                       yaml:"error_handling"`
+	AgentsAPI         AgentsAPI               `json:"-"                       yaml:"agents_api"`
+	SkillEvolution    SkillEvolution          `json:"-"                       yaml:"skill_evolution"`
+	CheckPointer      Checkpointer            `json:"-" yaml:"checkpointer"`
+
+	// MaxConcurrentSubagents is the hard ceiling that the SubagentLimit
+	// middleware enforces AND that the system prompt advertises to the LLM.
+	// Both must read this same number — drift between the prompt-stated
+	// limit and the runtime cap is the exact bug we keep relapsing into.
+	// Zero / negative falls back to defaultMaxConcurrentSubagents in the
+	// agent package (single source of truth for the fallback).
+	MaxConcurrentSubagents int `yaml:"max_concurrent_subagents"`
+
+	// HITLTools lists tool names whose calls must pass through
+	// agent.ApprovalCallback before executing. Empty list = HITL middleware
+	// is not even mounted (zero per-call cost).
+	HITLTools []string `yaml:"hitl_tools"`
 }

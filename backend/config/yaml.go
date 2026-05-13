@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -147,18 +149,37 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // loadFromYAML decodes config.yaml; Models come back in runtime shape.
-func loadFromYAML(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+func loadFromYAML(root string) (*Config, error) {
+
+	data, err := os.ReadFile(filepath.Join(root, "yaml", "config.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("read yaml config: %w", err)
 	}
 
-	var cfg Config
-	if err = yaml.Unmarshal(data, &cfg); err != nil {
+	var config Config
+	if err = yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("parse yaml config: %w", err)
 	}
 
-	return &cfg, nil
+	config.RootDir = root
+
+	config.DefaultAgent = defaultAgentKey
+
+	config.Agents = map[string]*AgentConfig{
+		defaultAgentKey: {
+			Name:         defaultAgentKey,
+			Instruction:  defaultAgentInstruction,
+			MaxIteration: defaultAgentIterations,
+			Model:        config.DefaultModel,
+		},
+	}
+
+	skillFolderPath := filepath.Join(root, "backend", "skills")
+	if !slices.Contains(config.Skills.Paths, skillFolderPath) {
+		config.Skills.Paths = append(config.Skills.Paths, skillFolderPath)
+	}
+
+	return &config, nil
 }
 
 // normalizeModels converts []ModelEntry → map[name]*ModelConfig; falls back

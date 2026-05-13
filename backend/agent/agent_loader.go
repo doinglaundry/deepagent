@@ -1,10 +1,8 @@
 package agent
 
 import (
-	"errors"
-	"strings"
-
 	"eino-cli/backend/config"
+	"errors"
 )
 
 func GetAgentConfig(cfg *config.Config, name string) (*config.AgentConfig, error) {
@@ -16,19 +14,11 @@ func GetAgentConfig(cfg *config.Config, name string) (*config.AgentConfig, error
 		return nil, nil
 	}
 	agentCfg, ok := cfg.Agents[name]
-	if !ok {
+	if !ok || agentCfg == nil {
 		return nil, errors.New("agent not found in cfg.Agents")
 	}
 	if agentCfg.Name != name {
 		return nil, errors.New("agent found in cfg.Agents but its name is different")
 	}
-	return &agentCfg, nil
-}
-
-func nameOrFallback(candidate, fallback string) string {
-	trimmed := strings.TrimSpace(candidate)
-	if trimmed == "" {
-		return fallback
-	}
-	return trimmed
+	return agentCfg, nil
 }

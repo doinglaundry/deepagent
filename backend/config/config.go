@@ -3,9 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -15,27 +13,30 @@ const (
 	defaultAgentIterations  = 6
 )
 
-func Load() (*Config, error) {
-	root, err := os.Getwd()
-	if err != nil {
-		log.Fatalf("get root: %v", err)
-	}
+func Load(root string) (config *Config, err error) {
 
-	cfg, err := loadFromYAML(filepath.Join(root, "yaml", "config.yaml"))
+	config, err = loadFromYAML(root)
 	if err != nil {
 		return nil, fmt.Errorf("load yaml config: %w", err)
 	}
 
-	cfg.RootDir = root
-
-	defaultModel := strings.TrimSpace(cfg.DefaultModel)
-	if defaultModel == "" {
-		return nil, fmt.Errorf("default model is empty")
+	err = CompleteDefaultModelConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("complete default model config: %w", err)
 	}
 
-	defaultModelCfg, ok := cfg.Models[defaultModel]
+	return
+}
+
+func CompleteDefaultModelConfig(config *Config) error {
+	defaultModel := strings.TrimSpace(config.DefaultModel)
+	if defaultModel == "" {
+		return fmt.Errorf("default model is empty")
+	}
+
+	defaultModelCfg, ok := config.Models[defaultModel]
 	if !ok || defaultModelCfg == nil {
-		return nil, errors.New("default model not found")
+		return errors.New("default model not found")
 	}
 
 	if defaultModelCfg.APIKey == "" {
@@ -43,28 +44,11 @@ func Load() (*Config, error) {
 	}
 
 	if !isModelConfigValid(defaultModelCfg) {
-		return nil, fmt.Errorf("invalid default model: %s", defaultModel)
+		return errors.New("invalid default model config")
 	}
 
-	if strings.TrimSpace(cfg.DefaultAgent) == "" {
-		cfg.DefaultAgent = defaultAgentKey
-	}
+	return nil
 
-	if cfg.Agents == nil {
-		cfg.Agents = map[string]AgentConfig{}
-	}
-	if _, ok := cfg.Agents[cfg.DefaultAgent]; !ok {
-		cfg.Agents[cfg.DefaultAgent] = AgentConfig{
-			Name:         cfg.DefaultAgent,
-			Instruction:  defaultAgentInstruction,
-			MaxIteration: defaultAgentIterations,
-			Model:        defaultModel,
-		}
-	}
-
-	cfg.Skills = appendDefaultSkillsPath(root, cfg.Skills)
-
-	return cfg, nil
 }
 
 func isModelConfigValid(modelCfg *ModelConfig) bool {
@@ -88,24 +72,6 @@ func isModelConfigValid(modelCfg *ModelConfig) bool {
 	}
 
 	return true
-}
-
-func appendDefaultSkillsPath(rootDir string, skillsCfg SkillsConfig) SkillsConfig {
-	if rootDir == "" {
-		return skillsCfg
-	}
-	skillPath := filepath.Join(rootDir, "backend", "skills")
-	info, err := os.Stat(skillPath)
-	if err != nil || !info.IsDir() {
-		return skillsCfg
-	}
-	for _, existing := range skillsCfg.Paths {
-		if existing == skillPath {
-			return skillsCfg
-		}
-	}
-	skillsCfg.Paths = append(skillsCfg.Paths, skillPath)
-	return skillsCfg
 }
 
 func GetAPIEnvKey(provider string) string {
