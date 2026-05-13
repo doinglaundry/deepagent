@@ -3,8 +3,12 @@ package main
 
 import (
 	"context"
+	"flag"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"eino-cli/backend/cli/tui"
 	"eino-cli/backend/config"
@@ -12,11 +16,12 @@ import (
 )
 
 func main() {
-
-	// 获取根目录
-	root, err := os.Getwd()
+	root, err := resolveRoot(os.Args[1:], os.Getenv, os.Getwd)
 	if err != nil {
 		log.Fatalf("get root: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		log.Fatalf("enter root: %v", err)
 	}
 
 	// 获取配置
@@ -39,4 +44,26 @@ func main() {
 	if err := tui.Run(runtime, cfg); err != nil {
 		os.Exit(1)
 	}
+}
+
+func resolveRoot(args []string, getenv func(string) string, getwd func() (string, error)) (string, error) {
+	flags := flag.NewFlagSet("sgadk", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	rootFlag := flags.String("root", "", "LLM repository root")
+	if err := flags.Parse(args); err != nil {
+		return "", err
+	}
+
+	root := strings.TrimSpace(*rootFlag)
+	if root == "" {
+		root = strings.TrimSpace(getenv("SGADK_ROOT"))
+	}
+	if root == "" {
+		wd, err := getwd()
+		if err != nil {
+			return "", err
+		}
+		root = wd
+	}
+	return filepath.Abs(root)
 }
