@@ -36,7 +36,7 @@ func main() {
 	}
 
 	// runtime运行 + cli渲染
-	if err := tui.Run(runtime); err != nil {
+	if err := tui.Run(runtime, cfg); err != nil {
 		os.Exit(1)
 	}
 }

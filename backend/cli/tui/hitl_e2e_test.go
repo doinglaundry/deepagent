@@ -25,8 +25,9 @@ func (stubRuntime) Execute(ctx context.Context, prompt string) (eino.Result, err
 func (stubRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk eino.StreamChunkHandler) (eino.Result, error) {
 	return eino.Result{}, nil
 }
-func (stubRuntime) ClearHistory() {}
-func (stubRuntime) Name() string  { return "stub-model" }
+func (stubRuntime) ClearHistory()                    {}
+func (stubRuntime) ReloadSoul(context.Context) error { return nil }
+func (stubRuntime) Name() string                     { return "stub-model" }
 
 // runHITLE2E spins up the TUI inside a real *tea.Program (via teatest)
 // with installTUIApproval wired to that program, kicks off a goroutine

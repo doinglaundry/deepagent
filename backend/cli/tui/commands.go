@@ -18,6 +18,7 @@ type slashCommand struct {
 // listed here but not dispatched there silently submits to the LLM as
 // a plain prompt.
 var commands = []slashCommand{
+	{Name: "bootstrap", Desc: "create or update yaml/soul.md through onboarding"},
 	{Name: "clear", Desc: "clear the in-memory conversation history"},
 	{Name: "debug", Args: "[on|off|toggle]", Desc: "show / hide the model's exact input & output per turn"},
 	{Name: "exit", Desc: "exit the TUI session"},

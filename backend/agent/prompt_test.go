@@ -91,3 +91,26 @@ func TestGetSystemPrompt_EmptyMemorySkipsBlock(t *testing.T) {
 		t.Fatalf("empty store should skip <memory> section, got:\n%s", out)
 	}
 }
+
+func TestLoadSoulPromptWrapsMarkdown(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "yaml", "soul.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("**Identity**\nAlice\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := loadSoulPrompt(&config.Config{RootDir: root})
+	want := "<soul>\n**Identity**\nAlice\n</soul>"
+	if got != want {
+		t.Fatalf("loadSoulPrompt() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadSoulPromptMissingFile(t *testing.T) {
+	if got := loadSoulPrompt(&config.Config{RootDir: t.TempDir()}); got != "" {
+		t.Fatalf("missing soul should be empty, got %q", got)
+	}
+}

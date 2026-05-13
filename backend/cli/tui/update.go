@@ -21,6 +21,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleChunk(msg)
 	case doneMsg:
 		return m.handleDone(msg)
+	case bootstrapReplyMsg:
+		return m.handleBootstrapReply(msg)
+	case bootstrapSavedMsg:
+		return m.handleBootstrapSaved(msg)
 	case approvalRequest:
 		return m.handleApprovalRequest(msg)
 	case middlewares.TraceEvent:
@@ -365,6 +369,9 @@ func (m *Model) acceptPopup(c slashCommand) {
 
 // submit handles slash commands inline; otherwise streams via the runtime.
 func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
+	if m.bootstrap != nil {
+		return m.submitBootstrap(text)
+	}
 	if cmd, handled := m.handleBuiltin(text); handled {
 		return m, cmd
 	}
@@ -447,6 +454,8 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		return nil, true
 	case "debug":
 		return m.handleDebugCmd(text), true
+	case "bootstrap":
+		return m.handleBootstrapCmd(), true
 	case "todos":
 		return m.handleTodosCmd(text), true
 	case "help":

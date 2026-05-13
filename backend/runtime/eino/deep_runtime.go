@@ -34,16 +34,10 @@ type DeepAgentRuntime struct {
 // NewDeepAgentRuntime builds the lead agent and the adk.Runner; history /
 // checkpoint / streaming live here (REPL-owned).
 func NewDeepAgentRuntime(ctx context.Context, cfg *config.Config) (Runtime, error) {
-	leadAgent, trace, err := agent.MakeLeadAgent(ctx, "default", false, true, cfg)
+	runner, trace, err := buildLeadRunner(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("build lead agent: %w", err)
+		return nil, err
 	}
-
-	runner := adk.NewRunner(ctx, adk.RunnerConfig{
-		Agent:           leadAgent,
-		EnableStreaming: true,
-		CheckPointStore: checkpoint.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "checkpoints")),
-	})
 
 	return &DeepAgentRuntime{
 		cfg:             cfg,
@@ -52,6 +46,20 @@ func NewDeepAgentRuntime(ctx context.Context, cfg *config.Config) (Runtime, erro
 		maxHistoryTurns: 20,
 		trace:           trace,
 	}, nil
+}
+
+func buildLeadRunner(ctx context.Context, cfg *config.Config) (*adk.Runner, *middlewares.Trace, error) {
+	leadAgent, trace, err := agent.MakeLeadAgent(ctx, "default", false, true, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build lead agent: %w", err)
+	}
+
+	runner := adk.NewRunner(ctx, adk.RunnerConfig{
+		Agent:           leadAgent,
+		EnableStreaming: true,
+		CheckPointStore: checkpoint.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "checkpoints")),
+	})
+	return runner, trace, nil
 }
 
 func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, error) {
@@ -108,6 +116,24 @@ func (r *DeepAgentRuntime) ClearHistory() {
 	if r.trace != nil {
 		r.trace.ResetTurn()
 	}
+}
+
+func (r *DeepAgentRuntime) ReloadSoul(ctx context.Context) error {
+	runner, trace, err := buildLeadRunner(ctx, r.cfg)
+	if err != nil {
+		return err
+	}
+
+	r.mu.Lock()
+	r.runner = runner
+	r.trace = trace
+	r.history = nil
+	r.pendingCheckpointID = ""
+	r.mu.Unlock()
+	if trace != nil {
+		trace.ResetTurn()
+	}
+	return nil
 }
 
 func (r *DeepAgentRuntime) Name() string {

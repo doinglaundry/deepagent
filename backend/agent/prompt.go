@@ -4,6 +4,8 @@ package agent
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -515,7 +517,7 @@ func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Confi
 	n := effectiveMaxSubagents(cfg)
 	replacer := strings.NewReplacer(
 		"{agent_name}", agentName,
-		"{soul}", "",
+		"{soul}", loadSoulPrompt(cfg),
 		"{memory_context}", getMemoryPrompt(agentName, memorystore.NewStoreFromConfig(cfg), cfg.Memory),
 		"{subagent_thinking}", GetSubagentThinking(IsSubagentEnabled, n),
 		"{skills_section}", GetSkillsPromptSection(skillsFromProfile(cfg.Agents[agentName]), cfg, cfg.SkillEvolution.Enabled),
@@ -528,6 +530,21 @@ func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Confi
 	prompt := replacer.Replace(strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"))
 
 	return prompt + "\n<current_date>" + time.Now().Format("2006-01-02, Monday") + "</current_date>"
+}
+
+func loadSoulPrompt(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(cfg.RootDir, "yaml", "soul.md"))
+	if err != nil {
+		return ""
+	}
+	body := strings.TrimSpace(string(data))
+	if body == "" {
+		return ""
+	}
+	return "<soul>\n" + body + "\n</soul>"
 }
 
 func GetSubagentThinking(IsSubagentEnabled bool, n int) string {

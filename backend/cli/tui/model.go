@@ -20,6 +20,8 @@ import (
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
 	"eino-cli/backend/agent/middlewares"
+	bootstrap "eino-cli/backend/cli/bootstrap"
+	"eino-cli/backend/config"
 	"eino-cli/backend/runtime/eino"
 )
 
@@ -40,6 +42,7 @@ type chatMessage struct {
 // Model is the bubbletea single-source-of-truth.
 type Model struct {
 	rt        eino.Runtime
+	cfg       *config.Config
 	cwd       string
 	modelName string
 
@@ -87,6 +90,8 @@ type Model struct {
 	// debug toggles inline LLM input/output panels via /debug.
 	debug bool
 
+	bootstrap *bootstrap.Session
+
 	// hitlQueue holds pending HITL approval requests in FIFO order;
 	// hitlQueue[0] is what the prompt renders. The agent goroutine
 	// blocks on each request's reply channel until handleKey picks a
@@ -110,10 +115,14 @@ type Model struct {
 
 // New builds a Model around rt; heavy wiring (config/runtime) stays in main
 // so tests can substitute a fake Runtime.
-func New(rt eino.Runtime) (*Model, error) {
+func New(rt eino.Runtime, cfgs ...*config.Config) (*Model, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
+	}
+	var cfg *config.Config
+	if len(cfgs) > 0 {
+		cfg = cfgs[0]
 	}
 
 	ti := textinput.New()
@@ -136,6 +145,7 @@ func New(rt eino.Runtime) (*Model, error) {
 
 	return &Model{
 		rt:        rt,
+		cfg:       cfg,
 		cwd:       cwd,
 		modelName: rt.Name(),
 		input:     ti,
@@ -298,6 +308,7 @@ func (m *Model) abortStream() bool {
 func builtinHelp() string {
 	return strings.TrimSpace(fmt.Sprintf(`
 **Built-in commands**
+- %s — create or update yaml/soul.md through onboarding
 - %s — clear the in-memory conversation history
 - %s — show / hide the model's exact input & output per turn
 - %s — expand / collapse the todo panel
@@ -307,7 +318,7 @@ func builtinHelp() string {
 
 Anything else is sent to the model as a prompt. Press Ctrl-C
 during a response to abort, or Ctrl-C twice from idle to quit.
-`, "`/clear`", "`/debug [on|off|toggle]`", "`/todos [open|close|toggle]`", "`/exit`", "`/quit`", "`/help`"))
+`, "`/bootstrap`", "`/clear`", "`/debug [on|off|toggle]`", "`/todos [open|close|toggle]`", "`/exit`", "`/quit`", "`/help`"))
 }
 
 // formatDebugInput renders a TracePhaseBefore event; [agentname] prefix
