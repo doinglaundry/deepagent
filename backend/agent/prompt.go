@@ -494,55 +494,68 @@ const systemPromptTemplateRaw = `
 </critical_reminders>
 `
 
-// systemPromptTemplate is the runtime-resolved template (with § replaced by `).
-var systemPromptTemplate = strings.ReplaceAll(systemPromptTemplateRaw, "§", "`")
+// defaultMaxConcurrentSubagents is the fallback used when
+// cfg.MaxConcurrentSubagents is zero / negative (i.e. not set in yaml).
+// Same constant is the only place this number lives — both prompt and
+// SubagentLimit middleware route through effectiveMaxSubagents.
+const defaultMaxConcurrentSubagents = 5
 
-// GetSystemPrompt assembles the system prompt and appends the current-date
-// footer. The memory store is derived from cfg internally so callers don't
-// thread it through; Store is stateless, so per-call construction is cheap.
-func GetSystemPrompt(rt *RuntimeContext, cfg *config.Config) string {
-	store := memorystore.NewStoreFromConfig(cfg)
-	memoryContext := getMemoryPrompt(rt.AgentName, store, cfg.Memory)
-
-	n := rt.MaxConcurrentSubagents
-	subagentSection := ""
-	subagentReminder := ""
-	subagentThinking := ""
-	if rt.SubagentEnabled {
-		subagentSection = buildSubagentSection(n)
-		subagentReminder = "" +
-			"- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. " +
-			fmt.Sprintf("**HARD LIMIT: max %d `task` calls per response.** ", n) +
-			fmt.Sprintf("If >%d sub-tasks, split into sequential batches of ≤%d. Synthesize after ALL batches complete.\n", n, n)
-		subagentThinking = "" +
-			"- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. " +
-			fmt.Sprintf("If count > %d, you MUST plan batches of ≤%d and only launch the FIRST batch now. ", n, n) +
-			fmt.Sprintf("NEVER launch more than %d `task` calls in one response.**\n", n)
+// effectiveMaxSubagents reads cfg.MaxConcurrentSubagents with the
+// defaultMaxConcurrentSubagents fallback. Single source of truth so the
+// system prompt's advertised limit and the SubagentLimit middleware's
+// runtime cap are guaranteed to agree.
+func effectiveMaxSubagents(cfg *config.Config) int {
+	if cfg.MaxConcurrentSubagents <= 0 {
+		return defaultMaxConcurrentSubagents
 	}
+	return cfg.MaxConcurrentSubagents
+}
 
-	skillsSection := GetSkillsPromptSection(skillsFromProfile(rt.AgentConfig), cfg, cfg.SkillEvolution.Enabled)
-	deferredToolsSection := GetDeferredToolsPromptSection(cfg, cfg.ToolSearch.Enabled)
-	acpSection := buildACPSection(cfg)
-
+func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Config) string {
+	n := effectiveMaxSubagents(cfg)
 	replacer := strings.NewReplacer(
-		"{agent_name}", rt.AgentName,
+		"{agent_name}", agentName,
 		"{soul}", "",
-		"{memory_context}", memoryContext,
-		"{subagent_thinking}", subagentThinking,
-		"{skills_section}", skillsSection,
-		"{deferred_tools_section}", deferredToolsSection,
-		"{subagent_section}", subagentSection,
-		"{subagent_reminder}", subagentReminder,
-		"{acp_section}", acpSection,
+		"{memory_context}", getMemoryPrompt(agentName, memorystore.NewStoreFromConfig(cfg), cfg.Memory),
+		"{subagent_thinking}", GetSubagentThinking(IsSubagentEnabled, n),
+		"{skills_section}", GetSkillsPromptSection(skillsFromProfile(cfg.Agents[agentName]), cfg, cfg.SkillEvolution.Enabled),
+		"{deferred_tools_section}", GetDeferredToolsPromptSection(cfg, cfg.ToolSearch.Enabled),
+		"{subagent_section}", GetSubagentSection(IsSubagentEnabled, n),
+		"{subagent_reminder}", GetSubagentReminder(IsSubagentEnabled, n),
+		"{acp_section}", buildACPSection(cfg),
 		"{root_dir}", cfg.RootDir,
 	)
-	prompt := replacer.Replace(systemPromptTemplate)
+	prompt := replacer.Replace(strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"))
 
 	return prompt + "\n<current_date>" + time.Now().Format("2006-01-02, Monday") + "</current_date>"
 }
 
-// promptLogger is the package-wide slog handler; callers can swap it.
-var promptLogger = slog.Default()
+func GetSubagentThinking(IsSubagentEnabled bool, n int) string {
+	if IsSubagentEnabled {
+		return "" +
+			"- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. " +
+			fmt.Sprintf("If count > %d, you MUST plan batches of ≤%d and only launch the FIRST batch now. ", n, n) +
+			fmt.Sprintf("NEVER launch more than %d `task` calls in one response.**\n", n)
+	}
+	return ""
+}
+
+func GetSubagentReminder(IsSubagentEnabled bool, n int) string {
+	if IsSubagentEnabled {
+		return "" +
+			"- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. " +
+			fmt.Sprintf("**HARD LIMIT: max %d `task` calls per response.** ", n) +
+			fmt.Sprintf("If >%d sub-tasks, split into sequential batches of ≤%d. Synthesize after ALL batches complete.\n", n, n)
+	}
+	return ""
+}
+
+func GetSubagentSection(IsSubagentEnabled bool, n int) string {
+	if IsSubagentEnabled {
+		return buildSubagentSection(n)
+	}
+	return ""
+}
 
 // loadEnabledSkillsFromConfig scans cfg.Skills.Paths for SKILL.md files and
 // returns the enabled skills as the prompt-side Skill type. Errors yield nil.
