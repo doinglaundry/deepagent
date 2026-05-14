@@ -134,9 +134,10 @@ func TestGlob(t *testing.T) {
 	}
 	bt, _ := GetGlobTool(root)
 	got := invoke(t, bt, `{"pattern":"*.go","path":""}`)
-	// filepath.Glob returns alphabetical paths; relative to root.
-	if got != "a.go\nb.go" {
-		t.Fatalf("glob:\ngot:  %q\nwant: %q", got, "a.go\nb.go")
+	// Glob returns absolute paths so follow-up tool calls can reuse them.
+	want := filepath.Join(root, "a.go") + "\n" + filepath.Join(root, "b.go")
+	if got != want {
+		t.Fatalf("glob:\ngot:  %q\nwant: %q", got, want)
 	}
 
 	if got := invoke(t, bt, `{"pattern":"*.rs","path":""}`); got != noFilesFound {
@@ -155,8 +156,9 @@ func TestGlobDefaultsToRecursiveSearch(t *testing.T) {
 	bt, _ := GetGlobTool(root)
 
 	got := invoke(t, bt, `{"pattern":"CHANGELOG.md","path":""}`)
-	if got != "yaml/CHANGELOG.md" {
-		t.Fatalf("recursive glob:\ngot:  %q\nwant: %q", got, "yaml/CHANGELOG.md")
+	want := filepath.Join(root, "yaml", "CHANGELOG.md")
+	if got != want {
+		t.Fatalf("recursive glob:\ngot:  %q\nwant: %q", got, want)
 	}
 }
 

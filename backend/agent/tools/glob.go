@@ -18,14 +18,12 @@ type globArgs struct {
 	Path string `json:"path" jsonschema:"description=The directory to search in. If not specified\\, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter 'undefined' or 'null' - simply omit it for the default behavior. Must be a valid directory path if provided."`
 }
 
-// GetGlobTool returns the "glob" tool. Matches are reported as paths
-// relative to root (not the resolved search base) so the model sees the
-// same mental model regardless of what `path` it passed in.
+// GetGlobTool returns the "glob" tool. Matches are reported as absolute paths
+// so follow-up read/write calls don't depend on the model rejoining paths.
 func GetGlobTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGlob, filesystem.GlobToolDesc,
 		func(ctx context.Context, in globArgs) (string, error) {
-			base := resolveRoot(root)
-			searchBase := base
+			searchBase := resolveRoot(root)
 			if in.Path != "" {
 				searchBase = resolvePath(root, in.Path)
 			}
@@ -37,15 +35,15 @@ func GetGlobTool(root string) (tool.BaseTool, error) {
 			if len(paths) == 0 {
 				return noFilesFound, nil
 			}
-			rels := make([]string, 0, len(paths))
+			absolutePaths := make([]string, 0, len(paths))
 			for _, p := range paths {
-				rel, relErr := filepath.Rel(base, p)
-				if relErr != nil {
-					rel = p
+				abs, absErr := filepath.Abs(p)
+				if absErr != nil {
+					abs = p
 				}
-				rels = append(rels, rel)
+				absolutePaths = append(absolutePaths, abs)
 			}
-			return strings.Join(rels, "\n"), nil
+			return strings.Join(absolutePaths, "\n"), nil
 		})
 }
 
