@@ -72,7 +72,7 @@ func TestInjectMemory_DisabledByConfig(t *testing.T) {
 	}
 }
 
-func TestInjectMemory_PrependsSystemMessage(t *testing.T) {
+func TestInjectMemory_AppendsSystemMessage(t *testing.T) {
 	data := memorystore.GetEmptyMemoryData()
 	data.User.WorkContext = memorystore.Section{Summary: "Go backend dev"}
 	s := seedStore(t, "alice", data)
@@ -84,14 +84,15 @@ func TestInjectMemory_PrependsSystemMessage(t *testing.T) {
 	if len(out) != 2 {
 		t.Fatalf("expected 2 messages after inject, got %d", len(out))
 	}
-	if out[0].Role != schema.System {
-		t.Errorf("expected first message to be System, got %s", out[0].Role)
+	memoryMsg := out[len(out)-1]
+	if memoryMsg.Role != schema.System {
+		t.Errorf("expected last message to be System, got %s", memoryMsg.Role)
 	}
-	if !strings.Contains(out[0].Content, "<memory>") || !strings.Contains(out[0].Content, "</memory>") {
-		t.Errorf("expected memory tags in injected message, got %q", out[0].Content)
+	if !strings.Contains(memoryMsg.Content, "<memory>") || !strings.Contains(memoryMsg.Content, "</memory>") {
+		t.Errorf("expected memory tags in injected message, got %q", memoryMsg.Content)
 	}
-	if !strings.Contains(out[0].Content, "Go backend dev") {
-		t.Errorf("expected memory content in injected message, got %q", out[0].Content)
+	if !strings.Contains(memoryMsg.Content, "Go backend dev") {
+		t.Errorf("expected memory content in injected message, got %q", memoryMsg.Content)
 	}
 }
 

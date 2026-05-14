@@ -43,7 +43,7 @@ func InjectMemory(
 		return msgs
 	}
 	out := make([]*schema.Message, 0, len(msgs)+1)
-	out = append(out, schema.SystemMessage(block))
 	out = append(out, msgs...)
+	out = append(out, schema.SystemMessage(block))
 	return out
 }
