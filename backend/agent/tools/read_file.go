@@ -32,8 +32,12 @@ func GetReadFileTool(root string) (tool.BaseTool, error) {
 				in.Limit = 2000
 			}
 
-			data, err := os.ReadFile(resolvePath(root, in.FilePath))
+			path := resolvePath(root, in.FilePath)
+			data, err := os.ReadFile(path)
 			if err != nil {
+				if os.IsNotExist(err) {
+					return fmt.Sprintf("File not found: %s", path), nil
+				}
 				return "", err
 			}
 			lines := strings.Split(string(data), "\n")

@@ -81,6 +81,12 @@ func TestReadFile(t *testing.T) {
 	if got != want {
 		t.Fatalf("read_file offset/limit:\ngot:  %q\nwant: %q", got, want)
 	}
+
+	got = invoke(t, bt, `{"file_path":"missing.txt"}`)
+	want = "File not found: " + filepath.Join(root, "missing.txt")
+	if got != want {
+		t.Fatalf("read_file missing file:\ngot:  %q\nwant: %q", got, want)
+	}
 }
 
 func TestWriteFile(t *testing.T) {
