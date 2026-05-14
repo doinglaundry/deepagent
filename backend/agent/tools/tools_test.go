@@ -144,6 +144,22 @@ func TestGlob(t *testing.T) {
 	}
 }
 
+func TestGlobDefaultsToRecursiveSearch(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "yaml", "CHANGELOG.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bt, _ := GetGlobTool(root)
+
+	got := invoke(t, bt, `{"pattern":"CHANGELOG.md","path":""}`)
+	if got != "yaml/CHANGELOG.md" {
+		t.Fatalf("recursive glob:\ngot:  %q\nwant: %q", got, "yaml/CHANGELOG.md")
+	}
+}
+
 func TestGrepFilesWithMatches(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello world\n"), 0o644); err != nil {

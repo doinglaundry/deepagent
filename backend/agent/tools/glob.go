@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/cloudwego/eino/adk/middlewares/filesystem"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
@@ -28,7 +29,8 @@ func GetGlobTool(root string) (tool.BaseTool, error) {
 			if in.Path != "" {
 				searchBase = resolvePath(root, in.Path)
 			}
-			paths, err := filepath.Glob(filepath.Join(searchBase, in.Pattern))
+			pattern := normalizeGlobPattern(in.Pattern)
+			paths, err := doublestar.FilepathGlob(filepath.Join(searchBase, pattern))
 			if err != nil {
 				return "", err
 			}
@@ -45,4 +47,12 @@ func GetGlobTool(root string) (tool.BaseTool, error) {
 			}
 			return strings.Join(rels, "\n"), nil
 		})
+}
+
+func normalizeGlobPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if strings.HasPrefix(pattern, "**/") {
+		return pattern
+	}
+	return filepath.Join("**", pattern)
 }
