@@ -26,10 +26,9 @@ func Run(rt eino.Runtime, cfgs ...*config.Config) error {
 	if err != nil {
 		return err
 	}
-	// Mouse intentionally off: stray bytes from incomplete SGR sequences leak
-	// into textinput as visible characters, and we don't need clicks anyway.
 	prog := tea.NewProgram(m,
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 		tea.WithInput(os.Stdin),
 		tea.WithOutput(os.Stdout),
 	)
