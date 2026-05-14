@@ -30,7 +30,7 @@ func TestExtractToolBlocksSingleCall(t *testing.T) {
 		t.Fatalf("expected 1 block, got %d", len(blocks))
 	}
 	got := blocks[0]
-	if got.id != 1 || got.name != "Bash" || got.argsLine != `{"command":"git log"}` {
+	if got.id != 1 || got.name != "Bash" || got.argsLine != "git log" {
 		t.Fatalf("unexpected block: %#v", got)
 	}
 	if strings.Join(got.lines, ",") != "one,two" {

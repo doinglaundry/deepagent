@@ -87,6 +87,7 @@ type Model struct {
 	// to avoid a second source of truth. Reset / clamped by
 	// onInputChanged on any input edit.
 	popupSel int
+	commands []slashCommand
 
 	lastErr error
 
@@ -100,6 +101,11 @@ type Model struct {
 	toolPreviewLines  int
 	toolArgsMaxChars  int
 	footerHint        string
+	flushedMsgCount   int
+	pendingScrollback []string
+	inputHistory      []string
+	historyIndex      int
+	historyDraft      string
 
 	bootstrap *bootstrap.Session
 	// bootstrapLoading marks the non-streaming LLM call that advances
@@ -172,7 +178,24 @@ func New(rt eino.Runtime, cfgs ...*config.Config) (*Model, error) {
 		toolBlocksEnabled: toolBlocksEnabled,
 		toolPreviewLines:  toolPreviewLines,
 		toolArgsMaxChars:  toolArgsMaxChars,
+		inputHistory:      loadInputHistory(rootFromConfig(cfg)),
+		historyIndex:      -1,
+		commands:          buildSlashCommands(cfg),
 	}, nil
+}
+
+func rootFromConfig(cfg *config.Config) string {
+	if cfg != nil && strings.TrimSpace(cfg.RootDir) != "" {
+		return cfg.RootDir
+	}
+	return "."
+}
+
+func (m *Model) availableCommands() []slashCommand {
+	if len(m.commands) > 0 {
+		return m.commands
+	}
+	return commands
 }
 
 func toolBlockSettings(cfg *config.Config) (enabled bool, previewLines int, argsMaxChars int) {
@@ -256,22 +279,82 @@ func noMarginStyle(name string) ansi.StyleConfig {
 	return cfg
 }
 
-// rebuildHistory regenerates the viewport content from m.messages.
-// Content changes also retrigger recomputeLayout so the viewport's height
-// shrinks/grows to match — without this the input would stay glued to
-// the screen bottom even when there's only a banner on screen.
+// rebuildHistory flushes stable history into the terminal scrollback and keeps
+// only the current tail message in the live Bubble Tea region.
 func (m *Model) rebuildHistory() {
-	if len(m.messages) == 0 {
+	m.queueScrollback()
+	live := m.liveMessages()
+	if len(live) == 0 {
 		m.viewport.SetContent("")
 	} else {
-		parts := make([]string, 0, len(m.messages)*2)
-		for _, msg := range m.messages {
+		parts := make([]string, 0, len(live)*2)
+		for _, msg := range live {
 			parts = append(parts, m.renderMessage(msg))
 		}
 		m.viewport.SetContent(strings.Join(parts, "\n\n"))
 	}
 	m.recomputeLayout()
 	m.viewport.GotoBottom()
+}
+
+func (m *Model) liveMessages() []chatMessage {
+	if len(m.messages) == 0 {
+		return nil
+	}
+	if len(m.messages) == 1 {
+		if m.messages[0].Role == "banner" && m.flushedMsgCount >= 1 {
+			return nil
+		}
+		return m.messages
+	}
+	return m.messages[len(m.messages)-1:]
+}
+
+func (m *Model) queueScrollback() {
+	if len(m.messages) == 0 {
+		return
+	}
+	if m.flushedMsgCount < 0 {
+		m.flushedMsgCount = 0
+	}
+	if len(m.messages) == 1 {
+		if m.flushedMsgCount == 0 {
+			if text := strings.TrimSpace(m.renderMessage(m.messages[0])); text != "" {
+				m.pendingScrollback = append(m.pendingScrollback, text)
+			}
+			m.flushedMsgCount = 1
+		}
+		return
+	}
+	target := len(m.messages) - 1
+	if target <= m.flushedMsgCount {
+		return
+	}
+	for _, msg := range m.messages[m.flushedMsgCount:target] {
+		if text := strings.TrimSpace(m.renderMessage(msg)); text != "" {
+			m.pendingScrollback = append(m.pendingScrollback, text)
+		}
+		if msg.Role == "tool-block" {
+			if id, ok := parseToolPlaceholder(msg.Content); ok {
+				if block := m.findToolBlockByID(id); block != nil {
+					block.flushed = true
+				}
+			}
+		}
+	}
+	m.flushedMsgCount = target
+}
+
+func (m *Model) flushScrollbackCmd() tea.Cmd {
+	if len(m.pendingScrollback) == 0 {
+		return nil
+	}
+	cmds := make([]tea.Cmd, 0, len(m.pendingScrollback))
+	for _, text := range m.pendingScrollback {
+		cmds = append(cmds, tea.Println(text))
+	}
+	m.pendingScrollback = nil
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) renderMessage(msg chatMessage) string {
@@ -337,6 +420,73 @@ func (m *Model) pushMessage(role, content string) {
 	m.rebuildHistory()
 }
 
+func (m *Model) saveInputHistoryEntry(text string) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return
+	}
+	if len(m.inputHistory) > 0 && m.inputHistory[len(m.inputHistory)-1] == trimmed {
+		m.historyIndex = -1
+		m.historyDraft = ""
+		return
+	}
+	m.inputHistory = append(m.inputHistory, trimmed)
+	if len(m.inputHistory) > maxInputHistory {
+		m.inputHistory = m.inputHistory[len(m.inputHistory)-maxInputHistory:]
+	}
+	saveInputHistory(rootFromConfig(m.cfg), m.inputHistory)
+	m.historyIndex = -1
+	m.historyDraft = ""
+}
+
+func (m *Model) browseInputHistory(delta int) {
+	if len(m.inputHistory) == 0 {
+		return
+	}
+	if m.historyIndex < 0 {
+		m.historyDraft = m.input.Value()
+		m.historyIndex = len(m.inputHistory)
+	}
+	m.historyIndex += delta
+	if m.historyIndex < 0 {
+		m.historyIndex = 0
+	}
+	if m.historyIndex >= len(m.inputHistory) {
+		m.historyIndex = -1
+		m.input.SetValue(m.historyDraft)
+		m.input.CursorEnd()
+		return
+	}
+	m.input.SetValue(m.inputHistory[m.historyIndex])
+	m.input.CursorEnd()
+}
+
+func (m *Model) exitInputHistoryBrowsing() {
+	m.historyIndex = -1
+	m.historyDraft = ""
+}
+
+func (m *Model) moveInputWord(delta int) {
+	value := m.input.Value()
+	pos := m.input.Position()
+	if delta < 0 {
+		for pos > 0 && value[pos-1] == ' ' {
+			pos--
+		}
+		for pos > 0 && value[pos-1] != ' ' {
+			pos--
+		}
+	} else {
+		for pos < len(value) && value[pos] == ' ' {
+			pos++
+		}
+		for pos < len(value) && value[pos] != ' ' {
+			pos++
+		}
+	}
+	m.input.SetCursor(pos)
+}
+
 // abortStream cancels any in-flight runtime call; returns true if one was active.
 // Drains m.hitlQueue too: cancelling ctx is what drives the approver's
 // ctx-done branch, but the visual queue still has stale rows; drop them
@@ -352,23 +502,49 @@ func (m *Model) abortStream() bool {
 	return true
 }
 
-// builtinHelp returns the static /help body.
-func builtinHelp() string {
-	return strings.TrimSpace(fmt.Sprintf(`
-**Built-in commands**
-- %s — create or update yaml/soul.md through onboarding
-- %s — clear the in-memory conversation history
-- %s — show / hide the model's exact input & output per turn
-- %s — expand / collapse the todo panel
-- %s — restart the agent service
-- %s — exit the TUI session
-- %s — exit the TUI session
-- %s — show this help
+// builtinHelp returns /help output for all commands or one named command.
+func (m *Model) builtinHelp(target string) string {
+	if target != "" {
+		if command, ok := findCommand(m.availableCommands(), target); ok {
+			kind := "Built-in command"
+			if command.Type == "skill" {
+				kind = "Skill"
+			}
+			args := ""
+			if command.Args != "" {
+				args = " " + command.Args
+			}
+			return fmt.Sprintf("**/%s%s** — _%s_\n\n%s", command.Name, args, kind, command.Desc)
+		}
+		return fmt.Sprintf("Unknown command: `/%s`. Run `/help` to see available commands.", strings.TrimPrefix(target, "/"))
+	}
 
-Anything else is sent to the model as a prompt. Press Ctrl-C
-during a response to abort, Ctrl-O to expand the latest tool block,
-or Ctrl-C twice from idle to quit.
-`, "`/bootstrap`", "`/clear`", "`/debug [on|off|toggle]`", "`/todos [open|close|toggle]`", "`/reload`", "`/exit`", "`/quit`", "`/help`"))
+	var builtins, skills []string
+	for _, command := range m.availableCommands() {
+		args := ""
+		if command.Args != "" {
+			args = " " + command.Args
+		}
+		line := fmt.Sprintf("- `/%s%s` — %s", command.Name, args, command.Desc)
+		if command.Type == "skill" {
+			skills = append(skills, line)
+		} else {
+			builtins = append(builtins, line)
+		}
+	}
+	var sb strings.Builder
+	sb.WriteString("**Available slash commands**\n\n_Built-in_\n")
+	sb.WriteString(strings.Join(builtins, "\n"))
+	if len(skills) > 0 {
+		sb.WriteString("\n\n_Skills_\n")
+		sb.WriteString(strings.Join(skills, "\n"))
+	}
+	sb.WriteString("\n\nRun `/help <name>` for details. Press Ctrl-C during a response to abort, Ctrl-O to expand the latest tool block, or Ctrl-C twice from idle to quit.")
+	return sb.String()
+}
+
+func builtinHelp() string {
+	return (&Model{commands: commands}).builtinHelp("")
 }
 
 // formatDebugInput renders a TracePhaseBefore event; [agentname] prefix

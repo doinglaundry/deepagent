@@ -43,6 +43,8 @@ func (m *Model) resetConversationView() {
 	m.lastSeenMsgCount = 0
 	m.toolBlockSeq = 0
 	m.footerHint = ""
+	m.flushedMsgCount = 0
+	m.pendingScrollback = nil
 	m.todos = nil
 	m.todoExpanded = false
 	m.rebuildHistory()

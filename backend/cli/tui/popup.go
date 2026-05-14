@@ -22,7 +22,7 @@ func (m *Model) renderPopup() string {
 	if !shouldShowPopup(input) {
 		return ""
 	}
-	matches := filterCommands(commands, input)
+	matches := filterCommands(m.availableCommands(), input)
 	if len(matches) == 0 {
 		return ""
 	}
@@ -63,12 +63,14 @@ func (m *Model) renderPopup() string {
 // instead of carrying a hanging gap.
 func popupRowBody(c slashCommand) string {
 	name := popupNameStyle.Render("/" + c.Name)
+	kind := popupArgsStyle.Render("[" + c.Type + "]")
 	if c.Args == "" {
-		return fmt.Sprintf("%s  %s", name, popupDescStyle.Render("— "+c.Desc))
+		return fmt.Sprintf("%s %s  %s", name, kind, popupDescStyle.Render("— "+c.Desc))
 	}
-	return fmt.Sprintf("%s %s  %s",
+	return fmt.Sprintf("%s %s %s  %s",
 		name,
 		popupArgsStyle.Render(c.Args),
+		kind,
 		popupDescStyle.Render("— "+c.Desc),
 	)
 }
@@ -79,7 +81,7 @@ func (m *Model) popupHeight() int {
 	if !shouldShowPopup(m.input.Value()) {
 		return 0
 	}
-	matches := filterCommands(commands, m.input.Value())
+	matches := filterCommands(m.availableCommands(), m.input.Value())
 	if len(matches) == 0 {
 		return 0
 	}

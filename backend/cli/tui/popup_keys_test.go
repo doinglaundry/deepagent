@@ -38,16 +38,16 @@ func TestHandlePopupKey_UpArrowWraps(t *testing.T) {
 	}
 }
 
-// Tab accepts the selected entry by rewriting input to "/<name>". For
-// "/de" only /debug matches → sel=0 → input becomes "/debug".
+// Tab accepts the selected entry by rewriting input to "/<name> ". For
+// "/de" only /debug matches → sel=0 → input becomes "/debug ".
 func TestHandlePopupKey_TabAcceptsSelectedCommand(t *testing.T) {
 	m := newModelForPopupKeys("/de", 0)
 	_, handled := m.handlePopupKey(tea.KeyMsg{Type: tea.KeyTab})
 	if !handled {
 		t.Fatal("Tab must be consumed when popup is open")
 	}
-	if got := m.input.Value(); got != "/debug" {
-		t.Errorf("Tab must rewrite input to /debug; got %q", got)
+	if got := m.input.Value(); got != "/debug " {
+		t.Errorf("Tab must rewrite input to /debug plus trailing space; got %q", got)
 	}
 }
 
@@ -64,7 +64,7 @@ func TestHandlePopupKey_EnterFallsThroughForSubmit(t *testing.T) {
 	if cmd != nil {
 		t.Error("Enter must not return a tea.Cmd from the popup branch")
 	}
-	if m.input.Value() != "/clear" {
+	if m.input.Value() != "/clear " {
 		t.Errorf("Enter must accept selected command first; input=%q",
 			m.input.Value())
 	}

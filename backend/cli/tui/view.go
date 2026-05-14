@@ -187,7 +187,42 @@ func (m *Model) renderStreamPanel() string {
 }
 
 func (m *Model) renderInput() string {
-	return inputBorderStyle.Width(m.width).Render(m.input.View())
+	value := m.input.Value()
+	body := "❯ " + m.renderInputText(value, m.input.Position())
+	return inputBorderStyle.Width(m.width).Render(body)
+}
+
+func (m *Model) renderInputText(value string, cursor int) string {
+	if value == "" {
+		placeholder := m.input.Placeholder
+		if placeholder == "" {
+			placeholder = "Ask anything... (/help for commands)"
+		}
+		first := " "
+		if placeholder != "" {
+			first = placeholder[:1]
+		}
+		return m.input.Cursor.Style.Render(first) + dimStyle.Render(placeholder[1:])
+	}
+	highlightLen := 0
+	if name := highlightedCommandName(value, m.availableCommands()); name != "" {
+		highlightLen = len(name) + 1
+	}
+	var sb strings.Builder
+	for i, r := range value {
+		ch := string(r)
+		if i < highlightLen {
+			ch = popupNameStyle.Render(ch)
+		}
+		if i == cursor {
+			ch = m.input.Cursor.Style.Render(ch)
+		}
+		sb.WriteString(ch)
+	}
+	if cursor == len(value) {
+		sb.WriteString(m.input.Cursor.Style.Render(" "))
+	}
+	return sb.String()
 }
 
 func (m *Model) renderFooter() string {

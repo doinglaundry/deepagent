@@ -19,6 +19,7 @@ type toolBlock struct {
 	argsLine  string
 	lines     []string
 	collapsed bool
+	flushed   bool
 }
 
 func extractNewToolBlocks(messages []*schema.Message, prevCount int, idSeq *int, argsMax int) []*toolBlock {
@@ -93,14 +94,101 @@ func renderToolBlock(block *toolBlock, previewLines int) string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
+func renderExpandedToolBlockCopy(block *toolBlock) string {
+	if block == nil {
+		return ""
+	}
+	wasCollapsed := block.collapsed
+	block.collapsed = false
+	out := renderToolBlock(block, len(block.lines))
+	block.collapsed = wasCollapsed
+	return out
+}
+
 func formatArgsLine(name, rawArgs string, max int) string {
 	switch name {
-	case "write_file", "Write", "edit", "Edit", "str_replace", "StrReplace":
+	case "execute", "bash", "Bash":
+		if command, ok := extractShellCommand(rawArgs); ok {
+			return truncateRunes(command, max)
+		}
+	case "read_file", "ls", "glob", "grep", "Read", "Glob", "Grep":
+		if summary, ok := extractPathSearchArgs(rawArgs); ok {
+			return truncateRunes(summary, max)
+		}
+	case "write_file", "Write", "edit", "Edit", "edit_file", "str_replace", "StrReplace":
 		if path, bodyLen, ok := extractFileWriteArgs(rawArgs); ok {
 			return fmt.Sprintf("%s, %d bytes", path, bodyLen)
 		}
+	case "ask_clarification":
+		if question, ok := extractClarificationArgs(rawArgs); ok {
+			return truncateRunes(question, max)
+		}
 	}
 	return truncateRunes(rawArgs, max)
+}
+
+func extractShellCommand(rawArgs string) (string, bool) {
+	var value struct {
+		Command     string `json:"command"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(rawArgs), &value); err != nil {
+		return "", false
+	}
+	if value.Description != "" && value.Command != "" {
+		return value.Description + ": " + value.Command, true
+	}
+	if value.Command != "" {
+		return value.Command, true
+	}
+	return "", false
+}
+
+func extractPathSearchArgs(rawArgs string) (string, bool) {
+	var value struct {
+		Path       string `json:"path"`
+		FilePath   string `json:"file_path"`
+		Pattern    string `json:"pattern"`
+		OutputMode string `json:"output_mode"`
+	}
+	if err := json.Unmarshal([]byte(rawArgs), &value); err != nil {
+		return "", false
+	}
+	path := value.Path
+	if path == "" {
+		path = value.FilePath
+	}
+	var parts []string
+	if path != "" {
+		parts = append(parts, path)
+	}
+	if value.Pattern != "" {
+		parts = append(parts, "pattern="+value.Pattern)
+	}
+	if value.OutputMode != "" {
+		parts = append(parts, "mode="+value.OutputMode)
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	return strings.Join(parts, ", "), true
+}
+
+func extractClarificationArgs(rawArgs string) (string, bool) {
+	var value struct {
+		Question string `json:"question"`
+		Prompt   string `json:"prompt"`
+		Message  string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(rawArgs), &value); err != nil {
+		return "", false
+	}
+	for _, candidate := range []string{value.Question, value.Prompt, value.Message} {
+		if strings.TrimSpace(candidate) != "" {
+			return strings.TrimSpace(candidate), true
+		}
+	}
+	return "", false
 }
 
 func extractFileWriteArgs(rawArgs string) (path string, bodyLen int, ok bool) {

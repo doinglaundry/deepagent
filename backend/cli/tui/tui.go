@@ -27,8 +27,6 @@ func Run(rt eino.Runtime, cfgs ...*config.Config) error {
 		return err
 	}
 	prog := tea.NewProgram(m,
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 		tea.WithInput(os.Stdin),
 		tea.WithOutput(os.Stdout),
 	)

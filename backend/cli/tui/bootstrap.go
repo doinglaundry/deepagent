@@ -109,6 +109,8 @@ func (m *Model) handleBootstrapSaved(msg bootstrapSavedMsg) (tea.Model, tea.Cmd)
 	}
 	m.bootstrap = nil
 	m.messages = freshMessages(m.width, m.modelName, m.cwd)
+	m.flushedMsgCount = 0
+	m.pendingScrollback = nil
 	m.rebuildHistory()
 	m.pushMessage("system", "SOUL saved and reloaded")
 	return m, nil

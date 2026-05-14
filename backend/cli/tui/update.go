@@ -11,7 +11,15 @@ import (
 	"eino-cli/backend/agent/middlewares"
 )
 
-func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
+	defer func() {
+		if model == nil {
+			model = m
+		}
+		if next, ok := model.(*Model); ok {
+			cmd = tea.Batch(cmd, next.flushScrollbackCmd())
+		}
+	}()
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return m.handleResize(msg)
@@ -48,11 +56,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmds []tea.Cmd
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	cmds = append(cmds, cmd)
-	m.viewport, cmd = m.viewport.Update(msg)
-	cmds = append(cmds, cmd)
+	var nextCmd tea.Cmd
+	m.input, nextCmd = m.input.Update(msg)
+	cmds = append(cmds, nextCmd)
+	m.viewport, nextCmd = m.viewport.Update(msg)
+	cmds = append(cmds, nextCmd)
 	return m, tea.Batch(cmds...)
 }
 
@@ -175,6 +183,30 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
+	switch msg.String() {
+	case "alt+b", "esc+b":
+		m.moveInputWord(-1)
+		return m, nil
+	case "alt+f", "esc+f":
+		m.moveInputWord(1)
+		return m, nil
+	}
+	if !m.popupShown() {
+		switch msg.Type {
+		case tea.KeyUp:
+			if m.input.Value() == "" || m.historyIndex >= 0 {
+				m.browseInputHistory(-1)
+				m.onInputChanged()
+				return m, nil
+			}
+		case tea.KeyDown:
+			if m.historyIndex >= 0 {
+				m.browseInputHistory(1)
+				m.onInputChanged()
+				return m, nil
+			}
+		}
+	}
 
 	switch msg.Type {
 	case tea.KeyCtrlC:
@@ -204,12 +236,18 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
+		m.saveInputHistoryEntry(text)
 		m.input.Reset()
 		m.pendingExit = false
 		return m.submit(text)
 	}
 	if msg.String() == "ctrl+o" {
 		if block := m.latestCollapsibleToolBlock(); block != nil {
+			if block.flushed {
+				m.pendingScrollback = append(m.pendingScrollback, renderExpandedToolBlockCopy(block))
+				m.footerHint = "printed expanded tool block"
+				return m, expireFooterHint(3 * time.Second)
+			}
 			block.collapsed = !block.collapsed
 			m.rebuildHistory()
 			return m, nil
@@ -231,6 +269,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// or typing "/" mid-edit collapses / opens the menu and rebalances
 	// chrome height before the next View.
 	if m.input.Value() != prevValue {
+		m.exitInputHistoryBrowsing()
 		m.onInputChanged()
 	}
 	return m, tea.Batch(cmds...)
@@ -328,7 +367,7 @@ func (m *Model) drainApprovals() {
 // the layout to rebalance — popup growth/shrink shifts the viewport
 // budget, and missing this leaves the input box at the wrong y.
 func (m *Model) onInputChanged() {
-	matches := filterCommands(commands, m.input.Value())
+	matches := filterCommands(m.availableCommands(), m.input.Value())
 	if m.popupSel < 0 || m.popupSel >= len(matches) {
 		m.popupSel = 0
 	}
@@ -340,7 +379,7 @@ func (m *Model) onInputChanged() {
 // returns (nil, false) after rewriting input so the outer KeyEnter
 // runs submit through its single code path.
 func (m *Model) handlePopupKey(msg tea.KeyMsg) (tea.Cmd, bool) {
-	matches := filterCommands(commands, m.input.Value())
+	matches := filterCommands(m.availableCommands(), m.input.Value())
 	if len(matches) == 0 {
 		return nil, false // defensive: popupShown implied >0 above
 	}
@@ -378,6 +417,9 @@ func (m *Model) handlePopupKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 // type ' on' themselves — uniformity beats clever-spacing.
 func (m *Model) acceptPopup(c slashCommand) {
 	m.input.SetValue("/" + c.Name)
+	if c.Type == "builtin" || c.Type == "skill" {
+		m.input.SetValue("/" + c.Name + " ")
+	}
 	m.input.CursorEnd()
 }
 
@@ -475,7 +517,8 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		return m.handleTodosCmd(text), true
 	case "help":
 		m.pushMessage("user", text)
-		m.pushMessage("assistant", builtinHelp())
+		arg := strings.TrimSpace(strings.TrimPrefix(text, "/help"))
+		m.pushMessage("assistant", m.builtinHelp(arg))
 		return nil, true
 	}
 	return nil, false
