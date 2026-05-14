@@ -32,7 +32,20 @@ func GetReadFileTool(root string) (tool.BaseTool, error) {
 				in.Limit = 2000
 			}
 
-			path := resolvePath(root, in.FilePath)
+			path, err := getResolvedPath(root, in.FilePath)
+			if err != nil {
+				return "", err
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return fmt.Sprintf("File not found: %s", path), nil
+				}
+				return "", err
+			}
+			if info.IsDir() {
+				return "", fmt.Errorf("path is a directory: %s", path)
+			}
 			data, err := os.ReadFile(path)
 			if err != nil {
 				if os.IsNotExist(err) {

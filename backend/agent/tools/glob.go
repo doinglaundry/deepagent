@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -25,23 +27,32 @@ func GetGlobTool(root string) (tool.BaseTool, error) {
 		func(ctx context.Context, in globArgs) (string, error) {
 			searchBase := resolveRoot(root)
 			if in.Path != "" {
-				searchBase = resolvePath(root, in.Path)
+				var err error
+				searchBase, err = getResolvedPath(root, in.Path)
+				if err != nil {
+					return "", err
+				}
 			}
 			pattern := normalizeGlobPattern(in.Pattern)
 			paths, err := doublestar.FilepathGlob(filepath.Join(searchBase, pattern))
 			if err != nil {
 				return "", err
 			}
-			if len(paths) == 0 {
-				return noFilesFound, nil
-			}
 			absolutePaths := make([]string, 0, len(paths))
 			for _, p := range paths {
+				info, statErr := os.Stat(p)
+				if statErr != nil || info.IsDir() {
+					continue
+				}
 				abs, absErr := filepath.Abs(p)
 				if absErr != nil {
 					abs = p
 				}
 				absolutePaths = append(absolutePaths, abs)
+			}
+			sort.Strings(absolutePaths)
+			if len(absolutePaths) == 0 {
+				return noFilesFound, nil
 			}
 			return strings.Join(absolutePaths, "\n"), nil
 		})

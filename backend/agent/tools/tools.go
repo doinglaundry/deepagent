@@ -26,6 +26,13 @@ func BuildBuiltinTools(root string) []tool.BaseTool {
 		mustBuild(GetGlobTool(root)),
 		mustBuild(GetGrepTool(root)),
 		mustBuild(GetExecuteTool(root)),
+		mustBuild(GetApplyPatchTool(root)),
+		mustBuild(GetDeleteFileTool(root)),
+		mustBuild(GetRgTool(root)),
+		mustBuild(GetSemanticSearchTool(root)),
+		mustBuild(GetReadLintsTool(root)),
+		mustBuild(GetShellTool(root)),
+		mustBuild(GetAwaitShellTool(root)),
 	}
 }
 

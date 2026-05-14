@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +88,11 @@ func TestReadFile(t *testing.T) {
 	if got != want {
 		t.Fatalf("read_file missing file:\ngot:  %q\nwant: %q", got, want)
 	}
+
+	err := invokeExpectErr(t, bt, `{"file_path":".."}`)
+	if !strings.Contains(err.Error(), "path escapes root") {
+		t.Fatalf("read_file escape error: %v", err)
+	}
 }
 
 func TestWriteFile(t *testing.T) {
@@ -168,6 +174,64 @@ func TestGlobDefaultsToRecursiveSearch(t *testing.T) {
 	}
 }
 
+func TestDeleteFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "old.txt")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bt, _ := GetDeleteFileTool(root)
+
+	got := invoke(t, bt, `{"file_path":"old.txt"}`)
+	if got != "Deleted file "+path {
+		t.Fatalf("delete_file:\ngot:  %q", got)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("file still exists: %v", err)
+	}
+	if got := invoke(t, bt, `{"file_path":"missing.txt"}`); !strings.Contains(got, "File does not exist") {
+		t.Fatalf("delete missing: %q", got)
+	}
+}
+
+func TestApplyPatchAddAndUpdate(t *testing.T) {
+	root := t.TempDir()
+	bt, _ := GetApplyPatchTool(root)
+	addPatch := `*** Begin Patch
+*** Add File: new.txt
++hello
++world
+*** End Patch`
+
+	got := invoke(t, bt, `{"patch":`+quoteJSON(t, addPatch)+`}`)
+	if got != "Applied patch to 1 file(s)" {
+		t.Fatalf("apply add: %q", got)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "new.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello\nworld" {
+		t.Fatalf("added content: %q", string(data))
+	}
+
+	updatePatch := `*** Begin Patch
+*** Update File: new.txt
+@@
+ hello
+-world
++cursor
+*** End Patch`
+	got = invoke(t, bt, `{"patch":`+quoteJSON(t, updatePatch)+`}`)
+	if got != "Applied patch to 1 file(s)" {
+		t.Fatalf("apply update: %q", got)
+	}
+	data, _ = os.ReadFile(filepath.Join(root, "new.txt"))
+	if string(data) != "hello\ncursor" {
+		t.Fatalf("updated content: %q", string(data))
+	}
+}
+
 func TestGrepFilesWithMatches(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello world\n"), 0o644); err != nil {
@@ -216,6 +280,22 @@ func TestGrepCount(t *testing.T) {
 	}
 }
 
+func TestRgContent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bt, _ := GetRgTool(root)
+
+	got := invoke(t, bt, `{"pattern":"hello","output_mode":"content"}`)
+	if !strings.Contains(got, "a.txt:1:hello") {
+		t.Fatalf("rg content: %q", got)
+	}
+	if got := invoke(t, bt, `{"pattern":"missing"}`); got != noMatchesFound {
+		t.Fatalf("rg no match: %q", got)
+	}
+}
+
 func TestExecute(t *testing.T) {
 	root := t.TempDir()
 	bt, _ := GetExecuteTool(root)
@@ -233,6 +313,54 @@ func TestExecute(t *testing.T) {
 	got = invoke(t, bt, `{"command":"true"}`)
 	if got != "[Command executed successfully with no output]" {
 		t.Fatalf("execute empty success: %q", got)
+	}
+}
+
+func TestShellAndAwaitShell(t *testing.T) {
+	root := t.TempDir()
+	bt, _ := GetShellTool(root)
+
+	got := invoke(t, bt, `{"command":"echo hi","timeout_ms":1000}`)
+	if !strings.HasPrefix(got, "hi") {
+		t.Fatalf("shell echo: %q", got)
+	}
+
+	got = invoke(t, bt, `{"command":"printf ready; sleep 0.2","timeout_ms":1}`)
+	if !strings.Contains(got, "task_id=") {
+		t.Fatalf("shell background: %q", got)
+	}
+	taskID := strings.TrimSpace(strings.TrimPrefix(got, "Command is still running in background. task_id="))
+	await, _ := GetAwaitShellTool(root)
+	got = invoke(t, await, `{"task_id":"`+taskID+`","pattern":"ready","timeout_ms":1000}`)
+	if !strings.Contains(got, "ready") {
+		t.Fatalf("await_shell: %q", got)
+	}
+}
+
+func TestSemanticSearch(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "tool.go"), []byte("func buildToolCall() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bt, _ := GetSemanticSearchTool(root)
+
+	got := invoke(t, bt, `{"query":"where is tool call built"}`)
+	if !strings.Contains(got, "tool.go:1") {
+		t.Fatalf("semantic_search: %q", got)
+	}
+}
+
+func TestReadLintsTargets(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, unsupported, err := getLintTargets(root, []string{"README.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 || len(unsupported) != 1 {
+		t.Fatalf("lint targets: packages=%v unsupported=%v", got, unsupported)
 	}
 }
 
@@ -278,13 +406,25 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
+func quoteJSON(t *testing.T, s string) string {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func TestBuildBuiltinToolsCount(t *testing.T) {
 	got := BuildBuiltinTools(t.TempDir())
-	if len(got) != 8 {
-		t.Fatalf("BuildBuiltinTools: got %d tools, want 8", len(got))
+	if len(got) != 15 {
+		t.Fatalf("BuildBuiltinTools: got %d tools, want 15", len(got))
 	}
 	// Names should match eino's expected wire identifiers exactly.
-	want := []string{"ask_clarification", "ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
+	want := []string{
+		"ask_clarification", "ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute",
+		"apply_patch", "delete_file", "rg", "semantic_search", "read_lints", "shell", "await_shell",
+	}
 	for i, bt := range got {
 		info, err := bt.Info(context.Background())
 		if err != nil {
