@@ -11,13 +11,14 @@ const (
 	noMatchesFound = "No matches found"
 )
 
-// BuildBuiltinTools returns the fixed 7-tool fs+shell set rooted at root.
+// BuildBuiltinTools returns the fixed built-in tool set rooted at root.
 // There is no per-agent filtering: every agent that opts into
-// ToolsConfig.Tools gets all seven. The caller decides what root means
+// ToolsConfig.Tools gets all tools. The caller decides what root means
 // (cfg.RootDir today, a subagent sandbox dir later) — this package never
 // reaches for os.Getwd or any other process state on its own.
 func BuildBuiltinTools(root string) []tool.BaseTool {
 	return []tool.BaseTool{
+		mustBuild(GetAskClarificationTool()),
 		mustBuild(GetLsTool(root)),
 		mustBuild(GetReadFileTool(root)),
 		mustBuild(GetWriteFileTool(root)),

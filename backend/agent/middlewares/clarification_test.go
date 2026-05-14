@@ -89,3 +89,55 @@ func TestClarification_FallbackForUnparsedArgs(t *testing.T) {
 		t.Fatalf("expected fallback Content, got empty")
 	}
 }
+
+func TestClarification_FormatsContextAndOptions(t *testing.T) {
+	mw := NewClarification()
+	state := &adk.ChatModelAgentState{
+		Messages: []*schema.Message{{
+			Role: schema.Assistant,
+			ToolCalls: []schema.ToolCall{
+				{
+					ID: "c1",
+					Function: schema.FunctionCall{
+						Name: AskClarificationToolName,
+						Arguments: `{
+							"question": "Which environment should I deploy to?",
+							"clarification_type": "approach_choice",
+							"context": "I need the target environment for the right configuration.",
+							"options": ["development", "staging", "production"]
+						}`,
+					},
+				},
+			},
+		}},
+	}
+
+	_, out, err := mw.AfterModelRewriteState(context.Background(), state, nil)
+	if err != nil {
+		t.Fatalf("AfterModelRewriteState: %v", err)
+	}
+	want := "I need the target environment for the right configuration.\n\nWhich environment should I deploy to?\n\n1. development\n2. staging\n3. production"
+	if out.Messages[0].Content != want {
+		t.Fatalf("formatted clarification:\ngot:  %q\nwant: %q", out.Messages[0].Content, want)
+	}
+}
+
+func TestClarification_FormatsStringEncodedOptions(t *testing.T) {
+	got := parseClarificationArgs(`{
+		"question": "Should I continue?",
+		"options": "[\"yes\", \"no\"]"
+	}`)
+	want := "Should I continue?\n\n1. yes\n2. no"
+	if got != want {
+		t.Fatalf("formatted clarification:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestClarification_QuestionFallbacks(t *testing.T) {
+	if got := parseClarificationArgs(`{"prompt":"Pick a file."}`); got != "Pick a file." {
+		t.Fatalf("prompt fallback: %q", got)
+	}
+	if got := parseClarificationArgs(`{"message":"Pick a file."}`); got != "Pick a file." {
+		t.Fatalf("message fallback: %q", got)
+	}
+}

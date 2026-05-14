@@ -212,13 +212,55 @@ func TestExecute(t *testing.T) {
 	}
 }
 
+func TestAskClarificationTool(t *testing.T) {
+	bt, err := GetAskClarificationTool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := bt.Info(context.Background())
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if info.Name != askClarificationToolName {
+		t.Fatalf("name: got %q want %q", info.Name, askClarificationToolName)
+	}
+	schema, err := info.ParamsOneOf.ToJSONSchema()
+	if err != nil {
+		t.Fatalf("ToJSONSchema: %v", err)
+	}
+	for _, name := range []string{"question", "clarification_type", "context", "options"} {
+		if _, ok := schema.Properties.Get(name); !ok {
+			t.Fatalf("schema missing %q", name)
+		}
+	}
+	for _, name := range []string{"question", "clarification_type"} {
+		if !containsString(schema.Required, name) {
+			t.Fatalf("schema required missing %q: %v", name, schema.Required)
+		}
+	}
+
+	got := invoke(t, bt, `{"question":"Which environment?","clarification_type":"approach_choice","options":["dev","prod"]}`)
+	if got != "Clarification request processed by middleware" {
+		t.Fatalf("clarification fallback output: %q", got)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBuildBuiltinToolsCount(t *testing.T) {
 	got := BuildBuiltinTools(t.TempDir())
-	if len(got) != 7 {
-		t.Fatalf("BuildBuiltinTools: got %d tools, want 7", len(got))
+	if len(got) != 8 {
+		t.Fatalf("BuildBuiltinTools: got %d tools, want 8", len(got))
 	}
 	// Names should match eino's expected wire identifiers exactly.
-	want := []string{"ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
+	want := []string{"ask_clarification", "ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
 	for i, bt := range got {
 		info, err := bt.Info(context.Background())
 		if err != nil {

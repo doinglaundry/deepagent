@@ -79,6 +79,32 @@ func TestCollectAgentEventsAggregatesOutput(t *testing.T) {
 	}
 }
 
+func TestCollectAgentEventsIgnoresToolResultsAndToolCallTurns(t *testing.T) {
+	iter, gen := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
+	toolCallMsg := schema.AssistantMessage("I will search first", nil)
+	toolCallMsg.ToolCalls = []schema.ToolCall{
+		{ID: "call-1", Function: schema.FunctionCall{Name: "glob", Arguments: `{"pattern":"soul.md"}`}},
+	}
+	gen.Send(&adk.AgentEvent{Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: toolCallMsg}}})
+	gen.Send(&adk.AgentEvent{Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: schema.ToolMessage("No files found", "call-1")}}})
+	gen.Send(&adk.AgentEvent{Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: schema.AssistantMessage("/Users/bytedance/go/src/content/LLM/soul.md", nil)}}})
+	gen.Close()
+
+	var chunks []string
+	summary, err := collectAgentEventsWithSink(iter, func(chunk string) {
+		chunks = append(chunks, chunk)
+	})
+	if err != nil {
+		t.Fatalf("collectAgentEvents() error = %v", err)
+	}
+	if summary.Output != "/Users/bytedance/go/src/content/LLM/soul.md" {
+		t.Fatalf("unexpected output: %q", summary.Output)
+	}
+	if len(chunks) != 1 || chunks[0] != summary.Output {
+		t.Fatalf("unexpected chunks: %#v", chunks)
+	}
+}
+
 func TestCollectAgentEventsInterrupted(t *testing.T) {
 	iter, gen := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
 	gen.Send(&adk.AgentEvent{Action: &adk.AgentAction{Interrupted: &adk.InterruptInfo{Data: "need approval"}}})

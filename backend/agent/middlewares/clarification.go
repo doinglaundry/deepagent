@@ -83,27 +83,80 @@ func (m *Clarification) AfterModelRewriteState(
 	return ctx, state, nil
 }
 
-// parseClarificationArgs extracts question/prompt/message from the JSON args;
-// falls back to the raw string when JSON parsing fails.
+// parseClarificationArgs formats structured clarification args for display;
+// falls back to prompt/message/raw so imperfect model calls still surface.
 func parseClarificationArgs(raw string) string {
 	if strings.TrimSpace(raw) == "" {
 		return ""
 	}
 	var args struct {
-		Question string `json:"question"`
-		Prompt   string `json:"prompt"`
-		Message  string `json:"message"`
+		Question          string          `json:"question"`
+		Prompt            string          `json:"prompt"`
+		Message           string          `json:"message"`
+		ClarificationType string          `json:"clarification_type"`
+		Context           string          `json:"context"`
+		Options           json.RawMessage `json:"options"`
 	}
 	if err := json.Unmarshal([]byte(raw), &args); err != nil {
 		return fmt.Sprintf("(unparsed clarification args: %s)", raw)
 	}
-	switch {
-	case strings.TrimSpace(args.Question) != "":
-		return strings.TrimSpace(args.Question)
-	case strings.TrimSpace(args.Prompt) != "":
-		return strings.TrimSpace(args.Prompt)
-	case strings.TrimSpace(args.Message) != "":
-		return strings.TrimSpace(args.Message)
+	question := getClarificationQuestion(args.Question, args.Prompt, args.Message)
+	if question == "" {
+		return raw
 	}
-	return raw
+
+	var parts []string
+	if context := strings.TrimSpace(args.Context); context != "" {
+		parts = append(parts, context, "")
+	}
+	parts = append(parts, question)
+	if options := parseClarificationOptions(args.Options); len(options) > 0 {
+		parts = append(parts, "")
+		for i, option := range options {
+			parts = append(parts, fmt.Sprintf("%d. %s", i+1, option))
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func getClarificationQuestion(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func parseClarificationOptions(raw json.RawMessage) []string {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return nil
+	}
+	var options []string
+	if err := json.Unmarshal(raw, &options); err == nil {
+		return cleanClarificationOptions(options)
+	}
+
+	var encoded string
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return nil
+	}
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return nil
+	}
+	if err := json.Unmarshal([]byte(encoded), &options); err == nil {
+		return cleanClarificationOptions(options)
+	}
+	return cleanClarificationOptions([]string{encoded})
+}
+
+func cleanClarificationOptions(options []string) []string {
+	out := make([]string, 0, len(options))
+	for _, option := range options {
+		if trimmed := strings.TrimSpace(option); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }

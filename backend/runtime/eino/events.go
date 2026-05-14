@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
 )
 
 type agentRunSummary struct {
@@ -44,6 +45,9 @@ func collectAgentEventsWithSink(iter *adk.AsyncIterator[*adk.AgentEvent], onChun
 
 		msg, err := event.Output.MessageOutput.GetMessage()
 		if err != nil || msg == nil {
+			continue
+		}
+		if msg.Role != schema.Assistant || len(msg.ToolCalls) > 0 {
 			continue
 		}
 

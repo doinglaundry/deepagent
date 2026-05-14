@@ -23,14 +23,13 @@ var (
 			Background(lipgloss.Color("236")).
 			Padding(0, 1)
 
-	// Debug trace styling: faint body, distinct bold markers for input vs output.
-	debugInputMarkerStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))  // light blue
-	debugOutputMarkerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207")) // light magenta
-	debugBodyStyle         = lipgloss.NewStyle().Faint(true)
+	// Debug trace styling: keep trace metadata visually secondary.
+	debugInputMarkerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	debugOutputMarkerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	debugBodyStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
 
-	// Tool blocks are user-facing scrollback, quieter than assistant text
-	// but more structured than debug dumps.
-	toolHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
+	// Tool blocks are trace metadata, so the whole block stays grey.
+	toolHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	toolBodyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	toolFooterStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
