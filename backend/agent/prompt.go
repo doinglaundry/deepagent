@@ -58,7 +58,9 @@ func availableSkillsAsSet(a *AvailableSkills) (allSkills bool, names []string) {
 
 // buildSubagentSection renders the orchestrator block; n is the per-turn task() cap.
 func buildSubagentSection(n int) string {
-	availableSubagents := ""
+	// Listing the deep-agent built-in keeps this block from rendering an empty
+	// "Available Subagents:" header when no named profiles are configured.
+	availableSubagents := "- `general-purpose`: a fresh deep-agent instance with the same toolbelt; use it for context-isolated parallel research / extraction tasks."
 	directToolExamples := "ls, read_file, web_search, etc."
 	directExecutionExample := "# User asks: \"Read the README\"\n# Thinking: Single straightforward file read\n# → Execute directly\n\nread_file(\"workspace/README.md\")  # Direct execution, not task()"
 
