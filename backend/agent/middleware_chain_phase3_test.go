@@ -28,7 +28,7 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 	}
 
 	cfg.RootDir = t.TempDir()
-	chain := GetChatModelMiddlewares(context.Background(), "default", true, cfg, nil)
+	chain := GetChatModelMiddlewares(context.Background(), "default", true, nil, cfg, nil)
 
 	wantOrder := []reflect.Type{
 		reflect.TypeOf(&middlewares.AgentState{}),
@@ -42,6 +42,7 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 		reflect.TypeOf(&middlewares.DeferredTools{}),
 		reflect.TypeOf(&middlewares.SubagentLimit{}),
 		reflect.TypeOf(&middlewares.HITL{}),
+		reflect.TypeOf(&middlewares.PlanReminder{}),
 		reflect.TypeOf(&middlewares.TodoReminder{}),
 		reflect.TypeOf(&middlewares.Trace{}),
 		reflect.TypeOf(&middlewares.Clarification{}),
@@ -61,13 +62,37 @@ func TestGetChatModelMiddlewares_GatedMiddlewares(t *testing.T) {
 			t.Fatalf("slot %d: got %v, want %v", i, got, want)
 		}
 	}
+}
 
-	agentMWs := GetAgentMiddleWares(true)
-	if len(agentMWs) != 1 {
-		t.Fatalf("expected 1 AgentMiddleware (Todo), got %d", len(agentMWs))
+// PlanReminder must run BEFORE TodoReminder so it modifies the agent's
+// own system message instead of the todo reminder's prepended one.
+// Drift here = plan-mode preamble grafted onto the wrong system msg.
+func TestGetChatModelMiddlewares_PlanReminderBeforeTodoReminder(t *testing.T) {
+	cfg := &config.Config{
+		Models: map[string]*config.ModelConfig{
+			"primary": {Name: "primary", Provider: "kimi"},
+		},
 	}
-	if agentMWs[0].AdditionalInstruction == "" {
-		t.Fatalf("Todo middleware should set AdditionalInstruction")
+	cfg.RootDir = t.TempDir()
+	chain := GetChatModelMiddlewares(context.Background(), "default", false, func() bool { return false }, cfg, nil)
+
+	planIdx, todoIdx := -1, -1
+	for i, mw := range chain {
+		switch mw.(type) {
+		case *middlewares.PlanReminder:
+			planIdx = i
+		case *middlewares.TodoReminder:
+			todoIdx = i
+		}
+	}
+	if planIdx < 0 {
+		t.Fatalf("PlanReminder missing from chain")
+	}
+	if todoIdx < 0 {
+		t.Fatalf("TodoReminder missing from chain")
+	}
+	if planIdx >= todoIdx {
+		t.Fatalf("PlanReminder index %d must come before TodoReminder index %d", planIdx, todoIdx)
 	}
 }
 
@@ -79,7 +104,7 @@ func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
 		},
 	}
 
-	chain := GetChatModelMiddlewares(context.Background(), "default", false, cfg, nil)
+	chain := GetChatModelMiddlewares(context.Background(), "default", false, nil, cfg, nil)
 	for _, mw := range chain {
 		switch mw.(type) {
 		case *middlewares.Memory,
@@ -89,9 +114,5 @@ func TestGetChatModelMiddlewares_NoGatesEmittedWhenDisabled(t *testing.T) {
 			*middlewares.HITL:
 			t.Fatalf("gated middleware %T present without flag", mw)
 		}
-	}
-
-	if got := len(GetAgentMiddleWares(false)); got != 0 {
-		t.Fatalf("expected no AgentMiddlewares without plan mode, got %d", got)
 	}
 }

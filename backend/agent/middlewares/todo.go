@@ -1,10 +1,9 @@
 package middlewares
 
-import (
-	"github.com/cloudwego/eino/adk"
-)
-
-// TodoInstruction is appended to the system prompt when plan mode is on.
+// TodoInstruction is the plan-mode preamble appended to the system
+// prompt when plan mode is on. PlanReminder middleware injects it
+// per-turn at runtime; constant lives here because TodoReminder also
+// references the <plan_mode> tag for idempotency.
 const TodoInstruction = `
 
 <plan_mode>
@@ -20,11 +19,3 @@ truth for the task plan:
 - Skip the tool entirely for trivial requests (< 3 steps); using it for
   small tasks wastes tokens and clutters the user view.
 </plan_mode>`
-
-// NewTodo returns the AgentMiddleware that adds the plan-mode preamble.
-// Only attach when RuntimeContext.IsPlanMode is true.
-func NewTodo() adk.AgentMiddleware {
-	return adk.AgentMiddleware{
-		AdditionalInstruction: TodoInstruction,
-	}
-}

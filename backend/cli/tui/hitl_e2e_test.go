@@ -27,7 +27,10 @@ func (stubRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk ein
 }
 func (stubRuntime) ClearHistory()                    {}
 func (stubRuntime) ReloadSoul(context.Context) error { return nil }
-func (stubRuntime) Name() string                     { return "stub-model" }
+func (stubRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) {
+	return on, nil
+}
+func (stubRuntime) Name() string { return "stub-model" }
 
 // runHITLE2E spins up the TUI inside a real *tea.Program (via teatest)
 // with installTUIApproval wired to that program, kicks off a goroutine

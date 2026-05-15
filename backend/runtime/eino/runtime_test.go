@@ -52,7 +52,7 @@ func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
 		t.Fatalf("NewDeepAgentRuntime() error = %v", err)
 	}
 
-	_, err = runtime.Execute(context.Background(), "   ")
+	_, err = runtime.ExecuteStream(context.Background(), "   ", nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}

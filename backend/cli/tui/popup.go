@@ -5,10 +5,10 @@ import (
 	"strings"
 )
 
-// popupMaxRows caps visible rows. Current pool is 7; 8 leaves headroom
+// popupMaxRows caps visible rows. Current pool is 9; 10 leaves headroom
 // without pagination — bump this if the registry grows, then revisit
 // scrolling.
-const popupMaxRows = 8
+const popupMaxRows = 10
 
 // renderPopup returns the slash-command candidate menu, or "" when the
 // popup is hidden (no '/', or arg region, or zero matches). Callers can

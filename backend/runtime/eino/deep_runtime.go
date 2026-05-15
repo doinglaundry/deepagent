@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
@@ -18,8 +19,6 @@ import (
 )
 
 type DeepAgentRuntime struct {
-	// cfg is kept for ClearHistory's checkpoint path; every other knob
-	// is a function argument to agent.MakeLeadAgent at construction time.
 	cfg                 *config.Config
 	modelName           string
 	runner              *adk.Runner
@@ -27,29 +26,27 @@ type DeepAgentRuntime struct {
 	pendingCheckpointID string
 	history             []*schema.Message
 	maxHistoryTurns     int
-	// trace is the lead agent's debug-trace; nil-safe; used only by ClearHistory.
-	trace *middlewares.Trace
+	trace               *middlewares.Trace
+	planMode            atomic.Bool
 }
 
-// NewDeepAgentRuntime builds the lead agent and the adk.Runner; history /
-// checkpoint / streaming live here (REPL-owned).
 func NewDeepAgentRuntime(ctx context.Context, cfg *config.Config) (Runtime, error) {
-	runner, trace, err := buildLeadRunner(ctx, cfg)
+	r := &DeepAgentRuntime{
+		cfg:             cfg,
+		modelName:       cfg.DefaultModel,
+		maxHistoryTurns: 20,
+	}
+	runner, trace, err := buildLeadRunner(ctx, cfg, r.planMode.Load)
 	if err != nil {
 		return nil, err
 	}
-
-	return &DeepAgentRuntime{
-		cfg:             cfg,
-		modelName:       cfg.DefaultModel,
-		runner:          runner,
-		maxHistoryTurns: 20,
-		trace:           trace,
-	}, nil
+	r.runner = runner
+	r.trace = trace
+	return r, nil
 }
 
-func buildLeadRunner(ctx context.Context, cfg *config.Config) (*adk.Runner, *middlewares.Trace, error) {
-	leadAgent, trace, err := agent.MakeLeadAgent(ctx, "default", false, true, cfg)
+func buildLeadRunner(ctx context.Context, cfg *config.Config, getPlanMode func() bool) (*adk.Runner, *middlewares.Trace, error) {
+	leadAgent, trace, err := agent.MakeLeadAgent(ctx, "default", true, getPlanMode, cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build lead agent: %w", err)
 	}
@@ -60,10 +57,6 @@ func buildLeadRunner(ctx context.Context, cfg *config.Config) (*adk.Runner, *mid
 		CheckPointStore: checkpoint.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "checkpoints")),
 	})
 	return runner, trace, nil
-}
-
-func (r *DeepAgentRuntime) Execute(ctx context.Context, prompt string) (Result, error) {
-	return r.ExecuteStream(ctx, prompt, nil)
 }
 
 func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk StreamChunkHandler) (Result, error) {
@@ -78,14 +71,15 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 	if len(r.history) > r.maxHistoryTurns*2 {
 		r.history = r.history[len(r.history)-r.maxHistoryTurns*2:]
 	}
-	msgs := make([]*schema.Message, len(r.history)+1)
-	copy(msgs, r.history)
-	msgs[len(msgs)-1] = schema.UserMessage(prompt)
+
+	messages := make([]*schema.Message, len(r.history)+1)
+	copy(messages, r.history)
+	messages[len(messages)-1] = schema.UserMessage(prompt)
 	runner := r.runner
 	r.mu.Unlock()
 
 	checkpointID := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
-	iter := runner.Run(ctx, msgs, adk.WithCheckPointID(checkpointID))
+	iter := runner.Run(ctx, messages, adk.WithCheckPointID(checkpointID))
 	summary, err := collectAgentEventsWithSink(iter, onChunk)
 	if err != nil {
 		return Result{}, err
@@ -119,7 +113,7 @@ func (r *DeepAgentRuntime) ClearHistory() {
 }
 
 func (r *DeepAgentRuntime) ReloadSoul(ctx context.Context) error {
-	runner, trace, err := buildLeadRunner(ctx, r.cfg)
+	runner, trace, err := buildLeadRunner(ctx, r.cfg, r.planMode.Load)
 	if err != nil {
 		return err
 	}
@@ -134,6 +128,16 @@ func (r *DeepAgentRuntime) ReloadSoul(ctx context.Context) error {
 		trace.ResetTurn()
 	}
 	return nil
+}
+
+// SetPlanMode flips the plan-mode flag read by PlanReminder middleware.
+// O(1) — no agent rebuild, no history clear, no mutex; takes effect on
+// the next BeforeModelRewriteState pass. ctx unused but kept on the
+// signature so a future implementation that does I/O (load a yaml
+// override, etc.) doesn't have to break callers.
+func (r *DeepAgentRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) {
+	r.planMode.Store(on)
+	return on, nil
 }
 
 func (r *DeepAgentRuntime) Name() string {

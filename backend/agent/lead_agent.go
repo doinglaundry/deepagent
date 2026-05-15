@@ -13,31 +13,33 @@ import (
 	"eino-cli/backend/config"
 )
 
-// MakeLeadAgent assembles the deep agent for rt.AgentName and returns the
-// lead's *Trace alongside it. The trace pointer is what DeepAgentRuntime
-// uses to reset the turn counter on /clear; the *Trace may be nil.
+// MakeLeadAgent assembles the deep agent for rt.AgentName and returns
+// the lead's *Trace alongside it. The trace pointer is what
+// DeepAgentRuntime uses to reset the turn counter on /clear; *Trace may
+// be nil.
+//
+// getPlanMode is read by the PlanReminder middleware on every model
+// turn — toggling plan mode is just a flag flip on the runtime side, no
+// agent rebuild. nil is treated as "always off" (subagents inherit
+// this branch).
 func MakeLeadAgent(
 	ctx context.Context,
 	agentName string,
-	IsPlanMode bool,
 	IsSubagentEnabled bool,
+	getPlanMode func() bool,
 	cfg *config.Config,
 ) (adk.ResumableAgent, *middlewares.Trace, error) {
 
 	agentConfig := cfg.Agents[agentName]
-
-	modelName := agentConfig.Model
-
-	modelConfig := cfg.Models[modelName]
+	modelConfig := cfg.Models[agentConfig.Model]
 
 	chatModel, err := buildChatModel(ctx, modelConfig)
 	if err != nil {
 		return nil, nil, err
 	}
-
 	chatModel = wrapErrorHandling(chatModel, cfg.ErrorHandling)
 
-	handlers := GetChatModelMiddlewares(ctx, agentName, IsSubagentEnabled, cfg, chatModel)
+	handlers := GetChatModelMiddlewares(ctx, agentName, IsSubagentEnabled, getPlanMode, cfg, chatModel)
 
 	deepCfg := &deep.Config{
 		Name:                   agentName,
@@ -47,7 +49,6 @@ func MakeLeadAgent(
 		MaxIteration:           defaultIterationLimit(agentConfig),
 		WithoutGeneralSubAgent: !IsSubagentEnabled,
 		WithoutWriteTodos:      false,
-		Middlewares:            GetAgentMiddleWares(IsPlanMode),
 		Handlers:               handlers,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{

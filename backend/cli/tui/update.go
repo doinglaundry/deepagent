@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -509,6 +510,8 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		return nil, true
 	case "debug":
 		return m.handleDebugCmd(text), true
+	case "plan":
+		return m.handlePlanCmd(text), true
 	case "bootstrap":
 		return m.handleBootstrapCmd(), true
 	case "reload":
@@ -549,6 +552,39 @@ func (m *Model) handleTodosCmd(text string) tea.Cmd {
 		state = "open"
 	}
 	m.pushMessage("system", fmt.Sprintf("todos panel = %s", state))
+	return nil
+}
+
+// handlePlanCmd processes "/plan [on|off|toggle]"; empty arg toggles.
+// Forwards to the runtime's atomic flip and mirrors the result into
+// m.planMode for footer / system-message rendering. Inline (not a
+// tea.Cmd) because SetPlanMode is O(1) — async would only buy a
+// rendering frame nobody asked for.
+func (m *Model) handlePlanCmd(text string) tea.Cmd {
+	arg := strings.TrimSpace(strings.TrimPrefix(text, "/plan"))
+	want := m.planMode
+	switch strings.ToLower(arg) {
+	case "", "toggle":
+		want = !m.planMode
+	case "on":
+		want = true
+	case "off":
+		want = false
+	default:
+		m.pushMessage("system", "usage: /plan [on|off|toggle]")
+		return nil
+	}
+	got, err := m.rt.SetPlanMode(context.Background(), want)
+	if err != nil {
+		m.pushMessage("system", fmt.Sprintf("plan: %v", err))
+		return nil
+	}
+	m.planMode = got
+	state := "off"
+	if got {
+		state = "on"
+	}
+	m.pushMessage("system", fmt.Sprintf("plan mode = %s", state))
 	return nil
 }
 

@@ -29,6 +29,10 @@ func (r *reloadRuntime) ReloadSoul(context.Context) error {
 	return nil
 }
 
+func (r *reloadRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) {
+	return on, nil
+}
+
 func (r *reloadRuntime) Name() string { return "stub-model" }
 
 func TestReloadCommandVisibleInPopupAndHelp(t *testing.T) {

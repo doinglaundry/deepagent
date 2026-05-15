@@ -23,6 +23,7 @@ func GetChatModelMiddlewares(
 	ctx context.Context,
 	agentName string,
 	isSubagentEnabled bool,
+	getPlanMode func() bool,
 	cfg *config.Config,
 	chatModel model.BaseChatModel,
 ) (middlewareList []adk.ChatModelAgentMiddleware) {
@@ -119,6 +120,13 @@ func GetChatModelMiddlewares(
 		}
 	}
 
+	// PlanReminder must run BEFORE TodoReminder. PlanReminder mutates
+	// msgs[0] (the agent's own system instruction) in place; TodoReminder
+	// later prepends a separate system message at index 0. If the order
+	// flipped, PlanReminder would target the todo reminder instead of
+	// the agent instruction.
+	middlewareList = append(middlewareList, middlewares.NewPlanReminder(getPlanMode))
+
 	// TodoReminder must run BEFORE Trace so the trace captures the raw
 	// state.Messages (with reminder already injected when applicable),
 	// keeping debug output an honest mirror of what the model sees.
@@ -128,13 +136,5 @@ func GetChatModelMiddlewares(
 	// the raw assistant message before Clarification's in-place rewrite.
 	middlewareList = append(middlewareList, middlewares.NewTrace(agentName))
 	middlewareList = append(middlewareList, middlewares.NewClarification())
-	return
-}
-
-func GetAgentMiddleWares(IsPlanMode bool) (res []adk.AgentMiddleware) {
-	res = make([]adk.AgentMiddleware, 0)
-	if IsPlanMode {
-		res = append(res, middlewares.NewTodo())
-	}
 	return
 }

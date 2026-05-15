@@ -49,7 +49,7 @@ func TestMemory_E2E_AfterModelHookWritesPerAgentFile(t *testing.T) {
 	})
 	chat := &fakeChatModel{response: resp}
 
-	chain := GetChatModelMiddlewares(context.Background(), "alice", false, cfg, chat)
+	chain := GetChatModelMiddlewares(context.Background(), "alice", false, nil, cfg, chat)
 
 	var memMW *middlewares.Memory
 	for _, mw := range chain {
@@ -114,7 +114,7 @@ func TestMemory_E2E_DisabledLeavesChainAndDiskUntouched(t *testing.T) {
 		Memory: config.Memory{Enabled: false},
 	}
 	chat := &fakeChatModel{response: "{}"}
-	chain := GetChatModelMiddlewares(context.Background(), "alice", false, cfg, chat)
+	chain := GetChatModelMiddlewares(context.Background(), "alice", false, nil, cfg, chat)
 
 	for _, mw := range chain {
 		if _, ok := mw.(*middlewares.Memory); ok {

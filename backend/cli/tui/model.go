@@ -94,6 +94,12 @@ type Model struct {
 	// debug toggles inline LLM input/output panels via /debug.
 	debug bool
 
+	// planMode mirrors the runtime-side flag so the footer and /plan
+	// echo can read it without round-tripping through the runtime. The
+	// runtime stays the source of truth (atomic.Bool); planSetMsg
+	// updates this view after every successful SetPlanMode call.
+	planMode bool
+
 	toolBlocks        []*toolBlock
 	toolBlocksEnabled bool
 	lastSeenMsgCount  int
