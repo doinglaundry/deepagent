@@ -322,6 +322,7 @@ const systemPromptTemplateRaw = `
 </role>
 
 {soul}
+{agents_md}
 {memory_context}
 
 <thinking_style>
@@ -518,6 +519,7 @@ func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Confi
 	replacer := strings.NewReplacer(
 		"{agent_name}", agentName,
 		"{soul}", loadSoulPrompt(cfg),
+		"{agents_md}", loadAgentsMDPrompt(cfg),
 		"{memory_context}", getMemoryPrompt(agentName, memorystore.NewStoreFromConfig(cfg), cfg.Memory),
 		"{subagent_thinking}", GetSubagentThinking(IsSubagentEnabled, n),
 		"{skills_section}", GetSkillsPromptSection(skillsFromProfile(cfg.Agents[agentName]), cfg, cfg.SkillEvolution.Enabled),
@@ -545,6 +547,27 @@ func loadSoulPrompt(cfg *config.Config) string {
 		return ""
 	}
 	return "<soul>\n" + body + "\n</soul>"
+}
+
+// loadAgentsMDPrompt mirrors loadSoulPrompt — same shape, different
+// file. AGENTS.md is the Cursor / Codex project-conventions doc;
+// semantically project metadata, lifecycle identical to soul.md (read
+// once at agent build, picked up by /reload). Missing file / empty
+// body / nil cfg → empty string, which the template collapses without
+// leaving a blank line.
+func loadAgentsMDPrompt(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(cfg.RootDir, "AGENTS.md"))
+	if err != nil {
+		return ""
+	}
+	body := strings.TrimSpace(string(data))
+	if body == "" {
+		return ""
+	}
+	return "<workspace_conventions>\n" + body + "\n</workspace_conventions>"
 }
 
 func GetSubagentThinking(IsSubagentEnabled bool, n int) string {

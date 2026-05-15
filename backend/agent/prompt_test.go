@@ -114,3 +114,58 @@ func TestLoadSoulPromptMissingFile(t *testing.T) {
 		t.Fatalf("missing soul should be empty, got %q", got)
 	}
 }
+
+// loadAgentsMDPrompt mirrors loadSoulPrompt in shape; same nil / missing
+// / present matrix locks the parity in.
+func TestLoadAgentsMDPromptWrapsContent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"),
+		[]byte("hello rules\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := loadAgentsMDPrompt(&config.Config{RootDir: root})
+	want := "<workspace_conventions>\nhello rules\n</workspace_conventions>"
+	if got != want {
+		t.Fatalf("loadAgentsMDPrompt() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadAgentsMDPromptMissingFile(t *testing.T) {
+	if got := loadAgentsMDPrompt(&config.Config{RootDir: t.TempDir()}); got != "" {
+		t.Fatalf("missing AGENTS.md should be empty, got %q", got)
+	}
+}
+
+func TestLoadAgentsMDPromptNilCfg(t *testing.T) {
+	if got := loadAgentsMDPrompt(nil); got != "" {
+		t.Fatalf("nil cfg must be empty (defensive zero-value), got %q", got)
+	}
+}
+
+// AGENTS.md present in cfg.RootDir → system prompt embeds the
+// <workspace_conventions> wrapper. Missing → no wrapper anywhere
+// (template collapses {agents_md} → "").
+func TestGetSystemPrompt_AgentsMDInjected(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"),
+		[]byte("never use sed; prefer StrReplace\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{RootDir: root}
+	out := GetSystemPrompt("default", false, cfg)
+
+	if !strings.Contains(out, "<workspace_conventions>") {
+		t.Fatalf("expected <workspace_conventions> in prompt:\n%s", out)
+	}
+	if !strings.Contains(out, "never use sed; prefer StrReplace") {
+		t.Fatalf("AGENTS.md content missing from prompt:\n%s", out)
+	}
+}
+
+func TestGetSystemPrompt_NoAgentsMDOmitsSection(t *testing.T) {
+	cfg := &config.Config{RootDir: t.TempDir()}
+	out := GetSystemPrompt("default", false, cfg)
+	if strings.Contains(out, "<workspace_conventions>") {
+		t.Fatalf("missing AGENTS.md must not produce wrapper:\n%s", out)
+	}
+}
