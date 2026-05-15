@@ -177,6 +177,64 @@ func TestTraceEvent_TodosFieldRoundtrip(t *testing.T) {
 	}
 }
 
+// TokenSnapshot, when wired, fires a separate TracePhaseTokens event on
+// every After hook. Pointer-only Tokens field stays nil for the other
+// phases (Before / After / Todos), confirming the by-value channel send
+// stays cheap for non-token events.
+func TestTrace_EmitsTokensPhaseWhenSnapshotWired(t *testing.T) {
+	tr := NewTrace(testAgentName)
+	tr.TokenSnapshot = func() TokenUsageStats {
+		return TokenUsageStats{PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150, Calls: 1}
+	}
+	rec := &recordingConsumer{}
+	ctx := WithTraceConsumer(context.Background(), rec)
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{schema.AssistantMessage("hi", nil)}}
+
+	if _, _, err := tr.AfterModelRewriteState(ctx, state, nil); err != nil {
+		t.Fatalf("After: %v", err)
+	}
+
+	var tokens *TraceEvent
+	for i := range rec.events {
+		if rec.events[i].Phase == TracePhaseTokens {
+			tokens = &rec.events[i]
+		}
+	}
+	if tokens == nil {
+		t.Fatalf("expected TracePhaseTokens event, got phases: %v", phaseList(rec.events))
+	}
+	if tokens.Tokens == nil || tokens.Tokens.TotalTokens != 150 {
+		t.Fatalf("Tokens.TotalTokens = %v, want 150", tokens.Tokens)
+	}
+}
+
+// nil snapshot → no TracePhaseTokens event. This is the production
+// path for cfg.TokenUsage.Enabled = false; the wire-up in
+// GetChatModelMiddlewares leaves TokenSnapshot zero-valued.
+func TestTrace_TokensPhaseSkippedWithoutSnapshot(t *testing.T) {
+	tr := NewTrace(testAgentName)
+	rec := &recordingConsumer{}
+	ctx := WithTraceConsumer(context.Background(), rec)
+	state := &adk.ChatModelAgentState{Messages: []*schema.Message{schema.AssistantMessage("hi", nil)}}
+
+	if _, _, err := tr.AfterModelRewriteState(ctx, state, nil); err != nil {
+		t.Fatalf("After: %v", err)
+	}
+	for _, ev := range rec.events {
+		if ev.Phase == TracePhaseTokens {
+			t.Fatalf("unexpected TracePhaseTokens event with nil snapshot: %+v", ev)
+		}
+	}
+}
+
+func phaseList(events []TraceEvent) []int {
+	out := make([]int, len(events))
+	for i, ev := range events {
+		out[i] = ev.Phase
+	}
+	return out
+}
+
 func TestFindTrace(t *testing.T) {
 	tr := NewTrace(testAgentName)
 

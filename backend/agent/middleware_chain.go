@@ -67,8 +67,12 @@ func GetChatModelMiddlewares(
 		middlewareList = append(middlewareList, middlewares.NewMemory(hooks))
 	}
 
+	// tokenUsage stays referenceable so the Trace below can pull
+	// Snapshot() into TraceEvent.Tokens; nil when disabled.
+	var tokenUsage *middlewares.TokenUsage
 	if cfg.TokenUsage.Enabled {
-		middlewareList = append(middlewareList, middlewares.NewTokenUsage())
+		tokenUsage = middlewares.NewTokenUsage()
+		middlewareList = append(middlewareList, tokenUsage)
 	}
 
 	if cfg.ToolSearch.Enabled {
@@ -134,7 +138,11 @@ func GetChatModelMiddlewares(
 
 	// Trace must run BEFORE Clarification so its After hook captures
 	// the raw assistant message before Clarification's in-place rewrite.
-	middlewareList = append(middlewareList, middlewares.NewTrace(agentName))
+	trace := middlewares.NewTrace(agentName)
+	if tokenUsage != nil {
+		trace.TokenSnapshot = tokenUsage.Snapshot
+	}
+	middlewareList = append(middlewareList, trace)
 	middlewareList = append(middlewareList, middlewares.NewClarification())
 	return
 }
