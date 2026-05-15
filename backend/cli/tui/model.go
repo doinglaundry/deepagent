@@ -106,6 +106,12 @@ type Model struct {
 	// hides the segment in that case so empty sessions stay quiet.
 	tokenTotal int64
 
+	// shimmerOffset is advanced once per spinner.TickMsg while a turn is
+	// in flight; renderStreamPanel reads it to position the highlight
+	// window over the verb. Plain int — wraps around 5800 mn years at
+	// 100ms cadence so no overflow guard needed.
+	shimmerOffset int
+
 	toolBlocks        []*toolBlock
 	toolBlocksEnabled bool
 	lastSeenMsgCount  int

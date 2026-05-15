@@ -36,6 +36,10 @@ var (
 	// Thinking indicator: bright magenta "✶", bold-white verb, dim tag.
 	thinkingMarkerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
 	thinkingPresentStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	// Shimmer overlay: bright magenta on bold to lift the moving window
+	// out of the bold-white base. Reusing color "13" (primary accent)
+	// keeps the highlight in the same colour family as the "✶" marker.
+	thinkingShimmerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
 	// Scrollback summary "✻ Verbed for Ns": faint magenta so it reads as
 	// a closed chapter rather than competing with the next prompt.
 	thinkingSummaryStyle = lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("13"))

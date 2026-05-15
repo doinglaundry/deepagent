@@ -49,10 +49,12 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 		}
 		// Spinner is no longer rendered (the thinking indicator owns
 		// the line), but its 100ms tick still drives elapsed-second
-		// refresh — cheaper than spinning up a dedicated tea.Tick.
+		// refresh and shimmer-window advance — cheaper than spinning
+		// up a dedicated tea.Tick.
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		m.elapsed = time.Since(m.streamStart).Round(time.Second)
+		m.shimmerOffset++
 		return m, cmd
 	}
 

@@ -174,9 +174,11 @@ func (m *Model) renderHeader() string {
 func (m *Model) renderStreamPanel() string {
 	if m.streaming || m.bootstrapLoading {
 		secs := int(m.elapsed.Seconds())
+		verb := renderShimmer(m.verbPresent+"…", m.shimmerOffset,
+			thinkingPresentStyle, thinkingShimmerStyle)
 		return fmt.Sprintf("%s %s %s",
 			thinkingMarkerStyle.Render("✶"),
-			thinkingPresentStyle.Render(m.verbPresent+"…"),
+			verb,
 			dimStyle.Render(fmt.Sprintf("(%ds · thinking)", secs)),
 		)
 	}
