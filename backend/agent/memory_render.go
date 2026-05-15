@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	memorystore "eino-cli/backend/memory/store"
 )
@@ -106,8 +107,19 @@ func renderFactsSection(facts []memorystore.Fact, runningTokens, maxTokens int) 
 		return "", runningTokens
 	}
 
-	sorted := make([]memorystore.Fact, len(facts))
-	copy(sorted, facts)
+	nowISO := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	live := make([]memorystore.Fact, 0, len(facts))
+	for _, f := range facts {
+		if !f.IsExpired(nowISO) {
+			live = append(live, f)
+		}
+	}
+	if len(live) == 0 {
+		return "", runningTokens
+	}
+
+	sorted := make([]memorystore.Fact, len(live))
+	copy(sorted, live)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Confidence > sorted[j].Confidence })
 
 	lines := make([]string, 0, len(sorted))

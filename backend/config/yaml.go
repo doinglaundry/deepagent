@@ -106,14 +106,16 @@ type Summarization struct {
 }
 
 type Memory struct {
-	Enabled                 bool    `yaml:"enabled"`
-	StoragePath             string  `yaml:"storage_path"`
-	DebounceSeconds         int     `yaml:"debounce_seconds"`
-	ModelName               string  `yaml:"model_name"`
-	MaxFacts                int     `yaml:"max_facts"`
-	FactConfidenceThreshold float64 `yaml:"fact_confidence_threshold"`
-	InjectionEnabled        bool    `yaml:"injection_enabled"`
-	MaxInjectionTokens      int     `yaml:"max_injection_tokens"`
+	Enabled                   bool    `yaml:"enabled"`
+	StoragePath               string  `yaml:"storage_path"`
+	DebounceSeconds           int     `yaml:"debounce_seconds"`
+	ModelName                 string  `yaml:"model_name"`
+	MaxFacts                  int     `yaml:"max_facts"`
+	FactConfidenceThreshold   float64 `yaml:"fact_confidence_threshold"`
+	InjectionEnabled          bool    `yaml:"injection_enabled"`
+	MaxInjectionTokens        int     `yaml:"max_injection_tokens"`
+	DedupEnabled              bool    `yaml:"dedup_enabled"`
+	EpisodicDefaultTTLSeconds int     `yaml:"episodic_default_ttl_seconds"`
 }
 
 type AgentsAPI struct {

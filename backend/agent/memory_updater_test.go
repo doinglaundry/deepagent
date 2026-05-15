@@ -378,3 +378,168 @@ func TestBuildUpdatePrompt_SubstitutesPlaceholders(t *testing.T) {
 		t.Errorf("conversation not embedded")
 	}
 }
+
+func TestNormalizeFactContent(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"User Loves Go", "user loves go"},
+		{"  User   Loves   Go  ", "user loves go"},
+		{"USER LOVES GO", "user loves go"},
+		{"\tUser\nLoves\tGo", "user loves go"},
+		{"用户对 Git 感兴趣", "用户对 git 感兴趣"},
+	}
+	for _, c := range cases {
+		got := normalizeFactContent(c.in)
+		if got != c.want {
+			t.Errorf("normalizeFactContent(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestApplyUpdate_DedupMergesIdenticalContent(t *testing.T) {
+	current := memorystore.GetEmptyMemoryData()
+	current.Facts = []memorystore.Fact{
+		{ID: "fact_old", Content: "用户对 Git 感兴趣", Confidence: 0.80, Kind: memorystore.FactKindEnduring},
+	}
+	cfg := enabledMemoryCfg()
+	cfg.DedupEnabled = true
+
+	upd := updatePayload{
+		NewFacts: []factUpdate{
+			{Content: "用户对 git 感兴趣", Category: "knowledge", Confidence: 0.70},
+		},
+	}
+	out := applyUpdate(current, upd, cfg)
+	if len(out.Facts) != 1 {
+		t.Fatalf("expected dedup → 1 fact, got %d", len(out.Facts))
+	}
+	want := 0.85
+	if got := out.Facts[0].Confidence; got < want-1e-6 || got > want+1e-6 {
+		t.Errorf("merged confidence = %v, want %v (max(0.80,0.70)+0.05)", got, want)
+	}
+}
+
+func TestApplyUpdate_DedupRespectsCeiling(t *testing.T) {
+	current := memorystore.GetEmptyMemoryData()
+	current.Facts = []memorystore.Fact{
+		{ID: "fact_high", Content: "x", Confidence: 0.97, Kind: memorystore.FactKindEnduring},
+	}
+	cfg := enabledMemoryCfg()
+	cfg.DedupEnabled = true
+
+	upd := updatePayload{
+		NewFacts: []factUpdate{{Content: "x", Confidence: 0.96}},
+	}
+	out := applyUpdate(current, upd, cfg)
+	if len(out.Facts) != 1 {
+		t.Fatalf("expected 1 merged fact, got %d", len(out.Facts))
+	}
+	if out.Facts[0].Confidence > 0.99 {
+		t.Errorf("merged confidence %v exceeds 0.99 cap", out.Facts[0].Confidence)
+	}
+}
+
+func TestApplyUpdate_DedupDisabledAppendsBoth(t *testing.T) {
+	current := memorystore.GetEmptyMemoryData()
+	current.Facts = []memorystore.Fact{
+		{ID: "fact_old", Content: "用户对 Git 感兴趣", Confidence: 0.80},
+	}
+	cfg := enabledMemoryCfg()
+	cfg.DedupEnabled = false
+
+	upd := updatePayload{
+		NewFacts: []factUpdate{{Content: "用户对 git 感兴趣", Confidence: 0.70}},
+	}
+	out := applyUpdate(current, upd, cfg)
+	if len(out.Facts) != 2 {
+		t.Errorf("DedupEnabled=false should append, got %d facts: %+v", len(out.Facts), out.Facts)
+	}
+}
+
+func TestApplyUpdate_KindDefaultsToEnduring(t *testing.T) {
+	current := memorystore.GetEmptyMemoryData()
+	cfg := enabledMemoryCfg()
+
+	upd := updatePayload{
+		NewFacts: []factUpdate{{Content: "no kind", Confidence: 0.9}},
+	}
+	out := applyUpdate(current, upd, cfg)
+	if len(out.Facts) != 1 {
+		t.Fatalf("expected 1 fact, got %d", len(out.Facts))
+	}
+	if out.Facts[0].Kind != memorystore.FactKindEnduring {
+		t.Errorf("missing kind should default to %q, got %q", memorystore.FactKindEnduring, out.Facts[0].Kind)
+	}
+	if out.Facts[0].ExpiresAt != "" {
+		t.Errorf("enduring fact must not get ExpiresAt, got %q", out.Facts[0].ExpiresAt)
+	}
+}
+
+func TestApplyUpdate_EpisodicTTLBackfilled(t *testing.T) {
+	current := memorystore.GetEmptyMemoryData()
+	cfg := enabledMemoryCfg()
+	cfg.EpisodicDefaultTTLSeconds = 3600
+
+	upd := updatePayload{
+		NewFacts: []factUpdate{
+			{Content: "find changelog line count", Confidence: 0.85, Kind: memorystore.FactKindEpisodic},
+		},
+	}
+	out := applyUpdate(current, upd, cfg)
+	if len(out.Facts) != 1 {
+		t.Fatalf("expected 1 fact, got %d", len(out.Facts))
+	}
+	if out.Facts[0].Kind != memorystore.FactKindEpisodic {
+		t.Errorf("kind not preserved: %q", out.Facts[0].Kind)
+	}
+	if out.Facts[0].ExpiresAt == "" {
+		t.Fatalf("episodic should have backfilled ExpiresAt")
+	}
+
+	parsed, err := time.Parse("2006-01-02T15:04:05Z", out.Facts[0].ExpiresAt)
+	if err != nil {
+		t.Fatalf("ExpiresAt not ISO-8601: %q (%v)", out.Facts[0].ExpiresAt, err)
+	}
+	delta := time.Until(parsed)
+	if delta < 30*time.Minute || delta > 90*time.Minute {
+		t.Errorf("ExpiresAt = now+%v, want ≈ now+1h", delta)
+	}
+}
+
+func TestApplyUpdate_EpisodicNoTTLNoBackfill(t *testing.T) {
+	current := memorystore.GetEmptyMemoryData()
+	cfg := enabledMemoryCfg()
+	cfg.EpisodicDefaultTTLSeconds = 0
+
+	upd := updatePayload{
+		NewFacts: []factUpdate{{Content: "x", Confidence: 0.9, Kind: memorystore.FactKindEpisodic}},
+	}
+	out := applyUpdate(current, upd, cfg)
+	if len(out.Facts) != 1 {
+		t.Fatalf("expected 1 fact, got %d", len(out.Facts))
+	}
+	if out.Facts[0].ExpiresAt != "" {
+		t.Errorf("TTL=0 must not backfill, got %q", out.Facts[0].ExpiresAt)
+	}
+}
+
+func TestApplyUpdate_SweepRemovesExpiredEpisodic(t *testing.T) {
+	current := memorystore.GetEmptyMemoryData()
+	current.Facts = []memorystore.Fact{
+		{ID: "keep_enduring", Content: "long-term", Confidence: 0.9, Kind: memorystore.FactKindEnduring},
+		{ID: "drop_expired", Content: "old episodic", Confidence: 0.9, Kind: memorystore.FactKindEpisodic, ExpiresAt: "2020-01-01T00:00:00Z"},
+		{ID: "keep_future", Content: "fresh episodic", Confidence: 0.9, Kind: memorystore.FactKindEpisodic, ExpiresAt: "2099-01-01T00:00:00Z"},
+	}
+	cfg := enabledMemoryCfg()
+
+	out := applyUpdate(current, updatePayload{}, cfg)
+	if len(out.Facts) != 2 {
+		t.Fatalf("expected sweep to drop 1 expired episodic, got %d facts", len(out.Facts))
+	}
+	for _, f := range out.Facts {
+		if f.ID == "drop_expired" {
+			t.Errorf("expired episodic still present: %+v", f)
+		}
+	}
+}

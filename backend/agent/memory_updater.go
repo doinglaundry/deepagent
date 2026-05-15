@@ -134,7 +134,31 @@ type factUpdate struct {
 	Content     string  `json:"content"`
 	Category    string  `json:"category"`
 	Confidence  float64 `json:"confidence"`
+	Kind        string  `json:"kind,omitempty"`
+	ExpiresAt   string  `json:"expiresAt,omitempty"`
 	SourceError string  `json:"sourceError,omitempty"`
+}
+
+// normalizeFactContent collapses trivial wording variants (case + leading
+// / trailing / inner whitespace) so write-side dedup can merge duplicates
+// like "用户对 Git 感兴趣" vs "用户对 git 感兴趣". Intentionally minimal:
+// no punctuation / stopword stripping, to avoid merging facts that are
+// only superficially similar.
+func normalizeFactContent(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// findDuplicateFact returns the index of the first fact whose normalized
+// content matches; -1 when nothing matches. O(n); n stays well under 100
+// per cfg.MaxFacts so an index is overkill.
+func findDuplicateFact(facts []memorystore.Fact, normalized string) int {
+	for i := range facts {
+		if normalizeFactContent(facts[i].Content) == normalized {
+			return i
+		}
+	}
+	return -1
 }
 
 // parseUpdatePayload tolerates LLMs that wrap JSON in ```json ... ``` fences.
@@ -222,11 +246,40 @@ func applyUpdate(
 		if category == "" {
 			category = "context"
 		}
+
+		if cfg.DedupEnabled {
+			idx := findDuplicateFact(out.Facts, normalizeFactContent(content))
+			if idx >= 0 {
+				merged := out.Facts[idx].Confidence
+				if conf > merged {
+					merged = conf
+				}
+				merged += 0.05
+				if merged > 0.99 {
+					merged = 0.99
+				}
+				out.Facts[idx].Confidence = merged
+				continue
+			}
+		}
+
+		kind := nf.Kind
+		if kind != memorystore.FactKindEpisodic {
+			kind = memorystore.FactKindEnduring
+		}
+		expiresAt := nf.ExpiresAt
+		if kind == memorystore.FactKindEpisodic && expiresAt == "" && cfg.EpisodicDefaultTTLSeconds > 0 {
+			ttl := time.Duration(cfg.EpisodicDefaultTTLSeconds) * time.Second
+			expiresAt = time.Now().UTC().Add(ttl).Format("2006-01-02T15:04:05Z")
+		}
+
 		out.Facts = append(out.Facts, memorystore.Fact{
 			ID:          memorystore.NewFactID(),
 			Content:     content,
 			Category:    category,
 			Confidence:  conf,
+			Kind:        kind,
+			ExpiresAt:   expiresAt,
 			SourceError: strings.TrimSpace(nf.SourceError),
 			CreatedAt:   now,
 			Source:      "llm",
@@ -239,6 +292,14 @@ func applyUpdate(
 		})
 		out.Facts = out.Facts[:cfg.MaxFacts]
 	}
+
+	live := make([]memorystore.Fact, 0, len(out.Facts))
+	for _, f := range out.Facts {
+		if !f.IsExpired(now) {
+			live = append(live, f)
+		}
+	}
+	out.Facts = live
 
 	out.LastUpdated = now
 	return out

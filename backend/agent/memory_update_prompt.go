@@ -91,7 +91,7 @@ Output Format (JSON):
     "longTermBackground": { "summary": "...", "shouldUpdate": true }
   },
   "newFacts": [
-    { "content": "...", "category": "preference|knowledge|context|behavior|goal|correction", "confidence": 0.0 }
+    { "content": "...", "category": "preference|knowledge|context|behavior|goal|correction", "confidence": 0.0, "kind": "enduring|episodic", "expiresAt": "2026-05-15T18:00:00Z" }
   ],
   "factsToRemove": ["fact_id_1", "fact_id_2"]
 }
@@ -108,6 +108,18 @@ Important Rules:
 - For history sections, integrate new information chronologically into appropriate time period
 - Preserve technical accuracy - keep exact names of technologies, companies, projects
 - Focus on information useful for future interactions and personalization
+- Dedup: before adding a newFact, scan <current_memory>.facts. If the same
+  fact is already present (literal or semantic match), DO NOT add it again
+  — the write side merges confidence automatically. If the wording is
+  different but semantically equivalent, add the new one AND put the old
+  fact_id into factsToRemove.
+- Kind classification (required for every newFact):
+  * enduring: long-term preferences, work background, sustained goals,
+    knowledge — the default when uncertain.
+  * episodic: one-shot conversational goals, transient debugging context,
+    single-question artefacts (e.g. "user asked for line count of
+    CHANGELOG.md"). These auto-expire on the write side; you may also set
+    an explicit expiresAt (ISO-8601 UTC) but it is optional.
 
 Return ONLY valid JSON, no explanation or markdown.`
 

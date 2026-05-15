@@ -214,3 +214,47 @@ func TestFormatMemoryForInjection_OnlyFactsSection(t *testing.T) {
 		t.Errorf("history header must not appear when history is empty: %q", got)
 	}
 }
+
+func TestFormatMemoryForInjection_FiltersExpiredEpisodic(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.Facts = []memorystore.Fact{
+		{ID: "live_enduring", Content: "long-term pref", Category: "preference", Confidence: 0.9, Kind: memorystore.FactKindEnduring},
+		{ID: "live_future_ep", Content: "fresh task", Category: "goal", Confidence: 0.9, Kind: memorystore.FactKindEpisodic, ExpiresAt: "2099-01-01T00:00:00Z"},
+		{ID: "dead_past_ep", Content: "stale task", Category: "goal", Confidence: 0.9, Kind: memorystore.FactKindEpisodic, ExpiresAt: "2020-01-01T00:00:00Z"},
+	}
+
+	got := formatMemoryForInjection(data, 0)
+	if !strings.Contains(got, "long-term pref") {
+		t.Errorf("enduring fact must render: %q", got)
+	}
+	if !strings.Contains(got, "fresh task") {
+		t.Errorf("future episodic must render: %q", got)
+	}
+	if strings.Contains(got, "stale task") {
+		t.Errorf("expired episodic must be filtered out: %q", got)
+	}
+}
+
+func TestFormatMemoryForInjection_AllExpiredOmitsFactsHeader(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.Facts = []memorystore.Fact{
+		{ID: "dead", Content: "stale", Confidence: 0.9, Kind: memorystore.FactKindEpisodic, ExpiresAt: "2020-01-01T00:00:00Z"},
+	}
+
+	got := formatMemoryForInjection(data, 0)
+	if strings.Contains(got, "Facts:") {
+		t.Errorf("all-expired episodic should suppress Facts header: %q", got)
+	}
+}
+
+func TestFormatMemoryForInjection_LegacyFactWithoutKindRenders(t *testing.T) {
+	data := memorystore.GetEmptyMemoryData()
+	data.Facts = []memorystore.Fact{
+		{ID: "legacy", Content: "old fact, no kind", Category: "preference", Confidence: 0.9},
+	}
+
+	got := formatMemoryForInjection(data, 0)
+	if !strings.Contains(got, "old fact, no kind") {
+		t.Errorf("legacy fact without Kind must render (treated as enduring): %q", got)
+	}
+}

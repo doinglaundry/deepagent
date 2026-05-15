@@ -42,15 +42,36 @@ type History struct {
 }
 
 // Fact is a single discrete memory item; ID is stable across rewrites so the
-// updater can target it via factsToRemove.
+// updater can target it via factsToRemove. Kind / ExpiresAt distinguish
+// long-term ("enduring") from one-shot ("episodic") facts; legacy data
+// without these fields is treated as enduring (zero-value friendly).
 type Fact struct {
 	ID          string  `json:"id"`
 	Content     string  `json:"content"`
 	Category    string  `json:"category"`
 	Confidence  float64 `json:"confidence"`
+	Kind        string  `json:"kind,omitempty"`
+	ExpiresAt   string  `json:"expiresAt,omitempty"`
 	SourceError string  `json:"sourceError,omitempty"`
 	CreatedAt   string  `json:"createdAt,omitempty"`
 	Source      string  `json:"source,omitempty"`
+}
+
+// FactKind* enumerate the lifecycle classes; bare strings (rather than a
+// typed enum) keep JSON omitempty trivial and tolerate older payloads.
+const (
+	FactKindEnduring = "enduring"
+	FactKindEpisodic = "episodic"
+)
+
+// IsExpired reports whether an episodic fact's ExpiresAt is past nowISO.
+// Enduring or empty-Kind facts always return false. ISO-8601 strings sort
+// in time order so plain string comparison is sufficient.
+func (f Fact) IsExpired(nowISO string) bool {
+	if f.Kind != FactKindEpisodic || f.ExpiresAt == "" {
+		return false
+	}
+	return f.ExpiresAt < nowISO
 }
 
 // GetEmptyMemoryData mirrors deer-flow create_empty_memory(): a freshly stamped

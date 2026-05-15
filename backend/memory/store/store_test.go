@@ -172,3 +172,29 @@ func TestStore_LoadCoercesFactConfidence(t *testing.T) {
 		t.Errorf("Load did not coerce confidences: %+v", out.Facts)
 	}
 }
+
+// TestFact_IsExpired locks down the four cases the renderer / sweeper rely
+// on. ISO-8601 strings sort lexicographically in time order so plain string
+// comparison must keep matching wall-clock semantics.
+func TestFact_IsExpired(t *testing.T) {
+	const now = "2026-05-15T17:00:00Z"
+	cases := []struct {
+		name string
+		fact Fact
+		want bool
+	}{
+		{"legacy missing kind", Fact{Content: "x"}, false},
+		{"enduring with future expiry", Fact{Kind: FactKindEnduring, ExpiresAt: "2099-01-01T00:00:00Z"}, false},
+		{"episodic without expiry", Fact{Kind: FactKindEpisodic}, false},
+		{"episodic future", Fact{Kind: FactKindEpisodic, ExpiresAt: "2099-01-01T00:00:00Z"}, false},
+		{"episodic past", Fact{Kind: FactKindEpisodic, ExpiresAt: "2020-01-01T00:00:00Z"}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := c.fact.IsExpired(now)
+			if got != c.want {
+				t.Errorf("IsExpired = %v, want %v (fact=%+v)", got, c.want, c.fact)
+			}
+		})
+	}
+}
