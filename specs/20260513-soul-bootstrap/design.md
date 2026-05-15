@@ -1,5 +1,17 @@
 # DeerFlow 风格 soul.md Bootstrap - 产品 & 技术方案
 
+> ⚠️ **OBSOLETE — 此方案已废弃**
+>
+> 后续决策(2026-05-15)取消了 `soul.md` 注入到 system prompt 的整条
+> 链路。`yaml/soul.md` 不再被加载,与之配套的 `/bootstrap` slash
+> command、`/reload` slash command、`Runtime.ReloadSoul`、
+> `backend/cli/bootstrap/`、`backend/agent/soul_bootstrap*.go`、
+> `backend/soulbootstrap/`、`backend/skills/public/bootstrap/` 全部已
+> 删除。系统提示词由 `backend/agent/prompt.go` 静态生成,长期人格信息
+> 改由 AGENTS.md(只注入 `<agent_discipline>` 段)和工作目录上下文承担。
+>
+> 本文档保留作为历史决策记录;不要按此方案实现。
+
 > 日期: 2026-05-13
 > 背景: CLI 需要一个显式入口生成或更新长期稳定的 agent persona。原方案是在首次启动且缺少 `RootDir/yaml/soul.md` 时自动进入 onboarding,但这会把功能限制在首启路径里。现在改为用户输入 `/bootstrap` 时启动 DeerFlow 风格 soul 生产逻辑: 通过 5-8 轮自适应 onboarding 会话采集信息,按固定模板生成草稿,用户确认后再写入 `soul.md`,之后构建 / 重建 system prompt 时注入。
 

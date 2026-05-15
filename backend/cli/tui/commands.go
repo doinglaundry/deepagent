@@ -26,14 +26,12 @@ type slashCommand struct {
 // listed here but not dispatched there silently submits to the LLM as
 // a plain prompt.
 var builtinCommands = []slashCommand{
-	{Name: "bootstrap", Desc: "create or update yaml/soul.md through onboarding", Type: "builtin"},
 	{Name: "clear", Desc: "clear the in-memory conversation history", Type: "builtin"},
 	{Name: "debug", Args: "[on|off|toggle]", Desc: "show / hide the model's exact input & output per turn", Type: "builtin"},
 	{Name: "exit", Desc: "exit the TUI session", Type: "builtin"},
 	{Name: "help", Args: "[name]", Desc: "show slash commands, or details for one command", Type: "builtin"},
 	{Name: "plan", Args: "[on|off|toggle]", Desc: "inject plan-mode preamble into every model turn", Type: "builtin"},
 	{Name: "quit", Desc: "exit the TUI session", Type: "builtin"},
-	{Name: "reload", Desc: "restart the agent service", Type: "builtin"},
 	{Name: "todos", Args: "[open|close|toggle]", Desc: "expand / collapse the todo panel", Type: "builtin"},
 }
 

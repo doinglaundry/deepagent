@@ -30,12 +30,6 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 		return m.handleChunk(msg)
 	case doneMsg:
 		return m.handleDone(msg)
-	case bootstrapReplyMsg:
-		return m.handleBootstrapReply(msg)
-	case bootstrapSavedMsg:
-		return m.handleBootstrapSaved(msg)
-	case reloadDoneMsg:
-		return m.handleReloadDone(msg)
 	case approvalRequest:
 		return m.handleApprovalRequest(msg)
 	case middlewares.TraceEvent:
@@ -44,7 +38,7 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 		m.footerHint = ""
 		return m, nil
 	case spinner.TickMsg:
-		if !m.streaming && !m.bootstrapLoading {
+		if !m.streaming {
 			return m, nil // self-terminate the tick chain
 		}
 		// Spinner is no longer rendered (the thinking indicator owns
@@ -110,7 +104,7 @@ func (m *Model) recomputeLayout() {
 	// + todoPanel(0..N) + popup(0..popupMaxRows+1) + input(3) + footer(1).
 	headerH := 3
 	streamH := 0
-	if m.streaming || m.bootstrapLoading || m.lastErr != nil {
+	if m.streaming || m.lastErr != nil {
 		streamH = 1 // single-line thinking indicator (was 3 with preview)
 	}
 	todoH := m.todoPanelHeight()
@@ -232,7 +226,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		return m, nil
 	case tea.KeyEnter:
-		if m.streaming || m.bootstrapLoading {
+		if m.streaming {
 			return m, nil
 		}
 		text := strings.TrimSpace(m.input.Value())
@@ -428,16 +422,12 @@ func (m *Model) acceptPopup(c slashCommand) {
 
 // submit handles slash commands inline; otherwise streams via the runtime.
 func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
-	if m.bootstrap != nil {
-		return m.submitBootstrap(text)
-	}
 	if cmd, handled := m.handleBuiltin(text); handled {
 		return m, cmd
 	}
 
 	m.pushMessage("user", text)
 	m.streaming = true
-	m.bootstrapLoading = false
 	m.streamBuf.Reset()
 	m.lastErr = nil
 
@@ -520,10 +510,6 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		return m.handleDebugCmd(text), true
 	case "plan":
 		return m.handlePlanCmd(text), true
-	case "bootstrap":
-		return m.handleBootstrapCmd(), true
-	case "reload":
-		return m.handleReloadCmd(), true
 	case "todos":
 		return m.handleTodosCmd(text), true
 	case "help":
@@ -671,4 +657,22 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 
 	m.streamBuf.Reset()
 	return m, nil
+}
+
+// resetConversationView wipes UI state that should not survive a /clear:
+// the chat scroll, tool-block panels, scrollback queue, todo panel.
+// Counterpart to ClearHistory on the runtime side, which drops the
+// in-memory message log; calling both keeps prompt history and TUI in
+// sync.
+func (m *Model) resetConversationView() {
+	m.messages = freshMessages(m.width, m.modelName, m.cwd)
+	m.toolBlocks = nil
+	m.lastSeenMsgCount = 0
+	m.toolBlockSeq = 0
+	m.footerHint = ""
+	m.flushedMsgCount = 0
+	m.pendingScrollback = nil
+	m.todos = nil
+	m.todoExpanded = false
+	m.rebuildHistory()
 }

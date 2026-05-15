@@ -4,6 +4,18 @@
 > 步"。本文档把 4 个已经写完但没开关的能力点亮，整体打包成一个 PR，按
 > commit 粒度可拆 5 个 commit（A4 拆 agent 层 / TUI 层 = 2 个，
 > A1 / A5 / A6 各 1 个）。
+>
+> **后续修订（2026-05-15）**：A6 落地后又有两次迭代，本文档保留首次实
+> 现的描述，下面这些点已与当前代码不再一致，阅读时请注意：
+> - `<workspace_conventions>` 块名已改为 `<agent_discipline>`，且只注入
+>   AGENTS.md 的「Agent 工作纪律」一节，其余章节按需让 agent 自己
+>   `read_file AGENTS.md` 读取。
+> - `Runtime.ReloadSoul` / `/reload` slash command / `loadSoulPrompt` /
+>   `{soul}` 模板占位符以及 `bootstrap` 全套（slash、cli/bootstrap、
+>   agent/soul_bootstrap、soulbootstrap 包、bootstrap skill）整体被移除；
+>   文中"复用 ReloadSoul 的 r.mu"、"`/reload` 时重读 disk"、"跟 `{soul}`
+>   同语义"等历史细节已不再适用。`atomic.Bool`/`PlanReminder` 那条主路径
+>   未变。
 
 ## 总览
 

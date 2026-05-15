@@ -112,24 +112,6 @@ func (r *DeepAgentRuntime) ClearHistory() {
 	}
 }
 
-func (r *DeepAgentRuntime) ReloadSoul(ctx context.Context) error {
-	runner, trace, err := buildLeadRunner(ctx, r.cfg, r.planMode.Load)
-	if err != nil {
-		return err
-	}
-
-	r.mu.Lock()
-	r.runner = runner
-	r.trace = trace
-	r.history = nil
-	r.pendingCheckpointID = ""
-	r.mu.Unlock()
-	if trace != nil {
-		trace.ResetTurn()
-	}
-	return nil
-}
-
 // SetPlanMode flips the plan-mode flag read by PlanReminder middleware.
 // O(1) — no agent rebuild, no history clear, no mutex; takes effect on
 // the next BeforeModelRewriteState pass. ctx unused but kept on the

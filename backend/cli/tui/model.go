@@ -20,7 +20,6 @@ import (
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
 	"eino-cli/backend/agent/middlewares"
-	bootstrap "eino-cli/backend/cli/bootstrap"
 	"eino-cli/backend/config"
 	"eino-cli/backend/runtime/eino"
 )
@@ -57,11 +56,10 @@ type Model struct {
 	streaming bool
 	streamBuf strings.Builder
 
-	// Thinking-indicator state for the active streaming/bootstrap turn.
+	// Thinking-indicator state for the active streaming turn.
 	// streamStart anchors elapsed; verbPresent / verbPast are picked
 	// once per submit() so the live indicator ("Moonwalking…") and the
-	// completion summary ("Moonwalked for 6s") share the same verb for
-	// normal assistant turns. Bootstrap only uses the live present form.
+	// completion summary ("Moonwalked for 6s") share the same verb.
 	streamStart time.Time
 	elapsed     time.Duration
 	verbPresent string
@@ -124,12 +122,6 @@ type Model struct {
 	inputHistory      []string
 	historyIndex      int
 	historyDraft      string
-
-	bootstrap *bootstrap.Session
-	// bootstrapLoading marks the non-streaming LLM call that advances
-	// /bootstrap. It shares the thinking indicator but not stream cancel
-	// semantics.
-	bootstrapLoading bool
 
 	// hitlQueue holds pending HITL approval requests in FIFO order;
 	// hitlQueue[0] is what the prompt renders. The agent goroutine

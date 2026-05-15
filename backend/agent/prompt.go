@@ -321,7 +321,6 @@ const systemPromptTemplateRaw = `
   You are {agent_name}, an open-source super agent.
 </role>
 
-{soul}
 {agents_md}
 {memory_context}
 
@@ -485,7 +484,6 @@ func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Confi
 	n := effectiveMaxSubagents(cfg)
 	replacer := strings.NewReplacer(
 		"{agent_name}", agentName,
-		"{soul}", loadSoulPrompt(cfg),
 		"{agents_md}", loadAgentsMDPrompt(cfg),
 		"{memory_context}", getMemoryPrompt(agentName, memorystore.NewStoreFromConfig(cfg), cfg.Memory),
 		"{subagent_thinking}", GetSubagentThinking(IsSubagentEnabled, n),
@@ -499,21 +497,6 @@ func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Confi
 	prompt := replacer.Replace(strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"))
 
 	return prompt + "\n<current_date>" + time.Now().Format("2006-01-02, Monday") + "</current_date>"
-}
-
-func loadSoulPrompt(cfg *config.Config) string {
-	if cfg == nil {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(cfg.RootDir, "yaml", "soul.md"))
-	if err != nil {
-		return ""
-	}
-	body := strings.TrimSpace(string(data))
-	if body == "" {
-		return ""
-	}
-	return "<soul>\n" + body + "\n</soul>"
 }
 
 // loadAgentsMDPrompt extracts only the "Agent 工作纪律" section of

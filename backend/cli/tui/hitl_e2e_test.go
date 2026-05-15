@@ -25,8 +25,7 @@ func (stubRuntime) Execute(ctx context.Context, prompt string) (eino.Result, err
 func (stubRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk eino.StreamChunkHandler) (eino.Result, error) {
 	return eino.Result{}, nil
 }
-func (stubRuntime) ClearHistory()                    {}
-func (stubRuntime) ReloadSoul(context.Context) error { return nil }
+func (stubRuntime) ClearHistory() {}
 func (stubRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) {
 	return on, nil
 }

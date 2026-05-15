@@ -172,7 +172,7 @@ func (m *Model) renderHeader() string {
 // with the input box. m.streamBuf is still populated for handleDone's
 // error fallback path — just no longer rendered here.
 func (m *Model) renderStreamPanel() string {
-	if m.streaming || m.bootstrapLoading {
+	if m.streaming {
 		secs := int(m.elapsed.Seconds())
 		verb := renderShimmer(m.verbPresent+"…", m.shimmerOffset,
 			thinkingPresentStyle, thinkingShimmerStyle)
@@ -242,8 +242,6 @@ func (m *Model) renderFooter() string {
 	hint := "/help · ctrl-c to quit"
 	if m.streaming {
 		hint = "esc to interrupt"
-	} else if m.bootstrapLoading {
-		hint = "bootstrap is thinking"
 	} else if m.footerHint != "" {
 		hint = m.footerHint
 	}
