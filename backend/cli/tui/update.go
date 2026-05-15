@@ -492,6 +492,12 @@ func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd)
 		if m.todoPanelHeight() != prevH {
 			m.recomputeLayout()
 		}
+	case middlewares.TracePhaseTokens:
+		// Footer height is constant 1 line; token segment swap is just a
+		// character rerender, no layout work.
+		if ev.Tokens != nil {
+			m.tokenTotal = ev.Tokens.TotalTokens
+		}
 	}
 	return m, nil
 }

@@ -100,6 +100,12 @@ type Model struct {
 	// updates this view after every successful SetPlanMode call.
 	planMode bool
 
+	// tokenTotal is the running cumulative-token total emitted by
+	// TokenUsage middleware via TracePhaseTokens. Zero when token
+	// tracking is disabled or before the first model turn — renderFooter
+	// hides the segment in that case so empty sessions stay quiet.
+	tokenTotal int64
+
 	toolBlocks        []*toolBlock
 	toolBlocksEnabled bool
 	lastSeenMsgCount  int

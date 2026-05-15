@@ -227,6 +227,13 @@ func (m *Model) renderInputText(value string, cursor int) string {
 
 func (m *Model) renderFooter() string {
 	left := footerStyle.Render(m.modelName)
+	// Token total rides the left segment with modelName because both
+	// are session metadata; pushing it into a third center segment
+	// would force a 3-way gap calculation. Hidden when 0 so empty
+	// sessions stay quiet.
+	if m.tokenTotal > 0 {
+		left += footerStyle.Render(" · " + formatTokenCount(m.tokenTotal))
+	}
 	// Streaming shows a single actionable hint; idle is the meta-hint
 	// "you can type / for commands". Old footer concatenated three
 	// hints, which read as a tutorial banner.
@@ -244,4 +251,15 @@ func (m *Model) renderFooter() string {
 		gap = 1
 	}
 	return left + strings.Repeat(" ", gap) + right
+}
+
+// formatTokenCount: >=1000 → "3.4k tokens"; <1000 → "<n> tokens".
+// Single decimal place is enough at thousand-scale and stays under 10
+// chars so the footer doesn't crowd the right-hand hint at narrow
+// widths.
+func formatTokenCount(n int64) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk tokens", float64(n)/1000)
+	}
+	return fmt.Sprintf("%d tokens", n)
 }

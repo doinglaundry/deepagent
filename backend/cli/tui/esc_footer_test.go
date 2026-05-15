@@ -63,3 +63,45 @@ func TestRenderFooter_IdleShowsHelpHint(t *testing.T) {
 		t.Errorf("idle footer must not show interrupt hint; got %q", got)
 	}
 }
+
+// Token total > 0 → "<x>k tokens" segment appears next to modelName.
+// Decimal kilo-format is the band-of-interest for typical LLM turns
+// (1k–100k); below 1k falls back to plain integer count.
+func TestRenderFooter_ShowsTokenTotalWhenPresent(t *testing.T) {
+	m := &Model{streaming: false, width: 80, modelName: "kimi", tokenTotal: 3400}
+	got := m.renderFooter()
+	if !strings.Contains(got, "3.4k tokens") {
+		t.Errorf("footer missing token total; got %q", got)
+	}
+}
+
+// Token total = 0 → segment hidden so empty sessions stay quiet
+// (zero-state noise was the v1 ask).
+func TestRenderFooter_HidesTokenTotalAtZero(t *testing.T) {
+	m := &Model{streaming: false, width: 80, modelName: "kimi", tokenTotal: 0}
+	got := m.renderFooter()
+	if strings.Contains(got, "tokens") {
+		t.Errorf("zero-token footer must not include 'tokens'; got %q", got)
+	}
+}
+
+// formatTokenCount: <1000 stays integer, ≥1000 becomes decimal kilo.
+// Tight test — single string in/out — locks the format string so the
+// footer stays readable at narrow widths.
+func TestFormatTokenCount(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0 tokens"},
+		{42, "42 tokens"},
+		{1000, "1.0k tokens"},
+		{3400, "3.4k tokens"},
+		{12500, "12.5k tokens"},
+	}
+	for _, c := range cases {
+		if got := formatTokenCount(c.in); got != c.want {
+			t.Errorf("formatTokenCount(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
