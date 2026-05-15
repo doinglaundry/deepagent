@@ -431,6 +431,22 @@ const systemPromptTemplateRaw = `
     writing any prose about it. NEVER ask the user to paste code that lives
     under §<root>§ — you have full read access. Asking for a paste is a
     bug, not a politeness.
+  - **Snippet-as-anchor**: When the user pastes a literal code snippet, the
+    snippet IS the ground-truth identifier. Locate the exact line in the
+    workspace via grep (literal pattern; on 0-hit shorten the query —
+    drop variable declarations, drop receivers, keep just the method /
+    identifier core — and retry). NEVER invent file paths from training
+    priors (e.g. assuming a §*.Load§ method lives in §config.go§).
+  - **Verbatim task tokens**: Echo the user's task-defining tokens
+    (variable name, target identifier, action verb) in your first
+    sentence so they survive reasoning. If you can't repeat the exact
+    ask, you've already drifted.
+  - **Code style on demand**: The system prompt carries only the
+    §<agent_discipline>§ section of §AGENTS.md§. Before any non-trivial
+    code change in this repo, call read_file on §AGENTS.md§ under
+    §<root>§ to load the project's code style (§核心原则§ / §命名§ /
+    §注释§ / §简洁赋值§ / §Commit 粒度§ / §Spec 文档§). One read per
+    session is enough; rely on conversation context afterward.
   - **Clarification only after grounding**: Try to resolve ambiguity by
     reading the relevant code first; only call ask_clarification when
     grounding can't resolve it (truly missing intent / destructive op /
@@ -500,12 +516,15 @@ func loadSoulPrompt(cfg *config.Config) string {
 	return "<soul>\n" + body + "\n</soul>"
 }
 
-// loadAgentsMDPrompt mirrors loadSoulPrompt — same shape, different
-// file. AGENTS.md is the Cursor / Codex project-conventions doc;
-// semantically project metadata, lifecycle identical to soul.md (read
-// once at agent build, picked up by /reload). Missing file / empty
-// body / nil cfg → empty string, which the template collapses without
-// leaving a blank line.
+// loadAgentsMDPrompt extracts only the "Agent 工作纪律" section of
+// AGENTS.md and wraps it in <agent_discipline>. The rest of AGENTS.md
+// (code style, naming, comments, commit granularity, spec doc rules,
+// etc.) is read on demand via read_file when the agent actually writes
+// code — keeping it out of the system prompt avoids inflating the
+// always-on prefix with reference material that's only relevant during
+// edits, and stops style guidance from competing with <response_style>
+// for attention. Missing file / missing section → empty string, which
+// the template collapses without leaving a blank line.
 func loadAgentsMDPrompt(cfg *config.Config) string {
 	if cfg == nil {
 		return ""
@@ -514,11 +533,28 @@ func loadAgentsMDPrompt(cfg *config.Config) string {
 	if err != nil {
 		return ""
 	}
-	body := strings.TrimSpace(string(data))
+	body := extractTopLevelSection(string(data), "Agent 工作纪律")
 	if body == "" {
 		return ""
 	}
-	return "<workspace_conventions>\n" + body + "\n</workspace_conventions>"
+	return "<agent_discipline>\n" + body + "\n</agent_discipline>"
+}
+
+// extractTopLevelSection returns the body of "## <title>" up to the next
+// "## " heading (or EOF). Heading line and trailing whitespace are
+// trimmed; nested "### " subheadings are kept intact. Returns "" when
+// the section is absent so callers can collapse the slot.
+func extractTopLevelSection(text, title string) string {
+	header := "## " + title
+	idx := strings.Index(text, header)
+	if idx == -1 {
+		return ""
+	}
+	rest := text[idx+len(header):]
+	if end := strings.Index(rest, "\n## "); end != -1 {
+		rest = rest[:end]
+	}
+	return strings.TrimSpace(rest)
 }
 
 func GetSubagentThinking(IsSubagentEnabled bool, n int) string {
