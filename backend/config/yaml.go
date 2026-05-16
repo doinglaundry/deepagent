@@ -118,6 +118,18 @@ type Memory struct {
 	EpisodicDefaultTTLSeconds int     `yaml:"episodic_default_ttl_seconds"`
 }
 
+// WebSearch wires the local web_search function tool to a real backend.
+// Disabled by default so network egress stays opt-in.
+type WebSearch struct {
+	Enabled        bool   `yaml:"enabled"`
+	Provider       string `yaml:"provider"` // bocha (only one supported today)
+	BaseURL        string `yaml:"base_url"`
+	APIKey         string `yaml:"api_key"`
+	APIKeyEnv      string `yaml:"api_key_env"`
+	MaxResults     int    `yaml:"max_results"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
+}
+
 type AgentsAPI struct {
 	Enabled bool `yaml:"enabled"`
 }

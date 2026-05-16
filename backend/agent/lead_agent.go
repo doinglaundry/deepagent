@@ -52,7 +52,7 @@ func MakeLeadAgent(
 		Handlers:               handlers,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: tools.BuildBuiltinTools(cfg.RootDir),
+				Tools: tools.BuildBuiltinTools(cfg),
 			},
 		},
 	}

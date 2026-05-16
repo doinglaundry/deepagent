@@ -2,6 +2,8 @@ package tools
 
 import (
 	"github.com/cloudwego/eino/components/tool"
+
+	"eino-cli/backend/config"
 )
 
 // Shared output literals reused by ls / glob / grep so the wire format
@@ -11,13 +13,14 @@ const (
 	noMatchesFound = "No matches found"
 )
 
-// BuildBuiltinTools returns the fixed built-in tool set rooted at root.
-// There is no per-agent filtering: every agent that opts into
-// ToolsConfig.Tools gets all tools. The caller decides what root means
-// (cfg.RootDir today, a subagent sandbox dir later) — this package never
-// reaches for os.Getwd or any other process state on its own.
-func BuildBuiltinTools(root string) []tool.BaseTool {
-	return []tool.BaseTool{
+// BuildBuiltinTools returns the fixed built-in tool set; root is read
+// from cfg.RootDir (single config.Config source — see AGENTS.md "Pass
+// less data"). Optional tools (web_search) are appended only when their
+// yaml flag is on, so the LLM does not see a tool that would always
+// error out.
+func BuildBuiltinTools(cfg *config.Config) []tool.BaseTool {
+	root := cfg.RootDir
+	tools := []tool.BaseTool{
 		mustBuild(GetAskClarificationTool()),
 		mustBuild(GetLsTool(root)),
 		mustBuild(GetReadFileTool(root)),
@@ -34,6 +37,10 @@ func BuildBuiltinTools(root string) []tool.BaseTool {
 		mustBuild(GetShellTool(root)),
 		mustBuild(GetAwaitShellTool(root)),
 	}
+	if cfg.WebSearch.Enabled {
+		tools = append(tools, mustBuild(GetWebSearchTool(cfg)))
+	}
+	return tools
 }
 
 // mustBuild collapses InferTool's (tool, err) into a single value. InferTool

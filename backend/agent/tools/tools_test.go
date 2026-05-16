@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/components/tool"
+
+	"eino-cli/backend/config"
 )
 
 // invoke is a small helper: every tool here is built via utils.InferTool
@@ -416,7 +418,7 @@ func quoteJSON(t *testing.T, s string) string {
 }
 
 func TestBuildBuiltinToolsCount(t *testing.T) {
-	got := BuildBuiltinTools(t.TempDir())
+	got := BuildBuiltinTools(&config.Config{RootDir: t.TempDir()})
 	if len(got) != 15 {
 		t.Fatalf("BuildBuiltinTools: got %d tools, want 15", len(got))
 	}
@@ -433,5 +435,25 @@ func TestBuildBuiltinToolsCount(t *testing.T) {
 		if info.Name != want[i] {
 			t.Fatalf("tool[%d] name: got %q want %q", i, info.Name, want[i])
 		}
+	}
+}
+
+// web_search is gated by yaml; flipping the flag must change roster size
+// AND tail name — drift between flag and prompt tool list is the bug.
+func TestBuildBuiltinToolsWithWebSearch(t *testing.T) {
+	cfg := &config.Config{
+		RootDir:   t.TempDir(),
+		WebSearch: config.WebSearch{Enabled: true, APIKey: "stub", MaxResults: 5},
+	}
+	got := BuildBuiltinTools(cfg)
+	if len(got) != 16 {
+		t.Fatalf("BuildBuiltinTools(enabled): got %d tools, want 16", len(got))
+	}
+	last, err := got[len(got)-1].Info(context.Background())
+	if err != nil {
+		t.Fatalf("tool.Info: %v", err)
+	}
+	if last.Name != "web_search" {
+		t.Fatalf("last tool name: got %q want web_search", last.Name)
 	}
 }

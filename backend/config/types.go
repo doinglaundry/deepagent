@@ -73,6 +73,7 @@ type Config struct {
 	Title             Title                   `json:"-"                       yaml:"title"`
 	Summarization     Summarization           `json:"-"                       yaml:"summarization"`
 	Memory            Memory                  `json:"-"                       yaml:"memory"`
+	WebSearch         WebSearch               `json:"-"                       yaml:"web_search"`
 	ErrorHandling     ErrorHandling           `json:"-"                       yaml:"error_handling"`
 	AgentsAPI         AgentsAPI               `json:"-"                       yaml:"agents_api"`
 	SkillEvolution    SkillEvolution          `json:"-"                       yaml:"skill_evolution"`
