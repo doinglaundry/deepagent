@@ -14,8 +14,6 @@ func (m *Model) View() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(m.renderHeader())
-	sb.WriteString("\n\n")
 	sb.WriteString(m.viewport.View())
 	if streamPanel := m.renderStreamPanel(); streamPanel != "" {
 		sb.WriteString("\n")
@@ -151,17 +149,6 @@ func findInProgress(todos []deep.TODO) string {
 		}
 	}
 	return ""
-}
-
-func (m *Model) renderHeader() string {
-	title := headerTitleStyle.Render("eino-tui")
-	model := dimStyle.Render(m.modelName)
-	cwd := dimStyle.Render(m.cwd)
-	if m.cwd == "" {
-		cwd = dimStyle.Render(".")
-	}
-	left := lipgloss.JoinVertical(lipgloss.Left, title, model, cwd)
-	return lipgloss.JoinHorizontal(lipgloss.Top, "  ", left)
 }
 
 // renderStreamPanel shows a single-line thinking indicator while a turn is

@@ -104,9 +104,8 @@ func (m *Model) recomputeLayout() {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	// Layout budget: header(3) + blank(1) + viewport(flex) + stream(0-1)
-	// + todoPanel(0..N) + popup(0..popupMaxRows+1) + input(3) + footer(1).
-	headerH := 3
+	// Layout budget: viewport(flex) + stream(0-1) + todoPanel(0..N)
+	// + popup(0..popupMaxRows+1) + input(3) + footer(1).
 	streamH := 0
 	if m.streaming || m.lastErr != nil {
 		streamH = 1 // single-line thinking indicator (was 3 with preview)
@@ -119,7 +118,7 @@ func (m *Model) recomputeLayout() {
 	}
 	inputH := 3
 	footerH := 1
-	chrome := headerH + 1 + streamH + todoH + popupH + approvalH + inputH + footerH
+	chrome := streamH + todoH + popupH + approvalH + inputH + footerH
 
 	vpMax := m.height - chrome
 	if vpMax < 3 {

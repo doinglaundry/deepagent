@@ -44,9 +44,9 @@ func TestRecomputeLayout_ClampsViewportAtBudget(t *testing.T) {
 
 	m.recomputeLayout()
 
-	// Chrome = header(3) + blank(1) + stream(0) + todo(0) + input(3) + footer(1) = 8
-	// So vpMax = 30 - 8 = 22.
-	const wantMax = 22
+	// Chrome = stream(0) + todo(0) + input(3) + footer(1) = 4.
+	// So vpMax = 30 - 4 = 26.
+	const wantMax = 26
 	if m.viewport.Height != wantMax {
 		t.Errorf("viewport must clamp at vpMax=%d; got Height=%d",
 			wantMax, m.viewport.Height)
