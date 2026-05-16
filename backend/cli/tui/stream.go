@@ -19,48 +19,51 @@ type doneMsg struct {
 	err    error
 }
 
-// teaProgramConsumer adapts *tea.Program to middlewares.TraceConsumer; bubbletea
-// drops Sends silently after stop, so no panic / no block.
-type teaProgramConsumer struct{ p *tea.Program }
-
-func (c teaProgramConsumer) Send(ev middlewares.TraceEvent) {
-	c.p.Send(ev)
+// streamConsumer puts trace events on the same queue as chunks and doneMsg, so
+// the TUI renders tool calls before the final assistant answer.
+type streamConsumer struct {
+	ctx context.Context
+	ch  chan<- tea.Msg
 }
 
-// startStream runs ExecuteStream in a goroutine, returning the chunk channel,
-// a cancel func, and a tea.Cmd that resolves to doneMsg. consumer=nil disables tracing.
-func startStream(rt eino.Runtime, prompt string, consumer middlewares.TraceConsumer) (<-chan string, context.CancelFunc, tea.Cmd) {
-	chunkCh := make(chan string, 64)
-	doneCh := make(chan doneMsg, 1)
+func (c streamConsumer) Send(ev middlewares.TraceEvent) {
+	select {
+	case c.ch <- ev:
+	case <-c.ctx.Done():
+	}
+}
+
+// startStream runs ExecuteStream in a goroutine. Trace events, text chunks and
+// doneMsg share one channel to preserve the model's execution order in the UI.
+func startStream(rt eino.Runtime, prompt string) (<-chan tea.Msg, context.CancelFunc) {
+	streamCh := make(chan tea.Msg, 64)
 	ctx, cancel := context.WithCancel(context.Background())
-	ctx = middlewares.WithTraceConsumer(ctx, consumer)
+	ctx = middlewares.WithTraceConsumer(ctx, streamConsumer{ctx: ctx, ch: streamCh})
 
 	go func() {
-		defer close(chunkCh)
+		defer close(streamCh)
 		result, err := rt.ExecuteStream(ctx, prompt, func(chunk string) {
 			select {
-			case chunkCh <- chunk:
+			case streamCh <- chunkMsg(chunk):
 			case <-ctx.Done():
 			}
 		})
 		if err != nil {
-			doneCh <- doneMsg{err: err}
+			streamCh <- doneMsg{err: err}
 			return
 		}
-		doneCh <- doneMsg{output: result.Output}
+		streamCh <- doneMsg{output: result.Output}
 	}()
-
-	awaitDone := func() tea.Msg { return <-doneCh }
-	return chunkCh, cancel, awaitDone
+	return streamCh, cancel
 }
 
-// waitForChunk reads one chunk; closed channel returns nil and ends the pump.
-func waitForChunk(ch <-chan string) tea.Cmd {
+// waitForStreamMsg reads one ordered runtime event; closed channel ends the pump.
+func waitForStreamMsg(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		v, ok := <-ch
 		if !ok {
 			return nil
 		}
-		return chunkMsg(v)
+		return v
 	}
 }

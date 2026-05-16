@@ -65,8 +65,8 @@ type Model struct {
 	verbPresent string
 	verbPast    string
 
-	chunkCh <-chan string
-	cancel  context.CancelFunc
+	streamCh <-chan tea.Msg
+	cancel   context.CancelFunc
 
 	mdRenderer *glamour.TermRenderer
 	// mdStyle is detected once before bubbletea claims stdin; re-querying after

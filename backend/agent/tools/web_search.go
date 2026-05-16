@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	webSearchToolName    = "web_search"
-	webSearchDefaultMax  = 5
+	webSearchToolName       = "web_search"
+	webSearchDefaultMax     = 5
 	webSearchDefaultTimeout = 30 * time.Second
-	bochaDefaultEndpoint = "https://api.bochaai.com/v1/web-search"
+	bochaDefaultEndpoint    = "https://api.bochaai.com/v1/web-search"
 )
 
 const webSearchToolDesc = `Search the live web for fresh information. Use when answering needs facts beyond the model's training cutoff (current weather, latest news, today's prices, recent releases). Returns titled snippets — cite or summarise them; do NOT pretend you searched when you did not.`
@@ -53,9 +53,6 @@ func GetWebSearchTool(cfg *config.Config) (tool.BaseTool, error) {
 		})
 }
 
-// runBochaSearch posts to Bocha's /v1/web-search and renders the hits as
-// a numbered markdown list. Provider switching (e.g. Tavily, custom)
-// would land here as a small switch when the second backend arrives.
 func runBochaSearch(ctx context.Context, cfg config.WebSearch, query string, max int) (string, error) {
 	endpoint := strings.TrimSpace(cfg.BaseURL)
 	if endpoint == "" {

@@ -33,7 +33,11 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 	case approvalRequest:
 		return m.handleApprovalRequest(msg)
 	case middlewares.TraceEvent:
-		return m.handleTraceEvent(msg)
+		model, cmd = m.handleTraceEvent(msg)
+		if m.streaming {
+			cmd = tea.Batch(cmd, waitForStreamMsg(m.streamCh))
+		}
+		return model, cmd
 	case footerHintExpiredMsg:
 		m.footerHint = ""
 		return m, nil
@@ -438,20 +442,10 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	m.streamStart = time.Now()
 	m.elapsed = 0
 
-	// Always attach the trace consumer regardless of m.debug: the Todos
-	// phase fires on every after-model hook with active todos and must
-	// reach the TUI even when /debug is off. Before/After phases are
-	// filtered out by handleTraceEvent on the consume side, so the only
-	// cost of "always-on" is one extra channel send per turn.
-	var consumer middlewares.TraceConsumer
-	if m.prog != nil {
-		consumer = teaProgramConsumer{p: m.prog}
-	}
-
-	ch, cancel, awaitDone := startStream(m.rt, text, consumer)
-	m.chunkCh = ch
+	ch, cancel := startStream(m.rt, text)
+	m.streamCh = ch
 	m.cancel = cancel
-	return m, tea.Batch(waitForChunk(ch), awaitDone, m.spin.Tick)
+	return m, tea.Batch(waitForStreamMsg(ch), m.spin.Tick)
 }
 
 // handleTraceEvent dispatches a TraceEvent. Before powers debug input dumps
@@ -606,7 +600,7 @@ func (m *Model) handleDebugCmd(text string) tea.Cmd {
 
 func (m *Model) handleChunk(msg chunkMsg) (tea.Model, tea.Cmd) {
 	m.streamBuf.WriteString(string(msg))
-	return m, waitForChunk(m.chunkCh)
+	return m, waitForStreamMsg(m.streamCh)
 }
 
 func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
@@ -616,7 +610,7 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 
 	m.streaming = false
 	m.cancel = nil
-	m.chunkCh = nil
+	m.streamCh = nil
 	// Stream done = no more approver calls coming. Anything still in
 	// the queue is from a turn that just unwound (cancellation or hard
 	// failure); the approver's ctx-done branch already returned false
