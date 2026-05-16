@@ -311,17 +311,26 @@ func (m *Model) liveMessages() []chatMessage {
 	if len(m.messages) == 0 {
 		return nil
 	}
+	if m.flushedMsgCount < 0 {
+		m.flushedMsgCount = 0
+	}
+	if m.flushedMsgCount >= len(m.messages) {
+		return nil
+	}
 	if len(m.messages) == 1 {
 		if m.messages[0].Role == "banner" && m.flushedMsgCount >= 1 {
 			return nil
 		}
 		return m.messages
 	}
-	return m.messages[len(m.messages)-1:]
+	return m.messages[m.flushedMsgCount:]
 }
 
 func (m *Model) queueScrollback() {
 	if len(m.messages) == 0 {
+		return
+	}
+	if m.streaming {
 		return
 	}
 	if m.flushedMsgCount < 0 {
@@ -337,6 +346,11 @@ func (m *Model) queueScrollback() {
 		return
 	}
 	target := len(m.messages) - 1
+	if m.messages[len(m.messages)-1].Role == "assistant" {
+		for target > m.flushedMsgCount && m.messages[target-1].Role == "tool-block" {
+			target--
+		}
+	}
 	if target <= m.flushedMsgCount {
 		return
 	}

@@ -462,7 +462,7 @@ func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd)
 			blocks := extractNewToolBlocks(ev.Messages, m.lastSeenMsgCount, &m.toolBlockSeq, m.toolArgsMaxChars)
 			for _, block := range blocks {
 				m.toolBlocks = append(m.toolBlocks, block)
-				m.pushMessage("tool-block", toolPlaceholder(block.id))
+				m.pushToolBlockMessage(toolPlaceholder(block.id))
 			}
 		}
 		m.lastSeenMsgCount = len(ev.Messages)
@@ -486,6 +486,17 @@ func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd)
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) pushToolBlockMessage(content string) {
+	if n := len(m.messages); n > 0 && m.messages[n-1].Role == "assistant" {
+		m.messages = append(m.messages, chatMessage{})
+		copy(m.messages[n:], m.messages[n-1:])
+		m.messages[n-1] = chatMessage{Role: "tool-block", Content: content}
+		m.rebuildHistory()
+		return
+	}
+	m.pushMessage("tool-block", content)
 }
 
 func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
@@ -607,8 +618,8 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 	// Snapshot elapsed BEFORE flipping streaming off so a slow handleDone
 	// doesn't drift the summary downward.
 	elapsed := time.Since(m.streamStart).Round(time.Second)
+	drainedCmd := m.drainQueuedStreamMessages()
 
-	m.streaming = false
 	m.cancel = nil
 	m.streamCh = nil
 	// Stream done = no more approver calls coming. Anything still in
@@ -626,9 +637,10 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		}
 		m.pushMessage("system", fmt.Sprintf("error: %s", msg.err))
 		m.streamBuf.Reset()
+		m.streaming = false
 		// Error path skips the thinking-summary — the error line is
 		// already enough noise; "Verbed for 3s" on top reads as gloating.
-		return m, nil
+		return m, drainedCmd
 	}
 
 	// Prefer the runtime's authoritative final output over the chunk buffer.
@@ -650,7 +662,30 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 	}
 
 	m.streamBuf.Reset()
-	return m, nil
+	m.streaming = false
+	return m, drainedCmd
+}
+
+func (m *Model) drainQueuedStreamMessages() tea.Cmd {
+	var cmds []tea.Cmd
+	for m.streamCh != nil {
+		select {
+		case queued, ok := <-m.streamCh:
+			if !ok {
+				return tea.Batch(cmds...)
+			}
+			switch v := queued.(type) {
+			case middlewares.TraceEvent:
+				_, cmd := m.handleTraceEvent(v)
+				cmds = append(cmds, cmd)
+			case chunkMsg:
+				m.streamBuf.WriteString(string(v))
+			}
+		default:
+			return tea.Batch(cmds...)
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
 // resetConversationView wipes UI state that should not survive a /clear:

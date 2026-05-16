@@ -271,6 +271,107 @@ func TestHandleTraceEventExtractsAndPushesBlock(t *testing.T) {
 	}
 }
 
+func TestToolBlockStaysLiveBeforeFinalAssistant(t *testing.T) {
+	m := &Model{
+		toolPreviewLines: defaultToolPreviewLines,
+		viewport:         viewport.New(80, 10),
+		width:            80,
+		height:           24,
+		toolBlocks: []*toolBlock{{
+			id:       1,
+			name:     "web_search",
+			argsLine: `{"query":"x"}`,
+			lines:    []string{"result"},
+		}},
+		messages: []chatMessage{
+			{Role: "user", Content: "question"},
+			{Role: "tool-block", Content: "[tool:#1]"},
+		},
+		flushedMsgCount: 1,
+	}
+
+	m.pushMessage("assistant", "answer")
+	live := m.liveMessages()
+	if len(live) != 2 || live[0].Role != "tool-block" || live[1].Role != "assistant" {
+		t.Fatalf("tool block must stay live before final assistant, got %#v", live)
+	}
+	if len(m.pendingScrollback) != 0 {
+		t.Fatalf("tool block should not be flushed before assistant renders, got %d pending", len(m.pendingScrollback))
+	}
+}
+
+func TestDoneDrainsQueuedToolTraceBeforeAssistant(t *testing.T) {
+	ch := make(chan tea.Msg, 1)
+	ch <- middlewares.TraceEvent{
+		Phase: middlewares.TracePhaseBefore,
+		Messages: []*schema.Message{
+			{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{
+					{ID: "call-1", Function: schema.FunctionCall{Name: "web_search", Arguments: `{"query":"x"}`}},
+				},
+			},
+			{Role: schema.Tool, ToolCallID: "call-1", Content: "result"},
+		},
+	}
+	close(ch)
+
+	m := &Model{
+		streaming:         true,
+		streamCh:          ch,
+		toolBlocksEnabled: true,
+		toolPreviewLines:  defaultToolPreviewLines,
+		toolArgsMaxChars:  defaultToolArgsMaxChars,
+		viewport:          viewport.New(80, 10),
+		width:             80,
+		height:            24,
+		messages:          []chatMessage{{Role: "user", Content: "question"}},
+		flushedMsgCount:   1,
+	}
+
+	_, _ = m.handleDone(doneMsg{output: "answer"})
+	live := m.liveMessages()
+	if len(live) != 2 || live[0].Role != "tool-block" || live[1].Role != "assistant" {
+		t.Fatalf("queued tool trace must render before done answer, got %#v", live)
+	}
+	if len(m.pendingScrollback) != 0 {
+		t.Fatalf("done must not flush this turn before ordered live render, got %d pending", len(m.pendingScrollback))
+	}
+}
+
+func TestLateToolTraceInsertsBeforeTrailingAssistant(t *testing.T) {
+	m := &Model{
+		toolBlocksEnabled: true,
+		toolPreviewLines:  defaultToolPreviewLines,
+		toolArgsMaxChars:  defaultToolArgsMaxChars,
+		viewport:          viewport.New(80, 10),
+		width:             80,
+		height:            24,
+		messages: []chatMessage{
+			{Role: "user", Content: "question"},
+			{Role: "assistant", Content: "answer"},
+		},
+		flushedMsgCount: 1,
+	}
+
+	_, _ = m.handleTraceEvent(middlewares.TraceEvent{
+		Phase: middlewares.TracePhaseBefore,
+		Messages: []*schema.Message{
+			{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{
+					{ID: "call-1", Function: schema.FunctionCall{Name: "web_search", Arguments: `{"query":"x"}`}},
+				},
+			},
+			{Role: schema.Tool, ToolCallID: "call-1", Content: "result"},
+		},
+	})
+	live := m.liveMessages()
+	if len(live) != 2 || live[0].Role != "tool-block" || live[1].Role != "assistant" {
+		t.Fatalf("late tool trace must be inserted before trailing assistant, got %#v", live)
+	}
+}
+
 func TestClearResetsToolBlocks(t *testing.T) {
 	m := &Model{
 		rt:               stubRuntime{},
