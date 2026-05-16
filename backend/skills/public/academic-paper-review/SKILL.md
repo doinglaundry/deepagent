@@ -277,7 +277,7 @@ Before finalizing the review, verify:
 ## Output Format
 
 - Output the complete review in **Markdown** format
-- Save the review to `/mnt/user-data/outputs/review-{paper-topic}.md` when working in sandbox
+- Save the review to `.eino-cli/skill-outputs/review-{paper-topic}.md` when working in sandbox
 - Present the review to the user using the `present_files` tool
 
 ## Notes

@@ -20,7 +20,7 @@ Deploy any project to Vercel instantly. No authentication required.
 ## Usage
 
 ```bash
-bash /mnt/skills/user/vercel-deploy/scripts/deploy.sh [path]
+bash backend/skills/user/vercel-deploy/scripts/deploy.sh [path]
 ```
 
 **Arguments:**
@@ -30,13 +30,13 @@ bash /mnt/skills/user/vercel-deploy/scripts/deploy.sh [path]
 
 ```bash
 # Deploy current directory
-bash /mnt/skills/user/vercel-deploy/scripts/deploy.sh
+bash backend/skills/user/vercel-deploy/scripts/deploy.sh
 
 # Deploy specific project
-bash /mnt/skills/user/vercel-deploy/scripts/deploy.sh /path/to/project
+bash backend/skills/user/vercel-deploy/scripts/deploy.sh /path/to/project
 
 # Deploy existing tarball
-bash /mnt/skills/user/vercel-deploy/scripts/deploy.sh /path/to/project.tgz
+bash backend/skills/user/vercel-deploy/scripts/deploy.sh /path/to/project.tgz
 ```
 
 ## Output

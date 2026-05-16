@@ -326,7 +326,7 @@ Before finalizing, verify:
 
 After generation:
 
-- Save the newsletter to `/mnt/user-data/outputs/newsletter-{topic}-{date}.md`
+- Save the newsletter to `.eino-cli/skill-outputs/newsletter-{topic}-{date}.md`
 - Present the newsletter to the user using the `present_files` tool
 - Offer to adjust sections, tone, length, or focus areas
 - If the user wants HTML output, note that the Markdown can be converted using standard tools

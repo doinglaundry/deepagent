@@ -26,20 +26,20 @@ When a user requests image generation, identify:
 - Style preferences: Art style, mood, color palette
 - Technical specs: Aspect ratio, composition, lighting
 - Reference images: Any images to guide generation
-- You don't need to check the folder under `/mnt/user-data`
+- You don't need to check the folder under `.eino-cli/skill-data`
 
 ### Step 2: Create Structured Prompt
 
-Generate a structured JSON file in `/mnt/user-data/workspace/` with naming pattern: `{descriptive-name}.json`
+Generate a structured JSON file in `.eino-cli/skill-workspace/` with naming pattern: `{descriptive-name}.json`
 
 ### Step 3: Execute Generation
 
 Call the Python script:
 ```bash
-python /mnt/skills/public/image-generation/scripts/generate.py \
-  --prompt-file /mnt/user-data/workspace/prompt-file.json \
+python backend/skills/public/image-generation/scripts/generate.py \
+  --prompt-file .eino-cli/skill-workspace/prompt-file.json \
   --reference-images /path/to/ref1.jpg /path/to/ref2.png \
-  --output-file /mnt/user-data/outputs/generated-image.jpg
+  --output-file .eino-cli/skill-outputs/generated-image.jpg
   --aspect-ratio 16:9
 ```
 
@@ -57,7 +57,7 @@ Do NOT read the python file, just call it with the parameters.
 
 User request: "Create a Tokyo street style woman character in 1990s"
 
-Create prompt file: `/mnt/user-data/workspace/asian-woman.json`
+Create prompt file: `.eino-cli/skill-workspace/asian-woman.json`
 ```json
 {
   "characters": [{
@@ -80,9 +80,9 @@ Create prompt file: `/mnt/user-data/workspace/asian-woman.json`
 
 Execute generation:
 ```bash
-python /mnt/skills/public/image-generation/scripts/generate.py \
-  --prompt-file /mnt/user-data/workspace/cyberpunk-hacker.json \
-  --output-file /mnt/user-data/outputs/cyberpunk-hacker-01.jpg \
+python backend/skills/public/image-generation/scripts/generate.py \
+  --prompt-file .eino-cli/skill-workspace/cyberpunk-hacker.json \
+  --output-file .eino-cli/skill-outputs/cyberpunk-hacker-01.jpg \
   --aspect-ratio 2:3
 ```
 
@@ -113,10 +113,10 @@ With reference images:
 }
 ```
 ```bash
-python /mnt/skills/public/image-generation/scripts/generate.py \
-  --prompt-file /mnt/user-data/workspace/star-wars-scene.json \
-  --reference-images /mnt/user-data/uploads/character-ref.jpg /mnt/user-data/uploads/vehicle-ref.jpg \
-  --output-file /mnt/user-data/outputs/star-wars-scene-01.jpg \
+python backend/skills/public/image-generation/scripts/generate.py \
+  --prompt-file .eino-cli/skill-workspace/star-wars-scene.json \
+  --reference-images .eino-cli/skill-uploads/character-ref.jpg .eino-cli/skill-uploads/vehicle-ref.jpg \
+  --output-file .eino-cli/skill-outputs/star-wars-scene-01.jpg \
   --aspect-ratio 16:9
 ```
 
@@ -153,7 +153,7 @@ Read the following template file only when matching the user request.
 
 After generation:
 
-- Images are typically saved in `/mnt/user-data/outputs/`
+- Images are typically saved in `.eino-cli/skill-outputs/`
 - Share generated images with user using present_files tool
 - Provide brief description of the generation result
 - Offer to iterate if adjustments needed

@@ -59,16 +59,16 @@ Use sandbox tools to explore the codebase:
 
 ```bash
 # Get directory structure
-ls /mnt/user-data/uploads/project-dir/
+ls .eino-cli/skill-uploads/project-dir/
 
 # Read key files
-read_file /mnt/user-data/uploads/project-dir/package.json
-read_file /mnt/user-data/uploads/project-dir/pyproject.toml
+read_file .eino-cli/skill-uploads/project-dir/package.json
+read_file .eino-cli/skill-uploads/project-dir/pyproject.toml
 
 # Search for public API surfaces
-grep -r "export " /mnt/user-data/uploads/project-dir/src/
-grep -r "def " /mnt/user-data/uploads/project-dir/src/ --include="*.py"
-grep -r "func " /mnt/user-data/uploads/project-dir/ --include="*.go"
+grep -r "export " .eino-cli/skill-uploads/project-dir/src/
+grep -r "def " .eino-cli/skill-uploads/project-dir/src/ --include="*.py"
+grep -r "func " .eino-cli/skill-uploads/project-dir/ --include="*.go"
 ```
 
 #### Step 1.3: Identify Documentation Scope
@@ -399,7 +399,7 @@ Ensure:
 
 After generation:
 
-- Save documentation files to `/mnt/user-data/outputs/`
+- Save documentation files to `.eino-cli/skill-outputs/`
 - For multi-file documentation, maintain the project directory structure
 - Present generated files to the user using the `present_files` tool
 - Offer to iterate on specific sections or adjust the level of detail

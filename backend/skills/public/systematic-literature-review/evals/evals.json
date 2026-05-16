@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "Do a systematic literature review on diffusion models in computer vision. 10 papers, last 2 years, category cs.CV, APA format. Save to default output location.",
-      "expected_output": "A structured SLR report saved to /mnt/user-data/outputs/ with APA citations, thematic synthesis across 10 papers, and per-paper annotations.",
+      "expected_output": "A structured SLR report saved to .eino-cli/skill-outputs/ with APA citations, thematic synthesis across 10 papers, and per-paper annotations.",
       "expectations": [
         "The skill read SKILL.md for systematic-literature-review",
         "The arxiv_search.py script was called with a short keyword query (2-3 words), not the full topic description",
@@ -13,7 +13,7 @@
         "The search was executed only once without retries",
         "Metadata extraction was delegated via the task tool to subagents, not done inline or via python -c",
         "The APA template file (templates/apa.md) was read",
-        "The final report was saved to /mnt/user-data/outputs/ with a filename matching slr-<topic-slug>-<YYYYMMDD>.md",
+        "The final report was saved to .eino-cli/skill-outputs/ with a filename matching slr-<topic-slug>-<YYYYMMDD>.md",
         "The present_files tool was called to make the report visible to the user",
         "The report contains an Executive Summary section",
         "The report identifies at least 3 themes with cross-paper analysis",
@@ -32,7 +32,7 @@
         "The arxiv_search.py script was called with a short keyword query",
         "Metadata extraction was delegated via the task tool to subagents",
         "The BibTeX template file (templates/bibtex.md) was read, not apa.md or ieee.md",
-        "The final report was saved to /mnt/user-data/outputs/",
+        "The final report was saved to .eino-cli/skill-outputs/",
         "The present_files tool was called",
         "The report contains BibTeX entries using @misc, not @article",
         "Each BibTeX entry includes eprint and primaryClass fields",

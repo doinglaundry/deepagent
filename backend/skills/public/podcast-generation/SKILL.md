@@ -26,11 +26,11 @@ When a user requests podcast generation, identify:
 - Source content: The text/article/report to convert into a podcast
 - Language: English or Chinese (based on content)
 - Output location: Where to save the generated podcast
-- You don't need to check the folder under `/mnt/user-data`
+- You don't need to check the folder under `.eino-cli/skill-data`
 
 ### Step 2: Create Structured Script JSON
 
-Generate a structured JSON script file in `/mnt/user-data/workspace/` with naming pattern: `{descriptive-name}-script.json`
+Generate a structured JSON script file in `.eino-cli/skill-workspace/` with naming pattern: `{descriptive-name}-script.json`
 
 The JSON structure:
 ```json
@@ -47,10 +47,10 @@ The JSON structure:
 
 Call the Python script:
 ```bash
-python /mnt/skills/public/podcast-generation/scripts/generate.py \
-  --script-file /mnt/user-data/workspace/script-file.json \
-  --output-file /mnt/user-data/outputs/generated-podcast.mp3 \
-  --transcript-file /mnt/user-data/outputs/generated-podcast-transcript.md
+python backend/skills/public/podcast-generation/scripts/generate.py \
+  --script-file .eino-cli/skill-workspace/script-file.json \
+  --output-file .eino-cli/skill-outputs/generated-podcast.mp3 \
+  --transcript-file .eino-cli/skill-outputs/generated-podcast-transcript.md
 ```
 
 Parameters:
@@ -116,7 +116,7 @@ When creating the script JSON, follow these guidelines:
 
 User request: "Generate a podcast about the history of artificial intelligence"
 
-Step 1: Create script file `/mnt/user-data/workspace/ai-history-script.json`:
+Step 1: Create script file `.eino-cli/skill-workspace/ai-history-script.json`:
 ```json
 {
   "title": "The History of Artificial Intelligence",
@@ -135,10 +135,10 @@ Step 1: Create script file `/mnt/user-data/workspace/ai-history-script.json`:
 
 Step 2: Execute generation:
 ```bash
-python /mnt/skills/public/podcast-generation/scripts/generate.py \
-  --script-file /mnt/user-data/workspace/ai-history-script.json \
-  --output-file /mnt/user-data/outputs/ai-history-podcast.mp3 \
-  --transcript-file /mnt/user-data/outputs/ai-history-transcript.md
+python backend/skills/public/podcast-generation/scripts/generate.py \
+  --script-file .eino-cli/skill-workspace/ai-history-script.json \
+  --output-file .eino-cli/skill-outputs/ai-history-podcast.mp3 \
+  --transcript-file .eino-cli/skill-outputs/ai-history-transcript.md
 ```
 
 This will generate:
@@ -164,7 +164,7 @@ The generated podcast follows the "Hello Deer" format:
 
 After generation:
 
-- Podcasts and transcripts are saved in `/mnt/user-data/outputs/`
+- Podcasts and transcripts are saved in `.eino-cli/skill-outputs/`
 - Share both the podcast MP3 and transcript MD with user using `present_files` tool
 - Provide brief description of the generation result (topic, duration, hosts)
 - Offer to regenerate if adjustments needed

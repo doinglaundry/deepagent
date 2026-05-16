@@ -25,11 +25,11 @@ When a user requests video generation, identify:
 - Style preferences: Art style, mood, color palette
 - Technical specs: Aspect ratio, composition, lighting
 - Reference image: Any image to guide generation
-- You don't need to check the folder under `/mnt/user-data`
+- You don't need to check the folder under `.eino-cli/skill-data`
 
 ### Step 2: Create Structured Prompt
 
-Generate a structured JSON file in `/mnt/user-data/workspace/` with naming pattern: `{descriptive-name}.json`
+Generate a structured JSON file in `.eino-cli/skill-workspace/` with naming pattern: `{descriptive-name}.json`
 
 ### Step 3: Create Reference Image (Optional when image-generation skill is available)
 
@@ -41,10 +41,10 @@ Generate reference image for the video generation.
 
 Call the Python script:
 ```bash
-python /mnt/skills/public/video-generation/scripts/generate.py \
-  --prompt-file /mnt/user-data/workspace/prompt-file.json \
+python backend/skills/public/video-generation/scripts/generate.py \
+  --prompt-file .eino-cli/skill-workspace/prompt-file.json \
   --reference-images /path/to/ref1.jpg \
-  --output-file /mnt/user-data/outputs/generated-video.mp4 \
+  --output-file .eino-cli/skill-outputs/generated-video.mp4 \
   --aspect-ratio 16:9
 ```
 
@@ -114,10 +114,10 @@ Load the image-generation skill and generate a single reference image `narnia-fa
 
 Step 4: Use the generate.py script to generate the video
 ```bash
-python /mnt/skills/public/video-generation/scripts/generate.py \
-  --prompt-file /mnt/user-data/workspace/narnia-farewell-scene.json \
-  --reference-images /mnt/user-data/outputs/narnia-farewell-scene-01.jpg \
-  --output-file /mnt/user-data/outputs/narnia-farewell-scene-01.mp4 \
+python backend/skills/public/video-generation/scripts/generate.py \
+  --prompt-file .eino-cli/skill-workspace/narnia-farewell-scene.json \
+  --reference-images .eino-cli/skill-outputs/narnia-farewell-scene-01.jpg \
+  --output-file .eino-cli/skill-outputs/narnia-farewell-scene-01.mp4 \
   --aspect-ratio 16:9
 ```
 > Do NOT read the python file, just call it with the parameters.
@@ -126,7 +126,7 @@ python /mnt/skills/public/video-generation/scripts/generate.py \
 
 After generation:
 
-- Videos are typically saved in `/mnt/user-data/outputs/`
+- Videos are typically saved in `.eino-cli/skill-outputs/`
 - Share generated videos (come first) with user as well as generated image if applicable, using `present_files` tool
 - Provide brief description of the generation result
 - Offer to iterate if adjustments needed
