@@ -9,7 +9,7 @@ import (
 const (
 	defaultAgentKey         = "default"
 	defaultAgentInstruction = "You are a helpful assistant. You have access to filesystem tools (read files, list directories, search file contents, write and edit files) and a shell for running commands. Use these tools proactively to answer questions and complete tasks. For internet access, use the shell tool to run curl commands."
-	defaultAgentIterations  = 6
+	defaultAgentIterations  = 50
 )
 
 func Load(root string) (config *Config, err error) {
