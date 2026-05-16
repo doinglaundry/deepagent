@@ -81,6 +81,25 @@ func TestGetSystemPrompt_SkillsAndDeferredSectionsRendered(t *testing.T) {
 	}
 }
 
+// task tool schema is {subagent_type, description} only (eino's
+// adk/prebuilt/deep/task_tool.go). Any prompt= or prompt: argument in the
+// rendered <subagent_system> examples is a hallucinated parameter that the
+// real tool drops on unmarshal — the subagent then receives only the
+// (formerly short) description string. Pin this so future edits cannot
+// reintroduce the bug.
+func TestGetSystemPrompt_SubagentExamplesHaveNoPromptArg(t *testing.T) {
+	cfg := &config.Config{RootDir: t.TempDir()}
+	out := GetSystemPrompt("default", true, cfg)
+	for _, bad := range []string{"prompt=\"...\"", "prompt=\"", "\"prompt\":"} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("found hallucinated %q in <subagent_system> examples; task tool schema is {subagent_type, description} only", bad)
+		}
+	}
+	if !strings.Contains(out, "task(subagent_type=\"general-purpose\", description=") {
+		t.Fatalf("expected example task() call with real schema fields; rendered prompt:\n%s", out)
+	}
+}
+
 // Subagent-mode bullets must keep the "  - " indent so the placeholder
 // expansion matches its <thinking_style>/<critical_reminders> siblings;
 // without the trailing two-space pad in the helper output the next bullet

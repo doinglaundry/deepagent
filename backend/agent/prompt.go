@@ -152,12 +152,14 @@ func buildSubagentSection(n int) string {
 		"",
 		"```python",
 		"# User asks: \"Why is Tencent's stock price declining?\"",
-		"# Thinking: 3 sub-tasks → fits in 1 batch",
+		"# Thinking: 3 sub-tasks → fits in 1 batch.",
+		"# Tool schema: task takes ONLY {subagent_type, description}. The full task",
+		"# brief lives in description — the subagent receives that string verbatim.",
 		"",
 		"# Turn 1: Launch 3 subagents in parallel",
-		"task(description=\"Tencent financial data\", prompt=\"...\", subagent_type=\"general-purpose\")",
-		"task(description=\"Tencent news & regulation\", prompt=\"...\", subagent_type=\"general-purpose\")",
-		"task(description=\"Industry & market trends\", prompt=\"...\", subagent_type=\"general-purpose\")",
+		"task(subagent_type=\"general-purpose\", description=\"Pull Tencent's last 4 quarters of financial reports, summarize revenue / earnings trends, flag any guidance changes. Return a 5-bullet summary.\")",
+		"task(subagent_type=\"general-purpose\", description=\"Search news and regulatory filings from the past 90 days for Tencent, focusing on negative items: lawsuits, fines, gaming approval delays. Return dated bullets.\")",
+		"task(subagent_type=\"general-purpose\", description=\"Compare Tencent's past-quarter price action against NetEase / Bilibili / Alibaba; surface sector-wide drivers vs company-specific causes. Return a comparison table.\")",
 		"# All 3 run in parallel → synthesize results",
 		"```",
 		"",
@@ -168,13 +170,13 @@ func buildSubagentSection(n int) string {
 		fmt.Sprintf("# Thinking: 5 sub-tasks → need multiple batches (max %d per batch)", n),
 		"",
 		fmt.Sprintf("# Turn 1: Launch first batch of %d", n),
-		"task(description=\"AWS analysis\", prompt=\"...\", subagent_type=\"general-purpose\")",
-		"task(description=\"Azure analysis\", prompt=\"...\", subagent_type=\"general-purpose\")",
-		"task(description=\"GCP analysis\", prompt=\"...\", subagent_type=\"general-purpose\")",
+		"task(subagent_type=\"general-purpose\", description=\"Profile AWS: pricing model, top differentiating services (compute / storage / AI), 2 strengths + 2 weaknesses. Return concise bullets.\")",
+		"task(subagent_type=\"general-purpose\", description=\"Profile Azure: pricing model, top differentiating services, 2 strengths + 2 weaknesses. Match the AWS bullet shape for comparability.\")",
+		"task(subagent_type=\"general-purpose\", description=\"Profile GCP: pricing model, top differentiating services, 2 strengths + 2 weaknesses. Match the AWS bullet shape.\")",
 		"",
 		"# Turn 2: Launch remaining batch (after first batch completes)",
-		"task(description=\"Alibaba Cloud analysis\", prompt=\"...\", subagent_type=\"general-purpose\")",
-		"task(description=\"Oracle Cloud analysis\", prompt=\"...\", subagent_type=\"general-purpose\")",
+		"task(subagent_type=\"general-purpose\", description=\"Profile Alibaba Cloud: pricing model, top differentiating services, 2 strengths + 2 weaknesses. Match the AWS bullet shape.\")",
+		"task(subagent_type=\"general-purpose\", description=\"Profile Oracle Cloud: pricing model, top differentiating services, 2 strengths + 2 weaknesses. Match the AWS bullet shape.\")",
 		"",
 		"# Turn 3: Synthesize ALL results from both batches",
 		"```",
@@ -542,9 +544,6 @@ func extractTopLevelSection(text, title string) string {
 	return strings.TrimSpace(rest)
 }
 
-// Trailing "  " keeps the next template bullet ("- Never write..." /
-// "- Skill First...") indented to match its siblings; without it the
-// placeholder replacement strips the leading indent on that bullet.
 func GetSubagentThinking(IsSubagentEnabled bool, n int) string {
 	if IsSubagentEnabled {
 		return "" +
