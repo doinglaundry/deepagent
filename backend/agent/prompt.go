@@ -447,10 +447,10 @@ const systemPromptTemplateRaw = `
   - **Code style on demand**: The system prompt carries only the
     §<agent_discipline>§ section of §AGENTS.md§. Before any non-trivial
     code change in this repo, call read_file on §AGENTS.md§ under
-    §<root>§ to load the project's code style (§Core Principles§ /
-    §Naming§ / §Comments§ / §Concise Assignment§ / §Commit Granularity§
-    / §Spec Documents§). One read per session is enough; rely on
-    conversation context afterward.
+    §<root>§ to load the project's code style (§Code Conventions§ —
+    Naming / Comments / Concise Assignment / Commits — and §Spec
+    Documents§). One read per session is enough; rely on conversation
+    context afterward.
   - **Clarification only after grounding**: Try to resolve ambiguity by
     reading the relevant code first; only call ask_clarification when
     grounding can't resolve it (truly missing intent / destructive op /
