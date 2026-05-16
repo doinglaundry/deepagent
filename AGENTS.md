@@ -1,66 +1,82 @@
 # AGENTS.md
 
-eino-cli 仓库的项目级编码风格说明，面向 AI Agent（Cursor、Codex 等）和
-人类贡献者。Agent 在本仓库内启动任务时会自动加载本文件。
+Project-level coding-style notes for the eino-cli repository, addressed
+to AI agents (Cursor, Codex, etc.) and human contributors. Agents
+auto-load this file when they open a task in the repo.
 
-## 核心原则
+## Core Principles
 
-> **结构体只装数据。函数承载行为。尽量少传数据。尽量少压调用栈。**
+> **Structs hold data. Functions hold behavior. Pass less data. Push less stack.**
 
-四个推论：
+Four corollaries:
 
-1. **结构体只装"必须一起出现的状态"。**字段必须共享生命周期，并且放在一起读才有意义。
-2. **行为住在普通顶层函数里。** 不挂 receiver，不藏 callback 字段，
-   不躲 `deps.X.Y(...)`。函数体能从上到下在一处读完。
-3. **少传数据。** 三个调用者都传 `cfg` 的同一种衍生量 → 把衍生内化进
-   被调用方。结构体 7 个字段只接 2 个 → 剩下 5 个删掉。
-4. **少压调用栈。** 业务代码从最外层接口到最底层执行，**总深度尽量在
-   4 层以内**。每一层都得做实事；纯转发层折叠掉。
+1. **A struct only holds "state that must travel together".** Fields must
+   share a lifecycle and be meaningful to read side by side.
+2. **Behavior lives in plain top-level functions.** No receivers, no
+   hidden callback fields, no `deps.X.Y(...)` indirection. The body
+   should read top-to-bottom in one place.
+3. **Pass less data.** When three callers all derive the same value from
+   `cfg`, internalize the derivation in the callee. When seven struct
+   fields only see two readers, delete the other five.
+4. **Push less stack.** Business code from outermost interface to
+   innermost executor should stay **within four layers** when possible.
+   Every layer earns its keep; collapse pure-forwarding layers.
 
-## 结构体何时存在
+## When Structs Earn Their Place
 
-**矫枉过正预警**：替代方案是 8+ 参数函数时，结构体反而是对的；两种
-序列化格式共用一个 Go 类型也保留 —— 用 struct tag（`json:"x"
-yaml:"x"`）解决，不要并行 DTO。
+**Overcorrection warning**: when the alternative is an 8+ argument
+function, a struct is the right answer; a single Go type shared between
+two serialization formats also stays — solve it with struct tags
+(`json:"x" yaml:"x"`), not parallel DTOs.
 
-**项目特例：配置只用一个 `config.Config`。** 子模块要的只是其中几个
-字段时，传整个 `cfg` 进去，让消费方自己读。**禁止**为某个子系统定义
-并行配置结构体把字段拷一遍 —— 这是本仓库最常见的 indirection 来源。
+**Project-specific exception: configuration uses one `config.Config`.**
+When a submodule needs only a few fields, pass the whole `cfg` and let
+the consumer read what it needs. **Do not** define a parallel config
+struct just to copy fields into — that is the most common source of
+indirection in this repo.
 
-## 命名
-- **变量名 = 语义本身**：`getID()` 的返回值叫 `id`，不叫 `result` /
-  `r` / `tmp`。
-- **禁止私造缩写**：`usrCnt` / `procRslt` / `tmpVal` 一律展开。Go 通行
-  短词（`ctx` / `err` / `cfg` / `fn` / `req` / `resp` / `i` / `ok`）
-  保留 —— 已是行业默认词汇。可读性永远第一。
-- **函数名以动词开头**：`getX` / `buildX` / `applyX` / `parseX` /
-  `renderX` 等动词形式；不要 `pathFor`（介词）/ `validX`（形容词）/
-  `userInfo`（裸名词）这种。Effective Go 关于 "不加 Get 前缀" 的建议
-  在本仓库**不**采用 —— `getX` 是首选，跟语义对齐。例外：Go 标准惯
-  例 `NewX`（构造）；返回属性值的小 helper（`utcNowISO` /
-  `defaultIterationLimit`）可沿用名词。
-- 重命名扫到底：所有调用点、注释、测试在同一个 commit 里改完。半截
-  重命名只会留下考古地层。
+## Naming
 
-## 注释
+- **Variable name = the thing's meaning.** `getID()` returns `id`, not
+  `result` / `r` / `tmp`.
+- **No invented abbreviations.** Expand `usrCnt` / `procRslt` /
+  `tmpVal`. Standard Go shorts (`ctx` / `err` / `cfg` / `fn` / `req` /
+  `resp` / `i` / `ok`) stay — those are industry vocabulary. Readability
+  always wins.
+- **Function names start with a verb.** `getX` / `buildX` / `applyX` /
+  `parseX` / `renderX`. Avoid `pathFor` (preposition) / `validX`
+  (adjective) / `userInfo` (bare noun). Effective Go's "no Get prefix"
+  recommendation is **not** adopted here — `getX` is preferred when it
+  matches the semantics. Exceptions: Go's standard `NewX` (constructor)
+  and trivial property helpers (`utcNowISO` /
+  `defaultIterationLimit`) may stay nominal.
+- **Carry renames through to the bottom.** All call sites, comments,
+  and tests change in the same commit. A half-finished rename only
+  leaves archaeological strata behind.
 
-- **最多两行，回答"为什么"。** "做什么"是代码自己的工作。
-- 一行不够时先反问：是不是该改名 / 拆函数？
-- 例外（合法的多行场景）：
-  - Package doc（`// Package x ...`）—— 在 `go doc` 里整体阅读；
-  - 大型字面量的结构约定（如 prompt 模板的缩进规则）；
-  - 非显式外部约束（协议怪癖、上游 bug），读者从代码里复原不出来。
-- 默认动作是删。**永远不要**给刚生成的代码贴段落级解释 —— 那段话该
-  在 commit message 或 spec 文档里。
+## Comments
+
+- **Two lines max, answer "why".** "What" is the code's job.
+- If one line is not enough, ask first: should this be renamed or
+  extracted into a function?
+- Legitimate multi-line cases:
+  - Package doc (`// Package x ...`) — read as a whole via `go doc`.
+  - Structural conventions for large literals (e.g. prompt template
+    indentation rules).
+  - Non-obvious external constraints (protocol quirks, upstream bugs)
+    that a reader cannot recover from the code alone.
+- The default action is delete. **Never** glue a paragraph-level
+  explanation onto code you just generated — that text belongs in the
+  commit message or a spec doc.
 
 ```go
 // Reset turn counter so /clear restarts numbering at 1.
 func (t *Trace) ResetTurn() { t.turn.Store(0) }
 ```
 
-## 简洁赋值（少用 if/else）
+## Concise Assignment (avoid if/else)
 
-原地标准化的标准写法：
+The standard pattern for in-place normalization:
 
 ```go
 trimmed := strings.TrimSpace(name)
@@ -70,7 +86,8 @@ if trimmed == "" {
 ac.Name = trimmed
 ```
 
-每行只承担一件事。避免把赋值拆到 if/else 两支：
+Each line does one thing. Avoid splitting the assignment across both
+branches:
 
 ```go
 // AVOID
@@ -81,140 +98,157 @@ if strings.TrimSpace(ac.Name) == "" {
 }
 ```
 
-三类典型替换：
+Three typical replacements:
 
-- **默认值赋值** → 先赋默认，再用 if 覆盖（上例）；
-- **错误处理** → 提前 return，不要把主逻辑塞进 else；
-- **二选一映射** → map / switch / lookup 表，不要嵌套 if。
+- **Default-value assignment** → write the default first, then `if`-override (example above).
+- **Error handling** → return early; do not stuff the main path inside `else`.
+- **Either-or mapping** → use map / switch / lookup table instead of nested `if`.
 
-## Commit 粒度
+## Commit Granularity
 
-- 纯重命名 ≠ 行为变更 → 拆成两个 commit。
-- "摘掉中间层" + "重连消费方" → 各占一个 commit。
-- 每个 commit 的 diff 要能用一句话说清。
+- Pure rename ≠ behavior change → split into two commits.
+- "Remove the middle layer" + "rewire the consumers" → one commit each.
+- Each commit's diff should fit in a single sentence.
 
-## Spec 文档
+## Spec Documents
 
-`specs/<日期>-<主题>/design.md` 是设计落地的载体。下列约定让 reviewer
-能在三个问题内问完：**做什么 / 怎么做 / 万一炸了怎么办**。
+`specs/<date>-<topic>/design.md` is where design lands. The conventions
+below let a reviewer answer the only three questions worth asking:
+**what / how / how does it fail safely**.
 
-### 三段式骨架
+### Three-section skeleton
 
-每个独立 feature（一个 yaml 字段、一个 middleware、一个工具…）固定
-三段、不增不减：
-
-```
-### 目标          — 现状一句话 + 现有代码引用 + 预期效果列表
-### 实现代码      — 按文件粒度的编号步骤 + 可粘贴的 Go 代码
-### 取舍          — 设计选择 + 副作用/风险 + 回滚
-```
-
-不要发明"现状 / 目标行为 / 代码改动清单 / 副作用 / 风险 / 回滚开关"
-这种四段六段七段——多余的标题对应不到 reviewer 的问题。
-
-### 代码引用
-
-- 引用现有代码：用工具支持的可点击语法（Cursor 是
-  `` ```起始行:结束行:文件路径 ``）。路径从仓库根开始（`backend/...`）。
-- 展示新增 / 修改的代码：``` ```go ``` 普通 fence，可粘贴；签名 / 导入
-  路径跟实际类型对齐。
-- 散文中提符号：`` `path::Symbol` ``，例如
-  `backend/agent/middlewares/trace.go::Trace`。
-- 关键 diff 区分新旧：在代码块内用 `// === 新增 ===` /
-  `// === 已有 ===` 注释分隔。
-
-### 设计决策挂依据
-
-每条**设计选择**带一条理由短语，**优先引用 AGENTS.md 自身原则**：
-
-- "矫枉过正预警 —— 8+ 字段才考虑结构体"
-- "行为住普通顶层函数"
-- "二选一映射 → switch / lookup 表"
-- "尽量少压调用栈"
-
-不写"best practice / clean / maintainable"——这种判断没有约束力。
-
-### 副作用要具体
-
-中等以上改动（>20 行）的"副作用 / 风险"段必须落地到具体数字、文件
-名、测试名：
-
-- ❌ "性能影响可忽略"  
-  ✅ "4 个 int64 struct copy"、"5800 万年才溢出"
-- ❌ "对其他模块无影响"  
-  ✅ "`esc_footer_test.go` 已有断言（`/help` / `ctrl-c`）不受影响 ——
-  这些都在 right hint 段，token 段只挂 left"
-- ❌ "测试需要更新"  
-  ✅ "`tools_test.go` raw 文本断言会挂"（明示预期 break 点）
-
-trivial 改动可以省略此段。
-
-### 回滚分两层
+Each independent feature (a yaml field, a middleware, a tool…) gets
+exactly three sections:
 
 ```
-**回滚**：
-
-- 软回滚：feature flag / yaml 关闭一行 → 行为退回现状
-- 硬回滚：列具体 N 处修改全删（每处用句号分开）
+### Goal              — one-sentence current state + code references + expected outcomes
+### Implementation    — file-grained numbered steps + paste-ready Go code
+### Tradeoffs         — design choice + side effects / risks + rollback
 ```
 
-软回滚不存在的场景（无 flag）只写硬回滚。
+Do not invent "current state / desired behavior / change list / side
+effects / risks / rollback toggle" four/six/seven-section variants —
+extra headings do not map onto the reviewer's questions.
 
-### 重命名扫到底也适用文档
+### Code references
 
-已在「命名」章节规定：所有调用点、注释、测试同一 commit 改完。**已落
-盘的 spec 文档（含 design.md / step-N.md）也算调用点**——发生重命名
-时一并改，不留半截。
+- Existing code: use the tool's clickable syntax (in Cursor:
+  `` ```start:end:path ``). Paths are repo-root relative (`backend/...`).
+- New / modified code: regular ``` ```go ``` fences, paste-ready;
+  signatures and import paths must match real types.
+- Inline symbol mentions: `` `path::Symbol` ``, e.g.
+  `backend/agent/middlewares/trace.go::Trace`.
+- Important diffs: split old vs new with `// === new ===` /
+  `// === existing ===` markers inside the code fence.
 
-## Agent 工作纪律
+### Anchor each design choice
 
-面向 LLM Agent 的执行守则。**这套规则向"谨慎"倾斜，不向"速度"倾斜；
-trivial 任务自行判断。**
+Every **design choice** carries a short reason, **preferably citing
+AGENTS.md itself**:
 
-### 1. 想清楚再下手
+- "Overcorrection warning — only consider a struct at 8+ fields"
+- "Behavior lives in plain top-level functions"
+- "Either-or mapping → switch / lookup table"
+- "Push less stack"
 
-- 不要假设。不要把困惑藏起来。把权衡说在明面上。
-- 实施前：把假设说出来，不确定就问；多种合理解读时列出来让 user
-  选，不要静悄悄挑一种；存在更简单方案时明说，必要时反驳；任何
-  不清楚的点 —— 停下来、指明困惑、提问。
+Do not write "best practice / clean / maintainable" — those carry no
+real constraint.
 
-### 2. 改动外科手术化
+### Side effects must be concrete
 
-- 只动**必须动的部分**。每一行 diff 都能直接追溯到 user 的请求。
-- 不要"顺手优化"邻近代码、注释、格式；不要重构没坏的东西；现有风格
-  即使你不喜欢，也照搬。
-- 自己引入后变 unused 的 import / 变量 / 函数自己清；预先存在的
-  dead code 不要顺手删 —— 提一下让 user 决定。
+Medium+ changes (>20 lines) require a "side effects / risks" section
+with specific numbers, file names, test names:
 
-### 3. 目标驱动执行
+- ❌ "performance impact negligible"  
+  ✅ "4 int64 struct copies", "overflows in 58 million years"
+- ❌ "no impact on other modules"  
+  ✅ "`esc_footer_test.go`'s existing assertions (`/help` / `ctrl-c`)
+  stay green — those live in the right-hint segment, the token segment
+  only attaches on the left"
+- ❌ "tests need updating"  
+  ✅ "`tools_test.go` raw-string assertion will break" (mark expected
+  break points explicitly)
 
-把任务转化为可验证的目标：
+Trivial changes may skip this section.
 
-| 模糊请求 | 可验证目标 |
-|---|---|
-| "加校验" | 为非法输入写测试，再让它通过 |
-| "修这个 bug" | 先写一个能复现 bug 的测试，再让它通过 |
-| "重构 X" | 确保前后测试都通过 |
-
-多步任务先列简短计划：
+### Two-tier rollback
 
 ```
-1. [步骤] → 验证：[检查]
-2. [步骤] → 验证：[检查]
-3. [步骤] → 验证：[检查]
+**Rollback**:
+
+- Soft: feature flag / yaml off-switch → behavior reverts to current
+- Hard: list each of the N edits to revert (period-separated)
 ```
 
-强成功标准 → Agent 能自循环跑完；弱标准（"让它能跑"）→ 反复打扰 user。
+When no flag exists, write only the hard rollback.
 
-### 4. 简洁性
+### "Carry renames through" applies to docs too
 
-`核心原则` 和 `结构体何时存在` 已经覆盖：不写 user 没要求的功能、
-不为单次代码搞抽象、不为不可能场景做错误处理、200 行能写成 50 行就
-重写。资深工程师看一眼会说"过度设计"的，就是过度设计。
+The Naming section already requires every call site, comment, and test
+to change in one commit. **Spec docs that have already shipped (design.md
+/ step-N.md) count as call sites** — update them too in the rename
+commit; do not leave a half-renamed paper trail.
 
-## 何时不适用
+## Agent Working Discipline
 
-公共库 API（向前兼容靠 struct option）、插件系统（DI 包正是接缝）、
-领域富类型（method 真的在建模 —— `time.Time` / `*sql.Tx`）。
+Execution rules for LLM agents. **This rule set leans toward "careful",
+not "fast"; trivial tasks are at your discretion.**
 
-规则是"减少 indirection"，不是"消灭 method"。
+### 1. Think before you cut
+
+- Do not assume. Do not hide your confusion. Put trade-offs on the
+  surface.
+- Before implementing: state your assumptions, ask when unsure; when
+  several reasonable readings exist, list them and let the user pick —
+  do not silently choose one; when a simpler approach exists, say so
+  and push back if needed; on any unclear point — stop, name the
+  confusion, ask.
+
+### 2. Surgical changes
+
+- Only touch **what must be touched**. Every diff line traces back to
+  the user's request.
+- Do not "casually optimize" neighboring code, comments, or
+  formatting; do not refactor what is not broken; copy the existing
+  style even if you dislike it.
+- Clean up imports / variables / functions you yourself made unused;
+  do not casually delete pre-existing dead code — flag it for the user
+  to decide.
+
+### 3. Goal-driven execution
+
+Translate the task into a verifiable goal:
+
+| Vague request    | Verifiable goal                                                       |
+|------------------|-----------------------------------------------------------------------|
+| "Add validation" | Write a test for invalid input first, then make it pass               |
+| "Fix this bug"   | Write a test that reproduces the bug first, then make it pass         |
+| "Refactor X"     | Make sure tests pass before and after                                 |
+
+For multi-step tasks, write a short plan first:
+
+```
+1. [step] → verify: [check]
+2. [step] → verify: [check]
+3. [step] → verify: [check]
+```
+
+Strong success criteria → the agent can self-loop to completion. Weak
+ones ("get it running") → repeated user pings.
+
+### 4. Simplicity
+
+`Core Principles` and `When Structs Earn Their Place` already cover the
+ground: do not add features the user did not ask for, do not abstract
+for a single use, do not handle errors for impossible cases, rewrite
+when 200 lines compress to 50. If a senior engineer would call it
+"over-engineered" at a glance, it is.
+
+## When this does not apply
+
+Public library APIs (forward compatibility via struct options), plug-in
+systems (the DI package is the seam), domain-rich types (methods are
+genuinely modeling something — `time.Time` / `*sql.Tx`).
+
+The rule is "reduce indirection", not "abolish methods".

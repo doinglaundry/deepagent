@@ -126,25 +126,26 @@ func TestGetSystemPrompt_EmptyMemorySkipsBlock(t *testing.T) {
 	}
 }
 
-// AGENTS.md is multi-section. Only §Agent 工作纪律§ goes into the system
-// prompt; the rest is read on demand. These tests lock that contract in.
+// AGENTS.md is multi-section. Only §Agent Working Discipline§ goes into
+// the system prompt; the rest is read on demand. These tests lock that
+// contract in.
 const agentsMDFixture = `# AGENTS.md
 
-## 核心原则
+## Core Principles
 
 > Structs hold data only.
 
 CODE_STYLE_BODY_MARKER
 
-## Agent 工作纪律
+## Agent Working Discipline
 
 DISCIPLINE_BODY_MARKER
 
-### 1. 想清楚再下手
+### 1. Think before you cut
 
 - be careful
 
-## 何时不适用
+## When this does not apply
 
 trailing section
 `
@@ -164,25 +165,25 @@ func TestLoadAgentsMDPrompt_ExtractsAgentDisciplineOnly(t *testing.T) {
 	if !strings.Contains(got, "DISCIPLINE_BODY_MARKER") {
 		t.Fatalf("agent discipline body missing:\n%s", got)
 	}
-	if !strings.Contains(got, "### 1. 想清楚再下手") {
+	if !strings.Contains(got, "### 1. Think before you cut") {
 		t.Fatalf("nested ### subheadings should be preserved:\n%s", got)
 	}
 	if strings.Contains(got, "CODE_STYLE_BODY_MARKER") {
-		t.Fatalf("§核心原则§ body must NOT leak into prompt:\n%s", got)
+		t.Fatalf("§Core Principles§ body must NOT leak into prompt:\n%s", got)
 	}
 	if strings.Contains(got, "trailing section") {
-		t.Fatalf("§何时不适用§ body must NOT leak into prompt:\n%s", got)
+		t.Fatalf("§When this does not apply§ body must NOT leak into prompt:\n%s", got)
 	}
 }
 
 func TestLoadAgentsMDPrompt_MissingSectionReturnsEmpty(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"),
-		[]byte("# AGENTS.md\n\n## 核心原则\n\nbody only\n"), 0o600); err != nil {
+		[]byte("# AGENTS.md\n\n## Core Principles\n\nbody only\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := loadAgentsMDPrompt(&config.Config{RootDir: root}); got != "" {
-		t.Fatalf("missing §Agent 工作纪律§ should produce empty, got %q", got)
+		t.Fatalf("missing §Agent Working Discipline§ should produce empty, got %q", got)
 	}
 }
 

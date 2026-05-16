@@ -447,9 +447,10 @@ const systemPromptTemplateRaw = `
   - **Code style on demand**: The system prompt carries only the
     §<agent_discipline>§ section of §AGENTS.md§. Before any non-trivial
     code change in this repo, call read_file on §AGENTS.md§ under
-    §<root>§ to load the project's code style (§核心原则§ / §命名§ /
-    §注释§ / §简洁赋值§ / §Commit 粒度§ / §Spec 文档§). One read per
-    session is enough; rely on conversation context afterward.
+    §<root>§ to load the project's code style (§Core Principles§ /
+    §Naming§ / §Comments§ / §Concise Assignment§ / §Commit Granularity§
+    / §Spec Documents§). One read per session is enough; rely on
+    conversation context afterward.
   - **Clarification only after grounding**: Try to resolve ambiguity by
     reading the relevant code first; only call ask_clarification when
     grounding can't resolve it (truly missing intent / destructive op /
@@ -503,8 +504,8 @@ func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Confi
 	return prompt + "\n<current_date>" + time.Now().Format("2006-01-02, Monday") + "</current_date>"
 }
 
-// loadAgentsMDPrompt extracts only the "Agent 工作纪律" section of
-// AGENTS.md and wraps it in <agent_discipline>. The rest of AGENTS.md
+// loadAgentsMDPrompt extracts only the "Agent Working Discipline" section
+// of AGENTS.md and wraps it in <agent_discipline>. The rest of AGENTS.md
 // (code style, naming, comments, commit granularity, spec doc rules,
 // etc.) is read on demand via read_file when the agent actually writes
 // code — keeping it out of the system prompt avoids inflating the
@@ -520,7 +521,7 @@ func loadAgentsMDPrompt(cfg *config.Config) string {
 	if err != nil {
 		return ""
 	}
-	body := extractTopLevelSection(string(data), "Agent 工作纪律")
+	body := extractTopLevelSection(string(data), "Agent Working Discipline")
 	if body == "" {
 		return ""
 	}
