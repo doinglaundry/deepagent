@@ -150,7 +150,7 @@ func buildSubagentSection(n int) string {
 		"",
 		fmt.Sprintf("**Usage Example 1 - Single Batch (≤%d sub-tasks):**", n),
 		"",
-		"```python",
+		"```text",
 		"# User asks: \"Why is Tencent's stock price declining?\"",
 		"# Thinking: 3 sub-tasks → fits in 1 batch.",
 		"# Tool schema: task takes ONLY {subagent_type, description}. The full task",
@@ -165,7 +165,7 @@ func buildSubagentSection(n int) string {
 		"",
 		fmt.Sprintf("**Usage Example 2 - Multiple Batches (>%d sub-tasks):**", n),
 		"",
-		"```python",
+		"```text",
 		"# User asks: \"Compare AWS, Azure, GCP, Alibaba Cloud, and Oracle Cloud\"",
 		fmt.Sprintf("# Thinking: 5 sub-tasks → need multiple batches (max %d per batch)", n),
 		"",
@@ -183,7 +183,7 @@ func buildSubagentSection(n int) string {
 		"",
 		"**Counter-Example - Direct Execution (NO subagents):**",
 		"",
-		"```python",
+		"```text",
 		directExecutionExample,
 		"```",
 		"",
@@ -379,7 +379,7 @@ const systemPromptTemplateRaw = `
   - ✅ After calling ask_clarification, execution will be interrupted automatically; wait for the user.
 
   **How to Use:**
-  §§§python
+  §§§text
   ask_clarification(
       question="Your specific question here?",
       clarification_type="missing_info",  # or other type
