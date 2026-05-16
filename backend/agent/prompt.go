@@ -542,12 +542,15 @@ func extractTopLevelSection(text, title string) string {
 	return strings.TrimSpace(rest)
 }
 
+// Trailing "  " keeps the next template bullet ("- Never write..." /
+// "- Skill First...") indented to match its siblings; without it the
+// placeholder replacement strips the leading indent on that bullet.
 func GetSubagentThinking(IsSubagentEnabled bool, n int) string {
 	if IsSubagentEnabled {
 		return "" +
 			"- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. " +
 			fmt.Sprintf("If count > %d, you MUST plan batches of ≤%d and only launch the FIRST batch now. ", n, n) +
-			fmt.Sprintf("NEVER launch more than %d `task` calls in one response.**\n", n)
+			fmt.Sprintf("NEVER launch more than %d `task` calls in one response.**\n  ", n)
 	}
 	return ""
 }
@@ -557,7 +560,7 @@ func GetSubagentReminder(IsSubagentEnabled bool, n int) string {
 		return "" +
 			"- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. " +
 			fmt.Sprintf("**HARD LIMIT: max %d `task` calls per response.** ", n) +
-			fmt.Sprintf("If >%d sub-tasks, split into sequential batches of ≤%d. Synthesize after ALL batches complete.\n", n, n)
+			fmt.Sprintf("If >%d sub-tasks, split into sequential batches of ≤%d. Synthesize after ALL batches complete.\n  ", n, n)
 	}
 	return ""
 }

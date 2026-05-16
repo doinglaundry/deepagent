@@ -81,6 +81,21 @@ func TestGetSystemPrompt_SkillsAndDeferredSectionsRendered(t *testing.T) {
 	}
 }
 
+// Subagent-mode bullets must keep the "  - " indent so the placeholder
+// expansion matches its <thinking_style>/<critical_reminders> siblings;
+// without the trailing two-space pad in the helper output the next bullet
+// loses its leading indent and the section visibly breaks.
+func TestGetSystemPrompt_SubagentEnabledKeepsBulletIndent(t *testing.T) {
+	cfg := &config.Config{RootDir: t.TempDir()}
+	out := GetSystemPrompt("default", true, cfg)
+	if !strings.Contains(out, "**\n  - Never write down your full final answer") {
+		t.Fatalf("subagent_thinking placeholder broke <thinking_style> bullet indent:\n%s", out)
+	}
+	if !strings.Contains(out, ".\n  - Skill First: Always load") {
+		t.Fatalf("subagent_reminder placeholder broke <critical_reminders> bullet indent:\n%s", out)
+	}
+}
+
 func TestGetSystemPrompt_EmptyMemorySkipsBlock(t *testing.T) {
 	cfg := &config.Config{
 		RootDir: t.TempDir(),
