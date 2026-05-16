@@ -10,14 +10,11 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 )
 
-// ToolErrorHandling converts tool-call errors into a string ToolMessage so the
-// agent loop continues instead of aborting the run.
 type ToolErrorHandling struct {
 	*adk.BaseChatModelAgentMiddleware
 	Logger *slog.Logger
 }
 
-// NewToolErrorHandling returns a ToolErrorHandling middleware.
 func NewToolErrorHandling() *ToolErrorHandling {
 	return &ToolErrorHandling{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},

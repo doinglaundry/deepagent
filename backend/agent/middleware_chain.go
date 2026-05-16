@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"eino-cli/backend/agent/memory"
 	"log/slog"
 
 	"github.com/cloudwego/eino/adk"
@@ -14,48 +15,33 @@ import (
 	memorystore "eino-cli/backend/memory/store"
 )
 
-// GetChatModelMiddlewares assembles the chat-model middleware chain. Memory
-// store and updater are constructed here (and only here) so MakeLeadAgent
-// stays memory-agnostic; the same updater instance is shared between the
-// memory hook and the summarization flush hook so debounce state is honoured
-// across both code paths.
 func GetChatModelMiddlewares(
 	ctx context.Context,
 	agentName string,
 	isSubagentEnabled bool,
-	getPlanMode func() bool,
+	getPlanModeFunc func() bool,
 	cfg *config.Config,
 	chatModel model.BaseChatModel,
 ) (middlewareList []adk.ChatModelAgentMiddleware) {
-	// patchtoolcalls inserts placeholder Tool messages for any dangling
-	// tool_call id (e.g. cancelled mid-flight) so the next model turn sees
-	// a well-formed history. Upstream New never returns a non-nil error.
 	patchToolCalls, _ := patchtoolcalls.New(ctx, nil)
 
 	middlewareList = []adk.ChatModelAgentMiddleware{
 		middlewares.NewAgentState(),
-		middlewares.NewTitle(),
 		middlewares.NewToolCallObservability(cfg.ToolObservability.Enabled),
 		middlewares.NewToolErrorHandling(),
 		patchToolCalls,
 		middlewares.NewLoopDetection(),
 	}
 
-	// store/updater must be visible to both the memory branch and the
-	// summarization branch below; declaring them here keeps the wiring
-	// explicit. updater stays nil when memory is disabled, which the
-	// flush hook short-circuits on.
 	var (
-		store   *memorystore.Store
-		updater *MemoryUpdater
+		store   = memorystore.NewStoreFromConfig(cfg)
+		updater = memory.NewMemoryUpdater(store)
 	)
-	if cfg.Memory.Enabled {
-		store = memorystore.NewStoreFromConfig(cfg)
-		updater = NewMemoryUpdater(store)
 
-		hooks := middlewares.MemoryHooks{
+	if cfg.Memory.Enabled {
+		middlewareList = append(middlewareList, middlewares.NewMemory(middlewares.MemoryHooks{
 			Inject: func(_ context.Context, msgs []*schema.Message) []*schema.Message {
-				return InjectMemory(store, cfg.Memory, agentName, msgs)
+				return memory.InjectMemory(store, cfg.Memory, agentName, msgs)
 			},
 			Extract: func(ctx context.Context, msgs []*schema.Message) {
 				err := updater.Run(ctx, chatModel, cfg.Memory, agentName, msgs, false)
@@ -63,12 +49,9 @@ func GetChatModelMiddlewares(
 					slog.Warn("memory update failed", "agent", agentName, "err", err)
 				}
 			},
-		}
-		middlewareList = append(middlewareList, middlewares.NewMemory(hooks))
+		}))
 	}
 
-	// tokenUsage stays referenceable so the Trace below can pull
-	// Snapshot() into TraceEvent.Tokens; nil when disabled.
 	var tokenUsage *middlewares.TokenUsage
 	if cfg.TokenUsage.Enabled {
 		tokenUsage = middlewares.NewTokenUsage()
@@ -81,10 +64,6 @@ func GetChatModelMiddlewares(
 		}
 	}
 
-	// SubagentLimit caps the number of parallel `task` calls the model
-	// can fire in a single turn. The cap MUST match the number the
-	// system prompt advertises (see effectiveMaxSubagents) — drift
-	// between prompt and runtime is a class of bug we're closing here.
 	if isSubagentEnabled {
 		middlewareList = append(middlewareList, middlewares.NewSubagentLimit(effectiveMaxSubagents(cfg)))
 	}
@@ -94,50 +73,16 @@ func GetChatModelMiddlewares(
 	}
 
 	if cfg.Summarization.Enabled {
-		summaryModel := buildSummaryChatModel(ctx, cfg)
-
-		// flushHook reuses the same updater instance as the memory hook so
-		// lastRunAt is shared; updater==nil (memory disabled) means there's
-		// nothing to flush, which the closure handles up front.
-		flushHook := func(ctx context.Context, before, _ adk.ChatModelAgentState) error {
-			if updater == nil {
-				return nil
-			}
-			flushCtx, cancel := context.WithTimeout(ctx, memoryFlushTimeout)
-			defer cancel()
-			return updater.Run(flushCtx, chatModel, cfg.Memory, agentName, before.Messages, true)
-		}
-
-		summaryMW, err := middlewares.NewSummarization(
-			ctx,
-			cfg.Summarization.Enabled,
-			0,
-			0,
-			cfg.Summarization.SummaryPrompt,
-			summaryModel,
-			flushHook,
-		)
-		if err != nil {
-			slog.Warn("summarization disabled: build failed", "err", err)
-		} else if summaryMW != nil {
+		summaryMW, err := middlewares.NewSummarization(ctx, cfg, updater, buildSummaryChatModel(ctx, cfg))
+		if err == nil {
 			middlewareList = append(middlewareList, summaryMW)
 		}
 	}
 
-	// PlanReminder must run BEFORE TodoReminder. PlanReminder mutates
-	// msgs[0] (the agent's own system instruction) in place; TodoReminder
-	// later prepends a separate system message at index 0. If the order
-	// flipped, PlanReminder would target the todo reminder instead of
-	// the agent instruction.
-	middlewareList = append(middlewareList, middlewares.NewPlanReminder(getPlanMode))
+	middlewareList = append(middlewareList, middlewares.NewPlanReminder(getPlanModeFunc))
 
-	// TodoReminder must run BEFORE Trace so the trace captures the raw
-	// state.Messages (with reminder already injected when applicable),
-	// keeping debug output an honest mirror of what the model sees.
 	middlewareList = append(middlewareList, middlewares.NewTodoReminder())
 
-	// Trace must run BEFORE Clarification so its After hook captures
-	// the raw assistant message before Clarification's in-place rewrite.
 	trace := middlewares.NewTrace(agentName)
 	if tokenUsage != nil {
 		trace.TokenSnapshot = tokenUsage.Snapshot

@@ -9,22 +9,19 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// TokenUsage accumulates per-call prompt/completion tokens; expose via Snapshot().
-type TokenUsage struct {
-	*adk.BaseChatModelAgentMiddleware
-
-	Logger *slog.Logger
-
-	mu    sync.Mutex
-	stats TokenUsageStats
-}
-
-// TokenUsageStats is the read-only counter surface.
 type TokenUsageStats struct {
 	PromptTokens     int64
 	CompletionTokens int64
 	TotalTokens      int64
 	Calls            int
+}
+
+// TokenUsage accumulates per-call prompt/completion tokens; expose via Snapshot().
+type TokenUsage struct {
+	*adk.BaseChatModelAgentMiddleware
+	Logger *slog.Logger
+	mu     sync.Mutex
+	stats  TokenUsageStats
 }
 
 // NewTokenUsage returns a TokenUsage middleware; attach when AppConfig.TokenUsage.Enabled.

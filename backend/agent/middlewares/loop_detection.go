@@ -11,16 +11,12 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// Defaults mirror the Python loop_detection_middleware constants.
 const (
 	defaultLoopWarnThreshold = 3
 	defaultLoopHardLimit     = 5
 	defaultLoopWindowSize    = 20
 )
 
-// LoopDetection hashes each assistant's tool_calls into a sliding window:
-// at WarnThreshold it warns; at HardLimit it strips tool_calls so the
-// agent must produce a text-only reply.
 type LoopDetection struct {
 	*adk.BaseChatModelAgentMiddleware
 
@@ -34,7 +30,6 @@ type LoopDetection struct {
 	warned map[string]struct{}
 }
 
-// NewLoopDetection returns a LoopDetection middleware with default thresholds.
 func NewLoopDetection() *LoopDetection {
 	return &LoopDetection{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},

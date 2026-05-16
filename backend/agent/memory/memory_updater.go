@@ -1,4 +1,4 @@
-package agent
+package memory
 
 import (
 	"context"
@@ -16,17 +16,10 @@ import (
 	memorystore "eino-cli/backend/memory/store"
 )
 
-// memoryUpdateTimeout caps a single LLM call so a hung backend doesn't hold
-// the updater mutex forever. memoryFlushTimeout is the shorter cap used by
-// /clear summarization flushes — UI must not stall.
 const (
 	memoryUpdateTimeout = 60 * time.Second
-	memoryFlushTimeout  = 5 * time.Second
 )
 
-// MemoryUpdater serialises LLM-driven memory updates per (store, agent).
-// chatModel/cfg/agentName flow in through Run so the same updater can be
-// shared between the per-turn memory hook and the /clear flush hook.
 type MemoryUpdater struct {
 	store *memorystore.Store
 
@@ -38,11 +31,6 @@ func NewMemoryUpdater(store *memorystore.Store) *MemoryUpdater {
 	return &MemoryUpdater{store: store}
 }
 
-// Run extracts memory updates from messages, asks chatModel to produce a
-// JSON delta against the current store, applies the delta, and persists.
-// force=true bypasses debounce and is what the /clear flush hook passes;
-// force=false is the per-turn path. Returns nil for a planned skip
-// (disabled / nothing to update / debounced) so callers don't log noise.
 func (u *MemoryUpdater) Run(
 	ctx context.Context,
 	chatModel model.BaseChatModel,
@@ -92,10 +80,7 @@ func (u *MemoryUpdater) Run(
 	if resp == nil {
 		return nil
 	}
-	// Empty content = LLM had nothing to add for this turn (or transient
-	// blip). Same shape as the convo-empty branch above: planned skip, no
-	// debounce advance, retry next turn. Avoids spurious "parse update:
-	// unexpected end of JSON input" warnings.
+
 	if strings.TrimSpace(resp.Content) == "" {
 		return nil
 	}
@@ -116,8 +101,6 @@ func (u *MemoryUpdater) Run(
 	return nil
 }
 
-// updatePayload is the LLM-emitted JSON shape; types live with the updater
-// because the renderer never needs them.
 type updatePayload struct {
 	User          map[string]sectionUpdate `json:"user"`
 	History       map[string]sectionUpdate `json:"history"`
@@ -139,19 +122,11 @@ type factUpdate struct {
 	SourceError string  `json:"sourceError,omitempty"`
 }
 
-// normalizeFactContent collapses trivial wording variants (case + leading
-// / trailing / inner whitespace) so write-side dedup can merge duplicates
-// like "用户对 Git 感兴趣" vs "用户对 git 感兴趣". Intentionally minimal:
-// no punctuation / stopword stripping, to avoid merging facts that are
-// only superficially similar.
 func normalizeFactContent(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// findDuplicateFact returns the index of the first fact whose normalized
-// content matches; -1 when nothing matches. O(n); n stays well under 100
-// per cfg.MaxFacts so an index is overkill.
 func findDuplicateFact(facts []memorystore.Fact, normalized string) int {
 	for i := range facts {
 		if normalizeFactContent(facts[i].Content) == normalized {
@@ -161,9 +136,6 @@ func findDuplicateFact(facts []memorystore.Fact, normalized string) int {
 	return -1
 }
 
-// parseUpdatePayload tolerates LLMs that wrap JSON in ```json ... ``` fences.
-// Unmarshal failures bubble up as wrapped errors so Run can decide not to
-// advance lastRunAt.
 func parseUpdatePayload(raw string) (updatePayload, error) {
 	text := strings.TrimSpace(raw)
 
@@ -187,9 +159,6 @@ func parseUpdatePayload(raw string) (updatePayload, error) {
 	return p, nil
 }
 
-// applyUpdate is a pure function: same (current, upd, cfg) -> same output
-// modulo NewFactID()/utcNowISO(). Keeping it pure makes the merge logic
-// trivially testable; Run handles the I/O.
 func applyUpdate(
 	current memorystore.MemoryData,
 	upd updatePayload,
@@ -305,8 +274,6 @@ func applyUpdate(
 	return out
 }
 
-// utcNowISO mirrors store.utcNowISO so the agent package doesn't need to
-// reach into store internals just to stamp timestamps.
 func utcNowISO() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
 }

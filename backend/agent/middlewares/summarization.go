@@ -2,29 +2,23 @@ package middlewares
 
 import (
 	"context"
+	"eino-cli/backend/agent/memory"
+	"eino-cli/backend/config"
 	"fmt"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/summarization"
 	"github.com/cloudwego/eino/components/model"
 )
 
-// SummarizationMemoryFlushHook fires once per summarization trigger, after
-// the summary is finalised. Errors are surfaced as warnings only — flushing
-// memory must never block summarization.
-type SummarizationMemoryFlushHook func(ctx context.Context, before, after adk.ChatModelAgentState) error
-
-// NewSummarization wraps eino's summarization middleware with eino-cli defaults
-// (190k token / 200-message trigger). Returns (nil, nil) when enabled is false.
 func NewSummarization(
 	ctx context.Context,
-	enabled bool,
-	contextTokens, contextMessages int,
-	userInstruction string,
+	cfg *config.Config,
+	updater *memory.MemoryUpdater,
 	summaryModel model.BaseChatModel,
-	memoryFlush SummarizationMemoryFlushHook,
 ) (adk.ChatModelAgentMiddleware, error) {
-	if !enabled {
+	if !cfg.Summarization.Enabled {
 		return nil, nil
 	}
 	if summaryModel == nil {
@@ -35,23 +29,20 @@ func NewSummarization(
 		ContextTokens:   190000,
 		ContextMessages: 200,
 	}
-	if contextTokens > 0 {
-		condition.ContextTokens = contextTokens
-	}
-	if contextMessages > 0 {
-		condition.ContextMessages = contextMessages
-	}
 
-	cfg := &summarization.Config{
+	mw, err := summarization.New(ctx, &summarization.Config{
 		Model:           summaryModel,
 		Trigger:         condition,
-		UserInstruction: userInstruction,
-	}
-	if memoryFlush != nil {
-		cfg.Callback = summarization.CallbackFunc(memoryFlush)
-	}
-
-	mw, err := summarization.New(ctx, cfg)
+		UserInstruction: cfg.Summarization.SummaryPrompt,
+		Callback: func(ctx context.Context, before, _ adk.ChatModelAgentState) error {
+			if updater == nil {
+				return nil
+			}
+			flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			return updater.Run(flushCtx, summaryModel, cfg.Memory, cfg.DefaultAgent, before.Messages, true)
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("build summarization middleware: %w", err)
 	}

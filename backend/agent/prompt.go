@@ -2,6 +2,7 @@
 package agent
 
 import (
+	"eino-cli/backend/agent/memory"
 	"fmt"
 	"log/slog"
 	"os"
@@ -203,7 +204,7 @@ func getMemoryPrompt(agentName string, store *memorystore.Store, m config.Memory
 	if !m.Enabled || !m.InjectionEnabled {
 		return ""
 	}
-	block := GetMemoryPromptBlock(store, agentName, m.MaxInjectionTokens)
+	block := memory.GetMemoryPromptBlock(store, agentName, m.MaxInjectionTokens)
 	if block == "" {
 		return ""
 	}
@@ -303,19 +304,6 @@ func GetDeferredToolsPromptSection(cfg *config.Config, toolSearchEnabled bool) s
 		return ""
 	}
 	return "<available-deferred-tools>\n" + strings.Join(names, "\n") + "\n</available-deferred-tools>"
-}
-
-// buildACPSection emits the static ACP block when at least one ACP agent is configured.
-func buildACPSection(cfg *config.Config) string {
-	if len(cfg.ACP.Agents) == 0 {
-		return ""
-	}
-	return "" +
-		"\n**ACP Agent Tasks (invoke_acp_agent):**\n" +
-		"- ACP agents (e.g. codex, claude_code) run in their own independent workspace — NOT in workspace/uploads/outputs\n" +
-		"- When writing prompts for ACP agents, describe the task only — do NOT reference workspace/uploads/outputs paths\n" +
-		"- ACP agent results are accessible at `/mnt/acp-workspace/` (read-only) — use `ls`, `read_file`, or `bash cp` to retrieve output files\n" +
-		"- To deliver ACP output to the user: copy from `/mnt/acp-workspace/<file>` to `outputs/<file>`, then use `present_files`"
 }
 
 // systemPromptTemplateRaw uses "§" as a backtick sentinel (Go raw strings
@@ -496,7 +484,6 @@ func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Confi
 		"{deferred_tools_section}", GetDeferredToolsPromptSection(cfg, cfg.ToolSearch.Enabled),
 		"{subagent_section}", GetSubagentSection(IsSubagentEnabled, n),
 		"{subagent_reminder}", GetSubagentReminder(IsSubagentEnabled, n),
-		"{acp_section}", buildACPSection(cfg),
 		"{root_dir}", cfg.RootDir,
 	)
 	prompt := replacer.Replace(strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"))

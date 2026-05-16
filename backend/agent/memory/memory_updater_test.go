@@ -1,9 +1,10 @@
-package agent
+package memory
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -274,7 +275,7 @@ func TestApplyUpdate_MaxFactsKeepsHighestConfidence(t *testing.T) {
 		t.Fatalf("MaxFacts=2 should cap to 2, got %d", len(out.Facts))
 	}
 	got := []string{out.Facts[0].Content, out.Facts[1].Content}
-	if !(contains(got, "b") && contains(got, "c")) {
+	if !(slices.Contains(got, "b") && slices.Contains(got, "c")) {
 		t.Errorf("MaxFacts should keep highest confidence (b,c), got %+v", got)
 	}
 }

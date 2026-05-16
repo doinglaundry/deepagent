@@ -10,9 +10,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// HITL gates tool calls behind a synchronous ApprovalCallback. Denied calls
-// are removed from the assistant message and a synthetic tool-result is
-// appended so the next model turn sees the denial.
 type HITL struct {
 	*adk.BaseChatModelAgentMiddleware
 	Tools            map[string]struct{}

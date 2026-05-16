@@ -9,7 +9,6 @@ import (
 	"github.com/cloudwego/eino/adk"
 )
 
-// AgentState tracks lifecycle counters (model-call, tool-call) for observers.
 type AgentState struct {
 	*adk.BaseChatModelAgentMiddleware
 
@@ -20,7 +19,6 @@ type AgentState struct {
 	startAt time.Time
 }
 
-// AgentStateSnapshot is the read-only view of AgentState's counters.
 type AgentStateSnapshot struct {
 	ModelCalls int
 	ToolCalls  int
@@ -28,7 +26,6 @@ type AgentStateSnapshot struct {
 	UpdatedAt  time.Time
 }
 
-// NewAgentState returns an AgentState middleware ready for use.
 func NewAgentState() *AgentState {
 	now := time.Now()
 	return &AgentState{

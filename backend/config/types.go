@@ -54,9 +54,6 @@ type Config struct {
 	RootDir      string                  `json:"root_dir"        yaml:"-"`
 	DefaultAgent string                  `json:"default_agent"   yaml:"-"`
 	Agents       map[string]*AgentConfig `json:"agents"          yaml:"-"`
-	ACP          ACPConfig               `json:"acp,omitempty"   yaml:"-"`
-
-	// Fields below mirror yaml/config.yaml's top-level sections in order.
 
 	DefaultModel      string                  `json:"default_model"           yaml:"default_model"`
 	ConfigVersion     int                     `json:"-"                       yaml:"config_version"`
@@ -65,10 +62,7 @@ type Config struct {
 	ToolObservability ToolObservability       `json:"-"                       yaml:"tool_observability"`
 	ToolBlocks        ToolBlocks              `json:"-"                       yaml:"tool_blocks"`
 	Models            map[string]*ModelConfig `json:"models"                  yaml:"-"` // built from the YAML list via UnmarshalYAML + normalizeModels
-	ToolGroups        []ToolGroup             `json:"-"                       yaml:"tool_groups"`
-	Tools             []Tool                  `json:"-"                       yaml:"tools"`
 	ToolSearch        ToolSearchConfig        `json:"tool_search,omitempty"   yaml:"tool_search"`
-	Uploads           Uploads                 `json:"-"                       yaml:"uploads"`
 	Skills            SkillsConfig            `json:"skills,omitempty"        yaml:"skills"`
 	Title             Title                   `json:"-"                       yaml:"title"`
 	Summarization     Summarization           `json:"-"                       yaml:"summarization"`

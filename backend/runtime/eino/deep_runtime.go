@@ -65,8 +65,6 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 		return Result{}, fmt.Errorf("prompt is required")
 	}
 
-	// Snapshot runner under the same lock that protects history + r.runner,
-	// so SetPlanMode swapping r.runner doesn't race with ExecuteStream.
 	r.mu.Lock()
 	if len(r.history) > r.maxHistoryTurns*2 {
 		r.history = r.history[len(r.history)-r.maxHistoryTurns*2:]
@@ -112,11 +110,6 @@ func (r *DeepAgentRuntime) ClearHistory() {
 	}
 }
 
-// SetPlanMode flips the plan-mode flag read by PlanReminder middleware.
-// O(1) — no agent rebuild, no history clear, no mutex; takes effect on
-// the next BeforeModelRewriteState pass. ctx unused but kept on the
-// signature so a future implementation that does I/O (load a yaml
-// override, etc.) doesn't have to break callers.
 func (r *DeepAgentRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) {
 	r.planMode.Store(on)
 	return on, nil

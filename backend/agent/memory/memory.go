@@ -1,4 +1,4 @@
-package agent
+package memory
 
 import (
 	"github.com/cloudwego/eino/schema"
