@@ -28,10 +28,7 @@ func GetShellTool(root string) (tool.BaseTool, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
-			// Sandboxed shell: deer-flow's contract is "shell goes through
-			// the sandbox when one is present" — we lose the background
-			// job semantics, but the LLM gets isolation in exchange. The
-			// background job path stays for CLI / local mode.
+			// Sandbox path is sync; background-job semantics only via host fs.
 			if sb := sandboxFromCtx(ctx); sb != nil {
 				return sb.ExecuteCommand(ctx, in.Command)
 			}

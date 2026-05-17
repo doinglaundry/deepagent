@@ -15,17 +15,14 @@ type deleteFileArgs struct {
 	FilePath string `json:"file_path" jsonschema:"required,description=Absolute or workspace-relative file path to delete"`
 }
 
+// GetDeleteFileTool returns the delete_file tool.
 func GetDeleteFileTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool("delete_file", deleteFileToolDesc,
 		func(ctx context.Context, in deleteFileArgs) (string, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
-			// Sandbox doesn't expose a delete primitive directly: writing
-			// empty bytes via UpdateFile would only truncate. For now,
-			// delete operations on /mnt/... paths fall back to host fs
-			// after the sandbox resolves the mount root for us — kept as
-			// a follow-up. Today host fs is the only deleter.
+			// Sandbox has no delete primitive; falls through to host fs.
 			return deleteFile(root, in.FilePath)
 		})
 }

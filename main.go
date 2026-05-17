@@ -1,7 +1,4 @@
-// Command eino-cli is the Bubbletea chat front-end over eino.Runtime.
-// With --mode=server it doubles as an HTTP/SSE gateway (M4) so the same
-// binary can run CLI for a single user or serve multi-thread agents
-// behind a network boundary.
+// Command eino-cli: --mode=cli (default) or --mode=server runs the gateway.
 package main
 
 import (
@@ -19,9 +16,7 @@ import (
 	"eino-cli/backend/runtime/eino"
 	"eino-cli/backend/sandbox"
 
-	// Register the AIO sandbox factory; init()-only import. The local
-	// factory is registered transitively by the existing eino imports
-	// (deep_runtime → local sandbox) — we only need to opt into aio here.
+	// init()-only: register sandbox factories.
 	_ "eino-cli/backend/sandbox/aio"
 	_ "eino-cli/backend/sandbox/local"
 )
@@ -78,9 +73,7 @@ func runServer(cfg *config.Config, addr string) {
 	}
 }
 
-// parseFlags reads --root / --mode / --addr from args and falls back to
-// envs / cwd for unset values. Kept side-effect free so tests can pass
-// stubs for getenv / getwd.
+// parseFlags reads --root / --mode / --addr; getenv/getwd are passed in for tests.
 func parseFlags(args []string, getenv func(string) string, getwd func() (string, error)) (root, mode, addr string, err error) {
 	flags := flag.NewFlagSet("eino-cli", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)

@@ -9,9 +9,7 @@ import (
 	"eino-cli/backend/uploads"
 )
 
-// handleUploadCreate consumes a multipart "file" field and stores it
-// under the thread's uploads dir. Returns the host path + safe name so
-// clients can hand the LLM a /mnt/user-data/uploads/<safe_name> reference.
+// handleUploadCreate stores the multipart "file" field under the thread's uploads dir.
 func (s *Server) handleUploadCreate(c *gin.Context) {
 	tid := c.Param("tid")
 	uid := runtime.GetEffectiveUserID(c.Request.Context())
@@ -35,8 +33,7 @@ func (s *Server) handleUploadCreate(c *gin.Context) {
 	})
 }
 
-// handleUploadList: enumerate files in the thread's uploads dir. Returns
-// the same FileInfo shape uploads.List produces.
+// handleUploadList lists files in the thread's uploads dir.
 func (s *Server) handleUploadList(c *gin.Context) {
 	tid := c.Param("tid")
 	uid := runtime.GetEffectiveUserID(c.Request.Context())
@@ -48,7 +45,7 @@ func (s *Server) handleUploadList(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"files": files})
 }
 
-// handleUploadDelete drops a single file safely (no symlink traversal).
+// handleUploadDelete removes one file with traversal/symlink guards.
 func (s *Server) handleUploadDelete(c *gin.Context) {
 	tid := c.Param("tid")
 	uid := runtime.GetEffectiveUserID(c.Request.Context())

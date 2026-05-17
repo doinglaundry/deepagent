@@ -1,14 +1,9 @@
 // Package sandbox declares the Sandbox abstraction the LLM tools see.
-// Concrete implementations live in the local/ and aio/ subpackages and plug
-// in via the SandboxManager interface (manager.go) selected by factory.go.
 package sandbox
 
 import "context"
 
-// Sandbox mirrors deerflow.sandbox.sandbox.Sandbox — 7 methods the tool
-// layer needs. Method set is stable; new operations go through a new
-// interface to avoid the "every implementation must re-export the world"
-// trap.
+// Sandbox is the 7-method surface every concrete provider must implement.
 type Sandbox interface {
 	ID() string
 
@@ -23,24 +18,21 @@ type Sandbox interface {
 	Grep(ctx context.Context, path, pattern string, opts GrepOpts) ([]GrepMatch, bool, error)
 }
 
-// GlobOpts groups the optional knobs of Glob so the interface stays at one
-// line per method and new options don't break implementers.
+// GlobOpts are the optional knobs of Sandbox.Glob.
 type GlobOpts struct {
 	IncludeDirs bool
-	MaxResults  int // 0 → defaults at the implementation (200 for deer-flow parity)
+	MaxResults  int // 0 → impl default (200)
 }
 
-// GrepOpts: same rationale.
+// GrepOpts are the optional knobs of Sandbox.Grep.
 type GrepOpts struct {
-	Glob          string // optional sub-path filter
-	Literal       bool   // treat pattern as a literal string, not regex
+	Glob          string
+	Literal       bool
 	CaseSensitive bool
-	MaxResults    int // 0 → default 100
+	MaxResults    int // 0 → impl default (100)
 }
 
-// GrepMatch: path + line number + truncated line content. Path is whatever
-// the sandbox reports — local sandbox reverse-resolves it to /mnt/... so
-// the LLM only ever sees container-shaped paths.
+// GrepMatch is one hit reported by Sandbox.Grep.
 type GrepMatch struct {
 	Path       string
 	LineNumber int

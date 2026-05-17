@@ -38,8 +38,6 @@ func Load(root string) (config *Config, err error) {
 }
 
 // normalizeSandbox fills zero-valued sandbox fields with built-in defaults.
-// Called once at Load so the sandbox manager / aio backend can read cfg
-// fields directly without orDefault / orDuration helpers at every call site.
 func normalizeSandbox(s *SandboxConfig) {
 	if s.Image == "" {
 		s.Image = defaultSandboxImage

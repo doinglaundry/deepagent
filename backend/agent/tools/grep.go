@@ -17,11 +17,7 @@ import (
 	"eino-cli/backend/sandbox"
 )
 
-// sandboxGrep dispatches to Sandbox.Grep using the subset of grepArgs flags
-// the sandbox interface understands (pattern, glob, -i, head_limit). Falls
-// back to ok=false on any error so the legacy runGrep path keeps the model
-// behaviour stable when advanced flags (-A/-B/-C, file type, multiline) are
-// requested.
+// sandboxGrep returns ok=false on any unsupported flag so the legacy path keeps schema parity.
 func sandboxGrep(ctx context.Context, sb sandbox.Sandbox, in grepArgs) (string, bool) {
 	if in.OutputMode != "" && in.OutputMode != "files_with_matches" {
 		return "", false
@@ -69,9 +65,7 @@ func boolOr(p *bool, fallback bool) bool {
 	return *p
 }
 
-// grepArgs mirrors eino filesystem.go:688-740 byte-for-byte. Many fields
-// are accepted-and-ignored at runtime (glob / type / multiline / -A/-B/-C)
-// to keep the JSON schema 1:1 with what the model is trained on.
+// Schema mirrors eino byte-for-byte; advanced fields are accepted-and-ignored.
 type grepArgs struct {
 	Pattern         string  `json:"pattern"                  jsonschema:"description=The regular expression pattern to search for in file contents"`
 	Path            *string `json:"path,omitempty"           jsonschema:"description=File or directory to search in (rg PATH). Defaults to current working directory."`
@@ -94,19 +88,10 @@ type grepMatch struct {
 	Content string
 }
 
-// GetGrepTool returns the "grep" tool. Output formats per OutputMode mirror
-// eino:
-//   - "" / "files_with_matches": "Found N file(s)\n<paths>"
-//   - "content": "<path>:<line>:<content>" lines (or "<path>:<content>" when -n=false)
-//   - "count": "<path>:<count>" lines + summary footer
+// GetGrepTool returns the grep tool with eino's OutputMode formats.
 func GetGrepTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGrep, filesystem.GrepToolDesc,
 		func(ctx context.Context, in grepArgs) (string, error) {
-			// Sandbox fast-path: only kick in when the model explicitly
-			// asked for /mnt/... and a sandbox is wired. Other flags
-			// (Multiline / FileType / offset / -A / -B / -C / OutputMode)
-			// stay on the legacy path — runGrep's behaviour is what the
-			// model is trained on.
 			if in.Path != nil && shouldUseSandbox(*in.Path) {
 				if sb := sandboxFromCtx(ctx); sb != nil {
 					if out, ok := sandboxGrep(ctx, sb, in); ok {
@@ -137,9 +122,6 @@ func GetGrepTool(root string) (tool.BaseTool, error) {
 		})
 }
 
-// runGrep walks searchRoot, compiles pattern (with (?i:) prefix when
-// CaseInsensitive is set), returns one grepMatch per matched line. Empty
-// in.Path falls back to root via resolvePath's join-with-empty semantics.
 func runGrep(root string, in grepArgs) ([]grepMatch, error) {
 	pattern := in.Pattern
 	if valueOr(in.CaseInsensitive, false) {
@@ -233,9 +215,7 @@ func formatGrepCount(matches []grepMatch, offset, headLimit int) string {
 	return strings.Join(lines, "\n") + "\n\n" + summary
 }
 
-// applyPagination drops the first offset items then caps to headLimit.
-// headLimit <= 0 means "no cap". Generic so it works for both grepMatch and
-// plain []string (paths) slices.
+// applyPagination drops the first offset items and caps to headLimit (<=0 = no cap).
 func applyPagination[T any](items []T, offset, headLimit int) []T {
 	if offset < 0 {
 		offset = 0
@@ -257,8 +237,6 @@ func plural(n int, singular, pluralForm string) string {
 	return pluralForm
 }
 
-// valueOr returns *p if p is non-nil, otherwise fallback. One generic
-// replaces per-type deref helpers; reads as a phrase ("value or fallback").
 func valueOr[T any](p *T, fallback T) T {
 	if p == nil {
 		return fallback

@@ -16,14 +16,12 @@ const (
 	idleSweepInterval      = 5 * time.Minute
 )
 
-// Router maps thread_id → DeepAgentRuntime with an LRU bound and an
-// idle-timeout sweeper. The gateway calls Router.Get per HTTP request;
-// the CLI mode wraps one Router around its single tid.
+// Router maps thread_id → DeepAgentRuntime with LRU bound + idle sweeper.
 type Router struct {
 	cfg *config.Config
 
 	mu       sync.Mutex
-	cache    map[string]*list.Element // tid -> *list.Element wrapping *threadEntry
+	cache    map[string]*list.Element
 	order    *list.List
 	maxKept  int
 	idleTTL  time.Duration
@@ -37,9 +35,7 @@ type threadEntry struct {
 	last    time.Time
 }
 
-// NewRouter constructs a router. ctx is intentionally NOT a field — the
-// idle goroutine uses stopIdle so Shutdown gives us a clean teardown
-// signal without a "ctx leaked into a struct" smell.
+// NewRouter builds a Router; idle sweep starts immediately.
 func NewRouter(cfg *config.Config) *Router {
 	r := &Router{
 		cfg:      cfg,
@@ -54,7 +50,6 @@ func NewRouter(cfg *config.Config) *Router {
 }
 
 // Get returns the runtime for tid, building it lazily on first call.
-// The LRU bump keeps active threads alive across the sweep window.
 func (r *Router) Get(ctx context.Context, tid string) (Runtime, error) {
 	if tid == "" {
 		return nil, fmt.Errorf("router: thread_id required")
@@ -69,9 +64,7 @@ func (r *Router) Get(ctx context.Context, tid string) (Runtime, error) {
 	}
 	r.mu.Unlock()
 
-	// Build outside the lock — NewDeepAgentRuntime calls eino which can
-	// take hundreds of ms on first build; holding the cache lock would
-	// stall every other thread's Get.
+	// Build outside the lock — first-build can take hundreds of ms.
 	rt, err := NewDeepAgentRuntime(ctx, r.cfg)
 	if err != nil {
 		return nil, fmt.Errorf("router: build runtime for %s: %w", tid, err)
@@ -90,8 +83,7 @@ func (r *Router) Get(ctx context.Context, tid string) (Runtime, error) {
 	return rt, nil
 }
 
-// Drop releases tid eagerly — gateway calls it after long-running threads
-// close (logout, /clear-history with --forget=true).
+// Drop evicts tid eagerly.
 func (r *Router) Drop(tid string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -139,8 +131,7 @@ func (r *Router) sweepIdle() {
 	}
 }
 
-// Shutdown stops the idle sweeper. Idempotent so the gateway and the CLI
-// can both `defer router.Shutdown()` without coordinating.
+// Shutdown stops the idle sweeper; idempotent.
 func (r *Router) Shutdown() {
 	r.shutdown.Do(func() { close(r.stopIdle) })
 }

@@ -2,18 +2,14 @@ package config
 
 import "time"
 
-// VolumeMount declares a host-to-container path binding for sandboxes.
-// ReadOnly maps to docker `:ro` / `readonly` and to local-sandbox EROFS.
+// VolumeMount declares a host-to-container path binding.
 type VolumeMount struct {
 	HostPath      string `yaml:"host_path"`
 	ContainerPath string `yaml:"container_path"`
 	ReadOnly      bool   `yaml:"read_only,omitempty"`
 }
 
-// SandboxConfig selects + tunes the per-thread sandbox manager.
-// Use: "local" (host fs + path mapping) or "aio" (containerised).
-// Defaults are filled by normalizeSandbox at Load time, so downstream code
-// reads cfg fields directly without orDefault helpers.
+// SandboxConfig selects and tunes the per-thread sandbox manager (use=local|aio).
 type SandboxConfig struct {
 	Use                    string            `yaml:"use"`
 	AllowHostBash          bool              `yaml:"allow_host_bash"`

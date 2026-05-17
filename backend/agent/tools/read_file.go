@@ -59,9 +59,6 @@ func GetReadFileTool(root string) (tool.BaseTool, error) {
 				in.Limit = 2000
 			}
 
-			// Sandbox fast-path: /mnt/... paths route through the per-thread sandbox
-			// so they see the same view as write_file did. Falls through on any
-			// error so the legacy host-fs path stays reachable.
 			if shouldUseSandbox(in.FilePath) {
 				if sb := sandboxFromCtx(ctx); sb != nil {
 					content, err := sb.ReadFile(ctx, in.FilePath)
@@ -103,8 +100,7 @@ func GetReadFileTool(root string) (tool.BaseTool, error) {
 		})
 }
 
-// paginateLines: cat -n style pagination. Shared between the sandbox path
-// and the host-fs path so output formatting stays identical.
+// paginateLines is cat -n style pagination shared by sandbox + host-fs paths.
 func paginateLines(content string, offset, limit int) string {
 	lines := strings.Split(content, "\n")
 	start := min(offset-1, len(lines))

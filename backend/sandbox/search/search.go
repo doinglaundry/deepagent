@@ -1,11 +1,4 @@
-// Package search is the algorithmic core shared by LocalSandbox.Glob /
-// .Grep. Mirrors deerflow.sandbox.search (Python) so test parity stays
-// straightforward.
-//
-// filepath.WalkDir + bmatcuk/doublestar/v4 replace os.walk + fnmatch:
-//   - WalkDir reuses the cached fs.DirEntry from readdir (one less stat per
-//     file than os.walk).
-//   - doublestar supports `**/` semantics out of the box.
+// Package search is the algorithmic core shared by LocalSandbox.Glob / Grep.
 package search
 
 import (
@@ -22,9 +15,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-// IgnorePatterns: directory and file names that Glob / Grep skip without
-// asking. Same list as deer-flow — drift would silently widen what the LLM
-// can see.
+// IgnorePatterns are the dir/file names Glob/Grep skip.
 var IgnorePatterns = []string{
 	".git", ".svn", ".hg", ".bzr",
 	"node_modules", "__pycache__",
@@ -49,17 +40,14 @@ const (
 	maxLineCharsRatio         = 10
 )
 
-// GrepMatch is the leaf type returned by Grep. Keep it package-local so
-// tools can keep using sandbox.GrepMatch — the conversion is a 3-field
-// struct copy and saves an import cycle (search → sandbox).
+// GrepMatch is the leaf type Grep returns; mirrors sandbox.GrepMatch to avoid import cycle.
 type GrepMatch struct {
 	Path       string
 	LineNumber int
 	Line       string
 }
 
-// ShouldIgnoreName: cheap-first check against IgnorePatterns. Used both as
-// "skip this dir" and "skip this file" during walks.
+// ShouldIgnoreName reports whether name matches any IgnorePatterns entry.
 func ShouldIgnoreName(name string) bool {
 	for _, pattern := range IgnorePatterns {
 		if ok, _ := doublestar.Match(pattern, name); ok {
@@ -69,9 +57,7 @@ func ShouldIgnoreName(name string) bool {
 	return false
 }
 
-// PathMatches: does relPath match pattern? Accepts both bare ("*.go") and
-// "**/" prefixed patterns ("**/foo/*.go") — the latter mirrors how Python's
-// PurePosixPath.match falls back when the prefix matches the leaf name.
+// PathMatches reports whether relPath matches pattern; accepts bare or "**/" prefixed.
 func PathMatches(pattern, relPath string) bool {
 	relPath = filepath.ToSlash(relPath)
 	if ok, _ := doublestar.PathMatch(pattern, relPath); ok {
@@ -84,8 +70,6 @@ func PathMatches(pattern, relPath string) bool {
 	return false
 }
 
-// truncateLine trims trailing newline and clips to max chars with "..."
-// suffix when it would otherwise exceed the budget.
 func truncateLine(line string, maxChars int) string {
 	line = strings.TrimRight(line, "\r\n")
 	if len(line) <= maxChars {
@@ -94,9 +78,7 @@ func truncateLine(line string, maxChars int) string {
 	return line[:maxChars-3] + "..."
 }
 
-// isBinary reads the first 8KB and looks for a NUL byte — the same heuristic
-// `file(1)` / Python's "if b'\\0' in sample" use. Cheap and good enough for
-// grep filtering.
+// isBinary samples the first bytes for a NUL — same heuristic as file(1).
 func isBinary(path string, sampleSize int) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -111,8 +93,7 @@ func isBinary(path string, sampleSize int) bool {
 	return bytes.IndexByte(buf[:n], 0) >= 0
 }
 
-// FindGlobMatches walks root, applies IgnorePatterns to dirs and files,
-// returns paths that match pattern. truncated=true iff it hit maxResults.
+// FindGlobMatches walks root and returns paths matching pattern; truncated=hit cap.
 func FindGlobMatches(root, pattern string, opts GlobOpts) ([]string, bool, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
@@ -173,9 +154,7 @@ func FindGlobMatches(root, pattern string, opts GlobOpts) ([]string, bool, error
 	return matches, truncated, nil
 }
 
-// FindGrepMatches walks root looking for files whose lines match pattern.
-// Skips symlinks (avoid loops), oversized files, and binaries. Returns at
-// most maxResults matches; truncated=true iff it hit the cap.
+// FindGrepMatches walks root for lines matching pattern; skips symlinks/binaries/oversized files.
 func FindGrepMatches(root, pattern string, opts GrepOpts) ([]GrepMatch, bool, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
@@ -238,7 +217,6 @@ func FindGrepMatches(root, pattern string, opts GrepOpts) ([]GrepMatch, bool, er
 		if d.IsDir() {
 			return nil
 		}
-		// Skip symlinks — resolving them risks walking outside root.
 		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
@@ -276,10 +254,7 @@ func FindGrepMatches(root, pattern string, opts GrepOpts) ([]GrepMatch, bool, er
 	return matches, truncated, nil
 }
 
-// scanFile reads p line-by-line and emits matches up to remaining cap.
-// Returns hit=true when remaining is exhausted so the walker stops.
-// Uses bufio.Reader.ReadString instead of Scanner so a single ultra-long
-// line (minified JS, no-newline JSON) doesn't blow the Scanner buffer cap.
+// scanFile reads path line-by-line via bufio.Reader (Scanner's buffer cap would break minified files).
 func scanFile(path string, re *regexp.Regexp, maxLineChars, lineSummaryLength, remaining int) ([]GrepMatch, bool, error) {
 	if remaining <= 0 {
 		return nil, true, nil
@@ -322,15 +297,13 @@ func scanFile(path string, re *regexp.Regexp, maxLineChars, lineSummaryLength, r
 	return out, false, nil
 }
 
-// GlobOpts mirrors sandbox.GlobOpts but lives here to avoid an import cycle
-// between sandbox and search. Tool layer translates between them.
+// GlobOpts mirrors sandbox.GlobOpts here to avoid the import cycle.
 type GlobOpts struct {
 	IncludeDirs bool
 	MaxResults  int
 }
 
-// GrepOpts: same rationale, plus the algorithm-internal knobs that don't
-// belong on the public sandbox interface.
+// GrepOpts is the algorithm-internal grep config.
 type GrepOpts struct {
 	Glob              string
 	Literal           bool

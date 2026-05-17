@@ -2,14 +2,11 @@ package sandbox
 
 import "eino-cli/backend/config"
 
-// HostBashDisabledMessage is shown when a tool tries to spawn a host shell
-// while the manager is the local (un-sandboxed) one. Copy lives here, not
-// in tools, so the wording stays consistent across execute/shell/subagent.
+// HostBashDisabledMessage is the canned refusal returned when execute/shell
+// run against a local manager without allow_host_bash.
 const HostBashDisabledMessage = "Host bash execution is disabled for LocalSandboxManager because it is not a secure sandbox boundary. Switch to AioSandboxManager (sandbox.use=aio) for isolated bash access, or set sandbox.allow_host_bash: true only in a fully trusted local environment."
 
-// UsesLocalSandboxManager: the only "this is the host fs" predicate the
-// tool / middleware layer needs. cfg.Sandbox.Use == "" defaults to local
-// (factory.go), so empty string counts as local too.
+// UsesLocalSandboxManager reports whether cfg selects the host-fs provider.
 func UsesLocalSandboxManager(cfg *config.Config) bool {
 	if cfg == nil {
 		return true
@@ -18,11 +15,7 @@ func UsesLocalSandboxManager(cfg *config.Config) bool {
 	return use == "" || use == "local"
 }
 
-// IsHostBashAllowed gates execute/shell tools. Returns true when:
-//   - the manager isn't the local one (any real sandbox is fine), OR
-//   - the user explicitly opted in via sandbox.allow_host_bash.
-//
-// Nil cfg is conservative — bash stays disabled.
+// IsHostBashAllowed reports whether execute/shell may spawn the host shell.
 func IsHostBashAllowed(cfg *config.Config) bool {
 	if cfg == nil {
 		return false

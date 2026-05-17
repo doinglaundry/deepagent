@@ -1,7 +1,3 @@
-// Package config: paths.go derives every per-user / per-thread filesystem
-// layout from cfg.RootDir. Top-level functions only — Paths used to be a
-// struct that just held base_dir; that was a pure-forwarding indirection and
-// violated AGENTS.md "Behavior lives in plain top-level functions".
 package config
 
 import (
@@ -9,44 +5,44 @@ import (
 	"path/filepath"
 )
 
-// VirtualPathPrefix is what the LLM sees inside the sandbox. Host paths get
-// reverse-mapped to this prefix when masking tool output.
+// VirtualPathPrefix is the LLM-visible /mnt/user-data root.
 const VirtualPathPrefix = "/mnt/user-data"
 
-// baseDir is the on-disk root for all multi-tenant state. Lives under
-// cfg.RootDir/.eino-cli to keep one repo checkout self-contained.
 func baseDir(cfg *Config) string {
 	return filepath.Join(cfg.RootDir, ".eino-cli")
 }
 
+// UserDir returns the on-disk directory for uid.
 func UserDir(cfg *Config, uid string) string {
 	return filepath.Join(baseDir(cfg), "users", uid)
 }
 
+// ThreadDir returns the on-disk directory for (tid, uid).
 func ThreadDir(cfg *Config, tid, uid string) string {
 	return filepath.Join(UserDir(cfg, uid), "threads", tid)
 }
 
-// SandboxUserDataDir is the host side of /mnt/user-data — the LLM-visible
-// root that workspace / uploads / outputs all hang off of.
+// SandboxUserDataDir is the host side of /mnt/user-data.
 func SandboxUserDataDir(cfg *Config, tid, uid string) string {
 	return filepath.Join(ThreadDir(cfg, tid, uid), "user-data")
 }
 
+// SandboxWorkDir is the host side of /mnt/user-data/workspace.
 func SandboxWorkDir(cfg *Config, tid, uid string) string {
 	return filepath.Join(SandboxUserDataDir(cfg, tid, uid), "workspace")
 }
 
+// SandboxUploadsDir is the host side of /mnt/user-data/uploads.
 func SandboxUploadsDir(cfg *Config, tid, uid string) string {
 	return filepath.Join(SandboxUserDataDir(cfg, tid, uid), "uploads")
 }
 
+// SandboxOutputsDir is the host side of /mnt/user-data/outputs.
 func SandboxOutputsDir(cfg *Config, tid, uid string) string {
 	return filepath.Join(SandboxUserDataDir(cfg, tid, uid), "outputs")
 }
 
-// EnsureThreadDirs creates every per-thread directory that tools may write
-// into. Idempotent — first call creates, subsequent calls no-op via MkdirAll.
+// EnsureThreadDirs creates every per-thread directory tools may write into.
 func EnsureThreadDirs(cfg *Config, tid, uid string) error {
 	for _, dir := range []string{
 		SandboxWorkDir(cfg, tid, uid),

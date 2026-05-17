@@ -16,10 +16,7 @@ type executeArgs struct {
 	Command string `json:"command" jsonschema:"description=The command to execute"`
 }
 
-// GetExecuteTool returns the "execute" tool. Runs the command via bash -lc
-// in root's resolved CWD; combines stdout+stderr; appends a failure marker
-// on non-zero exit. Non-ExitError errors (e.g. bash not on PATH) propagate
-// as Go errors.
+// GetExecuteTool returns the execute tool; sandbox routes when wired, else bash -lc.
 func GetExecuteTool(root string) (tool.BaseTool, error) {
 	cwd := resolveRoot(root)
 	return utils.InferTool(filesystem.ToolNameExecute, filesystem.ExecuteToolDesc,
@@ -27,8 +24,6 @@ func GetExecuteTool(root string) (tool.BaseTool, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
-			// Prefer sandboxed exec when available: it handles per-thread
-			// mounts and the path-rewriting boundary deer-flow guarantees.
 			if sb := sandboxFromCtx(ctx); sb != nil {
 				return sb.ExecuteCommand(ctx, in.Command)
 			}
@@ -47,9 +42,6 @@ func GetExecuteTool(root string) (tool.BaseTool, error) {
 		})
 }
 
-// formatExecuteOutput mirrors eino's convExecuteResponse: append a failure
-// tag on non-zero exit; return the canned "no output" message only when
-// the command both succeeded and produced nothing.
 func formatExecuteOutput(output string, exitCode int) string {
 	parts := []string{output}
 	if exitCode != 0 {

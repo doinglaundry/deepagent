@@ -2,7 +2,5 @@
 
 package uploads
 
-// osNoFollow: Windows OpenFile does not support O_NOFOLLOW. Returning 0
-// keeps the upload path working; defence-in-depth on Windows is
-// best-effort via Lstat checks before open.
+// Windows OpenFile has no O_NOFOLLOW; Lstat checks are best-effort.
 func osNoFollow() int { return 0 }

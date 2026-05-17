@@ -17,13 +17,7 @@ type runRequest struct {
 	PermissionMode string `json:"permission_mode,omitempty"`
 }
 
-// handleRun is the SSE-streaming primary endpoint. Each chunk emitted by
-// the agent is forwarded as an SSE `data:` line; the run terminates with
-// a `done` or `error` event so clients can stop reading without parsing.
-//
-// We spawn a goroutine for the agent run so this handler is free to do
-// SSE flushes — sharing the HTTP goroutine between agent execution and
-// SSE writes would block one or the other.
+// handleRun streams agent chunks as SSE; terminates with done or error.
 func (s *Server) handleRun(c *gin.Context) {
 	tid := c.Param("tid")
 	if tid == "" {
@@ -76,8 +70,7 @@ func (s *Server) handleRun(c *gin.Context) {
 	go func() {
 		defer close(chunkCh)
 		result, err := rt.ExecuteStream(ctx, req.Prompt, func(chunk string) {
-			// Non-blocking: drop chunks if the SSE side fell behind by
-			// more than the buffer. Better than wedging the agent.
+			// Non-blocking send; drop chunks rather than wedge the agent.
 			select {
 			case chunkCh <- chunk:
 			default:
@@ -126,7 +119,7 @@ func (s *Server) handleRun(c *gin.Context) {
 	}
 }
 
-// handleClear: drop the runtime's conversation history. Cheap, no SSE.
+// handleClear drops the runtime's conversation history.
 func (s *Server) handleClear(c *gin.Context) {
 	tid := c.Param("tid")
 	rt, err := s.router.Get(c.Request.Context(), tid)
@@ -142,8 +135,7 @@ type planModeRequest struct {
 	On bool `json:"on"`
 }
 
-// handlePlanMode: flip planning-mode hint on the runtime. Client can
-// toggle this each turn — runtime treats it as a per-turn flag.
+// handlePlanMode flips the runtime's plan-mode hint.
 func (s *Server) handlePlanMode(c *gin.Context) {
 	tid := c.Param("tid")
 	var req planModeRequest

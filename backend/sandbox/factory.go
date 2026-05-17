@@ -6,14 +6,7 @@ import (
 	"eino-cli/backend/config"
 )
 
-// NewSandboxManager picks a concrete manager from cfg.Sandbox.Use. Explicit
-// switch — not reflection / init-time registration — keeps the package
-// dependency tree visible from one place. Adding a new manager is +3 lines.
-//
-// This function is wired in M1's NewLocalManager call; the aio variant
-// follows in M3. We keep them behind a local indirection variable so this
-// file doesn't import the aio package directly until M3 lands (avoids a
-// false "import cycle for unused thing" during the M1→M3 transition).
+// NewSandboxManager builds the manager selected by cfg.Sandbox.Use.
 func NewSandboxManager(cfg *config.Config) (SandboxManager, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("sandbox: nil config")
@@ -26,7 +19,7 @@ func NewSandboxManager(cfg *config.Config) (SandboxManager, error) {
 		return newLocal(cfg)
 	case "aio":
 		if newAio == nil {
-			return nil, fmt.Errorf("sandbox: aio manager not yet implemented (set sandbox.use=local)")
+			return nil, fmt.Errorf("sandbox: aio manager not registered (init order bug)")
 		}
 		return newAio(cfg)
 	default:
@@ -34,22 +27,14 @@ func NewSandboxManager(cfg *config.Config) (SandboxManager, error) {
 	}
 }
 
-// newLocal / newAio are wired by the respective sub-packages via an init()
-// in a thin registration file. Keeps factory.go from importing local/ +
-// aio/ directly — those packages need to import the top-level sandbox
-// package for the Sandbox/SandboxManager interfaces, so the reverse import
-// would cycle.
+// Indirection so factory.go doesn't import local/ + aio/ (would cycle).
 var (
 	newLocal func(*config.Config) (SandboxManager, error)
 	newAio   func(*config.Config) (SandboxManager, error)
 )
 
-// RegisterLocalFactory is called by sandbox/local/init.go. Tests can stub.
-func RegisterLocalFactory(fn func(*config.Config) (SandboxManager, error)) {
-	newLocal = fn
-}
+// RegisterLocalFactory wires the local provider; called from sandbox/local init().
+func RegisterLocalFactory(fn func(*config.Config) (SandboxManager, error)) { newLocal = fn }
 
-// RegisterAioFactory: same for sandbox/aio (M3).
-func RegisterAioFactory(fn func(*config.Config) (SandboxManager, error)) {
-	newAio = fn
-}
+// RegisterAioFactory wires the aio provider; called from sandbox/aio init().
+func RegisterAioFactory(fn func(*config.Config) (SandboxManager, error)) { newAio = fn }

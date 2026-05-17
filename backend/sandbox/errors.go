@@ -1,6 +1,3 @@
-// Package sandbox: errors mirror deer-flow's deerflow.sandbox.exceptions
-// hierarchy so handlers and tools can `errors.As` on the same categories
-// regardless of which manager (local / aio) raised them.
 package sandbox
 
 import (
@@ -9,8 +6,7 @@ import (
 	"strings"
 )
 
-// baseErr is the embedded common state. Named with lowercase so it doesn't
-// collide with the Error() method on every exported subtype.
+// baseErr keeps the field name lowercase so it doesn't shadow Error() on subtypes.
 type baseErr struct {
 	msg     string
 	details map[string]any
@@ -27,19 +23,19 @@ func (e *baseErr) Error() string {
 	return fmt.Sprintf("%s (%s)", e.msg, strings.Join(parts, ", "))
 }
 
-// Message returns the raw message without the (key=value) suffix.
+// Message returns the raw message without the details suffix.
 func (e *baseErr) Message() string { return e.msg }
 
-// Details returns the structured payload (sandbox_id, path, exit_code...)
-// observability sinks attach without parsing the string form.
+// Details returns the structured payload observability sinks consume.
 func (e *baseErr) Details() map[string]any { return e.details }
 
-// NotFoundError: sandbox id has no live instance.
+// NotFoundError signals a sandbox id with no live instance.
 type NotFoundError struct {
 	baseErr
 	SandboxID string
 }
 
+// NewNotFoundError builds a NotFoundError for sandboxID.
 func NewNotFoundError(sandboxID string) *NotFoundError {
 	return &NotFoundError{
 		baseErr:   baseErr{msg: "sandbox not found", details: map[string]any{"sandbox_id": sandboxID}},
@@ -47,20 +43,22 @@ func NewNotFoundError(sandboxID string) *NotFoundError {
 	}
 }
 
-// RuntimeError: container runtime / external dependency misconfigured.
+// RuntimeError signals a misconfigured runtime / external dependency.
 type RuntimeError struct{ baseErr }
 
+// NewRuntimeError builds a RuntimeError with msg.
 func NewRuntimeError(msg string) *RuntimeError {
 	return &RuntimeError{baseErr: baseErr{msg: msg}}
 }
 
-// CommandError: shell exit != 0 or sandbox-side exec failure.
+// CommandError signals a non-zero exit or sandbox-side exec failure.
 type CommandError struct {
 	baseErr
 	Command  string
 	ExitCode int
 }
 
+// NewCommandError builds a CommandError; cmd is truncated to 100 chars in details.
 func NewCommandError(msg, cmd string, exitCode int) *CommandError {
 	details := map[string]any{"exit_code": exitCode}
 	if cmd != "" {
@@ -73,15 +71,14 @@ func NewCommandError(msg, cmd string, exitCode int) *CommandError {
 	}
 }
 
-// FileError: read/write/update failed. Path and operation surface in
-// details so observability sees "which tool / which path" without log
-// parsing.
+// FileError signals a failed read/write/update operation.
 type FileError struct {
 	baseErr
 	Path      string
 	Operation string
 }
 
+// NewFileError builds a FileError tagged with path and operation.
 func NewFileError(msg, path, op string) *FileError {
 	details := map[string]any{}
 	if path != "" {
@@ -93,17 +90,18 @@ func NewFileError(msg, path, op string) *FileError {
 	return &FileError{baseErr: baseErr{msg: msg, details: details}, Path: path, Operation: op}
 }
 
-// PermissionError: read-only mount / path-escape / mode-denied write.
-// Wraps FileError so handlers can errors.As on either.
+// PermissionError wraps FileError so handlers can errors.As on either.
 type PermissionError struct{ FileError }
 
+// NewPermissionError builds a PermissionError tagged at path.
 func NewPermissionError(msg, path string) *PermissionError {
 	return &PermissionError{FileError: *NewFileError(msg, path, "write")}
 }
 
-// FileNotFoundError: stat / open returned ENOENT.
+// FileNotFoundError signals ENOENT on stat/open.
 type FileNotFoundError struct{ FileError }
 
+// NewFileNotFoundError builds a FileNotFoundError at path.
 func NewFileNotFoundError(path string) *FileNotFoundError {
 	return &FileNotFoundError{FileError: *NewFileError("file not found", path, "read")}
 }
@@ -115,7 +113,7 @@ func truncate(s string, n int) string {
 	return s[:n-3] + "..."
 }
 
-// Sentinel checks for fast `errors.Is` style use sites.
+// Sentinels for errors.Is.
 var (
 	ErrSandboxNotFound  = errors.New("sandbox not found")
 	ErrThreadIDRequired = errors.New("thread_id required")

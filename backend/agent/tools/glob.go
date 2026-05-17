@@ -17,13 +17,11 @@ import (
 
 type globArgs struct {
 	Pattern string `json:"pattern" jsonschema:"description=The glob pattern to match files against"`
-	// Description copied verbatim from eino filesystem.go:660 — the "DO NOT
-	// enter undefined/null" wording is part of the prompt the model is trained on.
+	// Description copied verbatim from eino — part of the trained-on prompt.
 	Path string `json:"path" jsonschema:"description=The directory to search in. If not specified\\, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter 'undefined' or 'null' - simply omit it for the default behavior. Must be a valid directory path if provided."`
 }
 
-// GetGlobTool returns the "glob" tool. Matches are reported as absolute paths
-// so follow-up read/write calls don't depend on the model rejoining paths.
+// GetGlobTool returns the glob tool; results are absolute paths.
 func GetGlobTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGlob, filesystem.GlobToolDesc,
 		func(ctx context.Context, in globArgs) (string, error) {

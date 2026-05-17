@@ -1,6 +1,4 @@
-// Package gateway exposes the multi-user, multi-thread HTTP/SSE surface
-// in front of the agent runtime. Gin chosen for its mature router +
-// middleware story and small surface.
+// Package gateway exposes the multi-user multi-thread HTTP/SSE surface (Gin).
 package gateway
 
 import (
@@ -15,9 +13,7 @@ import (
 	"eino-cli/backend/runtime/eino"
 )
 
-// Server wraps gin.Engine plus the dependencies handlers need (Router,
-// cfg). New returns it ready-to-Listen; the caller decides on the port
-// and lifetime.
+// Server bundles gin.Engine with the dependencies handlers need.
 type Server struct {
 	cfg    *config.Config
 	router *eino.Router
@@ -25,9 +21,7 @@ type Server struct {
 	log    *slog.Logger
 }
 
-// New wires the HTTP server. ctx is intentionally NOT a parameter — the
-// Router idle loop has its own stop channel and the engine's lifetime is
-// the process's, not a per-call ctx.
+// New builds the Server with routes registered.
 func New(cfg *config.Config, router *eino.Router) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
@@ -60,9 +54,7 @@ func (s *Server) registerRoutes() {
 	api.DELETE("/threads/:tid/uploads/:name", s.handleUploadDelete)
 }
 
-// ListenAndServe starts the HTTP server. Plain wrapper — keep the
-// http.Server boilerplate (timeouts, graceful shutdown) close to the
-// caller that needs to coordinate the lifecycle.
+// ListenAndServe starts the HTTP server on addr.
 func (s *Server) ListenAndServe(addr string) error {
 	srv := &http.Server{
 		Addr:              addr,
@@ -72,14 +64,10 @@ func (s *Server) ListenAndServe(addr string) error {
 	return srv.ListenAndServe()
 }
 
-// Engine exposes the underlying gin engine so callers can compose extra
-// routes (admin endpoints, prometheus middleware, …) without forking
-// this package.
+// Engine exposes the gin engine for callers that want to compose extra routes.
 func (s *Server) Engine() *gin.Engine { return s.engine }
 
-// Shutdown is a stub that callers compose with their own http.Server's
-// Shutdown when they want graceful drain. Kept here so the surface is
-// symmetric with Router.Shutdown.
+// Shutdown stops the Router; callers handle the http.Server side themselves.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.router.Shutdown()
 	return nil

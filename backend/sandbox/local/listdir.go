@@ -9,9 +9,7 @@ import (
 	"eino-cli/backend/sandbox/search"
 )
 
-// listDir mirrors deer-flow list_dir.py: depth-limited iteration, skip
-// IGNORE_PATTERNS, suffix dirs with "/" so the LLM can tell file vs dir at
-// a glance. Returns absolute paths, sorted.
+// listDir returns depth-limited absolute paths under path; dirs get a trailing "/".
 func listDir(path string, maxDepth int) ([]string, error) {
 	root, err := filepath.Abs(path)
 	if err != nil {
@@ -39,7 +37,6 @@ func traverse(root, current string, depth, maxDepth int, out *[]string) error {
 	}
 	entries, err := os.ReadDir(current)
 	if err != nil {
-		// Permission denied / vanished — silently skip, matches python pass.
 		return nil
 	}
 	for _, e := range entries {
@@ -52,8 +49,7 @@ func traverse(root, current string, depth, maxDepth int, out *[]string) error {
 		if err != nil {
 			continue
 		}
-		// Resolve symlinks but only keep targets under root — avoid leaking
-		// /tmp by following a link in the workspace.
+		// Symlinks: only keep targets under root to avoid leaking /tmp via a workspace link.
 		if info.Mode()&os.ModeSymlink != 0 {
 			target, err := filepath.EvalSymlinks(full)
 			if err != nil {

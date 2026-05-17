@@ -21,29 +21,25 @@ import (
 	"eino-cli/backend/util/network"
 )
 
-// Manager owns the lifecycle of every aio sandbox in this process plus the
-// cross-process flock that prevents two CLIs racing to create the same
-// container. State maps are guarded by mu; per-thread singleflight makes
-// Acquire idempotent under concurrent first-time callers.
+// Manager owns every aio sandbox in this process.
 type Manager struct {
-	cfg *config.Config // global cfg (sandbox subsection + per-thread paths)
+	cfg *config.Config
 	rt  containerRuntime
 	log *slog.Logger
 
-	mu               sync.Mutex
-	sandboxes        map[string]*Sandbox     // sid -> live HTTP client
-	infos            map[string]SandboxInfo  // sid -> container record
-	threadSandboxes  map[string]string       // tid -> sid
-	lastActivity     map[string]time.Time    // sid -> last touch
-	warmPool         map[string]warmEntry    // sid -> released-but-running
+	mu              sync.Mutex
+	sandboxes       map[string]*Sandbox
+	infos           map[string]SandboxInfo
+	threadSandboxes map[string]string
+	lastActivity    map[string]time.Time
+	warmPool        map[string]warmEntry
 
 	sf       singleflight.Group
 	stopIdle chan struct{}
 	shutdown sync.Once
 }
 
-// New: factory wired from sandbox/factory.go via init(). Discovers any
-// orphan containers up-front so they seed the warm pool.
+// New builds the aio Manager and seeds the warm pool from any orphan containers.
 func New(cfg *config.Config) (sandbox.SandboxManager, error) {
 	m := &Manager{
 		cfg:             cfg,
@@ -66,21 +62,13 @@ func New(cfg *config.Config) (sandbox.SandboxManager, error) {
 	return m, nil
 }
 
-// sandboxCfg returns the sandbox-specific subsection of m.cfg. Tiny
-// shim so the rest of the file reads `m.sandboxCfg().X` instead of
-// `m.cfg.Sandbox.X` everywhere — that's the level the methods care about.
-func (m *Manager) sandboxCfg() *config.SandboxConfig { return &m.cfg.Sandbox }
-
-// deriveSandboxID is what makes cross-process discovery work: every
-// process hashes the same thread_id to the same 8-hex-char id, so the
-// container name (prefix + "-" + sid) collides on purpose.
+// Same tid hashes to the same sid in every process, so container names collide on purpose.
 func deriveSandboxID(tid string) string {
 	sum := sha256.Sum256([]byte(tid))
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-// Acquire serializes per-tid via singleflight so a tool burst that all
-// "first-touch" the same thread doesn't fire N container starts.
+// Acquire returns the sid for tid; singleflight prevents concurrent cold-starts.
 func (m *Manager) Acquire(ctx context.Context, tid string) (string, error) {
 	if tid == "" {
 		return "", sandbox.ErrThreadIDRequired
@@ -98,9 +86,7 @@ func (m *Manager) Acquire(ctx context.Context, tid string) (string, error) {
 	return v.(string), nil
 }
 
-// reuse: in-process cache check + warm-pool revive, both under one lock.
-// Returns the sid + true when we already know about this thread / there's
-// a warm container waiting; false means cold-start path.
+// reuse checks the in-process cache and warm pool under one lock.
 func (m *Manager) reuse(tid, sid string) (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -120,9 +106,7 @@ func (m *Manager) reuse(tid, sid string) (string, bool) {
 	return sid, true
 }
 
-// attachLocked centralises map mutations so call sites (warm revive,
-// orphan adopt, fresh create) don't drift on which maps to touch.
-// Caller must hold m.mu.
+// attachLocked records the sandbox in every map; caller must hold m.mu.
 func (m *Manager) attachLocked(tid, sid string, info SandboxInfo) {
 	m.sandboxes[sid] = newSandbox(sid, info.SandboxURL)
 	m.infos[sid] = info
@@ -132,9 +116,7 @@ func (m *Manager) attachLocked(tid, sid string, info SandboxInfo) {
 	m.lastActivity[sid] = time.Now()
 }
 
-// discoverOrCreate is the cold-start path: cross-process flock blocks
-// sibling CLIs from starting the same container twice, then we either
-// adopt a peer-started container or run one ourselves.
+// discoverOrCreate adopts a peer-started container or starts one; flock blocks racing siblings.
 func (m *Manager) discoverOrCreate(ctx context.Context, tid, sid string) (string, error) {
 	lockPath := filepath.Join(os.TempDir(), "eino-sandbox-"+sid+".lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
@@ -196,7 +178,7 @@ func (m *Manager) createSandbox(ctx context.Context, tid, sid string) (string, e
 	return sid, nil
 }
 
-// Get: look up by sid. Cheap — no I/O.
+// Get returns the live Sandbox for sid.
 func (m *Manager) Get(ctx context.Context, sid string) (sandbox.Sandbox, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -208,8 +190,7 @@ func (m *Manager) Get(ctx context.Context, sid string) (sandbox.Sandbox, error) 
 	return s, nil
 }
 
-// Release returns the sandbox to the warm pool — the container stays up
-// so a quick re-acquire skips the cold start.
+// Release moves sid to the warm pool so re-acquire skips the cold start.
 func (m *Manager) Release(ctx context.Context, sid string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -229,6 +210,7 @@ func (m *Manager) Release(ctx context.Context, sid string) error {
 	return nil
 }
 
+// Reset drops all in-process state; containers themselves are untouched.
 func (m *Manager) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -239,13 +221,10 @@ func (m *Manager) Reset() {
 	m.warmPool = map[string]warmEntry{}
 }
 
-// UsesThreadDataMounts: aio bind-mounts per-thread dirs at container
-// start, so the answer is yes — tools doing reverse path resolution
-// should look at the thread's host dirs.
+// UsesThreadDataMounts reports true — aio bind-mounts per-thread dirs.
 func (m *Manager) UsesThreadDataMounts() bool { return true }
 
-// Shutdown is idempotent; tears down every container we know about
-// (active + warm pool) on app exit.
+// Shutdown is idempotent; tears down every container the manager knows about.
 func (m *Manager) Shutdown() {
 	m.shutdown.Do(func() {
 		close(m.stopIdle)
@@ -262,8 +241,6 @@ func (m *Manager) Shutdown() {
 	})
 }
 
-// idleLoop runs on a fixed cadence; the channel-based stop signal lets
-// Shutdown deterministically tear it down without dangling goroutines.
 func (m *Manager) idleLoop() {
 	t := time.NewTicker(idleCheckInterval)
 	defer t.Stop()
@@ -277,9 +254,7 @@ func (m *Manager) idleLoop() {
 	}
 }
 
-// cleanupIdle moves active sandboxes past their idle TTL into the warm
-// pool, and tears down warm sandboxes that have been idle for the same
-// budget on top. Single lock pass, two predicate iterations.
+// cleanupIdle demotes active sandboxes past their TTL and stops over-aged warm ones.
 func (m *Manager) cleanupIdle() {
 	if m.cfg.Sandbox.IdleTimeout <= 0 {
 		return
@@ -312,9 +287,7 @@ func (m *Manager) cleanupIdle() {
 	}
 }
 
-// evictUntilWithinReplicasLocked enforces cfg.Replicas: drop the oldest
-// warm-pool entry first (cheapest — it's already idle), then the oldest
-// active sandbox if even that isn't enough. Caller must hold m.mu.
+// evictUntilWithinReplicasLocked enforces cfg.Replicas; warm pool first, then oldest active.
 func (m *Manager) evictUntilWithinReplicasLocked() {
 	replicas := m.cfg.Sandbox.Replicas
 	if replicas <= 0 {
@@ -373,18 +346,14 @@ func (m *Manager) evictOldestActiveLocked() bool {
 	return true
 }
 
-// reconcileOrphans seeds the warm pool with any containers a previous
-// process left behind. Treated as warm (not active) because we don't
-// know which thread they belong to.
+// reconcileOrphans seeds the warm pool with containers a previous process left behind.
 func (m *Manager) reconcileOrphans() {
 	for _, info := range listRunningContainers(m.rt, m.cfg.Sandbox.ContainerPrefix) {
 		m.warmPool[info.SandboxID] = warmEntry{info: info, releasedAt: time.Now()}
 	}
 }
 
-// buildMounts: bind-mount per-thread user-data dirs (so /mnt/user-data
-// inside the container points at the host's thread dir) plus the static
-// custom mounts the user configured.
+// buildMounts assembles per-thread /mnt/user-data plus user-configured mounts.
 func (m *Manager) buildMounts(ctx context.Context, tid string) []mountSpec {
 	uid := runtime.GetEffectiveUserID(ctx)
 	if err := config.EnsureThreadDirs(m.cfg, tid, uid); err != nil {

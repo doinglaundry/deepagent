@@ -17,31 +17,18 @@ import (
 )
 
 // Sandbox is the per-container HTTP client implementing sandbox.Sandbox.
-// A single-flight mutex serialises exec — the agent-sandbox image keeps
-// one persistent shell session whose state can corrupt under concurrent
-// invocation. The lock makes intra-process callers serial; cross-process
-// callers either get distinct containers (via Manager) or land on the
-// session_id parameter for explicit fan-out.
-//
-// API paths and bodies pinned to all-in-one-sandbox OpenAPI 3.1 (probed
-// 2026-05-17 against the FastAPI server inside the container).
 type Sandbox struct {
 	id      string
 	baseURL string
 	http    *http.Client
 
+	// shellMu serialises exec: the agent-sandbox image keeps one persistent
+	// shell session whose state can corrupt under concurrent invocation.
 	shellMu sync.Mutex
 }
 
 const (
-	// 600s matches the upstream Python SDK's client-level timeout. Long
-	// commands without output otherwise hit Go's http.Client deadline
-	// before the sandbox's own watchdog.
-	defaultHTTPTimeout = 600 * time.Second
-
-	// execTimeoutSeconds: how long the sandbox itself waits for the
-	// command before returning a "still running" status. Mirrors
-	// deer-flow's no_change_timeout=600.
+	defaultHTTPTimeout = 600 * time.Second // upstream Python SDK parity
 	execTimeoutSeconds = 600
 )
 
@@ -53,21 +40,17 @@ func newSandbox(id, baseURL string) *Sandbox {
 	}
 }
 
+// ID returns the sandbox id.
 func (s *Sandbox) ID() string { return s.id }
 
-// envelope is the FastAPI response shape every endpoint returns. data is
-// kept as raw bytes so each call can decode into its own typed payload
-// without an extra map round-trip.
+// envelope is the FastAPI response shape every endpoint returns.
 type envelope struct {
 	Success bool            `json:"success"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data"`
 }
 
-// ExecuteCommand: POST /v1/shell/exec. Sync mode (async_mode=false) means
-// the server blocks up to `timeout` seconds then returns the full output.
-// Status "completed" / "failed" / "running" — anything not "completed"
-// surfaces as a CommandError so the LLM sees the real failure mode.
+// ExecuteCommand runs cmd via POST /v1/shell/exec in sync mode.
 func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error) {
 	s.shellMu.Lock()
 	defer s.shellMu.Unlock()
@@ -97,9 +80,7 @@ func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error
 	return out, nil
 }
 
-// ReadFile: POST /v1/file/read. start_line / end_line stay zero so the
-// server returns the whole file — Sandbox interface has no pagination
-// knob (tools handle that themselves).
+// ReadFile reads the full file at path via POST /v1/file/read.
 func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 	var data struct {
 		Content string `json:"content"`
@@ -111,9 +92,7 @@ func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 	return data.Content, nil
 }
 
-// WriteFile: POST /v1/file/write. Native `append:true` — no need to
-// read-modify-write like deer-flow's Python SDK did before this endpoint
-// gained the flag.
+// WriteFile writes content via POST /v1/file/write; appendMode uses native append:true.
 func (s *Sandbox) WriteFile(ctx context.Context, path, content string, appendMode bool) error {
 	body := map[string]any{
 		"file":     path,
@@ -127,9 +106,7 @@ func (s *Sandbox) WriteFile(ctx context.Context, path, content string, appendMod
 	return nil
 }
 
-// UpdateFile: same endpoint, encoding=base64 so the sandbox stores binary
-// bytes verbatim. append is always false — binary "append" is rarely
-// semantically meaningful and the upstream SDK doesn't expose it either.
+// UpdateFile writes binary content base64-encoded via POST /v1/file/write.
 func (s *Sandbox) UpdateFile(ctx context.Context, path string, content []byte) error {
 	body := map[string]any{
 		"file":     path,
@@ -142,10 +119,7 @@ func (s *Sandbox) UpdateFile(ctx context.Context, path string, content []byte) e
 	return nil
 }
 
-// ListDir uses the native /v1/file/list, which supports max_depth and a
-// hidden-files toggle directly — no more `find -maxdepth ...` shell-out.
-// Result is flattened to host paths plus a trailing "/" on directories so
-// LocalSandbox and AioSandbox produce comparable output shapes.
+// ListDir lists path entries via POST /v1/file/list with native max_depth.
 func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]string, error) {
 	if maxDepth <= 0 {
 		maxDepth = 2
@@ -174,7 +148,6 @@ func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]str
 	return out, nil
 }
 
-// fileInfo mirrors the FastAPI FileInfo schema — just the fields we need.
 type fileInfo struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
@@ -183,9 +156,7 @@ type fileInfo struct {
 	Extension   string `json:"extension"`
 }
 
-// Glob: when include_dirs=false the native /v1/file/find handles the
-// glob in one call. When include_dirs=true we still fan out to /list
-// because /find doesn't return directories.
+// Glob matches pattern under path; falls back to /v1/file/list for dirs.
 func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.GlobOpts) ([]string, bool, error) {
 	maxResults := opts.MaxResults
 	if maxResults <= 0 {
@@ -239,8 +210,7 @@ func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.G
 	return matches, false, nil
 }
 
-// Grep: same two-tier approach as Glob. Per-file /v1/file/search returns
-// parallel arrays of line_numbers + matches; we zip them.
+// Grep searches files for pattern via per-file POST /v1/file/search.
 func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
 	maxResults := opts.MaxResults
 	if maxResults <= 0 {
@@ -320,10 +290,7 @@ func (s *Sandbox) listPathRecursive(ctx context.Context, path string) ([]fileInf
 	return data.Files, nil
 }
 
-// post is the single JSON RPC primitive. Non-2xx and success=false both
-// surface as Go errors with the server-provided message so handlers can
-// log meaningfully without parsing prose. data=nil means caller doesn't
-// care about the response body.
+// post is the single JSON RPC primitive; decodeData=nil discards the response data.
 func (s *Sandbox) post(ctx context.Context, path string, body, decodeData any) error {
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -357,10 +324,7 @@ func (s *Sandbox) post(ctx context.Context, path string, body, decodeData any) e
 	return json.Unmarshal(env.Data, decodeData)
 }
 
-// --- small helpers ---------------------------------------------------
-
-// regexpQuoteMeta inlined to keep the import set tight; equivalent to
-// regexp.QuoteMeta but allocates less for the typical short pattern.
+// Inlined regexp.QuoteMeta to avoid importing regexp for this single use.
 func regexpQuoteMeta(s string) string {
 	const special = `\.+*?()|[]{}^$`
 	var b strings.Builder

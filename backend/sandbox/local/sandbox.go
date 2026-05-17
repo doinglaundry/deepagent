@@ -1,6 +1,4 @@
-// Package local implements Sandbox on top of the host filesystem with
-// per-thread path mappings that translate /mnt/user-data/... into a
-// thread-scoped host directory. Mirrors deerflow.sandbox.local.local_sandbox.
+// Package local implements Sandbox on the host fs with per-thread path mappings.
 package local
 
 import (
@@ -20,13 +18,9 @@ import (
 	"eino-cli/backend/sandbox/search"
 )
 
-// commandTimeout is the per-execute_command wall clock budget. Matches
-// deer-flow's subprocess.run(timeout=600).
 const commandTimeout = 10 * time.Minute
 
-// Sandbox is the per-thread (or "local" generic) sandbox instance.
-// path_mappings is set at construction and never mutated; only the
-// agent-written-paths set has a lifetime mutex.
+// Sandbox is the per-thread (or generic "local") sandbox instance.
 type Sandbox struct {
 	id       string
 	mappings []PathMapping
@@ -43,11 +37,10 @@ func newSandbox(id string, mappings []PathMapping) *Sandbox {
 	}
 }
 
+// ID returns the sandbox id.
 func (s *Sandbox) ID() string { return s.id }
 
-// ExecuteCommand runs cmd through a host shell (zsh/bash/sh on unix,
-// pwsh/cmd on Windows), rewriting /mnt/... paths inside cmd first and
-// masking host paths in the output afterwards.
+// ExecuteCommand runs cmd through a host shell, rewriting /mnt/* in/out.
 func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error) {
 	resolved := resolvePathsInCommand(s.mappings, cmd)
 	shell, err := pickShell()
@@ -86,8 +79,7 @@ func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error
 	return out, nil
 }
 
-// pickShell finds the first usable shell — matches deer-flow priority
-// (zsh > bash > sh on unix; pwsh > powershell > cmd on Windows).
+// pickShell returns the first usable shell: zsh > bash > sh, or pwsh > cmd on Windows.
 func pickShell() (string, error) {
 	var candidates []string
 	if runtime.GOOS == "windows" {
@@ -109,9 +101,7 @@ func pickShell() (string, error) {
 	return "", errors.New("no usable shell found (tried zsh/bash/sh on unix or powershell/cmd on windows)")
 }
 
-// shellArgs picks argv for cmd based on shell flavour. Returns env=nil to
-// mean "inherit"; the only env override is MSYS_NO_PATHCONV for Git Bash
-// (we don't ship that today, leave it unused but documented).
+// shellArgs returns the argv for cmd based on shell flavour; env=nil inherits.
 func shellArgs(shell, cmd string) (args []string, env []string) {
 	if runtime.GOOS != "windows" {
 		return []string{shell, "-c", cmd}, nil
@@ -127,9 +117,7 @@ func shellArgs(shell, cmd string) (args []string, env []string) {
 	}
 }
 
-// runShell captures stdout/stderr separately so the caller can label them.
-// exit_code falls out of *ExitError; any other error (start failure) goes
-// to runErr.
+// runShell runs c and splits stdout/stderr/exitCode; runErr is non-nil only on start failure.
 func runShell(c *exec.Cmd) (stdout, stderr string, exitCode int, runErr error) {
 	var so, se strings.Builder
 	c.Stdout = &so
@@ -147,10 +135,7 @@ func runShell(c *exec.Cmd) (stdout, stderr string, exitCode int, runErr error) {
 	return stdout, stderr, 0, err
 }
 
-// ReadFile reads the host file, only reverse-resolving paths inside the
-// content when the file was written by write_file (deer-flow's
-// _agent_written_paths gate). User uploads and external files come back
-// untouched.
+// ReadFile reads the host file; agent-written files get path masking on the way out.
 func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 	r, err := resolvePath(s.mappings, path)
 	if err != nil {
@@ -170,10 +155,7 @@ func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 	return content, nil
 }
 
-// WriteFile creates / overwrites / appends. Read-only mounts come back as
-// PermissionError (EROFS in deer-flow). Container paths inside content are
-// rewritten before persisting (so a Python script the LLM saves still
-// references the host paths it will need at exec time).
+// WriteFile creates/overwrites/appends; read-only mounts surface as PermissionError.
 func (s *Sandbox) WriteFile(ctx context.Context, path, content string, appendMode bool) error {
 	r, err := resolvePath(s.mappings, path)
 	if err != nil {
@@ -213,9 +195,7 @@ func (s *Sandbox) WriteFile(ctx context.Context, path, content string, appendMod
 	return nil
 }
 
-// UpdateFile: binary overwrite, same read-only / mkdir rules as WriteFile.
-// Does NOT register the path as agent-written — binary files (images,
-// archives) have no path strings to reverse-resolve on read.
+// UpdateFile is the binary overwrite path; never registers agent-written (no strings to mask).
 func (s *Sandbox) UpdateFile(ctx context.Context, path string, content []byte) error {
 	r, err := resolvePath(s.mappings, path)
 	if err != nil {
@@ -238,6 +218,7 @@ func (s *Sandbox) UpdateFile(ctx context.Context, path string, content []byte) e
 	return nil
 }
 
+// ListDir returns entries under path up to maxDepth (default 2).
 func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]string, error) {
 	if maxDepth <= 0 {
 		maxDepth = 2
@@ -263,6 +244,7 @@ func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]str
 	return out, nil
 }
 
+// Glob walks path matching pattern via search.FindGlobMatches.
 func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.GlobOpts) ([]string, bool, error) {
 	r, err := resolvePath(s.mappings, path)
 	if err != nil {
@@ -282,6 +264,7 @@ func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.G
 	return out, truncated, nil
 }
 
+// Grep walks path matching pattern via search.FindGrepMatches.
 func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
 	r, err := resolvePath(s.mappings, path)
 	if err != nil {
@@ -307,8 +290,7 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.G
 	return out, truncated, nil
 }
 
-// wrapFileError maps stdlib OS errors to the sandbox.* hierarchy so callers
-// can errors.As on FileNotFoundError / PermissionError / FileError.
+// wrapFileError maps OS errors to FileNotFoundError / PermissionError / FileError.
 func wrapFileError(err error, path, op string) error {
 	if err == nil {
 		return nil

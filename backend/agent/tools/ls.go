@@ -10,15 +10,12 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 )
 
-// lsArgs mirrors eino's filesystem.lsArgs byte-for-byte: a single `path`
-// field with NO description tag, so the generated schema matches.
+// No description tag — matches eino's schema byte-for-byte.
 type lsArgs struct {
 	Path string `json:"path"`
 }
 
-// GetLsTool returns the "ls" tool. Lists immediate entries under path
-// (resolved against root); no recursion, no hidden-file filtering — matches
-// eino's filesystem.newLsTool behavior.
+// GetLsTool returns the ls tool.
 func GetLsTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameLs, filesystem.ListFilesToolDesc,
 		func(ctx context.Context, in lsArgs) (string, error) {

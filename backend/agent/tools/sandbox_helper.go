@@ -8,25 +8,12 @@ import (
 	"eino-cli/backend/sandbox"
 )
 
-// shouldUseSandbox: only route paths that look container-mapped through
-// the sandbox. CLI-style host paths (/Users/..., /home/...) keep going
-// through the legacy os.* path so the dual-mode CLI/server gateway keeps
-// working during the migration window.
+// Only /mnt/* paths route through the sandbox; host paths stay on os.* fast path.
 func shouldUseSandbox(path string) bool {
 	return strings.HasPrefix(path, "/mnt/")
 }
 
-// sandboxFromCtx pulls the active Sandbox out of ctx, or returns nil when
-// no manager / id is wired (CLI mode, tests). Tools call this once at the
-// top of their handler and branch on the result.
-//
-// The two-step lookup (Default manager, then GetSandboxID) is intentional:
-//   - SetDefault is process-wide (M3 / M4 wire it once at startup).
-//   - GetSandboxID is per-call, set by SandboxMiddleware.BeforeAgent.
-//
-// Returns nil instead of an error when either side is missing: that keeps
-// existing CLI flows backwards-compatible — tools that see nil run their
-// pre-M2 host-fs path.
+// sandboxFromCtx returns nil when no manager or no sid — caller falls back to host fs.
 func sandboxFromCtx(ctx context.Context) sandbox.Sandbox {
 	manager := sandbox.Default()
 	if manager == nil {
@@ -43,9 +30,7 @@ func sandboxFromCtx(ctx context.Context) sandbox.Sandbox {
 	return sb
 }
 
-// denyOnPlanMode returns the canned plan-mode denial message + true when
-// the caller should short-circuit. Write tools wrap their entry-point with
-// this helper instead of duplicating the comparison.
+// denyOnPlanMode returns (msg, true) when ctx is in plan mode; write tools short-circuit on true.
 func denyOnPlanMode(ctx context.Context) (string, bool) {
 	if middlewares.IsPlanMode(middlewares.GetPermissionMode(ctx)) {
 		return middlewares.PlanModeDeniedMessage, true

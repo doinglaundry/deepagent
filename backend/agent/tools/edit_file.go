@@ -18,10 +18,7 @@ type editFileArgs struct {
 	ReplaceAll bool   `json:"replace_all" jsonschema:"description=Replace all occurrences of old_string (default false),default=false"`
 }
 
-// GetEditFileTool returns the "edit_file" tool. ReplaceAll=false (the
-// default) requires old_string to appear exactly once — this guards against
-// the model accidentally rewriting many occurrences when it only meant one.
-// ReplaceAll=true skips the uniqueness check and rewrites every match.
+// GetEditFileTool returns the edit_file tool; ReplaceAll=false requires a unique old_string.
 func GetEditFileTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameEditFile, filesystem.EditFileToolDesc,
 		func(ctx context.Context, in editFileArgs) (string, error) {
@@ -31,7 +28,6 @@ func GetEditFileTool(root string) (tool.BaseTool, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
-			// Sandbox fast-path: read-modify-write through sandbox API.
 			if shouldUseSandbox(in.FilePath) {
 				if sb := sandboxFromCtx(ctx); sb != nil {
 					content, err := sb.ReadFile(ctx, in.FilePath)
@@ -64,9 +60,6 @@ func GetEditFileTool(root string) (tool.BaseTool, error) {
 		})
 }
 
-// applyEditReplacement: shared replace logic. count==1 enforces the
-// uniqueness guard unless replace_all is set; matches the legacy behaviour
-// the tool description promises the model.
 func applyEditReplacement(content, oldStr, newStr string, replaceAll bool) (string, error) {
 	if replaceAll {
 		return strings.ReplaceAll(content, oldStr, newStr), nil

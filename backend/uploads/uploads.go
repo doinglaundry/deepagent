@@ -1,7 +1,4 @@
-// Package uploads owns the per-thread file upload directory. Mirrors
-// deerflow.uploads.manager — filename normalisation, traversal guard,
-// O_NOFOLLOW write — minus the FastAPI bits that don't apply to a Go
-// service.
+// Package uploads owns the per-thread file upload directory with traversal/symlink guards.
 package uploads
 
 import (
@@ -17,18 +14,16 @@ import (
 	"eino-cli/backend/config"
 )
 
-// ErrPathTraversal: destination resolved outside the thread's uploads
-// directory. Caller's job to map this to a 4xx in the gateway.
+// ErrPathTraversal signals a destination outside the thread's uploads dir.
 var ErrPathTraversal = errors.New("path traversal detected")
 
-// ErrUnsafeFilename: empty / "." / ".." / overlong / contains backslash.
+// ErrUnsafeFilename signals an empty / "." / ".." / overlong / backslash filename.
 var ErrUnsafeFilename = errors.New("unsafe filename")
 
-// safeThreadID: alphanumeric + `_`, `-`, `.` only. Stops the model (or a
-// confused gateway client) from injecting `..` into the thread segment.
+// safeThreadID restricts tids to alphanumeric + `_`, `-`, `.`.
 var safeThreadID = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
-// ValidateThreadID rejects any tid that would escape the threads/ tree.
+// ValidateThreadID rejects tids that would escape the threads/ tree.
 func ValidateThreadID(tid string) error {
 	if tid == "" {
 		return fmt.Errorf("invalid thread_id: empty")
@@ -39,8 +34,7 @@ func ValidateThreadID(tid string) error {
 	return nil
 }
 
-// NormalizeFilename strips any directory part and rejects traversal-
-// shaped names. Returns the bare basename when safe.
+// NormalizeFilename strips the directory part and rejects traversal-shaped names.
 func NormalizeFilename(filename string) (string, error) {
 	if filename == "" {
 		return "", ErrUnsafeFilename
@@ -58,8 +52,7 @@ func NormalizeFilename(filename string) (string, error) {
 	return safe, nil
 }
 
-// PathFor returns the host path for `filename` under (tid, uid)'s uploads
-// dir without creating anything. Use Write to actually persist data.
+// PathFor returns the host path for filename under (tid, uid) without creating anything.
 func PathFor(cfg *config.Config, tid, uid, filename string) (string, error) {
 	if err := ValidateThreadID(tid); err != nil {
 		return "", err
@@ -76,9 +69,7 @@ func PathFor(cfg *config.Config, tid, uid, filename string) (string, error) {
 	return dest, nil
 }
 
-// Write streams `src` into uploads/<filename>, refusing to follow a
-// pre-existing symlink at the destination (POSIX O_NOFOLLOW). Returns
-// the host path on success so callers can hand it to the agent.
+// Write streams src into uploads/<filename> with O_NOFOLLOW; returns the host path.
 func Write(cfg *config.Config, tid, uid, filename string, src io.Reader) (string, error) {
 	dest, err := PathFor(cfg, tid, uid, filename)
 	if err != nil {
@@ -87,9 +78,7 @@ func Write(cfg *config.Config, tid, uid, filename string, src io.Reader) (string
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return "", err
 	}
-	// O_NOFOLLOW guards against a malicious sandbox process planting a
-	// symlink at the dest path; the upload process owns more privilege
-	// than the sandboxed agent. Linux/macOS both honour this flag.
+	// O_NOFOLLOW: a sandboxed agent must not plant a symlink at dest to escape via the upload process.
 	flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC | osNoFollow()
 	f, err := os.OpenFile(dest, flag, 0o600)
 	if err != nil {
@@ -102,18 +91,16 @@ func Write(cfg *config.Config, tid, uid, filename string, src io.Reader) (string
 	return dest, nil
 }
 
-// FileInfo is the per-file struct List returns. Sizes stay int64 here;
-// gateway serializers can stringify for JSON if they want.
+// FileInfo is the per-file struct List returns.
 type FileInfo struct {
 	Filename  string
 	Size      int64
 	Path      string
 	Extension string
-	Modified  int64 // unix seconds; stays an integer for JSON friendliness
+	Modified  int64 // unix seconds
 }
 
-// List enumerates regular files in the thread's uploads dir, sorted by
-// name. Symlinks are skipped — same rule as Write enforces on the way in.
+// List enumerates regular files in the thread's uploads dir, sorted by name; symlinks are skipped.
 func List(cfg *config.Config, tid, uid string) ([]FileInfo, error) {
 	if err := ValidateThreadID(tid); err != nil {
 		return nil, err
@@ -147,8 +134,7 @@ func List(cfg *config.Config, tid, uid string) ([]FileInfo, error) {
 	return out, nil
 }
 
-// Delete removes a single file. Mirrors the safety profile of Write —
-// traversal-guarded resolve, refuses symlinks, no error on already-gone.
+// Delete removes a single file with the same safety profile as Write; already-gone is fine.
 func Delete(cfg *config.Config, tid, uid, filename string) error {
 	dest, err := PathFor(cfg, tid, uid, filename)
 	if err != nil {
@@ -167,9 +153,7 @@ func Delete(cfg *config.Config, tid, uid, filename string) error {
 	return os.Remove(dest)
 }
 
-// guardTraversal: dest must resolve under base. We use filepath.Abs
-// because os.Lstat / Stat on a not-yet-created dest can fail, but the
-// path-cleaning is enough for the prefix check.
+// guardTraversal asserts dest resolves under base.
 func guardTraversal(dest, base string) error {
 	absBase, err := filepath.Abs(base)
 	if err != nil {

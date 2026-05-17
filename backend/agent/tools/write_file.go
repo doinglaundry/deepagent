@@ -16,15 +16,7 @@ type writeFileArgs struct {
 	Content  string `json:"content"   jsonschema:"description=The content to write to the file"`
 }
 
-// GetWriteFileTool returns the "write_file" tool. Creates parent dirs as
-// needed; reports the path the model passed in (not the absolute resolved
-// one) so log lines stay relative to the agent's mental model.
-//
-// Two execution paths:
-//  1. Plan mode: hard-deny — read-only mode by definition.
-//  2. Path looks container-mapped (/mnt/...) AND a sandbox is wired: write
-//     through Sandbox.WriteFile so per-thread mounts apply.
-//  3. Otherwise: legacy host-fs write under root.
+// GetWriteFileTool returns the write_file tool routed through sandbox or host fs.
 func GetWriteFileTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameWriteFile, filesystem.WriteFileToolDesc,
 		func(ctx context.Context, in writeFileArgs) (string, error) {
