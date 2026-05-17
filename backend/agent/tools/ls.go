@@ -22,6 +22,17 @@ type lsArgs struct {
 func GetLsTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameLs, filesystem.ListFilesToolDesc,
 		func(ctx context.Context, in lsArgs) (string, error) {
+			if shouldUseSandbox(in.Path) {
+				if sb := sandboxFromCtx(ctx); sb != nil {
+					entries, err := sb.ListDir(ctx, in.Path, 1)
+					if err == nil {
+						if len(entries) == 0 {
+							return noFilesFound, nil
+						}
+						return strings.Join(entries, "\n"), nil
+					}
+				}
+			}
 			entries, err := os.ReadDir(resolvePath(root, in.Path))
 			if err != nil {
 				return "", err

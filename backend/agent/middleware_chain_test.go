@@ -32,6 +32,7 @@ func TestGetChatModelMiddlewares_DefaultOrder(t *testing.T) {
 		reflect.TypeOf(&middlewares.LoopDetection{}),
 		reflect.TypeOf(&middlewares.PlanReminder{}),
 		reflect.TypeOf(&middlewares.TodoReminder{}),
+		reflect.TypeOf(&middlewares.SandboxMiddleware{}),
 		reflect.TypeOf(&middlewares.Trace{}),
 		reflect.TypeOf(&middlewares.Clarification{}),
 	}

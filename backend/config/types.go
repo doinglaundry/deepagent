@@ -1,5 +1,34 @@
 package config
 
+import "time"
+
+// VolumeMount declares a host-to-container path binding for sandboxes.
+// ReadOnly maps to docker `:ro` / `readonly` and to local-sandbox EROFS.
+type VolumeMount struct {
+	HostPath      string `yaml:"host_path"`
+	ContainerPath string `yaml:"container_path"`
+	ReadOnly      bool   `yaml:"read_only,omitempty"`
+}
+
+// SandboxConfig selects + tunes the per-thread sandbox manager.
+// Use: "local" (host fs + path mapping) or "aio" (containerised).
+// Defaults are filled by normalizeSandbox at Load time, so downstream code
+// reads cfg fields directly without orDefault helpers.
+type SandboxConfig struct {
+	Use                    string            `yaml:"use"`
+	AllowHostBash          bool              `yaml:"allow_host_bash"`
+	Image                  string            `yaml:"image"`
+	ContainerPrefix        string            `yaml:"container_prefix"`
+	Port                   int               `yaml:"port"`
+	Replicas               int               `yaml:"replicas"`
+	IdleTimeout            time.Duration     `yaml:"idle_timeout"`
+	Mounts                 []VolumeMount     `yaml:"mounts,omitempty"`
+	Environment            map[string]string `yaml:"environment,omitempty"`
+	BashOutputMaxChars     int               `yaml:"bash_output_max_chars"`
+	ReadFileOutputMaxChars int               `yaml:"read_file_output_max_chars"`
+	LsOutputMaxChars       int               `yaml:"ls_output_max_chars"`
+}
+
 type ModelConfig struct {
 	Name                 string `json:"name"`
 	Provider             string `json:"provider"`
@@ -72,6 +101,7 @@ type Config struct {
 	AgentsAPI         AgentsAPI               `json:"-"                       yaml:"agents_api"`
 	SkillEvolution    SkillEvolution          `json:"-"                       yaml:"skill_evolution"`
 	CheckPointer      Checkpointer            `json:"-" yaml:"checkpointer"`
+	Sandbox           SandboxConfig           `json:"-" yaml:"sandbox"`
 
 	// MaxConcurrentSubagents is the hard ceiling that the SubagentLimit
 	// middleware enforces AND that the system prompt advertises to the LLM.

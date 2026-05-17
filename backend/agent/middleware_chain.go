@@ -13,6 +13,7 @@ import (
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
 	memorystore "eino-cli/backend/memory/store"
+	"eino-cli/backend/sandbox"
 )
 
 func GetChatModelMiddlewares(
@@ -82,6 +83,15 @@ func GetChatModelMiddlewares(
 	middlewareList = append(middlewareList, middlewares.NewPlanReminder(getPlanModeFunc))
 
 	middlewareList = append(middlewareList, middlewares.NewTodoReminder())
+
+	// Sandbox sits before Trace so its BeforeAgent (acquire + stamp ctx)
+	// runs early. We do NOT slip it between Trace and Clarification — the
+	// "Trace immediately before Clarification" invariant is asserted in
+	// middleware_chain_test.go and exists so Trace captures the raw
+	// assistant message before the rewriter touches it. Acquire itself is
+	// cheap; not being inside Trace's span is fine. NewSandbox(nil) is a
+	// no-op when SetDefault has not been called (e.g. unit tests).
+	middlewareList = append(middlewareList, middlewares.NewSandbox(sandbox.Default()))
 
 	trace := middlewares.NewTrace(agentName)
 	if tokenUsage != nil {

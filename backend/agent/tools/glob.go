@@ -11,6 +11,8 @@ import (
 	"github.com/cloudwego/eino/adk/middlewares/filesystem"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/sandbox"
 )
 
 type globArgs struct {
@@ -25,6 +27,18 @@ type globArgs struct {
 func GetGlobTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGlob, filesystem.GlobToolDesc,
 		func(ctx context.Context, in globArgs) (string, error) {
+			if shouldUseSandbox(in.Path) {
+				if sb := sandboxFromCtx(ctx); sb != nil {
+					matches, _, err := sb.Glob(ctx, in.Path, normalizeGlobPattern(in.Pattern), sandbox.GlobOpts{})
+					if err == nil {
+						if len(matches) == 0 {
+							return noFilesFound, nil
+						}
+						sort.Strings(matches)
+						return strings.Join(matches, "\n"), nil
+					}
+				}
+			}
 			searchBase := resolveRoot(root)
 			if in.Path != "" {
 				var err error

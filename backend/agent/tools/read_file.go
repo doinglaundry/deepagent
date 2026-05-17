@@ -52,15 +52,25 @@ func GetReadFileTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameReadFile, filesystem.ReadFileToolDesc,
 		// 工具执行函数，处理实际的文件读取逻辑
 		func(ctx context.Context, in readFileArgs) (string, error) {
-			// 1. 参数验证和默认值设置
 			if in.Offset <= 0 {
-				in.Offset = 1 // 默认从第1行开始
+				in.Offset = 1
 			}
 			if in.Limit <= 0 {
-				in.Limit = 2000 // 默认最多读取2000行，避免大文件内存溢出
+				in.Limit = 2000
 			}
 
-			// 2. 路径解析和安全性检查
+			// Sandbox fast-path: /mnt/... paths route through the per-thread sandbox
+			// so they see the same view as write_file did. Falls through on any
+			// error so the legacy host-fs path stays reachable.
+			if shouldUseSandbox(in.FilePath) {
+				if sb := sandboxFromCtx(ctx); sb != nil {
+					content, err := sb.ReadFile(ctx, in.FilePath)
+					if err == nil {
+						return paginateLines(content, in.Offset, in.Limit), nil
+					}
+				}
+			}
+
 			path, err := getResolvedPath(root, in.FilePath)
 			if err != nil {
 				return "", fmt.Errorf("路径解析失败: %w", err)
@@ -89,19 +99,19 @@ func GetReadFileTool(root string) (tool.BaseTool, error) {
 				return "", fmt.Errorf("读取文件失败: %w", err)
 			}
 
-			// 5. 内容分页处理
-			lines := strings.Split(string(data), "\n")
-			start := min(in.Offset-1, len(lines)) // 确保起始位置不越界
-			end := min(start+in.Limit, len(lines)) // 确保结束位置不越界
-
-			// 6. 格式化输出（cat -n 风格）
-			// strings.Join 只在元素之间插入分隔符，天然没有结尾换行
-			// 这与 eino 的 "最后一行 fmt 不加 \n" 行为一致，无需每行判断
-			out := make([]string, end-start)
-			for i, line := range lines[start:end] {
-				// 格式化行号：6位右对齐，后接制表符和行内容
-				out[i] = fmt.Sprintf("%6d\t%s", in.Offset+i, line)
-			}
-			return strings.Join(out, "\n"), nil
+			return paginateLines(string(data), in.Offset, in.Limit), nil
 		})
+}
+
+// paginateLines: cat -n style pagination. Shared between the sandbox path
+// and the host-fs path so output formatting stays identical.
+func paginateLines(content string, offset, limit int) string {
+	lines := strings.Split(content, "\n")
+	start := min(offset-1, len(lines))
+	end := min(start+limit, len(lines))
+	out := make([]string, end-start)
+	for i, line := range lines[start:end] {
+		out[i] = fmt.Sprintf("%6d\t%s", offset+i, line)
+	}
+	return strings.Join(out, "\n")
 }

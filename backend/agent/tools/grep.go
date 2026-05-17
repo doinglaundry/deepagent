@@ -13,7 +13,61 @@ import (
 	"github.com/cloudwego/eino/adk/middlewares/filesystem"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/sandbox"
 )
+
+// sandboxGrep dispatches to Sandbox.Grep using the subset of grepArgs flags
+// the sandbox interface understands (pattern, glob, -i, head_limit). Falls
+// back to ok=false on any error so the legacy runGrep path keeps the model
+// behaviour stable when advanced flags (-A/-B/-C, file type, multiline) are
+// requested.
+func sandboxGrep(ctx context.Context, sb sandbox.Sandbox, in grepArgs) (string, bool) {
+	if in.OutputMode != "" && in.OutputMode != "files_with_matches" {
+		return "", false
+	}
+	if in.Multiline != nil && *in.Multiline {
+		return "", false
+	}
+	if in.FileType != nil && *in.FileType != "" {
+		return "", false
+	}
+	path := *in.Path
+	opts := sandbox.GrepOpts{
+		Literal:       false,
+		CaseSensitive: !boolOr(in.CaseInsensitive, false),
+	}
+	if in.Glob != nil {
+		opts.Glob = *in.Glob
+	}
+	if in.HeadLimit != nil {
+		opts.MaxResults = *in.HeadLimit
+	}
+	matches, _, err := sb.Grep(ctx, path, in.Pattern, opts)
+	if err != nil {
+		return "", false
+	}
+	if len(matches) == 0 {
+		return "No matches found.", true
+	}
+	uniq := map[string]struct{}{}
+	for _, m := range matches {
+		uniq[m.Path] = struct{}{}
+	}
+	files := make([]string, 0, len(uniq))
+	for p := range uniq {
+		files = append(files, p)
+	}
+	sort.Strings(files)
+	return fmt.Sprintf("Found %d file(s)\n%s", len(files), strings.Join(files, "\n")), true
+}
+
+func boolOr(p *bool, fallback bool) bool {
+	if p == nil {
+		return fallback
+	}
+	return *p
+}
 
 // grepArgs mirrors eino filesystem.go:688-740 byte-for-byte. Many fields
 // are accepted-and-ignored at runtime (glob / type / multiline / -A/-B/-C)
@@ -48,6 +102,18 @@ type grepMatch struct {
 func GetGrepTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGrep, filesystem.GrepToolDesc,
 		func(ctx context.Context, in grepArgs) (string, error) {
+			// Sandbox fast-path: only kick in when the model explicitly
+			// asked for /mnt/... and a sandbox is wired. Other flags
+			// (Multiline / FileType / offset / -A / -B / -C / OutputMode)
+			// stay on the legacy path — runGrep's behaviour is what the
+			// model is trained on.
+			if in.Path != nil && shouldUseSandbox(*in.Path) {
+				if sb := sandboxFromCtx(ctx); sb != nil {
+					if out, ok := sandboxGrep(ctx, sb, in); ok {
+						return out, nil
+					}
+				}
+			}
 			matches, err := runGrep(root, in)
 			if err != nil {
 				return "", err

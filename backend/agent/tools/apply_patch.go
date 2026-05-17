@@ -32,6 +32,14 @@ type patchLine struct {
 func GetApplyPatchTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool("apply_patch", applyPatchToolDesc,
 		func(ctx context.Context, in applyPatchArgs) (string, error) {
+			if msg, denied := denyOnPlanMode(ctx); denied {
+				return msg, nil
+			}
+			// Sandbox path: apply_patch is multi-file; we don't route the
+			// whole batch through Sandbox.* yet (no atomic "write set"
+			// primitive). Fall through to host fs — sandboxed deployments
+			// configure mounts so /mnt/... paths resolve to host dirs the
+			// process owns anyway.
 			return applyPatch(root, in.Patch)
 		})
 }

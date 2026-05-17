@@ -19,9 +19,26 @@ type writeFileArgs struct {
 // GetWriteFileTool returns the "write_file" tool. Creates parent dirs as
 // needed; reports the path the model passed in (not the absolute resolved
 // one) so log lines stay relative to the agent's mental model.
+//
+// Two execution paths:
+//  1. Plan mode: hard-deny — read-only mode by definition.
+//  2. Path looks container-mapped (/mnt/...) AND a sandbox is wired: write
+//     through Sandbox.WriteFile so per-thread mounts apply.
+//  3. Otherwise: legacy host-fs write under root.
 func GetWriteFileTool(root string) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameWriteFile, filesystem.WriteFileToolDesc,
 		func(ctx context.Context, in writeFileArgs) (string, error) {
+			if msg, denied := denyOnPlanMode(ctx); denied {
+				return msg, nil
+			}
+			if shouldUseSandbox(in.FilePath) {
+				if sb := sandboxFromCtx(ctx); sb != nil {
+					if err := sb.WriteFile(ctx, in.FilePath, in.Content, false); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Updated file %s", in.FilePath), nil
+				}
+			}
 			p := resolvePath(root, in.FilePath)
 			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 				return "", err

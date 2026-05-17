@@ -1,4 +1,7 @@
 // Command eino-cli is the Bubbletea chat front-end over eino.Runtime.
+// With --mode=server it doubles as an HTTP/SSE gateway (M4) so the same
+// binary can run CLI for a single user or serve multi-thread agents
+// behind a network boundary.
 package main
 
 import (
@@ -12,58 +15,104 @@ import (
 
 	"eino-cli/backend/cli/tui"
 	"eino-cli/backend/config"
+	"eino-cli/backend/gateway"
 	"eino-cli/backend/runtime/eino"
+	"eino-cli/backend/sandbox"
+
+	// Register the AIO sandbox factory; init()-only import. The local
+	// factory is registered transitively by the existing eino imports
+	// (deep_runtime → local sandbox) — we only need to opt into aio here.
+	_ "eino-cli/backend/sandbox/aio"
+	_ "eino-cli/backend/sandbox/local"
 )
 
 func main() {
-	root, err := resolveRoot(os.Args[1:], os.Getenv, os.Getwd)
+	args := os.Args[1:]
+	root, mode, addr, err := parseFlags(args, os.Getenv, os.Getwd)
 	if err != nil {
-		log.Fatalf("get root: %v", err)
+		log.Fatalf("parse flags: %v", err)
 	}
 	if err := os.Chdir(root); err != nil {
 		log.Fatalf("enter root: %v", err)
 	}
 
-	// 获取配置
 	cfg, err := config.Load(root)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-
-	// 把 cfg.LogLevel 装到 slog 默认 handler 上,Debug 才能真正出来。
-	// 必须在任何 agent / runtime 起来之前调,确保后续 slog.* 都走同一份配置。
 	config.SetLogLevel(cfg)
 
-	//构建runtime
-	runtime, err := eino.NewDeepAgentRuntime(context.Background(), cfg)
+	manager, err := sandbox.NewSandboxManager(cfg)
+	if err != nil {
+		log.Fatalf("build sandbox manager: %v", err)
+	}
+	sandbox.SetDefault(manager)
+	defer sandbox.ShutdownDefault()
+
+	switch mode {
+	case "server":
+		runServer(cfg, addr)
+	default:
+		runCLI(cfg)
+	}
+}
+
+func runCLI(cfg *config.Config) {
+	rt, err := eino.NewDeepAgentRuntime(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("build runtime: %v", err)
 	}
-
-	// runtime运行 + cli渲染
-	if err := tui.Run(runtime, cfg); err != nil {
+	if err := tui.Run(rt, cfg); err != nil {
 		os.Exit(1)
 	}
 }
 
-func resolveRoot(args []string, getenv func(string) string, getwd func() (string, error)) (string, error) {
-	flags := flag.NewFlagSet("sgadk", flag.ContinueOnError)
+func runServer(cfg *config.Config, addr string) {
+	router := eino.NewRouter(cfg)
+	defer router.Shutdown()
+
+	srv := gateway.New(cfg, router)
+	log.Printf("eino-cli gateway listening on %s", addr)
+	if err := srv.ListenAndServe(addr); err != nil {
+		log.Fatalf("gateway: %v", err)
+	}
+}
+
+// parseFlags reads --root / --mode / --addr from args and falls back to
+// envs / cwd for unset values. Kept side-effect free so tests can pass
+// stubs for getenv / getwd.
+func parseFlags(args []string, getenv func(string) string, getwd func() (string, error)) (root, mode, addr string, err error) {
+	flags := flag.NewFlagSet("eino-cli", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	rootFlag := flags.String("root", "", "LLM repository root")
-	if err := flags.Parse(args); err != nil {
-		return "", err
+	modeFlag := flags.String("mode", "cli", "Run mode: cli or server")
+	addrFlag := flags.String("addr", ":8000", "Server bind address (mode=server only)")
+	if err = flags.Parse(args); err != nil {
+		return "", "", "", err
 	}
 
-	root := strings.TrimSpace(*rootFlag)
+	root = strings.TrimSpace(*rootFlag)
 	if root == "" {
 		root = strings.TrimSpace(getenv("SGADK_ROOT"))
 	}
 	if root == "" {
 		wd, err := getwd()
 		if err != nil {
-			return "", err
+			return "", "", "", err
 		}
 		root = wd
 	}
-	return filepath.Abs(root)
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return "", "", "", err
+	}
+	mode = strings.TrimSpace(*modeFlag)
+	if mode == "" {
+		mode = "cli"
+	}
+	addr = strings.TrimSpace(*addrFlag)
+	if addr == "" {
+		addr = ":8000"
+	}
+	return root, mode, addr, nil
 }

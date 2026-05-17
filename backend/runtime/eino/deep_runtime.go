@@ -76,6 +76,14 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 	runner := r.runner
 	r.mu.Unlock()
 
+	// CLI / single-tenant default: stamp a fixed thread id so the sandbox
+	// middleware enters its per-thread mapping branch instead of falling
+	// back to the generic singleton. Server mode has already stamped the
+	// real tid via gateway middleware; guard keeps that intact.
+	if middlewares.GetThreadID(ctx) == "" {
+		ctx = middlewares.WithThreadID(ctx, "cli")
+	}
+
 	checkpointID := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
 	iter := runner.Run(ctx, messages, adk.WithCheckPointID(checkpointID))
 	summary, err := collectAgentEventsWithSink(iter, onChunk)

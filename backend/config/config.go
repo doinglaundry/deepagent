@@ -4,6 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+)
+
+const (
+	defaultSandboxImage           = "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest"
+	defaultSandboxContainerPrefix = "deer-flow-sandbox"
+	defaultSandboxIdleTimeout     = 10 * time.Minute
+	defaultSandboxReplicas        = 3
 )
 
 const (
@@ -24,7 +32,27 @@ func Load(root string) (config *Config, err error) {
 		return nil, fmt.Errorf("complete default model config: %w", err)
 	}
 
+	normalizeSandbox(&config.Sandbox)
+
 	return
+}
+
+// normalizeSandbox fills zero-valued sandbox fields with built-in defaults.
+// Called once at Load so the sandbox manager / aio backend can read cfg
+// fields directly without orDefault / orDuration helpers at every call site.
+func normalizeSandbox(s *SandboxConfig) {
+	if s.Image == "" {
+		s.Image = defaultSandboxImage
+	}
+	if s.ContainerPrefix == "" {
+		s.ContainerPrefix = defaultSandboxContainerPrefix
+	}
+	if s.IdleTimeout == 0 {
+		s.IdleTimeout = defaultSandboxIdleTimeout
+	}
+	if s.Replicas == 0 {
+		s.Replicas = defaultSandboxReplicas
+	}
 }
 
 // CompleteDefaultModelConfig validates that cfg.DefaultModel exists and

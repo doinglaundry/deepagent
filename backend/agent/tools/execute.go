@@ -24,6 +24,14 @@ func GetExecuteTool(root string) (tool.BaseTool, error) {
 	cwd := resolveRoot(root)
 	return utils.InferTool(filesystem.ToolNameExecute, filesystem.ExecuteToolDesc,
 		func(ctx context.Context, in executeArgs) (string, error) {
+			if msg, denied := denyOnPlanMode(ctx); denied {
+				return msg, nil
+			}
+			// Prefer sandboxed exec when available: it handles per-thread
+			// mounts and the path-rewriting boundary deer-flow guarantees.
+			if sb := sandboxFromCtx(ctx); sb != nil {
+				return sb.ExecuteCommand(ctx, in.Command)
+			}
 			cmd := exec.CommandContext(ctx, "bash", "-lc", in.Command)
 			cmd.Dir = cwd
 			out, err := cmd.CombinedOutput()

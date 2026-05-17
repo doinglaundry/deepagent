@@ -28,29 +28,55 @@ func GetEditFileTool(root string) (tool.BaseTool, error) {
 			if in.OldString == "" {
 				return "", fmt.Errorf("old_string must not be empty")
 			}
+			if msg, denied := denyOnPlanMode(ctx); denied {
+				return msg, nil
+			}
+			// Sandbox fast-path: read-modify-write through sandbox API.
+			if shouldUseSandbox(in.FilePath) {
+				if sb := sandboxFromCtx(ctx); sb != nil {
+					content, err := sb.ReadFile(ctx, in.FilePath)
+					if err != nil {
+						return "", err
+					}
+					updated, err := applyEditReplacement(content, in.OldString, in.NewString, in.ReplaceAll)
+					if err != nil {
+						return "", err
+					}
+					if err := sb.WriteFile(ctx, in.FilePath, updated, false); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Successfully replaced the string in '%s'", in.FilePath), nil
+				}
+			}
 			p := resolvePath(root, in.FilePath)
 			data, err := os.ReadFile(p)
 			if err != nil {
 				return "", err
 			}
-			content := string(data)
-
-			var updated string
-			if in.ReplaceAll {
-				updated = strings.ReplaceAll(content, in.OldString, in.NewString)
-			} else {
-				count := strings.Count(content, in.OldString)
-				if count == 0 {
-					return "", fmt.Errorf("old_string not found in file")
-				}
-				if count > 1 {
-					return "", fmt.Errorf("old_string appears %d times; set replace_all=true or make it unique", count)
-				}
-				updated = strings.Replace(content, in.OldString, in.NewString, 1)
+			updated, err := applyEditReplacement(string(data), in.OldString, in.NewString, in.ReplaceAll)
+			if err != nil {
+				return "", err
 			}
 			if err := os.WriteFile(p, []byte(updated), 0o644); err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("Successfully replaced the string in '%s'", in.FilePath), nil
 		})
+}
+
+// applyEditReplacement: shared replace logic. count==1 enforces the
+// uniqueness guard unless replace_all is set; matches the legacy behaviour
+// the tool description promises the model.
+func applyEditReplacement(content, oldStr, newStr string, replaceAll bool) (string, error) {
+	if replaceAll {
+		return strings.ReplaceAll(content, oldStr, newStr), nil
+	}
+	count := strings.Count(content, oldStr)
+	if count == 0 {
+		return "", fmt.Errorf("old_string not found in file")
+	}
+	if count > 1 {
+		return "", fmt.Errorf("old_string appears %d times; set replace_all=true or make it unique", count)
+	}
+	return strings.Replace(content, oldStr, newStr, 1), nil
 }
