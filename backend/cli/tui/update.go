@@ -105,7 +105,7 @@ func (m *Model) recomputeLayout() {
 		return
 	}
 	// Layout budget: viewport(flex) + stream(0-1) + todoPanel(0..N)
-	// + popup(0..popupMaxRows+1) + input(3) + footer(1).
+	// + popup/history + input(3) + footer(1).
 	streamH := 0
 	if m.streaming || m.lastErr != nil {
 		streamH = 1 // single-line thinking indicator (was 3 with preview)
@@ -116,9 +116,10 @@ func (m *Model) recomputeLayout() {
 	if len(m.hitlQueue) > 0 {
 		approvalH = approvalPromptHeight + 1 // prompt + one separator newline View() inserts
 	}
+	runHistoryH := m.runHistoryPanelHeight()
 	inputH := 3
 	footerH := 1
-	chrome := streamH + todoH + popupH + approvalH + inputH + footerH
+	chrome := streamH + todoH + popupH + approvalH + runHistoryH + inputH + footerH
 
 	vpMax := m.height - chrome
 	if vpMax < 3 {
@@ -166,6 +167,12 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// next keystroke unambiguously a decision.
 	if len(m.hitlQueue) > 0 {
 		if cmd, handled := m.handleApprovalKey(msg); handled {
+			return m, cmd
+		}
+		return m, nil
+	}
+	if m.runHistoryOpen {
+		if cmd, handled := m.handleRunHistoryKey(msg); handled {
 			return m, cmd
 		}
 		return m, nil
@@ -441,7 +448,7 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	m.streamStart = time.Now()
 	m.elapsed = 0
 
-	ch, cancel := startStream(m.rt, text)
+	ch, cancel := startStream(m.rt, text, m.runs)
 	m.streamCh = ch
 	m.cancel = cancel
 	return m, tea.Batch(waitForStreamMsg(ch), m.spin.Tick)
@@ -521,6 +528,8 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		arg := strings.TrimSpace(strings.TrimPrefix(text, "/help"))
 		m.pushMessage("assistant", m.builtinHelp(arg))
 		return nil, true
+	case "history":
+		return m.handleHistoryCmd(), true
 	}
 	return nil, false
 }

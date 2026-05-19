@@ -1,0 +1,6 @@
+{
+  "go.goroot": "/Users/bytedance/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.darwin-arm64",
+  "go.alternateTools": {
+    "go": "/Users/bytedance/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.darwin-arm64/bin/go"
+  }
+}

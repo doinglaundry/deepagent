@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	defaultMaxThreads      = 64
-	defaultIdleTimeout     = 30 * time.Minute
-	idleSweepInterval      = 5 * time.Minute
+	defaultMaxThreads  = 64
+	defaultIdleTimeout = 30 * time.Minute
+	idleSweepInterval  = 5 * time.Minute
 )
 
 // Router maps thread_id → DeepAgentRuntime with LRU bound + idle sweeper.

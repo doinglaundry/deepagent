@@ -1,13 +1,22 @@
 package middlewares
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // struct{} key types avoid collision with other packages' context keys.
 type (
-	threadIDKey       struct{}
-	sandboxIDKey      struct{}
-	permissionModeKey struct{}
+	threadIDKey          struct{}
+	sandboxIDKey         struct{}
+	permissionModeKey    struct{}
+	rollbackProtectedKey struct{}
+	rollbackPolicyKey    struct{}
 )
+
+type RollbackPolicyState struct {
+	unsafeToolBlocked atomic.Bool
+}
 
 // WithThreadID stamps tid on ctx; empty tid falls back to the generic sandbox.
 func WithThreadID(ctx context.Context, tid string) context.Context {
@@ -43,4 +52,27 @@ func GetPermissionMode(ctx context.Context) PermissionMode {
 		return ModeDefault
 	}
 	return v
+}
+
+func WithRollbackProtected(ctx context.Context, on bool) context.Context {
+	return context.WithValue(ctx, rollbackProtectedKey{}, on)
+}
+
+func IsRollbackProtected(ctx context.Context) bool {
+	v, _ := ctx.Value(rollbackProtectedKey{}).(bool)
+	return v
+}
+
+func WithRollbackPolicyState(ctx context.Context, state *RollbackPolicyState) context.Context {
+	return context.WithValue(ctx, rollbackPolicyKey{}, state)
+}
+
+func MarkRollbackUnsafeToolBlocked(ctx context.Context) {
+	if state, ok := ctx.Value(rollbackPolicyKey{}).(*RollbackPolicyState); ok && state != nil {
+		state.unsafeToolBlocked.Store(true)
+	}
+}
+
+func WasRollbackUnsafeToolBlocked(state *RollbackPolicyState) bool {
+	return state != nil && state.unsafeToolBlocked.Load()
 }

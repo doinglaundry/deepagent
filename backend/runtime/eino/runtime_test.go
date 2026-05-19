@@ -61,6 +61,29 @@ func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
 	}
 }
 
+func TestDeepAgentRuntimeExportImportHistory(t *testing.T) {
+	src := &DeepAgentRuntime{
+		history: []*schema.Message{
+			schema.UserMessage("hello"),
+			schema.AssistantMessage("world", nil),
+		},
+	}
+	payload, err := src.ExportHistory()
+	if err != nil {
+		t.Fatalf("ExportHistory() error = %v", err)
+	}
+	dst := &DeepAgentRuntime{}
+	if err := dst.RollbackToHistory(payload); err != nil {
+		t.Fatalf("RollbackToHistory() error = %v", err)
+	}
+	if len(dst.history) != 2 {
+		t.Fatalf("history len = %d, want 2", len(dst.history))
+	}
+	if dst.history[0].Content != "hello" || dst.history[1].Content != "world" {
+		t.Fatalf("unexpected history: %#v", dst.history)
+	}
+}
+
 func TestCollectAgentEventsAggregatesOutput(t *testing.T) {
 	iter, gen := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
 	gen.Send(&adk.AgentEvent{Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: schema.AssistantMessage("first", nil)}}})

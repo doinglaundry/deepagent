@@ -27,6 +27,10 @@ func (m *Model) View() string {
 		sb.WriteString("\n")
 		sb.WriteString(approvalPanel)
 	}
+	if historyPanel := m.renderRunHistoryPanel(); historyPanel != "" {
+		sb.WriteString("\n")
+		sb.WriteString(historyPanel)
+	}
 	if popup := m.renderPopup(); popup != "" {
 		sb.WriteString("\n")
 		sb.WriteString(popup)

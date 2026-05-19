@@ -2,6 +2,7 @@ package eino
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -113,6 +114,40 @@ func (r *DeepAgentRuntime) ClearHistory() {
 	if r.trace != nil {
 		r.trace.ResetTurn()
 	}
+}
+
+func (r *DeepAgentRuntime) ExportHistory() ([]byte, error) {
+	r.mu.Lock()
+	history := append([]*schema.Message(nil), r.history...)
+	r.mu.Unlock()
+	payload, err := json.Marshal(history)
+	if err != nil {
+		return nil, fmt.Errorf("marshal runtime history: %w", err)
+	}
+	return payload, nil
+}
+
+func (r *DeepAgentRuntime) ImportHistory(payload []byte) error {
+	var history []*schema.Message
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &history); err != nil {
+			return fmt.Errorf("decode runtime history: %w", err)
+		}
+	}
+	r.mu.Lock()
+	r.history = append([]*schema.Message(nil), history...)
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *DeepAgentRuntime) RollbackToHistory(payload []byte) error {
+	if err := r.ImportHistory(payload); err != nil {
+		return err
+	}
+	if r.trace != nil {
+		r.trace.ResetTurn()
+	}
+	return nil
 }
 
 func (r *DeepAgentRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) {

@@ -28,8 +28,8 @@ type TraceEvent struct {
 	Phase     int
 	Turn      int
 	Messages  []*schema.Message
-	Todos     []deep.TODO       // only set when Phase == TracePhaseTodos
-	Tokens    *TokenUsageStats  // only set when Phase == TracePhaseTokens
+	Todos     []deep.TODO      // only set when Phase == TracePhaseTodos
+	Tokens    *TokenUsageStats // only set when Phase == TracePhaseTokens
 }
 
 // TraceConsumer is the receiving end of a Trace event stream.
@@ -47,7 +47,11 @@ func WithTraceConsumer(ctx context.Context, consumer TraceConsumer) context.Cont
 	return context.WithValue(ctx, traceConsumerKey{}, consumer)
 }
 
-func getTraceConsumerFromContext(ctx context.Context) TraceConsumer {
+// GetTraceConsumer returns the TraceConsumer attached to ctx, or nil when
+// WithTraceConsumer was never called. Exported so the runtime/eino run
+// layer can extract the consumer it just installed (and tests can drive
+// trace events directly).
+func GetTraceConsumer(ctx context.Context) TraceConsumer {
 	c, _ := ctx.Value(traceConsumerKey{}).(TraceConsumer)
 	return c
 }
@@ -86,7 +90,7 @@ func (t *Trace) BeforeModelRewriteState(
 	state *adk.ChatModelAgentState,
 	_ *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
-	consumer := getTraceConsumerFromContext(ctx)
+	consumer := GetTraceConsumer(ctx)
 	if consumer == nil || state == nil {
 		return ctx, state, nil
 	}
@@ -104,7 +108,7 @@ func (t *Trace) AfterModelRewriteState(
 	state *adk.ChatModelAgentState,
 	_ *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
-	consumer := getTraceConsumerFromContext(ctx)
+	consumer := GetTraceConsumer(ctx)
 	if consumer == nil || state == nil || len(state.Messages) == 0 {
 		return ctx, state, nil
 	}

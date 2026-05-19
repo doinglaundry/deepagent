@@ -24,6 +24,9 @@ func GetExecuteTool(root string) (tool.BaseTool, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
+			if msg, denied := denyOnRollbackProtected(ctx); denied {
+				return msg, nil
+			}
 			if sb := sandboxFromCtx(ctx); sb != nil {
 				return sb.ExecuteCommand(ctx, in.Command)
 			}

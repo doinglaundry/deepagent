@@ -25,7 +25,10 @@ func (stubRuntime) Execute(ctx context.Context, prompt string) (eino.Result, err
 func (stubRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk eino.StreamChunkHandler) (eino.Result, error) {
 	return eino.Result{}, nil
 }
-func (stubRuntime) ClearHistory() {}
+func (stubRuntime) ClearHistory()                  {}
+func (stubRuntime) ExportHistory() ([]byte, error) { return []byte("[]"), nil }
+func (stubRuntime) ImportHistory([]byte) error     { return nil }
+func (stubRuntime) RollbackToHistory([]byte) error { return nil }
 func (stubRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) {
 	return on, nil
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 
+	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
 )
 
@@ -38,6 +39,19 @@ func invokeExpectErr(t *testing.T, bt tool.BaseTool, args string) error {
 		t.Fatalf("expected error, got nil")
 	}
 	return err
+}
+
+func invokeWithContext(t *testing.T, ctx context.Context, bt tool.BaseTool, args string) string {
+	t.Helper()
+	it, ok := bt.(tool.InvokableTool)
+	if !ok {
+		t.Fatalf("tool is not InvokableTool")
+	}
+	out, err := it.InvokableRun(ctx, args)
+	if err != nil {
+		t.Fatalf("tool invoke failed: %v", err)
+	}
+	return out
 }
 
 func TestLs(t *testing.T) {
@@ -318,6 +332,15 @@ func TestExecute(t *testing.T) {
 	}
 }
 
+func TestExecuteDeniedWhenRollbackProtected(t *testing.T) {
+	bt, _ := GetExecuteTool(t.TempDir())
+	ctx := middlewares.WithRollbackProtected(context.Background(), true)
+	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi"}`)
+	if !strings.Contains(got, "disabled in rollback-protected runs") {
+		t.Fatalf("execute rollback denial: %q", got)
+	}
+}
+
 func TestShellAndAwaitShell(t *testing.T) {
 	root := t.TempDir()
 	bt, _ := GetShellTool(root)
@@ -336,6 +359,15 @@ func TestShellAndAwaitShell(t *testing.T) {
 	got = invoke(t, await, `{"task_id":"`+taskID+`","pattern":"ready","timeout_ms":1000}`)
 	if !strings.Contains(got, "ready") {
 		t.Fatalf("await_shell: %q", got)
+	}
+}
+
+func TestShellDeniedWhenRollbackProtected(t *testing.T) {
+	bt, _ := GetShellTool(t.TempDir())
+	ctx := middlewares.WithRollbackProtected(context.Background(), true)
+	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
+	if !strings.Contains(got, "disabled in rollback-protected runs") {
+		t.Fatalf("shell rollback denial: %q", got)
 	}
 }
 

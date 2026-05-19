@@ -37,3 +37,11 @@ func denyOnPlanMode(ctx context.Context) (string, bool) {
 	}
 	return "", false
 }
+
+func denyOnRollbackProtected(ctx context.Context) (string, bool) {
+	if middlewares.IsRollbackProtected(ctx) {
+		middlewares.MarkRollbackUnsafeToolBlocked(ctx)
+		return "This tool is disabled in rollback-protected runs because shell side effects cannot be restored safely.", true
+	}
+	return "", false
+}

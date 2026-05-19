@@ -20,8 +20,9 @@ func GetFreePort(base int) (int, error) {
 	return kernelAssignedPort()
 }
 
+// Listen on 0.0.0.0 (not 127.0.0.1) so colima/VM-published docker ports register as occupied.
 func isAvailable(port int) bool {
-	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	l, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	if err != nil {
 		return false
 	}
@@ -30,7 +31,7 @@ func isAvailable(port int) bool {
 }
 
 func kernelAssignedPort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		return 0, err
 	}

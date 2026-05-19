@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,6 +23,8 @@ import (
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
 	"eino-cli/backend/runtime/eino"
+	"eino-cli/backend/session/rollback"
+	"eino-cli/backend/session/runs"
 )
 
 // Per-message / tool-arg caps for the debug panel; sized so a 2-4 KB
@@ -47,6 +50,7 @@ type Model struct {
 	cfg       *config.Config
 	cwd       string
 	modelName string
+	runs      *eino.RunManager
 
 	input    textinput.Model
 	viewport viewport.Model
@@ -122,6 +126,9 @@ type Model struct {
 	inputHistory      []string
 	historyIndex      int
 	historyDraft      string
+	runHistoryOpen    bool
+	runHistoryRows    []runs.Record
+	runHistorySel     int
 
 	// hitlQueue holds pending HITL approval requests in FIFO order;
 	// hitlQueue[0] is what the prompt renders. The agent goroutine
@@ -180,6 +187,7 @@ func New(rt eino.Runtime, cfgs ...*config.Config) (*Model, error) {
 		cfg:               cfg,
 		cwd:               cwd,
 		modelName:         rt.Name(),
+		runs:              newRunManager(cfg),
 		input:             ti,
 		viewport:          vp,
 		spin:              sp,
@@ -192,6 +200,14 @@ func New(rt eino.Runtime, cfgs ...*config.Config) (*Model, error) {
 		historyIndex:      -1,
 		commands:          buildSlashCommands(cfg),
 	}, nil
+}
+
+func newRunManager(cfg *config.Config) *eino.RunManager {
+	root := rootFromConfig(cfg)
+	return eino.NewRunManagerWithStore(
+		runs.NewStore(filepath.Join(root, ".eino-cli", "runs")),
+		rollback.NewStore(root),
+	)
 }
 
 func rootFromConfig(cfg *config.Config) string {
