@@ -15,21 +15,21 @@ import (
 	"time"
 )
 
-// Record is the on-disk wire format. Decoupled from runtime/eino.RunRecord
+// Record is the on-disk wire format. Decoupled from runtime/run.Record
 // so context.CancelFunc and error don't leak into JSON.
 type Record struct {
-	ID         string    `json:"id"`
-	Status     string    `json:"status"`
-	Prompt     string    `json:"prompt,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	DurationMS int64     `json:"duration_ms,omitempty"`
-	Output     string    `json:"output,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	Tokens     int64     `json:"tokens,omitempty"`
-	Rollbackable bool   `json:"rollbackable,omitempty"`
-	RollbackPath string `json:"rollback_path,omitempty"`
-	RollbackError string `json:"rollback_error,omitempty"`
+	ID            string    `json:"id"`
+	Status        string    `json:"status"`
+	Prompt        string    `json:"prompt,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	DurationMS    int64     `json:"duration_ms,omitempty"`
+	Output        string    `json:"output,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	Tokens        int64     `json:"tokens,omitempty"`
+	Rollbackable  bool      `json:"rollbackable,omitempty"`
+	RollbackPath  string    `json:"rollback_path,omitempty"`
+	RollbackError string    `json:"rollback_error,omitempty"`
 }
 
 type Store struct {

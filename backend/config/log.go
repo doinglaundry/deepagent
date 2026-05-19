@@ -4,7 +4,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -33,9 +32,8 @@ func defaultLogPath(cfg *Config) string {
 	if cfg == nil || strings.TrimSpace(cfg.RootDir) == "" {
 		return ""
 	}
-	dir := filepath.Join(cfg.RootDir, ".eino-cli")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(BaseDir(cfg), 0o755); err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "eino-cli.log")
+	return LogPath(cfg)
 }

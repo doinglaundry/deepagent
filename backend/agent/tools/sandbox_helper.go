@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"eino-cli/backend/agent/middlewares"
+	runtimecontext "eino-cli/backend/runtime/context"
 	"eino-cli/backend/sandbox"
 )
 
@@ -15,11 +15,14 @@ func shouldUseSandbox(path string) bool {
 
 // sandboxFromCtx returns nil when no manager or no sid — caller falls back to host fs.
 func sandboxFromCtx(ctx context.Context) sandbox.Sandbox {
-	manager := sandbox.Default()
+	manager := runtimecontext.GetSandboxManager(ctx)
 	if manager == nil {
-		return nil
+		manager = sandbox.Default()
+		if manager == nil {
+			return nil
+		}
 	}
-	sid := middlewares.GetSandboxID(ctx)
+	sid := runtimecontext.GetSandboxID(ctx)
 	if sid == "" {
 		return nil
 	}
@@ -32,15 +35,15 @@ func sandboxFromCtx(ctx context.Context) sandbox.Sandbox {
 
 // denyOnPlanMode returns (msg, true) when ctx is in plan mode; write tools short-circuit on true.
 func denyOnPlanMode(ctx context.Context) (string, bool) {
-	if middlewares.IsPlanMode(middlewares.GetPermissionMode(ctx)) {
-		return middlewares.PlanModeDeniedMessage, true
+	if runtimecontext.GetPermissionMode(ctx) == runtimecontext.ModePlan {
+		return runtimecontext.PlanModeDeniedMessage, true
 	}
 	return "", false
 }
 
 func denyOnRollbackProtected(ctx context.Context) (string, bool) {
-	if middlewares.IsRollbackProtected(ctx) {
-		middlewares.MarkRollbackUnsafeToolBlocked(ctx)
+	if runtimecontext.IsRollbackProtected(ctx) {
+		runtimecontext.MarkRollbackUnsafeToolBlocked(ctx)
 		return "This tool is disabled in rollback-protected runs because shell side effects cannot be restored safely.", true
 	}
 	return "", false

@@ -27,7 +27,8 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case chunkMsg:
-		return m.handleChunk(msg)
+		m.streamBuf.WriteString(string(msg))
+		return m, waitForStreamMsg(m.streamCh)
 	case doneMsg:
 		return m.handleDone(msg)
 	case approvalRequest:
@@ -185,7 +186,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// rewrites input to the full /<name> and returns handled=false so
 	// the outer KeyEnter below picks it up and runs submit normally
 	// (one path through submit, not two).
-	if m.popupShown() {
+	if m.popupHeight() > 0 {
 		if cmd, handled := m.handlePopupKey(msg); handled {
 			return m, cmd
 		}
@@ -198,7 +199,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveInputWord(1)
 		return m, nil
 	}
-	if !m.popupShown() {
+	if m.popupHeight() == 0 {
 		switch msg.Type {
 		case tea.KeyUp:
 			if m.input.Value() == "" || m.historyIndex >= 0 {
@@ -276,16 +277,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// or typing "/" mid-edit collapses / opens the menu and rebalances
 	// chrome height before the next View.
 	if m.input.Value() != prevValue {
-		m.exitInputHistoryBrowsing()
+		m.historyIndex = -1
+		m.historyDraft = ""
 		m.onInputChanged()
 	}
 	return m, tea.Batch(cmds...)
-}
-
-// popupShown is the runtime equivalent of "shouldShowPopup AND has
-// matches"; keyboard routing gates on this.
-func (m *Model) popupShown() bool {
-	return m.popupHeight() > 0
 }
 
 // handleApprovalRequest enqueues a HITL request from the agent
@@ -468,7 +464,7 @@ func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd)
 			blocks := extractNewToolBlocks(ev.Messages, m.lastSeenMsgCount, &m.toolBlockSeq, m.toolArgsMaxChars)
 			for _, block := range blocks {
 				m.toolBlocks = append(m.toolBlocks, block)
-				m.pushToolBlockMessage(toolPlaceholder(block.id))
+				m.pushToolBlockMessage(fmt.Sprintf("%s%d]", toolPlaceholderPrefix, block.id))
 			}
 		}
 		m.lastSeenMsgCount = len(ev.Messages)
@@ -510,28 +506,11 @@ func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
 		return nil, false
 	}
 	name := strings.TrimSpace(strings.TrimPrefix(strings.SplitN(text, " ", 2)[0], "/"))
-	switch strings.ToLower(name) {
-	case "exit", "quit":
-		return tea.Quit, true
-	case "clear":
-		m.resetConversationView()
-		m.rt.ClearHistory()
-		return nil, true
-	case "debug":
-		return m.handleDebugCmd(text), true
-	case "plan":
-		return m.handlePlanCmd(text), true
-	case "todos":
-		return m.handleTodosCmd(text), true
-	case "help":
-		m.pushMessage("user", text)
-		arg := strings.TrimSpace(strings.TrimPrefix(text, "/help"))
-		m.pushMessage("assistant", m.builtinHelp(arg))
-		return nil, true
-	case "history":
-		return m.handleHistoryCmd(), true
+	command, ok := findCommand(m.availableCommands(), name)
+	if !ok || command.Handler == nil {
+		return nil, false
 	}
-	return nil, false
+	return command.Handler(m, text), true
 }
 
 // handleTodosCmd processes "/todos [open|close|toggle]"; empty arg toggles.
@@ -615,11 +594,6 @@ func (m *Model) handleDebugCmd(text string) tea.Cmd {
 	}
 	m.pushMessage("system", fmt.Sprintf("debug = %s", state))
 	return nil
-}
-
-func (m *Model) handleChunk(msg chunkMsg) (tea.Model, tea.Cmd) {
-	m.streamBuf.WriteString(string(msg))
-	return m, waitForStreamMsg(m.streamCh)
 }
 
 func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {

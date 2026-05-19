@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"eino-cli/backend/config"
 )
 
 type Store struct {
@@ -70,7 +72,7 @@ func (s *Store) RestorePost(ctx context.Context, runID string) ([]byte, error) {
 }
 
 func (s *Store) snapshotDir(runID string) string {
-	return filepath.Join(s.root, ".eino-cli", "rollback", runID)
+	return config.RollbackRunDir(s.config(), runID)
 }
 
 func writeSnapshotMeta(dir, runID string, history []byte) error {
@@ -118,7 +120,7 @@ func (s *Store) restoreControlledRoots(ctx context.Context, src string) error {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "skill-") {
 			continue
 		}
-		if err := copyDir(ctx, filepath.Join(src, entry.Name()), filepath.Join(s.einoDir(), entry.Name())); err != nil {
+		if err := copyDir(ctx, filepath.Join(src, entry.Name()), config.SkillDir(s.config(), entry.Name())); err != nil {
 			return err
 		}
 	}
@@ -132,26 +134,26 @@ type rootPair struct {
 
 func (s *Store) fixedRoots() []rootPair {
 	return []rootPair{
-		{name: "checkpoints", host: filepath.Join(s.einoDir(), "checkpoints")},
-		{name: "user-data", host: filepath.Join(s.einoDir(), "users", "local", "threads", "cli", "user-data")},
-		{name: "memory", host: filepath.Join(s.einoDir(), "memory")},
-		{name: "runs", host: filepath.Join(s.einoDir(), "runs")},
+		{name: "checkpoints", host: config.CheckpointsDir(s.config())},
+		{name: "user-data", host: config.SandboxUserDataDir(s.config(), "cli", "local")},
+		{name: "memory", host: config.MemoryDir(s.config())},
+		{name: "runs", host: config.RunsDir(s.config())},
 	}
 }
 
-func (s *Store) einoDir() string {
-	return filepath.Join(s.root, ".eino-cli")
+func (s *Store) config() *config.Config {
+	return &config.Config{RootDir: s.root}
 }
 
 func (s *Store) skillDirs() []string {
-	entries, err := os.ReadDir(s.einoDir())
+	entries, err := os.ReadDir(config.BaseDir(s.config()))
 	if err != nil {
 		return nil
 	}
 	var out []string
 	for _, entry := range entries {
 		if entry.IsDir() && strings.HasPrefix(entry.Name(), "skill-") {
-			out = append(out, filepath.Join(s.einoDir(), entry.Name()))
+			out = append(out, config.SkillDir(s.config(), entry.Name()))
 		}
 	}
 	return out

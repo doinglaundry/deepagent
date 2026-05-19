@@ -5,7 +5,6 @@ import "github.com/charmbracelet/lipgloss"
 // Minimal v1 theme: primary accent + dim secondary + user emphasis.
 var (
 	primaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("13")) // magenta
-	accentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // blue
 	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 

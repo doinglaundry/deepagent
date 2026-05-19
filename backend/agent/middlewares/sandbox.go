@@ -6,6 +6,7 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 
+	runtimecontext "eino-cli/backend/runtime/context"
 	"eino-cli/backend/sandbox"
 )
 
@@ -35,10 +36,11 @@ func (m *SandboxMiddleware) BeforeAgent(
 	if m.Manager == nil {
 		return ctx, runCtx, nil
 	}
-	if GetSandboxID(ctx) != "" {
+	ctx = runtimecontext.WithSandboxManager(ctx, m.Manager)
+	if runtimecontext.GetSandboxID(ctx) != "" {
 		return ctx, runCtx, nil
 	}
-	tid := GetThreadID(ctx)
+	tid := runtimecontext.GetThreadID(ctx)
 	sid, err := m.Manager.Acquire(ctx, tid)
 	if err != nil {
 		// Acquire failure must not crash the run; tools degrade to host fs.
@@ -47,5 +49,5 @@ func (m *SandboxMiddleware) BeforeAgent(
 		return ctx, runCtx, nil
 	}
 	m.Logger.Debug("sandbox middleware: acquired", "thread_id", tid, "sandbox_id", sid)
-	return WithSandboxID(ctx, sid), runCtx, nil
+	return runtimecontext.WithSandboxID(ctx, sid), runCtx, nil
 }

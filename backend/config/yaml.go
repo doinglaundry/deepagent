@@ -261,28 +261,19 @@ func normalizeModels(entries []ModelEntry) map[string]*ModelConfig {
 			modelCfg.TimeoutSeconds = int(m.Timeout)
 		}
 		if modelCfg.Provider == "" {
-			modelCfg.Provider = inferProvider(modelCfg.BaseURL, m.Name)
+			lower := strings.ToLower(modelCfg.BaseURL + m.Name)
+			switch {
+			case strings.Contains(lower, "moonshot") || strings.Contains(lower, "kimi"):
+				modelCfg.Provider = "kimi"
+			case strings.Contains(lower, "anthropic") || strings.Contains(lower, "claude"):
+				modelCfg.Provider = "claude"
+			case strings.Contains(lower, "openai"):
+				modelCfg.Provider = "openai"
+			default:
+				modelCfg.Provider = "openai"
+			}
 		}
-		out[m.Name] = ToPtr(modelCfg)
+		out[m.Name] = &modelCfg
 	}
 	return out
-}
-
-func inferProvider(baseURL, name string) string {
-	lower := strings.ToLower(baseURL + name)
-	switch {
-	case strings.Contains(lower, "moonshot") || strings.Contains(lower, "kimi"):
-		return "kimi"
-	case strings.Contains(lower, "openai"):
-		return "openai"
-	case strings.Contains(lower, "anthropic") || strings.Contains(lower, "claude"):
-		return "claude"
-	default:
-		return "openai"
-	}
-}
-
-// ToPtr returns a pointer to v.
-func ToPtr[T any](v T) *T {
-	return &v
 }

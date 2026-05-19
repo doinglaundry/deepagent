@@ -6,25 +6,22 @@ import (
 	"sort"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"eino-cli/backend/config"
 )
 
-// slashCommand is the static metadata for one built-in slash command.
-// Description and Args drive popup rendering only; dispatch still lives
-// in update.go's handleBuiltin switch — registry-driven dispatch is a
-// separate refactor and intentionally out of scope here.
+type slashCommandHandler func(*Model, string) tea.Cmd
+
+// slashCommand is the metadata and optional builtin handler for one slash command.
 type slashCommand struct {
-	Name string // without the leading "/"
-	Args string // e.g. "[on|off|toggle]"; empty when the command takes none
-	Desc string // one short line; popup truncates to viewport width
-	Type string // "builtin" or "skill"
+	Name    string // without the leading "/"
+	Args    string // e.g. "[on|off|toggle]"; empty when the command takes none
+	Desc    string // one short line; popup truncates to viewport width
+	Type    string // "builtin" or "skill"
+	Handler slashCommandHandler
 }
 
-// commands is the single source of truth for the slash-command popup.
-// Order = display order; alphabetical keeps the empty-query menu
-// predictable. Keep in sync with handleBuiltin in update.go — a name
-// listed here but not dispatched there silently submits to the LLM as
-// a plain prompt.
 var builtinCommands = []slashCommand{
 	{Name: "clear", Desc: "clear the in-memory conversation history", Type: "builtin"},
 	{Name: "debug", Args: "[on|off|toggle]", Desc: "show / hide the model's exact input & output per turn", Type: "builtin"},
@@ -58,7 +55,32 @@ func buildSlashCommands(cfg *config.Config) []slashCommand {
 		}
 		return commands[i].Name < commands[j].Name
 	})
+	attachBuiltinHandlers(commands)
 	return commands
+}
+
+func attachBuiltinHandlers(commands []slashCommand) {
+	for i := range commands {
+		if commands[i].Type != "builtin" {
+			continue
+		}
+		switch commands[i].Name {
+		case "clear":
+			commands[i].Handler = handleClearCommand
+		case "debug":
+			commands[i].Handler = handleDebugCommand
+		case "exit", "quit":
+			commands[i].Handler = handleExitCommand
+		case "help":
+			commands[i].Handler = handleHelpCommand
+		case "history":
+			commands[i].Handler = handleHistoryCommand
+		case "plan":
+			commands[i].Handler = handlePlanCommand
+		case "todos":
+			commands[i].Handler = handleTodosCommand
+		}
+	}
 }
 
 func loadSkillSlashCommands(cfg *config.Config) []slashCommand {
@@ -118,6 +140,39 @@ func parseSkillCommand(path string) (slashCommand, bool) {
 	return slashCommand{Name: name, Desc: description, Type: "skill"}, true
 }
 
+func handleExitCommand(_ *Model, _ string) tea.Cmd {
+	return tea.Quit
+}
+
+func handleClearCommand(m *Model, _ string) tea.Cmd {
+	m.resetConversationView()
+	m.rt.ClearHistory()
+	return nil
+}
+
+func handleDebugCommand(m *Model, text string) tea.Cmd {
+	return m.handleDebugCmd(text)
+}
+
+func handleHelpCommand(m *Model, text string) tea.Cmd {
+	m.pushMessage("user", text)
+	arg := strings.TrimSpace(strings.TrimPrefix(text, "/help"))
+	m.pushMessage("assistant", m.builtinHelp(arg))
+	return nil
+}
+
+func handleHistoryCommand(m *Model, _ string) tea.Cmd {
+	return m.handleHistoryCmd()
+}
+
+func handlePlanCommand(m *Model, text string) tea.Cmd {
+	return m.handlePlanCmd(text)
+}
+
+func handleTodosCommand(m *Model, text string) tea.Cmd {
+	return m.handleTodosCmd(text)
+}
+
 // shouldShowPopup gates popup visibility on the input value alone. The
 // rule: input must start with "/" AND have no whitespace yet (still in
 // the command-name region). Once the user types a space we're in the
@@ -149,24 +204,23 @@ func filterCommands(all []slashCommand, query string) []slashCommand {
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		return commandScore(out[i], query) > commandScore(out[j], query)
+		score := func(command slashCommand) int {
+			name := strings.ToLower(command.Name)
+			desc := strings.ToLower(command.Desc)
+			switch {
+			case strings.HasPrefix(name, query):
+				return 3
+			case strings.Contains(name, query):
+				return 2
+			case len(query) >= 3 && strings.Contains(desc, query):
+				return 1
+			default:
+				return 0
+			}
+		}
+		return score(out[i]) > score(out[j])
 	})
 	return out
-}
-
-func commandScore(command slashCommand, query string) int {
-	name := strings.ToLower(command.Name)
-	desc := strings.ToLower(command.Desc)
-	switch {
-	case strings.HasPrefix(name, query):
-		return 3
-	case strings.Contains(name, query):
-		return 2
-	case len(query) >= 3 && strings.Contains(desc, query):
-		return 1
-	default:
-		return 0
-	}
 }
 
 func findCommand(commands []slashCommand, name string) (slashCommand, bool) {

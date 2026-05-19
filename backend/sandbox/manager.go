@@ -39,9 +39,6 @@ func SetDefault(m SandboxManager) {
 	defaultManager.Store(&managerHandle{m: m})
 }
 
-// ResetDefault clears the registration; used by tests.
-func ResetDefault() { defaultManager.Store(nil) }
-
 // Shutdowner is the optional teardown hook managers may implement.
 type Shutdowner interface{ Shutdown() }
 

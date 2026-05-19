@@ -36,12 +36,6 @@ func NewAgentState() *AgentState {
 	}
 }
 
-func (m *AgentState) Snapshot() AgentStateSnapshot {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.state
-}
-
 func (m *AgentState) AfterModelRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,

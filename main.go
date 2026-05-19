@@ -13,7 +13,7 @@ import (
 	"eino-cli/backend/cli/tui"
 	"eino-cli/backend/config"
 	"eino-cli/backend/gateway"
-	"eino-cli/backend/runtime/eino"
+	"eino-cli/backend/runtime/deepagent"
 	"eino-cli/backend/sandbox"
 
 	// init()-only: register sandbox factories.
@@ -53,7 +53,7 @@ func main() {
 }
 
 func runCLI(cfg *config.Config) {
-	rt, err := eino.NewDeepAgentRuntime(context.Background(), cfg)
+	rt, err := deepagent.NewRuntime(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("build runtime: %v", err)
 	}
@@ -63,7 +63,7 @@ func runCLI(cfg *config.Config) {
 }
 
 func runServer(cfg *config.Config, addr string) {
-	router := eino.NewRouter(cfg)
+	router := deepagent.NewRouter(cfg)
 	defer router.Shutdown()
 
 	srv := gateway.New(cfg, router)

@@ -72,7 +72,15 @@ func getLintTargets(root string, paths []string) ([]string, []string, error) {
 			}
 			target = filepath.Dir(path)
 		}
-		rel := "./" + filepath.ToSlash(getRelativePath(root, target))
+		base, err := filepath.Abs(resolveRoot(root))
+		if err != nil {
+			return nil, nil, err
+		}
+		relPath, err := filepath.Rel(base, target)
+		if err != nil {
+			return nil, nil, err
+		}
+		rel := "./" + filepath.ToSlash(relPath)
 		if rel == "./." {
 			rel = "."
 		}

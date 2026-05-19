@@ -15,20 +15,34 @@ func TestPaths_LayoutAndIsolation(t *testing.T) {
 	cfg := &Config{RootDir: "/tmp/eino-root"}
 
 	want := map[string]string{
-		"user":       "/tmp/eino-root/.eino-cli/users/alice",
-		"thread":     "/tmp/eino-root/.eino-cli/users/alice/threads/T1",
-		"user-data":  "/tmp/eino-root/.eino-cli/users/alice/threads/T1/user-data",
-		"workspace":  "/tmp/eino-root/.eino-cli/users/alice/threads/T1/user-data/workspace",
-		"uploads":    "/tmp/eino-root/.eino-cli/users/alice/threads/T1/user-data/uploads",
-		"outputs":    "/tmp/eino-root/.eino-cli/users/alice/threads/T1/user-data/outputs",
+		"base":        "/tmp/eino-root/.eino-cli",
+		"checkpoints": "/tmp/eino-root/.eino-cli/checkpoints",
+		"runs":        "/tmp/eino-root/.eino-cli/runs",
+		"rollback":    "/tmp/eino-root/.eino-cli/rollback",
+		"memory":      "/tmp/eino-root/.eino-cli/memory",
+		"history":     "/tmp/eino-root/.eino-cli/history.txt",
+		"log":         "/tmp/eino-root/.eino-cli/eino-cli.log",
+		"user":        "/tmp/eino-root/.eino-cli/users/alice",
+		"thread":      "/tmp/eino-root/.eino-cli/users/alice/threads/T1",
+		"user-data":   "/tmp/eino-root/.eino-cli/users/alice/threads/T1/user-data",
+		"workspace":   "/tmp/eino-root/.eino-cli/users/alice/threads/T1/user-data/workspace",
+		"uploads":     "/tmp/eino-root/.eino-cli/users/alice/threads/T1/user-data/uploads",
+		"outputs":     "/tmp/eino-root/.eino-cli/users/alice/threads/T1/user-data/outputs",
 	}
 	got := map[string]string{
-		"user":      UserDir(cfg, "alice"),
-		"thread":    ThreadDir(cfg, "T1", "alice"),
-		"user-data": SandboxUserDataDir(cfg, "T1", "alice"),
-		"workspace": SandboxWorkDir(cfg, "T1", "alice"),
-		"uploads":   SandboxUploadsDir(cfg, "T1", "alice"),
-		"outputs":   SandboxOutputsDir(cfg, "T1", "alice"),
+		"base":        BaseDir(cfg),
+		"checkpoints": CheckpointsDir(cfg),
+		"runs":        RunsDir(cfg),
+		"rollback":    RollbackDir(cfg),
+		"memory":      MemoryDir(cfg),
+		"history":     InputHistoryPath(cfg),
+		"log":         LogPath(cfg),
+		"user":        UserDir(cfg, "alice"),
+		"thread":      ThreadDir(cfg, "T1", "alice"),
+		"user-data":   SandboxUserDataDir(cfg, "T1", "alice"),
+		"workspace":   SandboxWorkDir(cfg, "T1", "alice"),
+		"uploads":     SandboxUploadsDir(cfg, "T1", "alice"),
+		"outputs":     SandboxOutputsDir(cfg, "T1", "alice"),
 	}
 	for k, w := range want {
 		if got[k] != w {
@@ -84,7 +98,7 @@ func TestEnsureThreadDirs_Idempotent(t *testing.T) {
 	}
 
 	// Sanity check that the dirs really nest under cfg.RootDir/.eino-cli —
-	// catches a future refactor that accidentally rewrites baseDir.
+	// catches a future refactor that accidentally rewrites BaseDir.
 	wantPrefix := filepath.Join(root, ".eino-cli")
 	if !strings.HasPrefix(SandboxWorkDir(cfg, "T1", "alice"), wantPrefix) {
 		t.Errorf("workspace not under %q", wantPrefix)

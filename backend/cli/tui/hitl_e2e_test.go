@@ -10,20 +10,20 @@ import (
 	"github.com/charmbracelet/x/exp/teatest"
 
 	"eino-cli/backend/agent"
-	"eino-cli/backend/runtime/eino"
+	rt "eino-cli/backend/runtime"
 )
 
-// stubRuntime satisfies eino.Runtime without touching a real LLM. Only
+// stubRuntime satisfies runtime.Runtime without touching a real LLM. Only
 // Name() is exercised by these tests (Model.New reads it for the header
 // and welcome card); the others would only fire if /clear or a prompt
 // submission ran, which they don't.
 type stubRuntime struct{}
 
-func (stubRuntime) Execute(ctx context.Context, prompt string) (eino.Result, error) {
-	return eino.Result{}, nil
+func (stubRuntime) Execute(ctx context.Context, prompt string) (rt.Result, error) {
+	return rt.Result{}, nil
 }
-func (stubRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk eino.StreamChunkHandler) (eino.Result, error) {
-	return eino.Result{}, nil
+func (stubRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk rt.StreamChunkHandler) (rt.Result, error) {
+	return rt.Result{}, nil
 }
 func (stubRuntime) ClearHistory()                  {}
 func (stubRuntime) ExportHistory() ([]byte, error) { return []byte("[]"), nil }

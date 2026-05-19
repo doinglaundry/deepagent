@@ -10,8 +10,8 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 
-	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
+	runtimecontext "eino-cli/backend/runtime/context"
 )
 
 // invoke is a small helper: every tool here is built via utils.InferTool
@@ -334,7 +334,7 @@ func TestExecute(t *testing.T) {
 
 func TestExecuteDeniedWhenRollbackProtected(t *testing.T) {
 	bt, _ := GetExecuteTool(t.TempDir())
-	ctx := middlewares.WithRollbackProtected(context.Background(), true)
+	ctx := runtimecontext.WithRollbackProtected(context.Background(), true)
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi"}`)
 	if !strings.Contains(got, "disabled in rollback-protected runs") {
 		t.Fatalf("execute rollback denial: %q", got)
@@ -364,7 +364,7 @@ func TestShellAndAwaitShell(t *testing.T) {
 
 func TestShellDeniedWhenRollbackProtected(t *testing.T) {
 	bt, _ := GetShellTool(t.TempDir())
-	ctx := middlewares.WithRollbackProtected(context.Background(), true)
+	ctx := runtimecontext.WithRollbackProtected(context.Background(), true)
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
 	if !strings.Contains(got, "disabled in rollback-protected runs") {
 		t.Fatalf("shell rollback denial: %q", got)

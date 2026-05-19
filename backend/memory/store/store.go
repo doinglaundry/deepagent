@@ -10,8 +10,6 @@ import (
 	"eino-cli/backend/config"
 )
 
-const memorySubDir = ".eino-cli/memory"
-
 type Store struct {
 	dir string
 }
@@ -21,7 +19,7 @@ func NewStore(dir string) *Store {
 }
 
 func NewStoreFromConfig(cfg *config.Config) *Store {
-	return NewStore(filepath.Join(cfg.RootDir, memorySubDir))
+	return NewStore(config.MemoryDir(cfg))
 }
 
 func (s *Store) Load(agentName string) (MemoryData, error) {

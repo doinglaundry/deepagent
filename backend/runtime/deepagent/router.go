@@ -1,4 +1,4 @@
-package eino
+package deepagent
 
 import (
 	"container/list"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"eino-cli/backend/config"
+	rt "eino-cli/backend/runtime"
 )
 
 const (
@@ -16,7 +17,7 @@ const (
 	idleSweepInterval  = 5 * time.Minute
 )
 
-// Router maps thread_id → DeepAgentRuntime with LRU bound + idle sweeper.
+// Router maps thread_id → Runtime with LRU bound + idle sweeper.
 type Router struct {
 	cfg *config.Config
 
@@ -31,11 +32,10 @@ type Router struct {
 
 type threadEntry struct {
 	tid     string
-	runtime Runtime
+	runtime rt.Runtime
 	last    time.Time
 }
 
-// NewRouter builds a Router; idle sweep starts immediately.
 func NewRouter(cfg *config.Config) *Router {
 	r := &Router{
 		cfg:      cfg,
@@ -49,8 +49,7 @@ func NewRouter(cfg *config.Config) *Router {
 	return r
 }
 
-// Get returns the runtime for tid, building it lazily on first call.
-func (r *Router) Get(ctx context.Context, tid string) (Runtime, error) {
+func (r *Router) Get(ctx context.Context, tid string) (rt.Runtime, error) {
 	if tid == "" {
 		return nil, fmt.Errorf("router: thread_id required")
 	}
@@ -64,8 +63,7 @@ func (r *Router) Get(ctx context.Context, tid string) (Runtime, error) {
 	}
 	r.mu.Unlock()
 
-	// Build outside the lock — first-build can take hundreds of ms.
-	rt, err := NewDeepAgentRuntime(ctx, r.cfg)
+	runtime, err := NewRuntime(ctx, r.cfg)
 	if err != nil {
 		return nil, fmt.Errorf("router: build runtime for %s: %w", tid, err)
 	}
@@ -76,21 +74,11 @@ func (r *Router) Get(ctx context.Context, tid string) (Runtime, error) {
 		r.order.MoveToFront(el)
 		return el.Value.(*threadEntry).runtime, nil
 	}
-	entry := &threadEntry{tid: tid, runtime: rt, last: time.Now()}
+	entry := &threadEntry{tid: tid, runtime: runtime, last: time.Now()}
 	el := r.order.PushFront(entry)
 	r.cache[tid] = el
 	r.evictLocked()
-	return rt, nil
-}
-
-// Drop evicts tid eagerly.
-func (r *Router) Drop(tid string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if el, ok := r.cache[tid]; ok {
-		r.order.Remove(el)
-		delete(r.cache, tid)
-	}
+	return runtime, nil
 }
 
 func (r *Router) evictLocked() {
@@ -131,7 +119,6 @@ func (r *Router) sweepIdle() {
 	}
 }
 
-// Shutdown stops the idle sweeper; idempotent.
 func (r *Router) Shutdown() {
 	r.shutdown.Do(func() { close(r.stopIdle) })
 }

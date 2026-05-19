@@ -10,7 +10,9 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"eino-cli/backend/runtime/eino"
+	"eino-cli/backend/config"
+	rt "eino-cli/backend/runtime"
+	runtimeRun "eino-cli/backend/runtime/run"
 	"eino-cli/backend/session/rollback"
 	"eino-cli/backend/session/runs"
 )
@@ -19,8 +21,8 @@ type historyRuntime struct {
 	payload string
 }
 
-func (r *historyRuntime) ExecuteStream(context.Context, string, eino.StreamChunkHandler) (eino.Result, error) {
-	return eino.Result{}, nil
+func (r *historyRuntime) ExecuteStream(context.Context, string, rt.StreamChunkHandler) (rt.Result, error) {
+	return rt.Result{}, nil
 }
 
 func (r *historyRuntime) ClearHistory() {}
@@ -71,7 +73,7 @@ func TestRunHistoryRenderAndKeys(t *testing.T) {
 
 func TestRunHistoryRollbackRestoresSelectedPostRun(t *testing.T) {
 	root := t.TempDir()
-	runStore := runs.NewStore(filepath.Join(root, ".eino-cli", "runs"))
+	runStore := runs.NewStore(config.RunsDir(&config.Config{RootDir: root}))
 	rollbackStore := rollback.NewStore(root)
 	now := time.Now()
 	run1 := runs.Record{
@@ -99,7 +101,7 @@ func TestRunHistoryRollbackRestoresSelectedPostRun(t *testing.T) {
 	rt := &historyRuntime{}
 	m := &Model{
 		rt:             rt,
-		runs:           eino.NewRunManagerWithStore(runStore, rollbackStore),
+		runs:           runtimeRun.NewManagerWithStore(runStore, rollbackStore),
 		width:          80,
 		height:         30,
 		viewport:       viewport.New(80, 10),

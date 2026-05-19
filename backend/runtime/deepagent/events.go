@@ -1,4 +1,4 @@
-package eino
+package deepagent
 
 import (
 	"errors"
@@ -6,6 +6,8 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
+
+	rt "eino-cli/backend/runtime"
 )
 
 type agentRunSummary struct {
@@ -13,7 +15,7 @@ type agentRunSummary struct {
 	Interrupted bool
 }
 
-func collectAgentEventsWithSink(iter *adk.AsyncIterator[*adk.AgentEvent], onChunk StreamChunkHandler) (agentRunSummary, error) {
+func collectAgentEventsWithSink(iter *adk.AsyncIterator[*adk.AgentEvent], onChunk rt.StreamChunkHandler) (agentRunSummary, error) {
 	var summary agentRunSummary
 	var outputs []string
 

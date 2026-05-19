@@ -5,7 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"eino-cli/backend/runtime/eino"
+	rt "eino-cli/backend/runtime"
+	runtimeRun "eino-cli/backend/runtime/run"
 )
 
 // chunkMsg is one streamed text chunk from the runtime's onChunk callback.
@@ -19,9 +20,9 @@ type doneMsg struct {
 }
 
 // startStream starts a runtime run and converts run events into Bubble Tea messages.
-func startStream(rt eino.Runtime, prompt string, runs *eino.RunManager) (<-chan tea.Msg, context.CancelFunc) {
+func startStream(runtime rt.Runtime, prompt string, runs *runtimeRun.Manager) (<-chan tea.Msg, context.CancelFunc) {
 	streamCh := make(chan tea.Msg, 64)
-	events, cancel, err := eino.StartRun(context.Background(), rt, prompt, runs)
+	events, cancel, err := runtimeRun.Start(context.Background(), runtime, prompt, runs)
 	if err != nil {
 		streamCh <- doneMsg{err: err}
 		close(streamCh)
@@ -31,19 +32,19 @@ func startStream(rt eino.Runtime, prompt string, runs *eino.RunManager) (<-chan 
 	return streamCh, cancel
 }
 
-func consumeRunEvents(streamCh chan<- tea.Msg, events <-chan eino.RunEvent) {
+func consumeRunEvents(streamCh chan<- tea.Msg, events <-chan runtimeRun.Event) {
 	defer close(streamCh)
 	for ev := range events {
 		switch ev.Type {
-		case eino.RunEventChunk:
+		case runtimeRun.EventChunk:
 			streamCh <- chunkMsg(ev.Chunk)
-		case eino.RunEventTrace:
+		case runtimeRun.EventTrace:
 			if ev.Trace != nil {
 				streamCh <- *ev.Trace
 			}
-		case eino.RunEventDone:
+		case runtimeRun.EventDone:
 			streamCh <- doneMsg{output: ev.Output}
-		case eino.RunEventError:
+		case runtimeRun.EventError:
 			streamCh <- doneMsg{err: ev.Err}
 		}
 	}

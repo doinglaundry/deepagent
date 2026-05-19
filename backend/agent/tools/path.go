@@ -53,22 +53,6 @@ func getResolvedPath(root, p string) (string, error) {
 	return path, nil
 }
 
-func getRelativePath(root, p string) string {
-	base, err := filepath.Abs(resolveRoot(root))
-	if err != nil {
-		return p
-	}
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return p
-	}
-	rel, err := filepath.Rel(base, abs)
-	if err != nil {
-		return p
-	}
-	return rel
-}
-
 func isInsideRoot(root, p string) bool {
 	rel, err := filepath.Rel(root, p)
 	if err != nil {

@@ -3,8 +3,8 @@ package gateway
 import (
 	"github.com/gin-gonic/gin"
 
-	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/runtime"
+	runtimecontext "eino-cli/backend/runtime/context"
 )
 
 const (
@@ -21,7 +21,7 @@ func userContextMiddleware() gin.HandlerFunc {
 		tid := c.Param("tid")
 		ctx := runtime.WithUserID(c.Request.Context(), uid)
 		if tid != "" {
-			ctx = middlewares.WithThreadID(ctx, tid)
+			ctx = runtimecontext.WithThreadID(ctx, tid)
 		}
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()

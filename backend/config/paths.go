@@ -8,13 +8,45 @@ import (
 // VirtualPathPrefix is the LLM-visible /mnt/user-data root.
 const VirtualPathPrefix = "/mnt/user-data"
 
-func baseDir(cfg *Config) string {
+func BaseDir(cfg *Config) string {
 	return filepath.Join(cfg.RootDir, ".eino-cli")
+}
+
+func CheckpointsDir(cfg *Config) string {
+	return filepath.Join(BaseDir(cfg), "checkpoints")
+}
+
+func RunsDir(cfg *Config) string {
+	return filepath.Join(BaseDir(cfg), "runs")
+}
+
+func RollbackDir(cfg *Config) string {
+	return filepath.Join(BaseDir(cfg), "rollback")
+}
+
+func RollbackRunDir(cfg *Config, runID string) string {
+	return filepath.Join(RollbackDir(cfg), runID)
+}
+
+func MemoryDir(cfg *Config) string {
+	return filepath.Join(BaseDir(cfg), "memory")
+}
+
+func InputHistoryPath(cfg *Config) string {
+	return filepath.Join(BaseDir(cfg), "history.txt")
+}
+
+func LogPath(cfg *Config) string {
+	return filepath.Join(BaseDir(cfg), "eino-cli.log")
+}
+
+func SkillDir(cfg *Config, name string) string {
+	return filepath.Join(BaseDir(cfg), name)
 }
 
 // UserDir returns the on-disk directory for uid.
 func UserDir(cfg *Config, uid string) string {
-	return filepath.Join(baseDir(cfg), "users", uid)
+	return filepath.Join(BaseDir(cfg), "users", uid)
 }
 
 // ThreadDir returns the on-disk directory for (tid, uid).

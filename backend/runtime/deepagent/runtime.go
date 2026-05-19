@@ -1,10 +1,9 @@
-package eino
+package deepagent
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,10 +15,12 @@ import (
 	"eino-cli/backend/agent"
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
+	rt "eino-cli/backend/runtime"
+	runtimecontext "eino-cli/backend/runtime/context"
 	"eino-cli/backend/session/checkpoint"
 )
 
-type DeepAgentRuntime struct {
+type Runtime struct {
 	cfg                 *config.Config
 	modelName           string
 	runner              *adk.Runner
@@ -31,39 +32,29 @@ type DeepAgentRuntime struct {
 	planMode            atomic.Bool
 }
 
-func NewDeepAgentRuntime(ctx context.Context, cfg *config.Config) (Runtime, error) {
-	r := &DeepAgentRuntime{
+func NewRuntime(ctx context.Context, cfg *config.Config) (rt.Runtime, error) {
+	r := &Runtime{
 		cfg:             cfg,
 		modelName:       cfg.DefaultModel,
 		maxHistoryTurns: 20,
 	}
-	runner, trace, err := buildLeadRunner(ctx, cfg, r.planMode.Load)
+	leadAgent, trace, err := agent.MakeLeadAgent(ctx, "default", true, r.planMode.Load, cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build lead agent: %w", err)
 	}
-	r.runner = runner
+	r.runner = adk.NewRunner(ctx, adk.RunnerConfig{
+		Agent:           leadAgent,
+		EnableStreaming: true,
+		CheckPointStore: checkpoint.NewStore(config.CheckpointsDir(cfg)),
+	})
 	r.trace = trace
 	return r, nil
 }
 
-func buildLeadRunner(ctx context.Context, cfg *config.Config, getPlanMode func() bool) (*adk.Runner, *middlewares.Trace, error) {
-	leadAgent, trace, err := agent.MakeLeadAgent(ctx, "default", true, getPlanMode, cfg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("build lead agent: %w", err)
-	}
-
-	runner := adk.NewRunner(ctx, adk.RunnerConfig{
-		Agent:           leadAgent,
-		EnableStreaming: true,
-		CheckPointStore: checkpoint.NewStore(filepath.Join(cfg.RootDir, ".eino-cli", "checkpoints")),
-	})
-	return runner, trace, nil
-}
-
-func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk StreamChunkHandler) (Result, error) {
+func (r *Runtime) ExecuteStream(ctx context.Context, prompt string, onChunk rt.StreamChunkHandler) (rt.Result, error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
-		return Result{}, fmt.Errorf("prompt is required")
+		return rt.Result{}, fmt.Errorf("prompt is required")
 	}
 
 	r.mu.Lock()
@@ -78,36 +69,36 @@ func (r *DeepAgentRuntime) ExecuteStream(ctx context.Context, prompt string, onC
 	r.mu.Unlock()
 
 	// CLI default tid; server mode stamps the real one via gateway middleware.
-	if middlewares.GetThreadID(ctx) == "" {
-		ctx = middlewares.WithThreadID(ctx, "cli")
+	if runtimecontext.GetThreadID(ctx) == "" {
+		ctx = runtimecontext.WithThreadID(ctx, "cli")
 	}
 
 	checkpointID := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
 	iter := runner.Run(ctx, messages, adk.WithCheckPointID(checkpointID))
 	summary, err := collectAgentEventsWithSink(iter, onChunk)
 	if err != nil {
-		return Result{}, err
+		return rt.Result{}, err
 	}
 
 	if summary.Interrupted {
 		r.mu.Lock()
 		r.pendingCheckpointID = checkpointID
 		r.mu.Unlock()
-		return Result{Success: false, Code: ErrorCodeRuntime, Message: "execution interrupted", NeedsUser: true}, nil
+		return rt.Result{Success: false, Code: rt.ErrorCodeRuntime, Message: "execution interrupted", NeedsUser: true}, nil
 	}
 
 	if strings.TrimSpace(summary.Output) == "" {
-		return Result{}, fmt.Errorf("deep runtime returned empty output")
+		return rt.Result{}, fmt.Errorf("deep runtime returned empty output")
 	}
 
 	r.mu.Lock()
 	r.history = append(r.history, schema.UserMessage(prompt), schema.AssistantMessage(summary.Output, nil))
 	r.mu.Unlock()
 
-	return SuccessResult(summary.Output), nil
+	return rt.Result{Success: true, Output: summary.Output}, nil
 }
 
-func (r *DeepAgentRuntime) ClearHistory() {
+func (r *Runtime) ClearHistory() {
 	r.mu.Lock()
 	r.history = nil
 	r.mu.Unlock()
@@ -116,7 +107,7 @@ func (r *DeepAgentRuntime) ClearHistory() {
 	}
 }
 
-func (r *DeepAgentRuntime) ExportHistory() ([]byte, error) {
+func (r *Runtime) ExportHistory() ([]byte, error) {
 	r.mu.Lock()
 	history := append([]*schema.Message(nil), r.history...)
 	r.mu.Unlock()
@@ -127,7 +118,7 @@ func (r *DeepAgentRuntime) ExportHistory() ([]byte, error) {
 	return payload, nil
 }
 
-func (r *DeepAgentRuntime) ImportHistory(payload []byte) error {
+func (r *Runtime) ImportHistory(payload []byte) error {
 	var history []*schema.Message
 	if len(payload) > 0 {
 		if err := json.Unmarshal(payload, &history); err != nil {
@@ -140,7 +131,7 @@ func (r *DeepAgentRuntime) ImportHistory(payload []byte) error {
 	return nil
 }
 
-func (r *DeepAgentRuntime) RollbackToHistory(payload []byte) error {
+func (r *Runtime) RollbackToHistory(payload []byte) error {
 	if err := r.ImportHistory(payload); err != nil {
 		return err
 	}
@@ -150,12 +141,12 @@ func (r *DeepAgentRuntime) RollbackToHistory(payload []byte) error {
 	return nil
 }
 
-func (r *DeepAgentRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) {
+func (r *Runtime) SetPlanMode(_ context.Context, on bool) (bool, error) {
 	r.planMode.Store(on)
 	return on, nil
 }
 
-func (r *DeepAgentRuntime) Name() string {
+func (r *Runtime) Name() string {
 	if strings.TrimSpace(r.modelName) == "" {
 		return "deep-agent"
 	}

@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"eino-cli/backend/agent/middlewares"
+	runtimecontext "eino-cli/backend/runtime/context"
 )
 
 type runRequest struct {
@@ -17,7 +17,7 @@ type runRequest struct {
 	PermissionMode string `json:"permission_mode,omitempty"`
 }
 
-// handleRun streams agent chunks as SSE; terminates with done or error.
+// handleRun streams direct runtime chunks; CLI-only run history stays outside gateway.
 func (s *Server) handleRun(c *gin.Context) {
 	tid := c.Param("tid")
 	if tid == "" {
@@ -34,12 +34,12 @@ func (s *Server) handleRun(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	if mode := middlewares.PermissionMode(req.PermissionMode); mode != "" {
-		if !middlewares.IsKnownMode(mode) {
+	if mode := runtimecontext.PermissionMode(req.PermissionMode); mode != "" {
+		if !runtimecontext.IsKnownMode(mode) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown permission_mode %q", mode)})
 			return
 		}
-		ctx = middlewares.WithPermissionMode(ctx, mode)
+		ctx = runtimecontext.WithPermissionMode(ctx, mode)
 	}
 
 	rt, err := s.router.Get(ctx, tid)

@@ -84,7 +84,11 @@ func renderToolBlock(block *toolBlock, previewLines int) string {
 		lines = lines[:previewLines]
 	}
 	for i, line := range lines {
-		sb.WriteString(toolBodyStyle.Render(toolBodyPrefix(i == 0) + line))
+		prefix := "     "
+		if i == 0 {
+			prefix = "  ⎿  "
+		}
+		sb.WriteString(toolBodyStyle.Render(prefix + line))
 		sb.WriteByte('\n')
 	}
 	if collapsed {
@@ -221,17 +225,6 @@ func splitToolLines(content string) []string {
 		return nil
 	}
 	return strings.Split(content, "\n")
-}
-
-func toolBodyPrefix(first bool) string {
-	if first {
-		return "  ⎿  "
-	}
-	return "     "
-}
-
-func toolPlaceholder(id int) string {
-	return fmt.Sprintf("%s%d]", toolPlaceholderPrefix, id)
 }
 
 func parseToolPlaceholder(content string) (int, bool) {

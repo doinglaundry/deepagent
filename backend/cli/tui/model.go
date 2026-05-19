@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,7 +21,8 @@ import (
 
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
-	"eino-cli/backend/runtime/eino"
+	rt "eino-cli/backend/runtime"
+	runtimeRun "eino-cli/backend/runtime/run"
 	"eino-cli/backend/session/rollback"
 	"eino-cli/backend/session/runs"
 )
@@ -46,11 +46,11 @@ type chatMessage struct {
 
 // Model is the bubbletea single-source-of-truth.
 type Model struct {
-	rt        eino.Runtime
+	rt        rt.Runtime
 	cfg       *config.Config
 	cwd       string
 	modelName string
-	runs      *eino.RunManager
+	runs      *runtimeRun.Manager
 
 	input    textinput.Model
 	viewport viewport.Model
@@ -153,7 +153,7 @@ type Model struct {
 
 // New builds a Model around rt; heavy wiring (config/runtime) stays in main
 // so tests can substitute a fake Runtime.
-func New(rt eino.Runtime, cfgs ...*config.Config) (*Model, error) {
+func New(runtime rt.Runtime, cfgs ...*config.Config) (*Model, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
@@ -183,15 +183,15 @@ func New(rt eino.Runtime, cfgs ...*config.Config) (*Model, error) {
 	}
 
 	return &Model{
-		rt:                rt,
+		rt:                runtime,
 		cfg:               cfg,
 		cwd:               cwd,
-		modelName:         rt.Name(),
+		modelName:         runtime.Name(),
 		runs:              newRunManager(cfg),
 		input:             ti,
 		viewport:          vp,
 		spin:              sp,
-		messages:          freshMessages(0, rt.Name(), cwd),
+		messages:          freshMessages(0, runtime.Name(), cwd),
 		mdStyle:           style,
 		toolBlocksEnabled: toolBlocksEnabled,
 		toolPreviewLines:  toolPreviewLines,
@@ -202,10 +202,10 @@ func New(rt eino.Runtime, cfgs ...*config.Config) (*Model, error) {
 	}, nil
 }
 
-func newRunManager(cfg *config.Config) *eino.RunManager {
+func newRunManager(cfg *config.Config) *runtimeRun.Manager {
 	root := rootFromConfig(cfg)
-	return eino.NewRunManagerWithStore(
-		runs.NewStore(filepath.Join(root, ".eino-cli", "runs")),
+	return runtimeRun.NewManagerWithStore(
+		runs.NewStore(config.RunsDir(&config.Config{RootDir: root})),
 		rollback.NewStore(root),
 	)
 }
@@ -221,6 +221,8 @@ func (m *Model) availableCommands() []slashCommand {
 	if len(m.commands) > 0 {
 		return m.commands
 	}
+	commands := append([]slashCommand(nil), builtinCommands...)
+	attachBuiltinHandlers(commands)
 	return commands
 }
 
@@ -499,11 +501,6 @@ func (m *Model) browseInputHistory(delta int) {
 	}
 	m.input.SetValue(m.inputHistory[m.historyIndex])
 	m.input.CursorEnd()
-}
-
-func (m *Model) exitInputHistoryBrowsing() {
-	m.historyIndex = -1
-	m.historyDraft = ""
 }
 
 func (m *Model) moveInputWord(delta int) {

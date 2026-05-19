@@ -2,7 +2,6 @@
 package gateway
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"time"
@@ -10,19 +9,19 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"eino-cli/backend/config"
-	"eino-cli/backend/runtime/eino"
+	"eino-cli/backend/runtime/deepagent"
 )
 
 // Server bundles gin.Engine with the dependencies handlers need.
 type Server struct {
 	cfg    *config.Config
-	router *eino.Router
+	router *deepagent.Router
 	engine *gin.Engine
 	log    *slog.Logger
 }
 
 // New builds the Server with routes registered.
-func New(cfg *config.Config, router *eino.Router) *Server {
+func New(cfg *config.Config, router *deepagent.Router) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery())
@@ -62,13 +61,4 @@ func (s *Server) ListenAndServe(addr string) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return srv.ListenAndServe()
-}
-
-// Engine exposes the gin engine for callers that want to compose extra routes.
-func (s *Server) Engine() *gin.Engine { return s.engine }
-
-// Shutdown stops the Router; callers handle the http.Server side themselves.
-func (s *Server) Shutdown(ctx context.Context) error {
-	s.router.Shutdown()
-	return nil
 }

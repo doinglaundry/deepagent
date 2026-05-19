@@ -48,7 +48,7 @@ func WithTraceConsumer(ctx context.Context, consumer TraceConsumer) context.Cont
 }
 
 // GetTraceConsumer returns the TraceConsumer attached to ctx, or nil when
-// WithTraceConsumer was never called. Exported so the runtime/eino run
+// WithTraceConsumer was never called. Exported so the runtime/run layer
 // layer can extract the consumer it just installed (and tests can drive
 // trace events directly).
 func GetTraceConsumer(ctx context.Context) TraceConsumer {

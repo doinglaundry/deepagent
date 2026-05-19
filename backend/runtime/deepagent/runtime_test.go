@@ -1,4 +1,4 @@
-package eino
+package deepagent
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 	"eino-cli/backend/config"
 )
 
-func TestNewDeepAgentRuntimeUnsupportedProvider(t *testing.T) {
-	runtime, err := NewDeepAgentRuntime(context.Background(), &config.Config{
+func TestNewRuntimeUnsupportedProvider(t *testing.T) {
+	runtime, err := NewRuntime(context.Background(), &config.Config{
 		DefaultModel: "primary",
 		DefaultAgent: "default",
 		Models: map[string]*config.ModelConfig{
@@ -30,7 +30,7 @@ func TestNewDeepAgentRuntimeUnsupportedProvider(t *testing.T) {
 	}
 }
 
-func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
+func TestNewRuntimeExecuteEmptyPrompt(t *testing.T) {
 	cfg := &config.Config{
 		DefaultModel: "primary",
 		DefaultAgent: "default",
@@ -47,9 +47,9 @@ func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
 			"default": {Name: "default", Model: "primary", Instruction: "You are a helpful assistant.", MaxIteration: 6},
 		},
 	}
-	runtime, err := NewDeepAgentRuntime(context.Background(), cfg)
+	runtime, err := NewRuntime(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("NewDeepAgentRuntime() error = %v", err)
+		t.Fatalf("NewRuntime() error = %v", err)
 	}
 
 	_, err = runtime.ExecuteStream(context.Background(), "   ", nil)
@@ -61,8 +61,8 @@ func TestNewDeepAgentRuntimeExecuteEmptyPrompt(t *testing.T) {
 	}
 }
 
-func TestDeepAgentRuntimeExportImportHistory(t *testing.T) {
-	src := &DeepAgentRuntime{
+func TestRuntimeExportImportHistory(t *testing.T) {
+	src := &Runtime{
 		history: []*schema.Message{
 			schema.UserMessage("hello"),
 			schema.AssistantMessage("world", nil),
@@ -72,7 +72,7 @@ func TestDeepAgentRuntimeExportImportHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportHistory() error = %v", err)
 	}
-	dst := &DeepAgentRuntime{}
+	dst := &Runtime{}
 	if err := dst.RollbackToHistory(payload); err != nil {
 		t.Fatalf("RollbackToHistory() error = %v", err)
 	}

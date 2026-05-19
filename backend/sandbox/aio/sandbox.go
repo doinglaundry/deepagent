@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -218,7 +219,7 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.G
 	}
 	regex := pattern
 	if opts.Literal {
-		regex = regexpQuoteMeta(pattern)
+		regex = regexp.QuoteMeta(pattern)
 	}
 	if !opts.CaseSensitive {
 		regex = "(?i)" + regex
@@ -322,19 +323,6 @@ func (s *Sandbox) post(ctx context.Context, path string, body, decodeData any) e
 		return nil
 	}
 	return json.Unmarshal(env.Data, decodeData)
-}
-
-// Inlined regexp.QuoteMeta to avoid importing regexp for this single use.
-func regexpQuoteMeta(s string) string {
-	const special = `\.+*?()|[]{}^$`
-	var b strings.Builder
-	for _, r := range s {
-		if strings.ContainsRune(special, r) {
-			b.WriteByte('\\')
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 func truncateLine(line string, maxChars int) string {
