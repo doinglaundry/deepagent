@@ -10,11 +10,13 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
+
+	"eino-cli/backend/consts"
 )
 
 // AskClarificationToolName is the conventional tool name the lead-agent
 // prompt instructs the model to call when it needs user input.
-const AskClarificationToolName = "ask_clarification"
+const AskClarificationToolName = consts.AskClarificationToolName
 
 // Clarification rewrites an `ask_clarification` tool call into a plain
 // assistant question, ending the deep-agent loop so the REPL can prompt

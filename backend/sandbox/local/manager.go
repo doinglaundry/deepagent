@@ -10,14 +10,9 @@ import (
 	"sync"
 
 	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 	"eino-cli/backend/runtime"
 	"eino-cli/backend/sandbox"
-)
-
-const (
-	defaultMaxCachedThreads = 256
-	genericID               = "local"
-	threadIDPrefix          = "local:"
 )
 
 // Manager is the per-thread Sandbox factory plus LRU cache.
@@ -44,7 +39,7 @@ func New(cfg *config.Config) (sandbox.SandboxManager, error) {
 		staticMappings:  setupStaticMappings(cfg),
 		cache:           map[string]*list.Element{},
 		order:           list.New(),
-		maxCachedThread: defaultMaxCachedThreads,
+		maxCachedThread: consts.DefaultMaxCachedThreads,
 	}
 	return m, nil
 }
@@ -55,7 +50,7 @@ func (m *Manager) Acquire(ctx context.Context, tid string) (string, error) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if m.generic == nil {
-			m.generic = newSandbox(genericID, append([]PathMapping{}, m.staticMappings...))
+			m.generic = newSandbox(consts.GenericLocalSandboxID, append([]PathMapping{}, m.staticMappings...))
 		}
 		return m.generic.id, nil
 	}
@@ -84,7 +79,7 @@ func (m *Manager) Acquire(ctx context.Context, tid string) (string, error) {
 		m.order.MoveToFront(el)
 		return el.Value.(*cacheEntry).sandbox.id, nil
 	}
-	sb := newSandbox(threadIDPrefix+tid, all)
+	sb := newSandbox(consts.LocalThreadIDPrefix+tid, all)
 	el := m.order.PushFront(&cacheEntry{tid: tid, sandbox: sb})
 	m.cache[tid] = el
 	m.evictLocked()
@@ -107,13 +102,13 @@ func (m *Manager) evictLocked() {
 func (m *Manager) Get(ctx context.Context, sandboxID string) (sandbox.Sandbox, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if sandboxID == genericID {
+	if sandboxID == consts.GenericLocalSandboxID {
 		if m.generic == nil {
 			return nil, sandbox.NewNotFoundError(sandboxID)
 		}
 		return m.generic, nil
 	}
-	if tid, ok := strings.CutPrefix(sandboxID, threadIDPrefix); ok {
+	if tid, ok := strings.CutPrefix(sandboxID, consts.LocalThreadIDPrefix); ok {
 		if el, ok := m.cache[tid]; ok {
 			m.order.MoveToFront(el)
 			return el.Value.(*cacheEntry).sandbox, nil
@@ -204,8 +199,4 @@ func buildThreadPathMappings(cfg *config.Config, tid, uid string) ([]PathMapping
 		{ContainerPath: "/mnt/user-data/uploads", LocalPath: config.SandboxUploadsDir(cfg, tid, uid)},
 		{ContainerPath: "/mnt/user-data/outputs", LocalPath: config.SandboxOutputsDir(cfg, tid, uid)},
 	}, nil
-}
-
-func init() {
-	sandbox.RegisterLocalFactory(New)
 }

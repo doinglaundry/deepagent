@@ -370,7 +370,3 @@ func (m *Manager) buildMounts(ctx context.Context, tid string) []mountSpec {
 	}
 	return out
 }
-
-func init() {
-	sandbox.RegisterAioFactory(New)
-}

@@ -9,6 +9,8 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/consts"
 )
 
 const rgToolDesc = `Search file contents with ripgrep. Supports content, files_with_matches, and count output modes. Returns "No matches found" when ripgrep finds nothing.`
@@ -93,13 +95,13 @@ func runRipgrep(ctx context.Context, root string, in rgArgs) (string, error) {
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return noMatchesFound, nil
+			return consts.NoMatchesFound, nil
 		}
 		return "", err
 	}
 	output := strings.TrimRight(string(out), "\n")
 	if output == "" {
-		return noMatchesFound, nil
+		return consts.NoMatchesFound, nil
 	}
 	return paginateOutput(output, in.Offset, in.HeadLimit), nil
 }
@@ -122,12 +124,12 @@ func runLocalRipgrepFallback(root string, in rgArgs) (string, error) {
 	switch in.OutputMode {
 	case "", "content":
 		if len(matches) == 0 {
-			return noMatchesFound, nil
+			return consts.NoMatchesFound, nil
 		}
 		return formatGrepContent(applyPagination(matches, in.Offset, in.HeadLimit), true), nil
 	case "files_with_matches":
 		if len(matches) == 0 {
-			return noMatchesFound, nil
+			return consts.NoMatchesFound, nil
 		}
 		seen := map[string]bool{}
 		var paths []string
@@ -142,7 +144,7 @@ func runLocalRipgrepFallback(root string, in rgArgs) (string, error) {
 		return strings.Join(paths, "\n"), nil
 	case "count":
 		if len(matches) == 0 {
-			return noMatchesFound, nil
+			return consts.NoMatchesFound, nil
 		}
 		return formatGrepCount(matches, in.Offset, in.HeadLimit), nil
 	default:

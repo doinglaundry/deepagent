@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 
+	"eino-cli/backend/consts"
 	"eino-cli/backend/sandbox"
 )
 
@@ -30,7 +31,7 @@ func GetGlobTool(root string) (tool.BaseTool, error) {
 					matches, _, err := sb.Glob(ctx, in.Path, normalizeGlobPattern(in.Pattern), sandbox.GlobOpts{})
 					if err == nil {
 						if len(matches) == 0 {
-							return noFilesFound, nil
+							return consts.NoFilesFound, nil
 						}
 						sort.Strings(matches)
 						return strings.Join(matches, "\n"), nil
@@ -64,7 +65,7 @@ func GetGlobTool(root string) (tool.BaseTool, error) {
 			}
 			sort.Strings(absolutePaths)
 			if len(absolutePaths) == 0 {
-				return noFilesFound, nil
+				return consts.NoFilesFound, nil
 			}
 			return strings.Join(absolutePaths, "\n"), nil
 		})

@@ -5,9 +5,6 @@ import (
 	"path/filepath"
 )
 
-// VirtualPathPrefix is the LLM-visible /mnt/user-data root.
-const VirtualPathPrefix = "/mnt/user-data"
-
 func BaseDir(cfg *Config) string {
 	return filepath.Join(cfg.RootDir, ".eino-cli")
 }

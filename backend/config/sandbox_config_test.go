@@ -3,6 +3,8 @@ package config
 import (
 	"testing"
 	"time"
+
+	"eino-cli/backend/consts"
 )
 
 // TestNormalizeSandbox_DefaultsAndOverrides locks the contract Provider-side
@@ -15,17 +17,17 @@ func TestNormalizeSandbox_DefaultsAndOverrides(t *testing.T) {
 		s := &SandboxConfig{}
 		normalizeSandbox(s)
 
-		if s.Image != defaultSandboxImage {
-			t.Errorf("Image = %q, want %q", s.Image, defaultSandboxImage)
+		if s.Image != consts.DefaultSandboxImage {
+			t.Errorf("Image = %q, want %q", s.Image, consts.DefaultSandboxImage)
 		}
-		if s.ContainerPrefix != defaultSandboxContainerPrefix {
-			t.Errorf("ContainerPrefix = %q, want %q", s.ContainerPrefix, defaultSandboxContainerPrefix)
+		if s.ContainerPrefix != consts.DefaultSandboxContainerPrefix {
+			t.Errorf("ContainerPrefix = %q, want %q", s.ContainerPrefix, consts.DefaultSandboxContainerPrefix)
 		}
-		if s.IdleTimeout != defaultSandboxIdleTimeout {
-			t.Errorf("IdleTimeout = %v, want %v", s.IdleTimeout, defaultSandboxIdleTimeout)
+		if s.IdleTimeout != consts.DefaultSandboxIdleTimeout {
+			t.Errorf("IdleTimeout = %v, want %v", s.IdleTimeout, consts.DefaultSandboxIdleTimeout)
 		}
-		if s.Replicas != defaultSandboxReplicas {
-			t.Errorf("Replicas = %d, want %d", s.Replicas, defaultSandboxReplicas)
+		if s.Replicas != consts.DefaultSandboxReplicas {
+			t.Errorf("Replicas = %d, want %d", s.Replicas, consts.DefaultSandboxReplicas)
 		}
 	})
 

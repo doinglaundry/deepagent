@@ -3,6 +3,7 @@ package gateway
 import (
 	"github.com/gin-gonic/gin"
 
+	"eino-cli/backend/consts"
 	"eino-cli/backend/runtime"
 	runtimecontext "eino-cli/backend/runtime/context"
 )
@@ -16,7 +17,7 @@ func userContextMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		uid := c.GetHeader(headerUserID)
 		if uid == "" {
-			uid = runtime.DefaultUserID
+			uid = consts.DefaultUserID
 		}
 		tid := c.Param("tid")
 		ctx := runtime.WithUserID(c.Request.Context(), uid)

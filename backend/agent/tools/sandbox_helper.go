@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"eino-cli/backend/consts"
 	runtimecontext "eino-cli/backend/runtime/context"
 	"eino-cli/backend/sandbox"
 )
@@ -36,7 +37,7 @@ func sandboxFromCtx(ctx context.Context) sandbox.Sandbox {
 // denyOnPlanMode returns (msg, true) when ctx is in plan mode; write tools short-circuit on true.
 func denyOnPlanMode(ctx context.Context) (string, bool) {
 	if runtimecontext.GetPermissionMode(ctx) == runtimecontext.ModePlan {
-		return runtimecontext.PlanModeDeniedMessage, true
+		return consts.PlanModeDeniedMessage, true
 	}
 	return "", false
 }

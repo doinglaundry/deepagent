@@ -7,13 +7,15 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/schema"
+
+	"eino-cli/backend/consts"
 )
 
 const (
-	TracePhaseBefore = iota + 1
-	TracePhaseAfter
-	TracePhaseTodos
-	TracePhaseTokens
+	TracePhaseBefore = consts.TracePhaseBefore
+	TracePhaseAfter  = consts.TracePhaseAfter
+	TracePhaseTodos  = consts.TracePhaseTodos
+	TracePhaseTokens = consts.TracePhaseTokens
 )
 
 // TraceEvent is one half-turn snapshot. Before carries the full message

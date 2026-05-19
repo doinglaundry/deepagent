@@ -6,13 +6,6 @@ import (
 	"eino-cli/backend/config"
 )
 
-// Shared output literals reused by ls / glob / grep so the wire format
-// matches eino's filesystem implementation byte-for-byte.
-const (
-	noFilesFound   = "No files found"
-	noMatchesFound = "No matches found"
-)
-
 // BuildBuiltinTools returns the fixed built-in tool set; root is read
 // from cfg.RootDir (single config.Config source — see AGENTS.md "Pass
 // less data"). Optional tools (web_search) are appended only when their

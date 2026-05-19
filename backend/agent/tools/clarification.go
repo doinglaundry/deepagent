@@ -5,9 +5,9 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
-)
 
-const askClarificationToolName = "ask_clarification"
+	"eino-cli/backend/consts"
+)
 
 const askClarificationToolDesc = `Ask the user for clarification when required information is missing, ambiguous, risky, or needs an explicit choice before continuing. Use this before taking action; execution will be stopped by middleware and the question will be shown to the user.`
 
@@ -21,7 +21,7 @@ type clarificationArgs struct {
 // GetAskClarificationTool returns the "ask_clarification" tool. The function
 // body is only a fallback; Clarification middleware intercepts the tool call.
 func GetAskClarificationTool() (tool.BaseTool, error) {
-	return utils.InferTool(askClarificationToolName, askClarificationToolDesc,
+	return utils.InferTool(consts.AskClarificationToolName, askClarificationToolDesc,
 		func(ctx context.Context, in clarificationArgs) (string, error) {
 			return "Clarification request processed by middleware", nil
 		})

@@ -3,19 +3,21 @@ package runtime
 import (
 	"context"
 	"testing"
+
+	"eino-cli/backend/consts"
 )
 
 func TestUserContext(t *testing.T) {
 	t.Run("missing key falls back to local", func(t *testing.T) {
-		if got := GetEffectiveUserID(context.Background()); got != DefaultUserID {
-			t.Errorf("got %q, want %q", got, DefaultUserID)
+		if got := GetEffectiveUserID(context.Background()); got != consts.DefaultUserID {
+			t.Errorf("got %q, want %q", got, consts.DefaultUserID)
 		}
 	})
 
 	t.Run("empty string also falls back", func(t *testing.T) {
 		ctx := WithUserID(context.Background(), "")
-		if got := GetEffectiveUserID(ctx); got != DefaultUserID {
-			t.Errorf("got %q, want %q", got, DefaultUserID)
+		if got := GetEffectiveUserID(ctx); got != consts.DefaultUserID {
+			t.Errorf("got %q, want %q", got, consts.DefaultUserID)
 		}
 	})
 

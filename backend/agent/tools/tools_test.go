@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 
 	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 	runtimecontext "eino-cli/backend/runtime/context"
 )
 
@@ -73,8 +74,8 @@ func TestLs(t *testing.T) {
 
 	emptyDir := t.TempDir()
 	bt2, _ := GetLsTool(emptyDir)
-	if got := invoke(t, bt2, `{"path":"."}`); got != noFilesFound {
-		t.Fatalf("empty dir: got %q want %q", got, noFilesFound)
+	if got := invoke(t, bt2, `{"path":"."}`); got != consts.NoFilesFound {
+		t.Fatalf("empty dir: got %q want %q", got, consts.NoFilesFound)
 	}
 }
 
@@ -168,8 +169,8 @@ func TestGlob(t *testing.T) {
 		t.Fatalf("glob:\ngot:  %q\nwant: %q", got, want)
 	}
 
-	if got := invoke(t, bt, `{"pattern":"*.rs","path":""}`); got != noFilesFound {
-		t.Fatalf("no match: got %q want %q", got, noFilesFound)
+	if got := invoke(t, bt, `{"pattern":"*.rs","path":""}`); got != consts.NoFilesFound {
+		t.Fatalf("no match: got %q want %q", got, consts.NoFilesFound)
 	}
 }
 
@@ -307,7 +308,7 @@ func TestRgContent(t *testing.T) {
 	if !strings.Contains(got, "a.txt:1:hello") {
 		t.Fatalf("rg content: %q", got)
 	}
-	if got := invoke(t, bt, `{"pattern":"missing"}`); got != noMatchesFound {
+	if got := invoke(t, bt, `{"pattern":"missing"}`); got != consts.NoMatchesFound {
 		t.Fatalf("rg no match: %q", got)
 	}
 }
@@ -407,8 +408,8 @@ func TestAskClarificationTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Info: %v", err)
 	}
-	if info.Name != askClarificationToolName {
-		t.Fatalf("name: got %q want %q", info.Name, askClarificationToolName)
+	if info.Name != consts.AskClarificationToolName {
+		t.Fatalf("name: got %q want %q", info.Name, consts.AskClarificationToolName)
 	}
 	schema, err := info.ParamsOneOf.ToJSONSchema()
 	if err != nil {

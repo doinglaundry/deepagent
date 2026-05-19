@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"math"
 	"time"
+
+	"eino-cli/backend/consts"
 )
 
 // memoryFormatVersion is stamped into every MemoryData.Version on save and
@@ -60,8 +62,8 @@ type Fact struct {
 // FactKind* enumerate the lifecycle classes; bare strings (rather than a
 // typed enum) keep JSON omitempty trivial and tolerate older payloads.
 const (
-	FactKindEnduring = "enduring"
-	FactKindEpisodic = "episodic"
+	FactKindEnduring = consts.FactKindEnduring
+	FactKindEpisodic = consts.FactKindEpisodic
 )
 
 // IsExpired reports whether an episodic fact's ExpiresAt is past nowISO.

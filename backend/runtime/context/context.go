@@ -4,19 +4,18 @@ import (
 	stdctx "context"
 	"sync/atomic"
 
+	"eino-cli/backend/consts"
 	"eino-cli/backend/sandbox"
 )
 
 type PermissionMode string
 
 const (
-	ModeDefault     PermissionMode = "default"           // HITL on every mutation
-	ModeAcceptEdits PermissionMode = "acceptEdits"       // writes auto-approve, shell still asks
-	ModePlan        PermissionMode = "plan"              // read-only; writes hard-deny
-	ModeBypass      PermissionMode = "bypassPermissions" // full trust, no HITL
+	ModeDefault     PermissionMode = consts.ModeDefault
+	ModeAcceptEdits PermissionMode = consts.ModeAcceptEdits
+	ModePlan        PermissionMode = consts.ModePlan
+	ModeBypass      PermissionMode = consts.ModeBypass
 )
-
-const PlanModeDeniedMessage = "This action is blocked by plan mode. Switch to default or acceptEdits mode to perform writes."
 
 type (
 	threadIDKey          struct{}

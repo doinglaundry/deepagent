@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"eino-cli/backend/consts"
 )
 
 // TestPaths_LayoutAndIsolation locks the .eino-cli/users/<uid>/threads/<tid>
@@ -64,8 +66,8 @@ func TestPaths_LayoutAndIsolation(t *testing.T) {
 }
 
 func TestVirtualPathPrefix(t *testing.T) {
-	if VirtualPathPrefix != "/mnt/user-data" {
-		t.Errorf("VirtualPathPrefix = %q, want %q", VirtualPathPrefix, "/mnt/user-data")
+	if consts.VirtualPathPrefix != "/mnt/user-data" {
+		t.Errorf("VirtualPathPrefix = %q, want %q", consts.VirtualPathPrefix, "/mnt/user-data")
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"eino-cli/backend/consts"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -199,13 +201,13 @@ func loadFromYAML(root string) (*Config, error) {
 
 	config.RootDir = root
 
-	config.DefaultAgent = defaultAgentKey
+	config.DefaultAgent = consts.DefaultAgentKey
 
 	config.Agents = map[string]*AgentConfig{
-		defaultAgentKey: {
-			Name:         defaultAgentKey,
-			Instruction:  defaultAgentInstruction,
-			MaxIteration: defaultAgentIterations,
+		consts.DefaultAgentKey: {
+			Name:         consts.DefaultAgentKey,
+			Instruction:  consts.DefaultAgentInstruction,
+			MaxIteration: consts.DefaultAgentIterations,
 			Model:        config.DefaultModel,
 		},
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 
+	"eino-cli/backend/consts"
 	"eino-cli/backend/sandbox"
 )
 
@@ -157,7 +158,7 @@ func runGrep(root string, in grepArgs) ([]grepMatch, error) {
 
 func formatGrepFiles(matches []grepMatch, offset, headLimit int) string {
 	if len(matches) == 0 {
-		return noFilesFound
+		return consts.NoFilesFound
 	}
 	seen := make(map[string]bool, len(matches))
 	paths := make([]string, 0, len(matches))
@@ -174,7 +175,7 @@ func formatGrepFiles(matches []grepMatch, offset, headLimit int) string {
 
 func formatGrepContent(matches []grepMatch, showLine bool) string {
 	if len(matches) == 0 {
-		return noMatchesFound
+		return consts.NoMatchesFound
 	}
 	lines := make([]string, len(matches))
 	for i, m := range matches {
@@ -204,7 +205,7 @@ func formatGrepCount(matches []grepMatch, offset, headLimit int) string {
 		totalOccurrences, plural(totalOccurrences, "occurrence", "occurrences"),
 		totalFiles, plural(totalFiles, "file", "files"))
 	if totalOccurrences == 0 {
-		return noMatchesFound + "\n\n" + summary
+		return consts.NoMatchesFound + "\n\n" + summary
 	}
 
 	paths = applyPagination(paths, offset, headLimit)
