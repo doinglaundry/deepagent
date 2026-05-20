@@ -281,6 +281,20 @@ func TestGrepContent(t *testing.T) {
 	}
 }
 
+func TestGrepFallsBackToLiteralPattern(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\n\\Middleware\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bt, _ := GetGrepTool(root)
+
+	got := invoke(t, bt, `{"pattern":"\\Middleware","output_mode":"content"}`)
+	want := "a.txt:2:\\Middleware"
+	if got != want {
+		t.Fatalf("grep literal fallback:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
 func TestGrepCount(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x\nx\n"), 0o644); err != nil {

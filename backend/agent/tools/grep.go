@@ -124,13 +124,9 @@ func GetGrepTool(root string) (tool.BaseTool, error) {
 }
 
 func runGrep(root string, in grepArgs) ([]grepMatch, error) {
-	pattern := in.Pattern
-	if valueOr(in.CaseInsensitive, false) {
-		pattern = "(?i:" + pattern + ")"
-	}
-	re, err := regexp.Compile(pattern)
+	re, err := compileGrepPattern(in.Pattern, valueOr(in.CaseInsensitive, false))
 	if err != nil {
-		return nil, fmt.Errorf("invalid pattern: %w", err)
+		return nil, err
 	}
 
 	base := resolveRoot(root)
@@ -154,6 +150,25 @@ func runGrep(root string, in grepArgs) ([]grepMatch, error) {
 		return nil
 	})
 	return matches, walkErr
+}
+
+func compileGrepPattern(pattern string, caseInsensitive bool) (*regexp.Regexp, error) {
+	re, err := compileRegexp(pattern, caseInsensitive)
+	if err == nil {
+		return re, nil
+	}
+	re, literalErr := compileRegexp(regexp.QuoteMeta(pattern), caseInsensitive)
+	if literalErr != nil {
+		return nil, fmt.Errorf("invalid pattern: %w", err)
+	}
+	return re, nil
+}
+
+func compileRegexp(pattern string, caseInsensitive bool) (*regexp.Regexp, error) {
+	if caseInsensitive {
+		pattern = "(?i:" + pattern + ")"
+	}
+	return regexp.Compile(pattern)
 }
 
 func formatGrepFiles(matches []grepMatch, offset, headLimit int) string {
