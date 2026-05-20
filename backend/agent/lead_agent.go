@@ -34,7 +34,7 @@ func MakeLeadAgent(
 	sandboxManager := sandbox.Default()
 	handlers := GetChatModelMiddlewares(ctx, agentName, isSubagentEnabled, getPlanMode, cfg, chatModel, sandboxManager)
 
-	deepCfg := &deep.Config{
+	agentImpl, err := deep.New(ctx, &deep.Config{
 		Name:                   agentName,
 		Description:            "Deep Agent",
 		ChatModel:              chatModel,
@@ -48,9 +48,7 @@ func MakeLeadAgent(
 				Tools: tools.BuildBuiltinTools(cfg, sandboxManager),
 			},
 		},
-	}
-
-	agentImpl, err := deep.New(ctx, deepCfg)
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build deep agent: %w", err)
 	}
