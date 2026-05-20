@@ -18,7 +18,7 @@ func TestMessagesLogWritesOnlyNewMessages(t *testing.T) {
 	first := &adk.ChatModelAgentState{
 		Messages: []*schema.Message{schema.UserMessage("hi")},
 	}
-	_, _, err := mw.BeforeModelRewriteState(context.Background(), first, nil)
+	_, _, err := mw.AfterModelRewriteState(context.Background(), first, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestMessagesLogWritesOnlyNewMessages(t *testing.T) {
 			schema.UserMessage("next"),
 		},
 	}
-	_, _, err = mw.BeforeModelRewriteState(context.Background(), second, nil)
+	_, _, err = mw.AfterModelRewriteState(context.Background(), second, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

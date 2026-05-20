@@ -25,7 +25,7 @@ func NewMessagesLog(path string) *MessagesLog {
 	}
 }
 
-func (m *MessagesLog) BeforeModelRewriteState(
+func (m *MessagesLog) AfterModelRewriteState(
 	ctx context.Context,
 	state *adk.ChatModelAgentState,
 	_ *adk.ModelContext,
