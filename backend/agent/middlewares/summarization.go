@@ -37,7 +37,7 @@ func NewSummarization(
 			}
 			flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
-			return updater.Run(flushCtx, summaryModel, memCfg, consts.DefaultAgentKey, before.Messages, true)
+			return updater.Run(flushCtx, summaryModel, consts.DefaultAgentKey, before.Messages, true)
 		},
 	})
 	if err != nil {
