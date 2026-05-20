@@ -2,10 +2,11 @@ package middlewares
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
@@ -61,16 +62,35 @@ func appendMessagesLog(path string, messages []*schema.Message) {
 	}
 	defer f.Close()
 
-	encoder := json.NewEncoder(f)
 	for _, msg := range messages {
-		record := map[string]any{
-			"created_at": time.Now().UTC(),
-			"type":       msg.Role,
-			"message":    msg,
-		}
-		if err := encoder.Encode(record); err != nil {
+		if _, err := fmt.Fprint(f, formatMessageLogEntry(msg)); err != nil {
 			slog.Warn("messages log: write failed", "path", path, "err", err)
 			return
 		}
 	}
+}
+
+func formatMessageLogEntry(msg *schema.Message) string {
+	role := ""
+	content := ""
+	if msg != nil {
+		role = fmt.Sprint(msg.Role)
+		content = msg.Content
+	}
+	fence := markdownFence(content)
+	return fmt.Sprintf("## %s · %s\n\n%stext\n%s\n%s\n\n---\n\n",
+		time.Now().UTC().Format(time.RFC3339Nano),
+		role,
+		fence,
+		content,
+		fence,
+	)
+}
+
+func markdownFence(content string) string {
+	fence := "```"
+	for strings.Contains(content, fence) {
+		fence += "`"
+	}
+	return fence
 }

@@ -38,7 +38,7 @@ func LogPath(cfg *Config) string {
 }
 
 func AgentMessagesLogPath(cfg *Config) string {
-	return filepath.Join(BaseDir(cfg), "agent-messages.log")
+	return filepath.Join(BaseDir(cfg), "agent-messages.md")
 }
 
 func SkillDir(cfg *Config, name string) string {
