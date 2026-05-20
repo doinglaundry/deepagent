@@ -2,7 +2,6 @@
 package agent
 
 import (
-	"eino-cli/backend/agent/memory"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,7 +11,6 @@ import (
 
 	"eino-cli/backend/agent/skills"
 	"eino-cli/backend/config"
-	memorystore "eino-cli/backend/memory/store"
 )
 
 // Skill mirrors deerflow.skills.Skill (only fields used by the prompt).
@@ -198,19 +196,6 @@ func buildSubagentSection(n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// getMemoryPrompt returns the <memory> block (with trailing newline) or ""
-// when memory is disabled / injection-disabled / no data on disk for agentName.
-func getMemoryPrompt(agentName string, store *memorystore.Store, m config.Memory) string {
-	if !m.Enabled || !m.InjectionEnabled {
-		return ""
-	}
-	block := memory.GetMemoryPromptBlock(store, agentName, m.MaxInjectionTokens)
-	if block == "" {
-		return ""
-	}
-	return block + "\n"
-}
-
 // GetSkillsPromptSection mirrors get_skills_prompt_section.
 func GetSkillsPromptSection(available *AvailableSkills, cfg *config.Config, skillEvolutionEnabled bool) string {
 	skills := loadEnabledSkillsFromConfig(cfg)
@@ -314,7 +299,6 @@ const systemPromptTemplateRaw = `
 </role>
 
 {agents_md}
-{memory_context}
 
 <thinking_style>
   - Think concisely and strategically about the user's request BEFORE taking action
@@ -478,7 +462,6 @@ func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Confi
 	replacer := strings.NewReplacer(
 		"{agent_name}", agentName,
 		"{agents_md}", loadAgentsMDPrompt(cfg),
-		"{memory_context}", getMemoryPrompt(agentName, memorystore.NewStoreFromConfig(cfg), cfg.Memory),
 		"{subagent_thinking}", GetSubagentThinking(IsSubagentEnabled, n),
 		"{skills_section}", GetSkillsPromptSection(skillsFromProfile(cfg.Agents[agentName]), cfg, cfg.SkillEvolution.Enabled),
 		"{deferred_tools_section}", GetDeferredToolsPromptSection(cfg, cfg.ToolSearch.Enabled),

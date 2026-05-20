@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"eino-cli/backend/config"
+	memorystore "eino-cli/backend/memory/store"
 )
 
 func TestLoadEnabledSkillsFromConfig_FromPaths(t *testing.T) {
@@ -115,14 +116,20 @@ func TestGetSystemPrompt_SubagentEnabledKeepsBulletIndent(t *testing.T) {
 	}
 }
 
-func TestGetSystemPrompt_EmptyMemorySkipsBlock(t *testing.T) {
+func TestGetSystemPrompt_DoesNotInjectMemory(t *testing.T) {
 	cfg := &config.Config{
 		RootDir: t.TempDir(),
 		Memory:  config.Memory{Enabled: true, InjectionEnabled: true, MaxInjectionTokens: 1024},
 	}
+	data := memorystore.GetEmptyMemoryData()
+	data.User.WorkContext = memorystore.Section{Summary: "memory belongs in middleware"}
+	if err := memorystore.NewStoreFromConfig(cfg).Save("default", data); err != nil {
+		t.Fatal(err)
+	}
+
 	out := GetSystemPrompt("default", false, cfg)
 	if strings.Contains(out, "<memory>") {
-		t.Fatalf("empty store should skip <memory> section, got:\n%s", out)
+		t.Fatalf("system prompt should not inject <memory>; middleware owns memory injection, got:\n%s", out)
 	}
 }
 
