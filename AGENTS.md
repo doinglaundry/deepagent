@@ -125,3 +125,9 @@ no more — extra headings do not map onto the reviewer's questions
 - **Rollback** has two tiers: soft (flag / yaml off-switch → behavior
   reverts) + hard (the N edits to revert, period-separated). Skip
   "soft" when no flag exists.
+- **Implementation plans must be executable**: minimize background,
+  motivation, and repeated explanation. Keep only necessary judgments
+  and constraints. Do not describe implementation only in prose; include
+  key code snippets covering new files, structs, functions, call sites,
+  and tests. Keep verification steps short and concrete. The document
+  should read like implementation notes, not a long design essay.
