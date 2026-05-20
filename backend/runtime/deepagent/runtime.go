@@ -38,14 +38,14 @@ func NewRuntime(ctx context.Context, cfg *config.Config) (rt.Runtime, error) {
 		modelName:       cfg.DefaultModel,
 		maxHistoryTurns: 20,
 	}
-	leadAgent, trace, err := agent.MakeLeadAgent(ctx, "default", true, r.planMode.Load, cfg)
+	leadAgent, trace, err := agent.MakeLeadAgent(ctx, true, r.planMode.Load, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build lead agent: %w", err)
 	}
 	r.runner = adk.NewRunner(ctx, adk.RunnerConfig{
 		Agent:           leadAgent,
 		EnableStreaming: true,
-		CheckPointStore: checkpoint.NewStore(config.CheckpointsDir(cfg)),
+		CheckPointStore: checkpoint.NewStore(config.CheckpointsDir()),
 	})
 	r.trace = trace
 	return r, nil

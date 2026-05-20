@@ -68,8 +68,8 @@ type Trace struct {
 
 	// TokenSnapshot, when non-nil, fires a TracePhaseTokens event after
 	// every model turn carrying the current cumulative token counters.
-	// Wired by GetChatModelMiddlewares iff cfg.TokenUsage.Enabled, so
-	// the field stays nil in test stubs / disabled runs and the After
+	// Wired by GetChatModelMiddlewares, so the field stays nil in test stubs
+	// and the After
 	// hook short-circuits the emission. Field over a separate struct
 	// because TokenUsage is the only metric we'd plumb this way today
 	// (AGENTS.md "矫枉过正预警" — 8+ fields before a struct).

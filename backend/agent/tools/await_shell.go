@@ -20,7 +20,7 @@ type awaitShellArgs struct {
 	SinceOffset int    `json:"since_offset,omitempty" jsonschema:"description=Return output starting at byte offset"`
 }
 
-func GetAwaitShellTool(root string) (tool.BaseTool, error) {
+func GetAwaitShellTool() (tool.BaseTool, error) {
 	return utils.InferTool("await_shell", awaitShellToolDesc,
 		func(ctx context.Context, in awaitShellArgs) (string, error) {
 			return awaitShell(in)

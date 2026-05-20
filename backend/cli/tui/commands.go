@@ -24,7 +24,6 @@ type slashCommand struct {
 
 var builtinCommands = []slashCommand{
 	{Name: "clear", Desc: "clear the in-memory conversation history", Type: "builtin"},
-	{Name: "debug", Args: "[on|off|toggle]", Desc: "show / hide the model's exact input & output per turn", Type: "builtin"},
 	{Name: "exit", Desc: "exit the TUI session", Type: "builtin"},
 	{Name: "help", Args: "[name]", Desc: "show slash commands, or details for one command", Type: "builtin"},
 	{Name: "history", Desc: "browse past runs and rollback", Type: "builtin"},
@@ -41,7 +40,7 @@ func buildSlashCommands(cfg *config.Config) []slashCommand {
 	for _, command := range commands {
 		seen[strings.ToLower(command.Name)] = true
 	}
-	for _, command := range loadSkillSlashCommands(cfg) {
+	for _, command := range loadSkillSlashCommands() {
 		key := strings.ToLower(command.Name)
 		if seen[key] {
 			continue
@@ -67,8 +66,6 @@ func attachBuiltinHandlers(commands []slashCommand) {
 		switch commands[i].Name {
 		case "clear":
 			commands[i].Handler = handleClearCommand
-		case "debug":
-			commands[i].Handler = handleDebugCommand
 		case "exit", "quit":
 			commands[i].Handler = handleExitCommand
 		case "help":
@@ -83,22 +80,18 @@ func attachBuiltinHandlers(commands []slashCommand) {
 	}
 }
 
-func loadSkillSlashCommands(cfg *config.Config) []slashCommand {
-	if cfg == nil {
-		return nil
-	}
+func loadSkillSlashCommands() []slashCommand {
 	var commands []slashCommand
-	for _, root := range cfg.Skills.Paths {
-		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || d.Name() != "SKILL.md" {
-				return nil
-			}
-			if command, ok := parseSkillCommand(path); ok {
-				commands = append(commands, command)
-			}
+	root := filepath.Join(config.RootDir(), "backend", "skills")
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Name() != "SKILL.md" {
 			return nil
-		})
-	}
+		}
+		if command, ok := parseSkillCommand(path); ok {
+			commands = append(commands, command)
+		}
+		return nil
+	})
 	return commands
 }
 
@@ -150,10 +143,6 @@ func handleClearCommand(m *Model, _ string) tea.Cmd {
 	return nil
 }
 
-func handleDebugCommand(m *Model, text string) tea.Cmd {
-	return m.handleDebugCmd(text)
-}
-
 func handleHelpCommand(m *Model, text string) tea.Cmd {
 	m.pushMessage("user", text)
 	arg := strings.TrimSpace(strings.TrimPrefix(text, "/help"))
@@ -176,7 +165,7 @@ func handleTodosCommand(m *Model, text string) tea.Cmd {
 // shouldShowPopup gates popup visibility on the input value alone. The
 // rule: input must start with "/" AND have no whitespace yet (still in
 // the command-name region). Once the user types a space we're in the
-// argument region — the menu disappears so /plan, /debug etc. can take
+// argument region — the menu disappears so /plan, /todos etc. can take
 // their on/off/toggle freely.
 func shouldShowPopup(input string) bool {
 	if !strings.HasPrefix(input, "/") {

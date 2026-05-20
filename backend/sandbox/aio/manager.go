@@ -356,17 +356,15 @@ func (m *Manager) reconcileOrphans() {
 // buildMounts assembles per-thread /mnt/user-data plus user-configured mounts.
 func (m *Manager) buildMounts(ctx context.Context, tid string) []mountSpec {
 	uid := runtime.GetEffectiveUserID(ctx)
-	if err := config.EnsureThreadDirs(m.cfg, tid, uid); err != nil {
+	if err := config.EnsureThreadDirs(tid, uid); err != nil {
 		m.log.Warn("aio: ensure thread dirs", "thread_id", tid, "error", err)
 	}
 	out := []mountSpec{}
 	out = append(out, mountSpec{
-		Host:      config.SandboxUserDataDir(m.cfg, tid, uid),
+		Host:      config.SandboxUserDataDir(tid, uid),
 		Container: "/mnt/user-data",
 		ReadOnly:  false,
 	})
-	for _, mt := range m.cfg.Sandbox.Mounts {
-		out = append(out, mountSpec{Host: mt.HostPath, Container: mt.ContainerPath, ReadOnly: mt.ReadOnly})
-	}
+
 	return out
 }

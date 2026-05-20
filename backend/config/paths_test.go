@@ -14,7 +14,8 @@ import (
 // on a single derivation rule. Drift here would silently leak one user's
 // thread data into another user's mount.
 func TestPaths_LayoutAndIsolation(t *testing.T) {
-	cfg := &Config{RootDir: "/tmp/eino-root"}
+	cleanup := SetRootDirForTest("/tmp/eino-root")
+	defer cleanup()
 
 	want := map[string]string{
 		"base":        "/tmp/eino-root/.eino-cli",
@@ -32,19 +33,19 @@ func TestPaths_LayoutAndIsolation(t *testing.T) {
 		"outputs":     "/tmp/eino-root/.eino-cli/users/alice/threads/T1/user-data/outputs",
 	}
 	got := map[string]string{
-		"base":        BaseDir(cfg),
-		"checkpoints": CheckpointsDir(cfg),
-		"runs":        RunsDir(cfg),
-		"rollback":    RollbackDir(cfg),
-		"memory":      MemoryDir(cfg),
-		"history":     InputHistoryPath(cfg),
-		"log":         LogPath(cfg),
-		"user":        UserDir(cfg, "alice"),
-		"thread":      ThreadDir(cfg, "T1", "alice"),
-		"user-data":   SandboxUserDataDir(cfg, "T1", "alice"),
-		"workspace":   SandboxWorkDir(cfg, "T1", "alice"),
-		"uploads":     SandboxUploadsDir(cfg, "T1", "alice"),
-		"outputs":     SandboxOutputsDir(cfg, "T1", "alice"),
+		"base":        BaseDir(),
+		"checkpoints": CheckpointsDir(),
+		"runs":        RunsDir(),
+		"rollback":    RollbackDir(),
+		"memory":      MemoryDir(),
+		"history":     InputHistoryPath(),
+		"log":         LogPath(),
+		"user":        UserDir("alice"),
+		"thread":      ThreadDir("T1", "alice"),
+		"user-data":   SandboxUserDataDir("T1", "alice"),
+		"workspace":   SandboxWorkDir("T1", "alice"),
+		"uploads":     SandboxUploadsDir("T1", "alice"),
+		"outputs":     SandboxOutputsDir("T1", "alice"),
 	}
 	for k, w := range want {
 		if got[k] != w {
@@ -55,8 +56,8 @@ func TestPaths_LayoutAndIsolation(t *testing.T) {
 	// Different uid must yield a disjoint subtree — sandbox path checks rely
 	// on prefix matching for the reverse mask, so any path crossover breaks
 	// the user-isolation invariant.
-	alice := ThreadDir(cfg, "T1", "alice")
-	bob := ThreadDir(cfg, "T1", "bob")
+	alice := ThreadDir("T1", "alice")
+	bob := ThreadDir("T1", "bob")
 	if alice == bob {
 		t.Fatalf("uid not separated: both resolve to %q", alice)
 	}
@@ -76,18 +77,19 @@ func TestVirtualPathPrefix(t *testing.T) {
 // call returning ErrExist would crash the sandbox lifecycle.
 func TestEnsureThreadDirs_Idempotent(t *testing.T) {
 	root := t.TempDir()
-	cfg := &Config{RootDir: root}
+	cleanup := SetRootDirForTest(root)
+	defer cleanup()
 
 	for i := 0; i < 2; i++ {
-		if err := EnsureThreadDirs(cfg, "T1", "alice"); err != nil {
+		if err := EnsureThreadDirs("T1", "alice"); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
 
 	for _, dir := range []string{
-		SandboxWorkDir(cfg, "T1", "alice"),
-		SandboxUploadsDir(cfg, "T1", "alice"),
-		SandboxOutputsDir(cfg, "T1", "alice"),
+		SandboxWorkDir("T1", "alice"),
+		SandboxUploadsDir("T1", "alice"),
+		SandboxOutputsDir("T1", "alice"),
 	} {
 		info, err := os.Stat(dir)
 		if err != nil {
@@ -99,10 +101,10 @@ func TestEnsureThreadDirs_Idempotent(t *testing.T) {
 		}
 	}
 
-	// Sanity check that the dirs really nest under cfg.RootDir/.eino-cli —
+	// Sanity check that the dirs really nest under RootDir()/.eino-cli —
 	// catches a future refactor that accidentally rewrites BaseDir.
 	wantPrefix := filepath.Join(root, ".eino-cli")
-	if !strings.HasPrefix(SandboxWorkDir(cfg, "T1", "alice"), wantPrefix) {
+	if !strings.HasPrefix(SandboxWorkDir("T1", "alice"), wantPrefix) {
 		t.Errorf("workspace not under %q", wantPrefix)
 	}
 }

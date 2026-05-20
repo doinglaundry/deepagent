@@ -9,7 +9,6 @@ package tui
 // accurate when the right column word-wraps; Chinese / emoji content goes
 // into a spec doc instead.
 var releaseNotes = []string{
+	"yaml/config.yaml now only carries models and web_search",
 	"rebuilt fs/shell tools; tool-call slog.Debug observability hook",
-	"slog default handler now honors cfg.LogLevel",
-	"yaml/config.yaml untracked; yaml/CHANGELOG.md is the contract",
 }

@@ -31,10 +31,10 @@ type rgArgs struct {
 	ShowLineNumbers *bool  `json:"-n,omitempty" jsonschema:"description=Show line numbers in content output"`
 }
 
-func GetRgTool(root string) (tool.BaseTool, error) {
+func GetRgTool() (tool.BaseTool, error) {
 	return utils.InferTool("rg", rgToolDesc,
 		func(ctx context.Context, in rgArgs) (string, error) {
-			return runRipgrep(ctx, root, in)
+			return runRipgrep(ctx, resolveRoot(), in)
 		})
 }
 
@@ -42,10 +42,10 @@ func runRipgrep(ctx context.Context, root string, in rgArgs) (string, error) {
 	if strings.TrimSpace(in.Pattern) == "" {
 		return "", fmt.Errorf("pattern must not be empty")
 	}
-	searchPath := resolveRoot(root)
+	searchPath := resolveRoot()
 	if strings.TrimSpace(in.Path) != "" {
 		var err error
-		searchPath, err = getResolvedPath(root, in.Path)
+		searchPath, err = getResolvedPath(in.Path)
 		if err != nil {
 			return "", err
 		}
@@ -87,7 +87,7 @@ func runRipgrep(ctx context.Context, root string, in rgArgs) (string, error) {
 	args = append(args, in.Pattern, searchPath)
 
 	cmd := exec.CommandContext(ctx, "rg", args...)
-	cmd.Dir = resolveRoot(root)
+	cmd.Dir = resolveRoot()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {

@@ -197,10 +197,10 @@ func buildSubagentSection(n int) string {
 }
 
 // GetSkillsPromptSection mirrors get_skills_prompt_section.
-func GetSkillsPromptSection(available *AvailableSkills, cfg *config.Config, skillEvolutionEnabled bool) string {
-	skills := loadEnabledSkillsFromConfig(cfg)
+func GetSkillsPromptSection(available *AvailableSkills) string {
+	skills := loadEnabledSkillsFromConfig()
 
-	if len(skills) == 0 && !skillEvolutionEnabled {
+	if len(skills) == 0 {
 		return ""
 	}
 
@@ -246,20 +246,6 @@ func GetSkillsPromptSection(available *AvailableSkills, cfg *config.Config, skil
 		skillsXML = "<available_skills>\n" + strings.Join(items, "\n") + "\n</available_skills>"
 	}
 
-	skillEvolutionSection := ""
-	if skillEvolutionEnabled {
-		skillEvolutionSection = "" +
-			"\n## Skill Self-Evolution\n" +
-			"After completing a task, consider creating or updating a skill when:\n" +
-			"- The task required 5+ tool calls to resolve\n" +
-			"- You overcame non-obvious errors or pitfalls\n" +
-			"- The user corrected your approach and the corrected version worked\n" +
-			"- You discovered a non-trivial, recurring workflow\n" +
-			"If you used a skill and encountered issues not covered by it, patch it immediately.\n" +
-			"Prefer patch over edit. Before creating a new skill, confirm with the user first.\n" +
-			"Skip simple one-off tasks.\n"
-	}
-
 	return "" +
 		"<skill_system>\n" +
 		"You have access to skills that provide optimized workflows for specific tasks. " +
@@ -273,18 +259,14 @@ func GetSkillsPromptSection(available *AvailableSkills, cfg *config.Config, skil
 		"4. Load referenced resources only when needed during execution\n" +
 		"5. Follow the skill's instructions precisely\n" +
 		"\n" +
-		skillEvolutionSection + "\n" +
 		skillsXML + "\n" +
 		"\n" +
 		"</skill_system>"
 }
 
 // GetDeferredToolsPromptSection mirrors get_deferred_tools_prompt_section.
-func GetDeferredToolsPromptSection(cfg *config.Config, toolSearchEnabled bool) string {
-	if !toolSearchEnabled {
-		return ""
-	}
-	names := DeferredToolNamesFromConfig(cfg)
+func GetDeferredToolsPromptSection() string {
+	names := DeferredToolNamesFromConfig()
 	if len(names) == 0 {
 		return ""
 	}
@@ -440,34 +422,23 @@ const systemPromptTemplateRaw = `
 </critical_reminders>
 `
 
-// defaultMaxConcurrentSubagents is the fallback used when
-// cfg.MaxConcurrentSubagents is zero / negative (i.e. not set in yaml).
-// Same constant is the only place this number lives — both prompt and
-// SubagentLimit middleware route through effectiveMaxSubagents.
 const defaultMaxConcurrentSubagents = 5
 
-// effectiveMaxSubagents reads cfg.MaxConcurrentSubagents with the
-// defaultMaxConcurrentSubagents fallback. Single source of truth so the
-// system prompt's advertised limit and the SubagentLimit middleware's
-// runtime cap are guaranteed to agree.
-func effectiveMaxSubagents(cfg *config.Config) int {
-	if cfg.MaxConcurrentSubagents <= 0 {
-		return defaultMaxConcurrentSubagents
-	}
-	return cfg.MaxConcurrentSubagents
+func getMaxSubagents() int {
+	return defaultMaxConcurrentSubagents
 }
 
-func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Config) string {
-	n := effectiveMaxSubagents(cfg)
+func GetSystemPrompt(agentName string, isSubagentEnabled bool, cfg *config.Config) string {
+	n := getMaxSubagents()
 	replacer := strings.NewReplacer(
 		"{agent_name}", agentName,
-		"{agents_md}", loadAgentsMDPrompt(cfg),
-		"{subagent_thinking}", GetSubagentThinking(IsSubagentEnabled, n),
-		"{skills_section}", GetSkillsPromptSection(skillsFromProfile(cfg.Agents[agentName]), cfg, cfg.SkillEvolution.Enabled),
-		"{deferred_tools_section}", GetDeferredToolsPromptSection(cfg, cfg.ToolSearch.Enabled),
-		"{subagent_section}", GetSubagentSection(IsSubagentEnabled, n),
-		"{subagent_reminder}", GetSubagentReminder(IsSubagentEnabled, n),
-		"{root_dir}", cfg.RootDir,
+		"{agents_md}", loadAgentsMDPrompt(),
+		"{subagent_thinking}", GetSubagentThinking(isSubagentEnabled, n),
+		"{skills_section}", GetSkillsPromptSection(AllSkills()),
+		"{deferred_tools_section}", GetDeferredToolsPromptSection(),
+		"{subagent_section}", GetSubagentSection(isSubagentEnabled, n),
+		"{subagent_reminder}", GetSubagentReminder(isSubagentEnabled, n),
+		"{root_dir}", config.RootDir(),
 	)
 	prompt := replacer.Replace(strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"))
 
@@ -483,11 +454,8 @@ func GetSystemPrompt(agentName string, IsSubagentEnabled bool, cfg *config.Confi
 // edits, and stops style guidance from competing with <response_style>
 // for attention. Missing file / missing section → empty string, which
 // the template collapses without leaving a blank line.
-func loadAgentsMDPrompt(cfg *config.Config) string {
-	if cfg == nil {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(cfg.RootDir, "AGENTS.md"))
+func loadAgentsMDPrompt() string {
+	data, err := os.ReadFile(filepath.Join(config.RootDir(), "AGENTS.md"))
 	if err != nil {
 		return ""
 	}
@@ -515,8 +483,8 @@ func extractTopLevelSection(text, title string) string {
 	return strings.TrimSpace(rest)
 }
 
-func GetSubagentThinking(IsSubagentEnabled bool, n int) string {
-	if IsSubagentEnabled {
+func GetSubagentThinking(isSubagentEnabled bool, n int) string {
+	if isSubagentEnabled {
 		return "" +
 			"- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. " +
 			fmt.Sprintf("If count > %d, you MUST plan batches of ≤%d and only launch the FIRST batch now. ", n, n) +
@@ -525,8 +493,8 @@ func GetSubagentThinking(IsSubagentEnabled bool, n int) string {
 	return ""
 }
 
-func GetSubagentReminder(IsSubagentEnabled bool, n int) string {
-	if IsSubagentEnabled {
+func GetSubagentReminder(isSubagentEnabled bool, n int) string {
+	if isSubagentEnabled {
 		return "" +
 			"- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. " +
 			fmt.Sprintf("**HARD LIMIT: max %d `task` calls per response.** ", n) +
@@ -535,29 +503,23 @@ func GetSubagentReminder(IsSubagentEnabled bool, n int) string {
 	return ""
 }
 
-func GetSubagentSection(IsSubagentEnabled bool, n int) string {
-	if IsSubagentEnabled {
+func GetSubagentSection(isSubagentEnabled bool, n int) string {
+	if isSubagentEnabled {
 		return buildSubagentSection(n)
 	}
 	return ""
 }
 
-// loadEnabledSkillsFromConfig scans cfg.Skills.Paths for SKILL.md files and
+// loadEnabledSkillsFromConfig scans the default skills path for SKILL.md files and
 // returns the enabled skills as the prompt-side Skill type. Errors yield nil.
-func loadEnabledSkillsFromConfig(cfg *config.Config) []Skill {
-	if len(cfg.Skills.Paths) == 0 {
-		return nil
-	}
-	loaded, err := skills.LoadFromPaths(cfg.Skills.Paths)
+func loadEnabledSkillsFromConfig() []Skill {
+	loaded, err := skills.LoadFromPaths([]string{filepath.Join(config.RootDir(), "backend", "skills")})
 	if err != nil {
 		slog.Warn("skills loader: scan failed", "err", err)
 		return nil
 	}
 	out := make([]Skill, 0, len(loaded))
 	for _, s := range loaded {
-		if !skills.IsEnabled(s.Name, s.Category, cfg.Skills.Enabled) {
-			continue
-		}
 		out = append(out, Skill{
 			Name:        s.Name,
 			Description: s.Description,
@@ -568,15 +530,7 @@ func loadEnabledSkillsFromConfig(cfg *config.Config) []Skill {
 	return out
 }
 
-// DeferredToolNamesFromConfig: tools advertised in the prompt and filtered out
-// of the active toolbelt by the DeferredTools middleware.
-func DeferredToolNamesFromConfig(cfg *config.Config) []string {
-	if len(cfg.ToolSearch.Deferred) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(cfg.ToolSearch.Deferred))
-	for _, e := range cfg.ToolSearch.Deferred {
-		names = append(names, e.Name)
-	}
-	return names
+// DeferredToolNamesFromConfig returns the code-defined deferred tool list.
+func DeferredToolNamesFromConfig() []string {
+	return nil
 }

@@ -15,7 +15,7 @@ func TestShouldShowPopup(t *testing.T) {
 		{"/", true},
 		{"/cl", true},
 		{"/clear", true},
-		{"/debug on", false},    // space → arg region
+		{"/plan on", false},     // space → arg region
 		{"hello /clear", false}, // slash not at column 0
 		{"/clear\t", false},     // tab counts as whitespace too
 	}
@@ -26,11 +26,11 @@ func TestShouldShowPopup(t *testing.T) {
 	}
 }
 
-// Case-insensitive prefix match: "/DE" must surface /debug only.
+// Case-insensitive prefix match: "/PL" must surface /plan only.
 func TestFilterCommands_PrefixCaseInsensitive(t *testing.T) {
-	got := filterCommands(commands, "/DE")
-	if len(got) != 1 || got[0].Name != "debug" {
-		t.Errorf("expected only [debug], got %#v", got)
+	got := filterCommands(commands, "/PL")
+	if len(got) != 1 || got[0].Name != "plan" {
+		t.Errorf("expected only [plan], got %#v", got)
 	}
 }
 

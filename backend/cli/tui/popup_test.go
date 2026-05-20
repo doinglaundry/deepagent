@@ -23,10 +23,10 @@ func TestRenderPopup_HiddenWhenNoSlash(t *testing.T) {
 }
 
 // Once the user types a space, focus has moved into the argument
-// region — the menu hides so /debug / /todos can take their
+// region — the menu hides so /plan / /todos can take their
 // on/off/open/close without competing with name suggestions.
 func TestRenderPopup_HiddenWhenInArgRegion(t *testing.T) {
-	m := newModelForPopup("/debug on")
+	m := newModelForPopup("/plan on")
 	if got := m.renderPopup(); got != "" {
 		t.Errorf("popup must hide once a space is typed; got %q", got)
 	}
@@ -45,16 +45,16 @@ func TestRenderPopup_ShowsAllOnBareSlash(t *testing.T) {
 	}
 }
 
-// Prefix filtering narrows the menu; "/de" must surface /debug and
+// Prefix filtering narrows the menu; "/pl" must surface /plan and
 // drop unrelated entries like /clear.
 func TestRenderPopup_PrefixFilters(t *testing.T) {
-	m := newModelForPopup("/de")
+	m := newModelForPopup("/pl")
 	out := m.renderPopup()
-	if !strings.Contains(out, "/debug") {
-		t.Errorf("/de must surface /debug; got %q", out)
+	if !strings.Contains(out, "/plan") {
+		t.Errorf("/pl must surface /plan; got %q", out)
 	}
 	if strings.Contains(out, "/clear") {
-		t.Errorf("/de must filter out /clear; got %q", out)
+		t.Errorf("/pl must filter out /clear; got %q", out)
 	}
 }
 
@@ -65,7 +65,7 @@ func TestRenderPopup_PrefixFilters(t *testing.T) {
 // together across the full state space — hidden / shown / overflow are
 // all exercised through the cases.
 func TestPopupHeight_MatchesRenderLineCount(t *testing.T) {
-	cases := []string{"/", "/de", "/zzz", "hello", "/debug on", ""}
+	cases := []string{"/", "/pl", "/zzz", "hello", "/plan on", ""}
 	for _, value := range cases {
 		m := newModelForPopup(value)
 		out := m.renderPopup()

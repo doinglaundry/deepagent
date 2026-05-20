@@ -5,82 +5,80 @@ import (
 	"path/filepath"
 )
 
-func BaseDir(cfg *Config) string {
-	return filepath.Join(cfg.RootDir, ".eino-cli")
+var rootDirOverride string
+
+func RootDir() string {
+	if rootDirOverride != "" {
+		return rootDirOverride
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return wd
 }
 
-func CheckpointsDir(cfg *Config) string {
-	return filepath.Join(BaseDir(cfg), "checkpoints")
+func BaseDir() string {
+	return filepath.Join(RootDir(), ".eino-cli")
 }
 
-func RunsDir(cfg *Config) string {
-	return filepath.Join(BaseDir(cfg), "runs")
+func CheckpointsDir() string {
+	return filepath.Join(BaseDir(), "checkpoints")
 }
 
-func RollbackDir(cfg *Config) string {
-	return filepath.Join(BaseDir(cfg), "rollback")
+func RunsDir() string {
+	return filepath.Join(BaseDir(), "runs")
 }
 
-func RollbackRunDir(cfg *Config, runID string) string {
-	return filepath.Join(RollbackDir(cfg), runID)
+func RollbackDir() string {
+	return filepath.Join(BaseDir(), "rollback")
 }
 
-func MemoryDir(cfg *Config) string {
-	return filepath.Join(BaseDir(cfg), "memory")
+func MemoryDir() string {
+	return filepath.Join(BaseDir(), "memory")
 }
 
-func InputHistoryPath(cfg *Config) string {
-	return filepath.Join(BaseDir(cfg), "history.txt")
+func InputHistoryPath() string {
+	return filepath.Join(BaseDir(), "history.txt")
 }
 
-func LogPath(cfg *Config) string {
-	return filepath.Join(BaseDir(cfg), "eino-cli.log")
+func LogPath() string {
+	return filepath.Join(BaseDir(), "eino-cli.log")
 }
 
-func AgentMessagesLogPath(cfg *Config) string {
-	return filepath.Join(BaseDir(cfg), "agent-messages.md")
+func AgentMessagesLogPath() string {
+	return filepath.Join(BaseDir(), "agent-messages.md")
 }
 
-func SkillDir(cfg *Config, name string) string {
-	return filepath.Join(BaseDir(cfg), name)
+func UserDir(uid string) string {
+	return filepath.Join(BaseDir(), "users", uid)
 }
 
-// UserDir returns the on-disk directory for uid.
-func UserDir(cfg *Config, uid string) string {
-	return filepath.Join(BaseDir(cfg), "users", uid)
+func ThreadDir(tid, uid string) string {
+	return filepath.Join(UserDir(uid), "threads", tid)
 }
 
-// ThreadDir returns the on-disk directory for (tid, uid).
-func ThreadDir(cfg *Config, tid, uid string) string {
-	return filepath.Join(UserDir(cfg, uid), "threads", tid)
+func SandboxUserDataDir(tid, uid string) string {
+	return filepath.Join(ThreadDir(tid, uid), "user-data")
 }
 
-// SandboxUserDataDir is the host side of /mnt/user-data.
-func SandboxUserDataDir(cfg *Config, tid, uid string) string {
-	return filepath.Join(ThreadDir(cfg, tid, uid), "user-data")
+func SandboxWorkDir(tid, uid string) string {
+	return filepath.Join(SandboxUserDataDir(tid, uid), "workspace")
 }
 
-// SandboxWorkDir is the host side of /mnt/user-data/workspace.
-func SandboxWorkDir(cfg *Config, tid, uid string) string {
-	return filepath.Join(SandboxUserDataDir(cfg, tid, uid), "workspace")
+func SandboxUploadsDir(tid, uid string) string {
+	return filepath.Join(SandboxUserDataDir(tid, uid), "uploads")
 }
 
-// SandboxUploadsDir is the host side of /mnt/user-data/uploads.
-func SandboxUploadsDir(cfg *Config, tid, uid string) string {
-	return filepath.Join(SandboxUserDataDir(cfg, tid, uid), "uploads")
+func SandboxOutputsDir(tid, uid string) string {
+	return filepath.Join(SandboxUserDataDir(tid, uid), "outputs")
 }
 
-// SandboxOutputsDir is the host side of /mnt/user-data/outputs.
-func SandboxOutputsDir(cfg *Config, tid, uid string) string {
-	return filepath.Join(SandboxUserDataDir(cfg, tid, uid), "outputs")
-}
-
-// EnsureThreadDirs creates every per-thread directory tools may write into.
-func EnsureThreadDirs(cfg *Config, tid, uid string) error {
+func EnsureThreadDirs(tid, uid string) error {
 	for _, dir := range []string{
-		SandboxWorkDir(cfg, tid, uid),
-		SandboxUploadsDir(cfg, tid, uid),
-		SandboxOutputsDir(cfg, tid, uid),
+		SandboxWorkDir(tid, uid),
+		SandboxUploadsDir(tid, uid),
+		SandboxOutputsDir(tid, uid),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err

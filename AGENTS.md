@@ -53,6 +53,10 @@ The rule is "reduce indirection", not "abolish methods".
 - Behavior lives in plain top-level functions: no receivers, no hidden
   callbacks, no `deps.X.Y(...)`. The body reads top-to-bottom in one
   place.
+- Never use function-injection style for dependencies (`getenv func(...)`,
+  `getwd func(...)`, clocks, command runners). Call the real dependency in
+  production code; if tests need control, isolate the wrapper behind a small
+  test-only helper instead of threading functions through normal call paths.
 - When N callers all derive the same value from `cfg`, internalize the
   derivation in the callee. When seven struct fields only see two
   readers, delete the other five.

@@ -19,8 +19,8 @@ type executeArgs struct {
 }
 
 // GetExecuteTool returns the execute tool; sandbox routes when wired, else bash -lc.
-func GetExecuteTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
-	cwd := resolveRoot(root)
+func GetExecuteTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
+	cwd := resolveRoot()
 	return utils.InferTool(filesystem.ToolNameExecute, filesystem.ExecuteToolDesc,
 		func(ctx context.Context, in executeArgs) (string, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {

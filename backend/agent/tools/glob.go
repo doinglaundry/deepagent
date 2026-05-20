@@ -23,7 +23,7 @@ type globArgs struct {
 }
 
 // GetGlobTool returns the glob tool; results are absolute paths.
-func GetGlobTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
+func GetGlobTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGlob, filesystem.GlobToolDesc,
 		func(ctx context.Context, in globArgs) (string, error) {
 			if shouldUseSandbox(in.Path) {
@@ -38,10 +38,10 @@ func GetGlobTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseT
 					}
 				}
 			}
-			searchBase := resolveRoot(root)
+			searchBase := resolveRoot()
 			if in.Path != "" {
 				var err error
-				searchBase, err = getResolvedPath(root, in.Path)
+				searchBase, err = getResolvedPath(in.Path)
 				if err != nil {
 					return "", err
 				}

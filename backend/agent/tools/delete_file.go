@@ -16,14 +16,14 @@ type deleteFileArgs struct {
 }
 
 // GetDeleteFileTool returns the delete_file tool.
-func GetDeleteFileTool(root string) (tool.BaseTool, error) {
+func GetDeleteFileTool() (tool.BaseTool, error) {
 	return utils.InferTool("delete_file", deleteFileToolDesc,
 		func(ctx context.Context, in deleteFileArgs) (string, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
 			// Sandbox has no delete primitive; falls through to host fs.
-			path, err := getResolvedPath(root, in.FilePath)
+			path, err := getResolvedPath(in.FilePath)
 			if err != nil {
 				return "", err
 			}

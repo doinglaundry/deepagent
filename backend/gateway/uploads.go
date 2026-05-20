@@ -21,14 +21,14 @@ func (s *Server) handleUploadCreate(c *gin.Context) {
 	}
 	defer file.Close()
 
-	dest, err := uploads.Write(s.cfg, tid, uid, header.Filename, file)
+	dest, err := uploads.Write(tid, uid, header.Filename, file)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"path":        dest,
-		"filename":    header.Filename,
+		"path":         dest,
+		"filename":     header.Filename,
 		"virtual_path": "/mnt/user-data/uploads/" + header.Filename,
 	})
 }
@@ -37,7 +37,7 @@ func (s *Server) handleUploadCreate(c *gin.Context) {
 func (s *Server) handleUploadList(c *gin.Context) {
 	tid := c.Param("tid")
 	uid := runtime.GetEffectiveUserID(c.Request.Context())
-	files, err := uploads.List(s.cfg, tid, uid)
+	files, err := uploads.List(tid, uid)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -50,7 +50,7 @@ func (s *Server) handleUploadDelete(c *gin.Context) {
 	tid := c.Param("tid")
 	uid := runtime.GetEffectiveUserID(c.Request.Context())
 	name := c.Param("name")
-	if err := uploads.Delete(s.cfg, tid, uid, name); err != nil {
+	if err := uploads.Delete(tid, uid, name); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

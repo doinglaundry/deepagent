@@ -4,107 +4,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
-
-	"eino-cli/backend/consts"
 
 	"gopkg.in/yaml.v3"
 )
 
 const defaultYAMLModel = "kimi"
 
-// ModelEntry is the wire shape; legacy aliases (api_base/timeout) get
-// normalised into the canonical ModelConfig fields.
 type ModelEntry struct {
-	Name           string  `yaml:"name"`
-	Provider       string  `yaml:"provider"`
-	Model          string  `yaml:"model"`
-	BaseURL        string  `yaml:"base_url"`
-	APIBase        string  `yaml:"api_base"`
-	APIKey         string  `yaml:"api_key"`
-	APIKeyEnv      string  `yaml:"api_key_env"`
-	Timeout        float64 `yaml:"timeout"`
-	TimeoutSeconds int     `yaml:"timeout_seconds"`
-}
-
-// The types below mirror every top-level section of yaml/config.yaml so the
-// file shape has one authoritative declaration. Unused sections still parse.
-
-type TokenUsage struct {
-	Enabled bool `yaml:"enabled"`
-}
-
-// ToolObservability gates the ToolCallObservability middleware (§5 of
-// rebuild_builtin_tools spec). Disabled → middleware short-circuits to a
-// no-op endpoint passthrough, zero per-call overhead.
-type ToolObservability struct {
-	Enabled bool `yaml:"enabled"`
-}
-
-type ToolBlocks struct {
-	Enabled      bool `yaml:"enabled"`
-	PreviewLines int  `yaml:"preview_lines"`
-	ArgsMaxChars int  `yaml:"args_max_chars"`
-	configured   bool
-}
-
-func (tb *ToolBlocks) UnmarshalYAML(value *yaml.Node) error {
-	type rawToolBlocks ToolBlocks
-	var raw rawToolBlocks
-	if err := value.Decode(&raw); err != nil {
-		return err
-	}
-	*tb = ToolBlocks(raw)
-	tb.configured = true
-	return nil
-}
-
-func (tb ToolBlocks) Configured() bool {
-	return tb.configured
-}
-
-type ToolGroup struct {
-	Name string `yaml:"name"`
-}
-
-// Tool captures heterogeneous `tools:` entries; per-tool variants land in Extra.
-type Tool struct {
-	Name  string         `yaml:"name"`
-	Group string         `yaml:"group"`
-	Use   string         `yaml:"use"`
-	Extra map[string]any `yaml:",inline"`
-}
-
-type Uploads struct {
-	AutoConvertDocuments bool   `yaml:"auto_convert_documents"`
-	PDFConverter         string `yaml:"pdf_converter"`
-}
-
-type Title struct {
-	Enabled   bool   `yaml:"enabled"`
-	MaxWords  int    `yaml:"max_words"`
-	MaxChars  int    `yaml:"max_chars"`
-	ModelName string `yaml:"model_name"`
-}
-
-// SummarizationThreshold mixes integer counts and fractional ratios; hence float64.
-type SummarizationThreshold struct {
-	Type  string  `yaml:"type"`
-	Value float64 `yaml:"value"`
-}
-
-type Summarization struct {
-	Enabled                           bool                     `yaml:"enabled"`
-	ModelName                         string                   `yaml:"model_name"`
-	Trigger                           []SummarizationThreshold `yaml:"trigger"`
-	Keep                              SummarizationThreshold   `yaml:"keep"`
-	TrimTokensToSummarize             int                      `yaml:"trim_tokens_to_summarize"`
-	SummaryPrompt                     string                   `yaml:"summary_prompt"`
-	PreserveRecentSkillCount          int                      `yaml:"preserve_recent_skill_count"`
-	PreserveRecentSkillTokens         int                      `yaml:"preserve_recent_skill_tokens"`
-	PreserveRecentSkillTokensPerSkill int                      `yaml:"preserve_recent_skill_tokens_per_skill"`
-	SkillFileReadToolNames            []string                 `yaml:"skill_file_read_tool_names"`
+	Name           string `yaml:"name"`
+	Provider       string `yaml:"provider"`
+	Model          string `yaml:"model"`
+	BaseURL        string `yaml:"base_url"`
+	APIBase        string `yaml:"api_base"`
+	APIKey         string `yaml:"api_key"`
+	APIKeyEnv      string `yaml:"api_key_env"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
 
 type Memory struct {
@@ -120,8 +35,6 @@ type Memory struct {
 	EpisodicDefaultTTLSeconds int     `yaml:"episodic_default_ttl_seconds"`
 }
 
-// WebSearch wires the local web_search function tool to a real backend.
-// Disabled by default so network egress stays opt-in.
 type WebSearch struct {
 	Enabled        bool   `yaml:"enabled"`
 	Provider       string `yaml:"provider"` // bocha (only one supported today)
@@ -132,24 +45,6 @@ type WebSearch struct {
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
 
-type AgentsAPI struct {
-	Enabled bool `yaml:"enabled"`
-}
-
-type SkillEvolution struct {
-	Enabled             bool   `yaml:"enabled"`
-	ModerationModelName string `yaml:"moderation_model_name"`
-}
-
-type Checkpointer struct {
-	Type             string `yaml:"type"`
-	ConnectionString string `yaml:"connection_string"`
-}
-
-// ErrorHandling gates the LLM-call wrapper that classifies transport errors,
-// retries transient/busy with capped exponential backoff, and trips a circuit
-// breaker after N consecutive failures. Enabled is the master switch — when
-// false, the wrapper is skipped and the raw model error propagates.
 type ErrorHandling struct {
 	Enabled        bool                 `yaml:"enabled"`
 	Retry          RetryConfig          `yaml:"retry"`
@@ -167,9 +62,6 @@ type CircuitBreakerConfig struct {
 	RecoverySeconds  int `yaml:"recovery_seconds"`
 }
 
-// UnmarshalYAML intercepts `models:` (list → map); everything else flows through
-// the `type alias Config` trick to avoid infinite recursion. Runtime fields
-// (yaml:"-") stay zero and are filled by Load().
 func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 	type alias Config
 	aux := struct {
@@ -182,47 +74,10 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		return err
 	}
 	*c = Config(aux.alias)
-	c.Models = normalizeModels(aux.Models)
+	c.Models = GetModels(aux.Models)
 	return nil
 }
-
-// loadFromYAML decodes config.yaml; Models come back in runtime shape.
-func loadFromYAML(root string) (*Config, error) {
-
-	data, err := os.ReadFile(filepath.Join(root, "yaml", "config.yaml"))
-	if err != nil {
-		return nil, fmt.Errorf("read yaml config: %w", err)
-	}
-
-	var config Config
-	if err = yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("parse yaml config: %w", err)
-	}
-
-	config.RootDir = root
-
-	config.DefaultAgent = consts.DefaultAgentKey
-
-	config.Agents = map[string]*AgentConfig{
-		consts.DefaultAgentKey: {
-			Name:         consts.DefaultAgentKey,
-			Instruction:  consts.DefaultAgentInstruction,
-			MaxIteration: consts.DefaultAgentIterations,
-			Model:        config.DefaultModel,
-		},
-	}
-
-	skillFolderPath := filepath.Join(root, "backend", "skills")
-	if !slices.Contains(config.Skills.Paths, skillFolderPath) {
-		config.Skills.Paths = append(config.Skills.Paths, skillFolderPath)
-	}
-
-	return &config, nil
-}
-
-// normalizeModels converts []ModelEntry → map[name]*ModelConfig; falls back
-// to a built-in kimi default when the YAML declares none.
-func normalizeModels(entries []ModelEntry) map[string]*ModelConfig {
+func GetModels(entries []ModelEntry) map[string]*ModelConfig {
 	if len(entries) == 0 {
 		return map[string]*ModelConfig{
 			defaultYAMLModel: {
@@ -239,15 +94,16 @@ func normalizeModels(entries []ModelEntry) map[string]*ModelConfig {
 	out := make(map[string]*ModelConfig, len(entries))
 	for _, m := range entries {
 		modelCfg := ModelConfig{
-			Name:     m.Name,
-			Provider: m.Provider,
-			Model:    m.Model,
+			Name:           m.Name,
+			Provider:       m.Provider,
+			Model:          m.Model,
+			TimeoutSeconds: m.TimeoutSeconds,
 		}
-		if m.BaseURL != "" {
-			modelCfg.BaseURL = m.BaseURL
-		} else if m.APIBase != "" {
+		modelCfg.BaseURL = m.BaseURL
+		if modelCfg.BaseURL == "" {
 			modelCfg.BaseURL = m.APIBase
 		}
+
 		// API-key precedence: api_key_env → api_key:$VAR → literal.
 		switch {
 		case m.APIKeyEnv != "":
@@ -257,11 +113,7 @@ func normalizeModels(entries []ModelEntry) map[string]*ModelConfig {
 		case strings.TrimSpace(m.APIKey) != "":
 			modelCfg.APIKey = strings.TrimSpace(m.APIKey)
 		}
-		if m.TimeoutSeconds > 0 {
-			modelCfg.TimeoutSeconds = m.TimeoutSeconds
-		} else if m.Timeout > 0 {
-			modelCfg.TimeoutSeconds = int(m.Timeout)
-		}
+
 		if modelCfg.Provider == "" {
 			lower := strings.ToLower(modelCfg.BaseURL + m.Name)
 			switch {
@@ -278,4 +130,19 @@ func normalizeModels(entries []ModelEntry) map[string]*ModelConfig {
 		out[m.Name] = &modelCfg
 	}
 	return out
+}
+
+func loadFromYAML(root string) (*Config, error) {
+
+	data, err := os.ReadFile(filepath.Join(root, "yaml", "config.yaml"))
+	if err != nil {
+		return nil, fmt.Errorf("read yaml config: %w", err)
+	}
+
+	var config Config
+	if err = yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("parse yaml config: %w", err)
+	}
+
+	return &config, nil
 }

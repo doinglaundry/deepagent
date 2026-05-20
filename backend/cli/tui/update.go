@@ -450,16 +450,10 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitForStreamMsg(ch), m.spin.Tick)
 }
 
-// handleTraceEvent dispatches a TraceEvent. Before powers debug input dumps
-// plus user-facing tool blocks; After stays debug-only. Todos updates the
-// panel cache unconditionally — the panel is a first-class TUI affordance,
-// not a debug aid.
+// handleTraceEvent dispatches a TraceEvent. Before powers user-facing tool blocks.
 func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd) {
 	switch ev.Phase {
 	case middlewares.TracePhaseBefore:
-		if m.debug {
-			m.pushMessage("debug-input", formatDebugInput(ev))
-		}
 		if m.toolBlocksEnabled {
 			blocks := extractNewToolBlocks(ev.Messages, m.lastSeenMsgCount, &m.toolBlockSeq, m.toolArgsMaxChars)
 			for _, block := range blocks {
@@ -468,10 +462,6 @@ func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd)
 			}
 		}
 		m.lastSeenMsgCount = len(ev.Messages)
-	case middlewares.TracePhaseAfter:
-		if m.debug {
-			m.pushMessage("debug-output", formatDebugOutput(ev))
-		}
 	case middlewares.TracePhaseTodos:
 		prevH := m.todoPanelHeight()
 		m.todos = ev.Todos
@@ -571,28 +561,6 @@ func (m *Model) handlePlanCmd(text string) tea.Cmd {
 		state = "on"
 	}
 	m.pushMessage("system", fmt.Sprintf("plan mode = %s", state))
-	return nil
-}
-
-// handleDebugCmd processes "/debug [on|off|toggle]"; empty arg toggles.
-func (m *Model) handleDebugCmd(text string) tea.Cmd {
-	arg := strings.TrimSpace(strings.TrimPrefix(text, "/debug"))
-	switch strings.ToLower(arg) {
-	case "", "toggle":
-		m.debug = !m.debug
-	case "on":
-		m.debug = true
-	case "off":
-		m.debug = false
-	default:
-		m.pushMessage("system", "usage: /debug [on|off|toggle]")
-		return nil
-	}
-	state := "off"
-	if m.debug {
-		state = "on"
-	}
-	m.pushMessage("system", fmt.Sprintf("debug = %s", state))
 	return nil
 }
 

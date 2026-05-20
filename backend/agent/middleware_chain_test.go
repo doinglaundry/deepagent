@@ -24,31 +24,29 @@ func makeChainTestCfg() *config.Config {
 func TestGetChatModelMiddlewares_DefaultOrder(t *testing.T) {
 	chain := GetChatModelMiddlewares(context.Background(), "default", false, nil, makeChainTestCfg(), nil, nil)
 
-	wantOrder := []reflect.Type{
-		reflect.TypeOf(&middlewares.AgentState{}),
-		reflect.TypeOf(&middlewares.ToolCallObservability{}),
-		reflect.TypeOf(&middlewares.ToolErrorHandling{}),
-		nil, // patchtoolcalls.middleware — unexported, matched by string below
-		reflect.TypeOf(&middlewares.LoopDetection{}),
-		reflect.TypeOf(&middlewares.PlanReminder{}),
-		reflect.TypeOf(&middlewares.TodoReminder{}),
-		reflect.TypeOf(&middlewares.SandboxMiddleware{}),
-		reflect.TypeOf(&middlewares.MessagesLog{}),
-		reflect.TypeOf(&middlewares.Trace{}),
-		reflect.TypeOf(&middlewares.Clarification{}),
+	wantOrder := []string{
+		"*middlewares.AgentState",
+		"*middlewares.ToolCallObservability",
+		"*middlewares.ToolErrorHandling",
+		"patchtoolcalls",
+		"*middlewares.LoopDetection",
+		"*middlewares.Memory",
+		"*middlewares.TokenUsage",
+		"*middlewares.HITL",
+		"*summarization.middleware",
+		"*middlewares.PlanReminder",
+		"*middlewares.TodoReminder",
+		"*middlewares.SandboxMiddleware",
+		"*middlewares.MessagesLog",
+		"*middlewares.Trace",
+		"*middlewares.Clarification",
 	}
 	if len(chain) != len(wantOrder) {
 		t.Fatalf("len(chain) = %d, want %d", len(chain), len(wantOrder))
 	}
 	for i, want := range wantOrder {
-		got := reflect.TypeOf(chain[i])
-		if want == nil {
-			if !strings.Contains(got.String(), "patchtoolcalls") {
-				t.Fatalf("slot %d: got %v, want patchtoolcalls middleware", i, got)
-			}
-			continue
-		}
-		if got != want {
+		got := reflect.TypeOf(chain[i]).String()
+		if !strings.Contains(got, want) {
 			t.Fatalf("slot %d: got %v, want %v", i, got, want)
 		}
 	}
@@ -61,14 +59,14 @@ func TestGetChatModelMiddlewares_DefaultOrder(t *testing.T) {
 	}
 }
 
-func TestGetChatModelMiddlewares_SummarizationDisabled(t *testing.T) {
+func TestGetChatModelMiddlewares_SummarizationSkippedWithoutModel(t *testing.T) {
 	cfg := makeChainTestCfg()
-	cfg.Summarization = config.Summarization{Enabled: false}
+	cfg.Models["primary"].Provider = "unknown"
 	chain := GetChatModelMiddlewares(context.Background(), "default", false, nil, cfg, nil, nil)
 
 	for _, mw := range chain {
 		if reflect.TypeOf(mw).String() == "*summarization.middleware" {
-			t.Fatalf("summarization slot should be skipped when disabled")
+			t.Fatalf("summarization slot should be skipped without a summary model")
 		}
 	}
 }

@@ -38,16 +38,15 @@ func TestHandlePopupKey_UpArrowWraps(t *testing.T) {
 	}
 }
 
-// Tab accepts the selected entry by rewriting input to "/<name> ". For
-// "/de" only /debug matches → sel=0 → input becomes "/debug ".
+// Tab accepts the selected entry by rewriting input to "/<name> ".
 func TestHandlePopupKey_TabAcceptsSelectedCommand(t *testing.T) {
-	m := newModelForPopupKeys("/de", 0)
+	m := newModelForPopupKeys("/pl", 0)
 	_, handled := m.handlePopupKey(tea.KeyMsg{Type: tea.KeyTab})
 	if !handled {
 		t.Fatal("Tab must be consumed when popup is open")
 	}
-	if got := m.input.Value(); got != "/debug " {
-		t.Errorf("Tab must rewrite input to /debug plus trailing space; got %q", got)
+	if got := m.input.Value(); got != "/plan " {
+		t.Errorf("Tab must rewrite input to /plan plus trailing space; got %q", got)
 	}
 }
 
@@ -74,7 +73,7 @@ func TestHandlePopupKey_EnterFallsThroughForSubmit(t *testing.T) {
 // (abort streaming, clear input) only runs on a subsequent Esc, when
 // the popup is no longer claiming the key.
 func TestHandlePopupKey_EscClosesPopupByEmptyingInput(t *testing.T) {
-	m := newModelForPopupKeys("/de", 0)
+	m := newModelForPopupKeys("/pl", 0)
 	_, handled := m.handlePopupKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if !handled {
 		t.Fatal("Esc must be consumed when popup is open")
@@ -93,7 +92,7 @@ func TestOnInputChanged_ResetsSelOnRangeShrink(t *testing.T) {
 	ti.SetValue("/")
 	m := &Model{input: ti, popupSel: 5} // sel=5 valid for the full pool
 
-	m.input.SetValue("/de")
+	m.input.SetValue("/pl")
 	m.onInputChanged()
 
 	if m.popupSel != 0 {

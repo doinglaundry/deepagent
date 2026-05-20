@@ -12,18 +12,18 @@ import (
 
 func TestLoadEnabledSkillsFromConfig_FromPaths(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "demo"), 0o755); err != nil {
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	skillDir := filepath.Join(root, "backend", "skills", "demo")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "demo", "SKILL.md"),
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
 		[]byte("---\nname: demo\ndescription: A demo skill.\n---\n"), 0o644); err != nil {
 		t.Fatalf("write SKILL.md: %v", err)
 	}
 
-	cfg := &config.Config{
-		Skills: config.SkillsConfig{Paths: []string{root}},
-	}
-	got := loadEnabledSkillsFromConfig(cfg)
+	got := loadEnabledSkillsFromConfig()
 	if len(got) != 1 {
 		t.Fatalf("loadEnabledSkillsFromConfig: got %d, want 1: %+v", len(got), got)
 	}
@@ -33,43 +33,30 @@ func TestLoadEnabledSkillsFromConfig_FromPaths(t *testing.T) {
 }
 
 func TestLoadEnabledSkillsFromConfig_NoPaths(t *testing.T) {
-	if got := loadEnabledSkillsFromConfig(&config.Config{}); got != nil {
+	root := t.TempDir()
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	if got := loadEnabledSkillsFromConfig(); len(got) != 0 {
 		t.Fatalf("empty config should yield nil skill list, got %+v", got)
 	}
 }
 
 func TestDeferredToolNamesFromConfig_NilWhenEmpty(t *testing.T) {
-	if got := DeferredToolNamesFromConfig(&config.Config{}); got != nil {
+	if got := DeferredToolNamesFromConfig(); got != nil {
 		t.Fatal("expected nil slice when no deferred tools configured")
-	}
-	cfg := &config.Config{
-		ToolSearch: config.ToolSearchConfig{
-			Deferred: []config.DeferredToolEntry{{Name: "fancy_search"}},
-		},
-	}
-	got := DeferredToolNamesFromConfig(cfg)
-	if len(got) != 1 || got[0] != "fancy_search" {
-		t.Fatalf("DeferredToolNamesFromConfig mismatch: %+v", got)
 	}
 }
 
-func TestGetSystemPrompt_SkillsAndDeferredSectionsRendered(t *testing.T) {
+func TestGetSystemPrompt_SkillsRendered(t *testing.T) {
 	root := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(root, "demo"), 0o755)
-	_ = os.WriteFile(filepath.Join(root, "demo", "SKILL.md"),
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	skillDir := filepath.Join(root, "backend", "skills", "demo")
+	_ = os.MkdirAll(skillDir, 0o755)
+	_ = os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
 		[]byte("---\nname: demo\ndescription: Demo skill.\n---\n"), 0o644)
 
-	cfg := &config.Config{
-		Skills: config.SkillsConfig{Paths: []string{root}},
-		ToolSearch: config.ToolSearchConfig{
-			Enabled: true,
-			Deferred: []config.DeferredToolEntry{
-				{Name: "fancy_search"},
-			},
-		},
-	}
-
-	out := GetSystemPrompt("default", false, cfg)
+	out := GetSystemPrompt("default", false, &config.Config{})
 
 	if !strings.Contains(out, "<available_skills>") {
 		t.Fatalf("available_skills section missing from prompt:\n%s", out)
@@ -77,8 +64,8 @@ func TestGetSystemPrompt_SkillsAndDeferredSectionsRendered(t *testing.T) {
 	if !strings.Contains(out, "<name>demo</name>") {
 		t.Fatalf("demo skill not rendered:\n%s", out)
 	}
-	if !strings.Contains(out, "<available-deferred-tools>") || !strings.Contains(out, "fancy_search") {
-		t.Fatalf("deferred-tools section missing from prompt")
+	if strings.Contains(out, "<available-deferred-tools>") {
+		t.Fatalf("deferred-tools section should be omitted when default list is empty")
 	}
 }
 
@@ -89,8 +76,10 @@ func TestGetSystemPrompt_SkillsAndDeferredSectionsRendered(t *testing.T) {
 // (formerly short) description string. Pin this so future edits cannot
 // reintroduce the bug.
 func TestGetSystemPrompt_SubagentExamplesHaveNoPromptArg(t *testing.T) {
-	cfg := &config.Config{RootDir: t.TempDir()}
-	out := GetSystemPrompt("default", true, cfg)
+	root := t.TempDir()
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	out := GetSystemPrompt("default", true, &config.Config{})
 	for _, bad := range []string{"prompt=\"...\"", "prompt=\"", "\"prompt\":"} {
 		if strings.Contains(out, bad) {
 			t.Fatalf("found hallucinated %q in <subagent_system> examples; task tool schema is {subagent_type, description} only", bad)
@@ -106,8 +95,10 @@ func TestGetSystemPrompt_SubagentExamplesHaveNoPromptArg(t *testing.T) {
 // without the trailing two-space pad in the helper output the next bullet
 // loses its leading indent and the section visibly breaks.
 func TestGetSystemPrompt_SubagentEnabledKeepsBulletIndent(t *testing.T) {
-	cfg := &config.Config{RootDir: t.TempDir()}
-	out := GetSystemPrompt("default", true, cfg)
+	root := t.TempDir()
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	out := GetSystemPrompt("default", true, &config.Config{})
 	if !strings.Contains(out, "**\n  - Never write down your full final answer") {
 		t.Fatalf("subagent_thinking placeholder broke <thinking_style> bullet indent:\n%s", out)
 	}
@@ -117,17 +108,16 @@ func TestGetSystemPrompt_SubagentEnabledKeepsBulletIndent(t *testing.T) {
 }
 
 func TestGetSystemPrompt_DoesNotInjectMemory(t *testing.T) {
-	cfg := &config.Config{
-		RootDir: t.TempDir(),
-		Memory:  config.Memory{Enabled: true, InjectionEnabled: true, MaxInjectionTokens: 1024},
-	}
+	root := t.TempDir()
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
 	data := memorystore.GetEmptyMemoryData()
 	data.User.WorkContext = memorystore.Section{Summary: "memory belongs in middleware"}
-	if err := memorystore.NewStoreFromConfig(cfg).Save("default", data); err != nil {
+	if err := memorystore.NewStoreFromConfig().Save("default", data); err != nil {
 		t.Fatal(err)
 	}
 
-	out := GetSystemPrompt("default", false, cfg)
+	out := GetSystemPrompt("default", false, &config.Config{})
 	if strings.Contains(out, "<memory>") {
 		t.Fatalf("system prompt should not inject <memory>; middleware owns memory injection, got:\n%s", out)
 	}
@@ -163,7 +153,9 @@ func TestLoadAgentsMDPrompt_ExtractsAgentDisciplineOnly(t *testing.T) {
 		[]byte(agentsMDFixture), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := loadAgentsMDPrompt(&config.Config{RootDir: root})
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	got := loadAgentsMDPrompt()
 
 	if !strings.HasPrefix(got, "<agent_discipline>\n") ||
 		!strings.HasSuffix(got, "\n</agent_discipline>") {
@@ -189,24 +181,22 @@ func TestLoadAgentsMDPrompt_MissingSectionReturnsEmpty(t *testing.T) {
 		[]byte("# AGENTS.md\n\n## Core Principles\n\nbody only\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := loadAgentsMDPrompt(&config.Config{RootDir: root}); got != "" {
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	if got := loadAgentsMDPrompt(); got != "" {
 		t.Fatalf("missing §Agent Working Discipline§ should produce empty, got %q", got)
 	}
 }
 
 func TestLoadAgentsMDPromptMissingFile(t *testing.T) {
-	if got := loadAgentsMDPrompt(&config.Config{RootDir: t.TempDir()}); got != "" {
+	cleanup := config.SetRootDirForTest(t.TempDir())
+	defer cleanup()
+	if got := loadAgentsMDPrompt(); got != "" {
 		t.Fatalf("missing AGENTS.md should be empty, got %q", got)
 	}
 }
 
-func TestLoadAgentsMDPromptNilCfg(t *testing.T) {
-	if got := loadAgentsMDPrompt(nil); got != "" {
-		t.Fatalf("nil cfg must be empty (defensive zero-value), got %q", got)
-	}
-}
-
-// AGENTS.md present in cfg.RootDir → system prompt embeds the
+// AGENTS.md present in RootDir() → system prompt embeds the
 // <agent_discipline> wrapper, but §核心原则§ stays out.
 func TestGetSystemPrompt_AgentDisciplineInjected(t *testing.T) {
 	root := t.TempDir()
@@ -214,8 +204,9 @@ func TestGetSystemPrompt_AgentDisciplineInjected(t *testing.T) {
 		[]byte(agentsMDFixture), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{RootDir: root}
-	out := GetSystemPrompt("default", false, cfg)
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	out := GetSystemPrompt("default", false, &config.Config{})
 
 	if !strings.Contains(out, "<agent_discipline>\nDISCIPLINE_BODY_MARKER") {
 		t.Fatalf("expected <agent_discipline> wrapper opening with body:\n%s", out)
@@ -230,8 +221,9 @@ func TestGetSystemPrompt_AgentDisciplineInjected(t *testing.T) {
 // presence requires matching the precise "<agent_discipline>\n" opening
 // rather than the bare tag.
 func TestGetSystemPrompt_NoAgentsMDOmitsSection(t *testing.T) {
-	cfg := &config.Config{RootDir: t.TempDir()}
-	out := GetSystemPrompt("default", false, cfg)
+	cleanup := config.SetRootDirForTest(t.TempDir())
+	defer cleanup()
+	out := GetSystemPrompt("default", false, &config.Config{})
 	if strings.Contains(out, "<agent_discipline>\n") {
 		t.Fatalf("missing AGENTS.md must not produce wrapper:\n%s", out)
 	}

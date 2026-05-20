@@ -30,10 +30,8 @@ type webSearchArgs struct {
 	MaxResults int    `json:"max_results,omitempty" jsonschema:"description=Max results to return; defaults to provider config (commonly 5)"`
 }
 
-// GetWebSearchTool returns the "web_search" function tool. Backed by Bocha
-// only today; switch on cfg.WebSearch.Provider when more backends land.
-func GetWebSearchTool(cfg *config.Config) (tool.BaseTool, error) {
-	wsCfg := cfg.WebSearch
+// GetWebSearchTool returns the "web_search" function tool.
+func GetWebSearchTool(wsCfg config.WebSearch) (tool.BaseTool, error) {
 	return utils.InferTool(webSearchToolName, webSearchToolDesc,
 		func(ctx context.Context, in webSearchArgs) (string, error) {
 			if !wsCfg.Enabled {

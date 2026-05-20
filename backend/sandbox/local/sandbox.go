@@ -22,25 +22,22 @@ const commandTimeout = 10 * time.Minute
 
 // Sandbox is the per-thread (or generic "local") sandbox instance.
 type Sandbox struct {
-	id       string
-	mappings []PathMapping
-
+	id        string
+	mappings  []PathMapping
 	writtenMu sync.RWMutex
-	written   map[string]struct{}
+	written   map[string]any
 }
 
 func newSandbox(id string, mappings []PathMapping) *Sandbox {
 	return &Sandbox{
 		id:       id,
 		mappings: mappings,
-		written:  map[string]struct{}{},
+		written:  map[string]any{},
 	}
 }
 
-// ID returns the sandbox id.
 func (s *Sandbox) ID() string { return s.id }
 
-// ExecuteCommand runs cmd through a host shell, rewriting /mnt/* in/out.
 func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error) {
 	resolved := resolvePathsInCommand(s.mappings, cmd)
 	shell, err := pickShell()
@@ -58,25 +55,27 @@ func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error
 	}
 	stdout, stderr, exitCode, runErr := runShell(c)
 
+	out := reverseResolvePathsInOutput(s.mappings, formatCommandOutput(stdout, stderr, exitCode))
+	if runErr != nil && exitCode == 0 {
+		return out, sandbox.NewCommandError(runErr.Error(), cmd, exitCode)
+	}
+	return out, nil
+}
+
+func formatCommandOutput(stdout, stderr string, exitCode int) string {
 	out := stdout
-	if stderr != "" {
-		if out != "" {
-			out += "\nStd Error:\n" + stderr
-		} else {
-			out = stderr
-		}
+	if stderr != "" && out != "" {
+		out += "\nStd Error:\n" + stderr
+	} else if stderr != "" {
+		out = stderr
 	}
 	if exitCode != 0 {
 		out += fmt.Sprintf("\nExit Code: %d", exitCode)
 	}
 	if out == "" {
-		out = "(no output)"
+		return "(no output)"
 	}
-	out = reverseResolvePathsInOutput(s.mappings, out)
-	if runErr != nil && exitCode == 0 {
-		return out, sandbox.NewCommandError(runErr.Error(), cmd, exitCode)
-	}
-	return out, nil
+	return out
 }
 
 // pickShell returns the first usable shell: zsh > bash > sh, or pwsh > cmd on Windows.
@@ -157,23 +156,10 @@ func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 
 // WriteFile creates/overwrites/appends; read-only mounts surface as PermissionError.
 func (s *Sandbox) WriteFile(ctx context.Context, path, content string, appendMode bool) error {
-	r, err := resolvePath(s.mappings, path)
+	r, err := s.prepareWritePath(path, "write")
 	if err != nil {
 		return err
 	}
-	if r.Mapping != nil && r.Mapping.ReadOnly {
-		return sandbox.NewPermissionError("read-only file system", path)
-	}
-	if isReadOnlyPath(s.mappings, r.Path) {
-		return sandbox.NewPermissionError("read-only file system", path)
-	}
-	if dir := filepath.Dir(r.Path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return wrapFileError(err, path, "write")
-		}
-	}
-	resolvedContent := resolvePathsInContent(s.mappings, content)
-
 	flag := os.O_CREATE | os.O_WRONLY
 	if appendMode {
 		flag |= os.O_APPEND
@@ -185,7 +171,7 @@ func (s *Sandbox) WriteFile(ctx context.Context, path, content string, appendMod
 		return wrapFileError(err, path, "write")
 	}
 	defer f.Close()
-	if _, err := f.WriteString(resolvedContent); err != nil {
+	if _, err := f.WriteString(resolvePathsInContent(s.mappings, content)); err != nil {
 		return wrapFileError(err, path, "write")
 	}
 
@@ -197,25 +183,28 @@ func (s *Sandbox) WriteFile(ctx context.Context, path, content string, appendMod
 
 // UpdateFile is the binary overwrite path; never registers agent-written (no strings to mask).
 func (s *Sandbox) UpdateFile(ctx context.Context, path string, content []byte) error {
-	r, err := resolvePath(s.mappings, path)
+	r, err := s.prepareWritePath(path, "update")
 	if err != nil {
 		return err
-	}
-	if r.Mapping != nil && r.Mapping.ReadOnly {
-		return sandbox.NewPermissionError("read-only file system", path)
-	}
-	if isReadOnlyPath(s.mappings, r.Path) {
-		return sandbox.NewPermissionError("read-only file system", path)
-	}
-	if dir := filepath.Dir(r.Path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return wrapFileError(err, path, "update")
-		}
 	}
 	if err := os.WriteFile(r.Path, content, 0o644); err != nil {
 		return wrapFileError(err, path, "update")
 	}
 	return nil
+}
+
+func (s *Sandbox) prepareWritePath(path, op string) (resolved, error) {
+	r, err := resolvePath(s.mappings, path)
+	if err != nil {
+		return resolved{}, err
+	}
+	if r.Mapping != nil && r.Mapping.ReadOnly || isReadOnlyPath(s.mappings, r.Path) {
+		return resolved{}, sandbox.NewPermissionError("read-only file system", path)
+	}
+	if err := os.MkdirAll(filepath.Dir(r.Path), 0o755); err != nil {
+		return resolved{}, wrapFileError(err, path, op)
+	}
+	return r, nil
 }
 
 // ListDir returns entries under path up to maxDepth (default 2).
@@ -231,17 +220,19 @@ func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]str
 	if err != nil {
 		return nil, wrapFileError(err, path, "list")
 	}
-	out := make([]string, 0, len(entries))
-	for _, e := range entries {
-		isDir := strings.HasSuffix(e, "/") || strings.HasSuffix(e, `\`)
-		stripped := strings.TrimRight(e, `/\`)
-		reversed := reverseResolvePath(s.mappings, stripped)
-		if isDir && !strings.HasSuffix(reversed, "/") {
-			reversed += "/"
-		}
-		out = append(out, reversed)
+	for i, e := range entries {
+		entries[i] = s.reverseListEntry(e)
 	}
-	return out, nil
+	return entries, nil
+}
+
+func (s *Sandbox) reverseListEntry(entry string) string {
+	isDir := strings.HasSuffix(entry, "/") || strings.HasSuffix(entry, `\`)
+	reversed := reverseResolvePath(s.mappings, strings.TrimRight(entry, `/\`))
+	if isDir && !strings.HasSuffix(reversed, "/") {
+		return reversed + "/"
+	}
+	return reversed
 }
 
 // Glob walks path matching pattern via search.FindGlobMatches.

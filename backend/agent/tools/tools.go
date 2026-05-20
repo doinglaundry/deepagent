@@ -7,32 +7,29 @@ import (
 	"eino-cli/backend/sandbox"
 )
 
-// BuildBuiltinTools returns the fixed built-in tool set; root is read
-// from cfg.RootDir (single config.Config source — see AGENTS.md "Pass
-// less data"). Optional tools (web_search) are appended only when their
+// BuildBuiltinTools returns the fixed built-in tool set. Optional tools (web_search) are appended only when their
 // yaml flag is on, so the LLM does not see a tool that would always
 // error out.
 func BuildBuiltinTools(cfg *config.Config, sandboxManager sandbox.SandboxManager) []tool.BaseTool {
-	root := cfg.RootDir
 	tools := []tool.BaseTool{
 		mustBuild(GetAskClarificationTool()),
-		mustBuild(GetLsTool(root, sandboxManager)),
-		mustBuild(GetReadFileTool(root, sandboxManager)),
-		mustBuild(GetWriteFileTool(root, sandboxManager)),
-		mustBuild(GetEditFileTool(root, sandboxManager)),
-		mustBuild(GetGlobTool(root, sandboxManager)),
-		mustBuild(GetGrepTool(root, sandboxManager)),
-		mustBuild(GetExecuteTool(root, sandboxManager)),
-		mustBuild(GetApplyPatchTool(root)),
-		mustBuild(GetDeleteFileTool(root)),
-		mustBuild(GetRgTool(root)),
-		mustBuild(GetSemanticSearchTool(root)),
-		mustBuild(GetReadLintsTool(root)),
-		mustBuild(GetShellTool(root, sandboxManager)),
-		mustBuild(GetAwaitShellTool(root)),
+		mustBuild(GetLsTool(sandboxManager)),
+		mustBuild(GetReadFileTool(sandboxManager)),
+		mustBuild(GetWriteFileTool(sandboxManager)),
+		mustBuild(GetEditFileTool(sandboxManager)),
+		mustBuild(GetGlobTool(sandboxManager)),
+		mustBuild(GetGrepTool(sandboxManager)),
+		mustBuild(GetExecuteTool(sandboxManager)),
+		mustBuild(GetApplyPatchTool()),
+		mustBuild(GetDeleteFileTool()),
+		mustBuild(GetRgTool()),
+		mustBuild(GetSemanticSearchTool()),
+		mustBuild(GetReadLintsTool()),
+		mustBuild(GetShellTool(sandboxManager)),
+		mustBuild(GetAwaitShellTool()),
 	}
 	if cfg.WebSearch.Enabled {
-		tools = append(tools, mustBuild(GetWebSearchTool(cfg)))
+		tools = append(tools, mustBuild(GetWebSearchTool(cfg.WebSearch)))
 	}
 	return tools
 }

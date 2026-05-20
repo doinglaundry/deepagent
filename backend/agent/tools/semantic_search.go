@@ -28,10 +28,10 @@ type semanticMatch struct {
 	text  string
 }
 
-func GetSemanticSearchTool(root string) (tool.BaseTool, error) {
+func GetSemanticSearchTool() (tool.BaseTool, error) {
 	return utils.InferTool("semantic_search", semanticSearchToolDesc,
 		func(ctx context.Context, in semanticSearchArgs) (string, error) {
-			return semanticSearch(root, in)
+			return semanticSearch(resolveRoot(), in)
 		})
 }
 
@@ -40,10 +40,10 @@ func semanticSearch(root string, in semanticSearchArgs) (string, error) {
 	if len(terms) == 0 {
 		return "", fmt.Errorf("query must include searchable terms")
 	}
-	searchPath := resolveRoot(root)
+	searchPath := resolveRoot()
 	if strings.TrimSpace(in.Path) != "" {
 		var err error
-		searchPath, err = getResolvedPath(root, in.Path)
+		searchPath, err = getResolvedPath(in.Path)
 		if err != nil {
 			return "", err
 		}

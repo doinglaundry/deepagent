@@ -5,37 +5,29 @@ package tools
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"eino-cli/backend/config"
 )
 
-// resolveRoot returns root, falling back to os.Getwd then "." when empty.
-// Mirrors legacy fs_backend.resolveRoot so existing test fixtures behave
-// identically post-migration.
-func resolveRoot(root string) string {
-	if strings.TrimSpace(root) != "" {
-		return root
-	}
-	if cwd, err := os.Getwd(); err == nil && cwd != "" {
-		return cwd
-	}
-	return "."
+func resolveRoot() string {
+	return config.RootDir()
 }
 
 // resolvePath joins p against the resolved root unless p is already absolute.
-func resolvePath(root, p string) string {
+func resolvePath(p string) string {
 	if filepath.IsAbs(p) {
 		return p
 	}
-	return filepath.Join(resolveRoot(root), p)
+	return filepath.Join(resolveRoot(), p)
 }
 
-func getResolvedPath(root, p string) (string, error) {
+func getResolvedPath(p string) (string, error) {
 	if strings.TrimSpace(p) == "" {
 		return "", fmt.Errorf("path must not be empty")
 	}
-	base, err := filepath.Abs(resolveRoot(root))
+	base, err := filepath.Abs(resolveRoot())
 	if err != nil {
 		return "", err
 	}

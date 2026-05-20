@@ -46,7 +46,7 @@ func (r *DeepAgentRuntime) ImportHistory(payload []byte) error
 func (r *DeepAgentRuntime) RollbackToHistory(payload []byte) error
 ```
 
-`RollbackToHistory` imports history and resets the trace turn. It does not toggle plan/debug flags.
+`RollbackToHistory` imports history and resets the trace turn. It does not toggle plan mode.
 
 Add rollback metadata to `runs.Record`:
 

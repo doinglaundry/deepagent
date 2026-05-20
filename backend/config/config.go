@@ -25,27 +25,28 @@ func Load(root string) (config *Config, err error) {
 		return nil, fmt.Errorf("default_model %q not found in models list", defaultModel)
 	}
 
-	err = isModelConfigValid(defaultModelCfg)
-	if err != nil {
-		return nil, err
-	}
+	err = validateModelConfig(defaultModelCfg)
+	normalizeSandbox(&config.Sandbox)
 
-	if config.Sandbox.Image == "" {
-		config.Sandbox.Image = consts.DefaultSandboxImage
-	}
-	if config.Sandbox.ContainerPrefix == "" {
-		config.Sandbox.ContainerPrefix = consts.DefaultSandboxContainerPrefix
-	}
-	if config.Sandbox.IdleTimeout == 0 {
-		config.Sandbox.IdleTimeout = consts.DefaultSandboxIdleTimeout
-	}
-	if config.Sandbox.Replicas == 0 {
-		config.Sandbox.Replicas = consts.DefaultSandboxReplicas
-	}
-	return
+	return config, err
 }
 
-func isModelConfigValid(m *ModelConfig) error {
+func normalizeSandbox(s *SandboxConfig) {
+	if s.Image == "" {
+		s.Image = consts.DefaultSandboxImage
+	}
+	if s.ContainerPrefix == "" {
+		s.ContainerPrefix = consts.DefaultSandboxContainerPrefix
+	}
+	if s.IdleTimeout == 0 {
+		s.IdleTimeout = consts.DefaultSandboxIdleTimeout
+	}
+	if s.Replicas == 0 {
+		s.Replicas = consts.DefaultSandboxReplicas
+	}
+}
+
+func validateModelConfig(m *ModelConfig) error {
 	if m == nil {
 		return errors.New("model config is nil")
 	}

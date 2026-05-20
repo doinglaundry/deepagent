@@ -26,7 +26,7 @@ type Memory struct {
 	injected bool
 }
 
-// NewMemory returns a Memory middleware; attach when AppConfig.Memory.Enabled.
+// NewMemory returns the default-on Memory middleware.
 func NewMemory(hooks MemoryHooks) *Memory {
 	return &Memory{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},

@@ -10,10 +10,11 @@ import (
 	"eino-cli/backend/config"
 )
 
-func testCfg(t *testing.T) *config.Config {
+func setTestRoot(t *testing.T) {
 	t.Helper()
 	tmp := t.TempDir()
-	return &config.Config{RootDir: tmp}
+	cleanup := config.SetRootDirForTest(tmp)
+	t.Cleanup(cleanup)
 }
 
 func TestNormalizeFilename(t *testing.T) {
@@ -41,10 +42,10 @@ func TestNormalizeFilename(t *testing.T) {
 }
 
 func TestWriteListDelete(t *testing.T) {
-	cfg := testCfg(t)
+	setTestRoot(t)
 	tid := "t1"
 	uid := "user1"
-	dest, err := Write(cfg, tid, uid, "hello.txt", strings.NewReader("hi"))
+	dest, err := Write(tid, uid, "hello.txt", strings.NewReader("hi"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,11 +53,11 @@ func TestWriteListDelete(t *testing.T) {
 	if err != nil || string(data) != "hi" {
 		t.Fatalf("dest content mismatch: %q (err=%v)", data, err)
 	}
-	files, err := List(cfg, tid, uid)
+	files, err := List(tid, uid)
 	if err != nil || len(files) != 1 || files[0].Filename != "hello.txt" {
 		t.Fatalf("list mismatch: %+v err=%v", files, err)
 	}
-	if err := Delete(cfg, tid, uid, "hello.txt"); err != nil {
+	if err := Delete(tid, uid, "hello.txt"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dest); !os.IsNotExist(err) {
@@ -69,26 +70,26 @@ func TestWriteStripsPathSegments(t *testing.T) {
 	// inside the uploads dir — that's the correct behaviour: the LLM
 	// never gets to write outside its uploads scope, but a confused
 	// filename ending in `passwd` isn't a hard error either.
-	cfg := testCfg(t)
-	dest, err := Write(cfg, "t1", "u1", "../etc/passwd", strings.NewReader("x"))
+	setTestRoot(t)
+	dest, err := Write("t1", "u1", "../etc/passwd", strings.NewReader("x"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if filepath.Base(dest) != "passwd" {
 		t.Fatalf("expected dest to be basename'd, got %s", dest)
 	}
-	base := config.SandboxUploadsDir(cfg, "t1", "u1")
+	base := config.SandboxUploadsDir("t1", "u1")
 	if !strings.HasPrefix(dest, base+string(filepath.Separator)) {
 		t.Fatalf("dest %s escaped uploads dir %s", dest, base)
 	}
 }
 
 func TestWriteRejectsSymlinkDestination(t *testing.T) {
-	cfg := testCfg(t)
+	setTestRoot(t)
 	tid := "t1"
 	uid := "u1"
 	// Pre-create a symlink at the destination filename pointing outside.
-	base := config.SandboxUploadsDir(cfg, tid, uid)
+	base := config.SandboxUploadsDir(tid, uid)
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +97,7 @@ func TestWriteRejectsSymlinkDestination(t *testing.T) {
 	if err := os.Symlink("/etc/passwd", bad); err != nil {
 		t.Skipf("symlink unsupported on this fs: %v", err)
 	}
-	_, err := Write(cfg, tid, uid, "evil.txt", strings.NewReader("pwn"))
+	_, err := Write(tid, uid, "evil.txt", strings.NewReader("pwn"))
 	if err == nil {
 		t.Fatal("expected open to refuse symlink")
 	}

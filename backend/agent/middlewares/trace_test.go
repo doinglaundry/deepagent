@@ -208,9 +208,8 @@ func TestTrace_EmitsTokensPhaseWhenSnapshotWired(t *testing.T) {
 	}
 }
 
-// nil snapshot → no TracePhaseTokens event. This is the production
-// path for cfg.TokenUsage.Enabled = false; the wire-up in
-// GetChatModelMiddlewares leaves TokenSnapshot zero-valued.
+// nil snapshot -> no TracePhaseTokens event. Test stubs can leave
+// TokenSnapshot zero-valued.
 func TestTrace_TokensPhaseSkippedWithoutSnapshot(t *testing.T) {
 	tr := NewTrace(testAgentName)
 	rec := &recordingConsumer{}

@@ -40,8 +40,6 @@ func (r *historyRuntime) RollbackToHistory(payload []byte) error {
 
 func (r *historyRuntime) SetPlanMode(_ context.Context, on bool) (bool, error) { return on, nil }
 
-func (r *historyRuntime) SetDebugMode(_ context.Context, on bool) (bool, error) { return on, nil }
-
 func (r *historyRuntime) Name() string { return "history-runtime" }
 
 func TestRunHistoryRenderAndKeys(t *testing.T) {
@@ -73,7 +71,9 @@ func TestRunHistoryRenderAndKeys(t *testing.T) {
 
 func TestRunHistoryRollbackRestoresSelectedPostRun(t *testing.T) {
 	root := t.TempDir()
-	runStore := runs.NewStore(config.RunsDir(&config.Config{RootDir: root}))
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	runStore := runs.NewStore(config.RunsDir())
 	rollbackStore := rollback.NewStore(root)
 	now := time.Now()
 	run1 := runs.Record{

@@ -11,45 +11,36 @@ import (
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/agent/tools"
 	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 	"eino-cli/backend/sandbox"
 )
 
-// MakeLeadAgent assembles the deep agent for rt.AgentName and returns
-// the lead's *Trace alongside it. The trace pointer is what
-// DeepAgentRuntime uses to reset the turn counter on /clear; *Trace may
-// be nil.
-//
-// getPlanMode is read by the PlanReminder middleware on every model
-// turn — toggling plan mode is just a flag flip on the runtime side, no
-// agent rebuild. nil is treated as "always off" (subagents inherit
-// this branch).
 func MakeLeadAgent(
 	ctx context.Context,
-	agentName string,
-	IsSubagentEnabled bool,
+	isSubagentEnabled bool,
 	getPlanMode func() bool,
 	cfg *config.Config,
 ) (adk.ResumableAgent, *middlewares.Trace, error) {
 
-	agentConfig := cfg.Agents[agentName]
-	modelConfig := cfg.Models[agentConfig.Model]
+	agentName := consts.DefaultAgentKey
+	modelConfig := cfg.Models[cfg.DefaultModel]
 
 	chatModel, err := buildChatModel(ctx, modelConfig)
 	if err != nil {
 		return nil, nil, err
 	}
-	chatModel = wrapErrorHandling(chatModel, cfg.ErrorHandling)
+	chatModel = wrapErrorHandling(chatModel, getDefaultErrorHandlingConfig())
 
 	sandboxManager := sandbox.Default()
-	handlers := GetChatModelMiddlewares(ctx, agentName, IsSubagentEnabled, getPlanMode, cfg, chatModel, sandboxManager)
+	handlers := GetChatModelMiddlewares(ctx, agentName, isSubagentEnabled, getPlanMode, cfg, chatModel, sandboxManager)
 
 	deepCfg := &deep.Config{
 		Name:                   agentName,
 		Description:            "Deep Agent",
 		ChatModel:              chatModel,
-		Instruction:            GetSystemPrompt(agentName, IsSubagentEnabled, cfg),
-		MaxIteration:           defaultIterationLimit(agentConfig),
-		WithoutGeneralSubAgent: !IsSubagentEnabled,
+		Instruction:            GetSystemPrompt(agentName, isSubagentEnabled, cfg),
+		MaxIteration:           consts.DefaultAgentIterations,
+		WithoutGeneralSubAgent: !isSubagentEnabled,
 		WithoutWriteTodos:      false,
 		Handlers:               handlers,
 		ToolsConfig: adk.ToolsConfig{
@@ -66,17 +57,17 @@ func MakeLeadAgent(
 	return agentImpl, middlewares.FindTrace(handlers), nil
 }
 
-func skillsFromProfile(p *config.AgentConfig) *AvailableSkills {
-	if p == nil || p.Skills == nil {
-		return AllSkills()
+func getDefaultErrorHandlingConfig() config.ErrorHandling {
+	return config.ErrorHandling{
+		Enabled: true,
+		Retry: config.RetryConfig{
+			MaxAttempts: 3,
+			BaseDelayMS: 1000,
+			CapDelayMS:  8000,
+		},
+		CircuitBreaker: config.CircuitBreakerConfig{
+			FailureThreshold: 5,
+			RecoverySeconds:  60,
+		},
 	}
-	return SkillSet(p.Skills...)
-}
-
-func defaultIterationLimit(p *config.AgentConfig) int {
-	const runtimeMaxIterDefault = 6
-	if p == nil || p.MaxIteration <= 0 {
-		return runtimeMaxIterDefault
-	}
-	return p.MaxIteration
 }

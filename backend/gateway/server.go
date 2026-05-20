@@ -8,26 +8,23 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"eino-cli/backend/config"
 	"eino-cli/backend/runtime/deepagent"
 )
 
 // Server bundles gin.Engine with the dependencies handlers need.
 type Server struct {
-	cfg    *config.Config
 	router *deepagent.Router
 	engine *gin.Engine
 	log    *slog.Logger
 }
 
 // New builds the Server with routes registered.
-func New(cfg *config.Config, router *deepagent.Router) *Server {
+func New(router *deepagent.Router) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 
 	s := &Server{
-		cfg:    cfg,
 		router: router,
 		engine: engine,
 		log:    slog.Default(),

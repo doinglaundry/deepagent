@@ -14,12 +14,8 @@ import (
 func TestNewRuntimeUnsupportedProvider(t *testing.T) {
 	runtime, err := NewRuntime(context.Background(), &config.Config{
 		DefaultModel: "primary",
-		DefaultAgent: "default",
 		Models: map[string]*config.ModelConfig{
 			"primary": {Name: "primary", Provider: "unknown", Model: "foo", APIKey: "test-key", TimeoutSeconds: 30},
-		},
-		Agents: map[string]*config.AgentConfig{
-			"default": {Name: "default", Model: "primary", Instruction: "You are a helpful assistant.", MaxIteration: 6},
 		},
 	})
 	if err == nil {
@@ -33,7 +29,6 @@ func TestNewRuntimeUnsupportedProvider(t *testing.T) {
 func TestNewRuntimeExecuteEmptyPrompt(t *testing.T) {
 	cfg := &config.Config{
 		DefaultModel: "primary",
-		DefaultAgent: "default",
 		Models: map[string]*config.ModelConfig{
 			"primary": {
 				Name:           "primary",
@@ -42,9 +37,6 @@ func TestNewRuntimeExecuteEmptyPrompt(t *testing.T) {
 				APIKey:         "test-key",
 				TimeoutSeconds: 30,
 			},
-		},
-		Agents: map[string]*config.AgentConfig{
-			"default": {Name: "default", Model: "primary", Instruction: "You are a helpful assistant.", MaxIteration: 6},
 		},
 	}
 	runtime, err := NewRuntime(context.Background(), cfg)

@@ -19,19 +19,17 @@ import (
 // never hit api.bochaai.com from CI.
 func runWebSearch(t *testing.T, srv *httptest.Server, override func(c *config.WebSearch), query string, max int) (string, error) {
 	t.Helper()
-	cfg := &config.Config{
-		WebSearch: config.WebSearch{
-			Enabled:    true,
-			Provider:   "bocha",
-			APIKey:     "test-key",
-			MaxResults: 5,
-		},
+	cfg := config.WebSearch{
+		Enabled:    true,
+		Provider:   "bocha",
+		APIKey:     "test-key",
+		MaxResults: 5,
 	}
 	if srv != nil {
-		cfg.WebSearch.BaseURL = srv.URL
+		cfg.BaseURL = srv.URL
 	}
 	if override != nil {
-		override(&cfg.WebSearch)
+		override(&cfg)
 	}
 	bt, err := GetWebSearchTool(cfg)
 	if err != nil {
@@ -50,8 +48,7 @@ func runWebSearch(t *testing.T, srv *httptest.Server, override func(c *config.We
 }
 
 func TestWebSearch_Disabled(t *testing.T) {
-	cfg := &config.Config{WebSearch: config.WebSearch{Enabled: false}}
-	bt, err := GetWebSearchTool(cfg)
+	bt, err := GetWebSearchTool(config.WebSearch{Enabled: false})
 	if err != nil {
 		t.Fatalf("GetWebSearchTool: %v", err)
 	}

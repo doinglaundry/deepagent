@@ -17,10 +17,10 @@ type readLintsArgs struct {
 	Paths []string `json:"paths,omitempty" jsonschema:"description=Optional files or directories to check"`
 }
 
-func GetReadLintsTool(root string) (tool.BaseTool, error) {
+func GetReadLintsTool() (tool.BaseTool, error) {
 	return utils.InferTool("read_lints", readLintsToolDesc,
 		func(ctx context.Context, in readLintsArgs) (string, error) {
-			return readLints(ctx, root, in.Paths)
+			return readLints(ctx, resolveRoot(), in.Paths)
 		})
 }
 
@@ -37,7 +37,7 @@ func readLints(ctx context.Context, root string, paths []string) (string, error)
 	}
 	args := append([]string{"test"}, packages...)
 	cmd := exec.CommandContext(ctx, "go", args...)
-	cmd.Dir = resolveRoot(root)
+	cmd.Dir = resolveRoot()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return truncateToolOutput(strings.TrimRight(string(out), "\n"), 64*1024), nil
@@ -56,7 +56,7 @@ func getLintTargets(root string, paths []string) ([]string, []string, error) {
 	var packages []string
 	var unsupported []string
 	for _, p := range paths {
-		path, err := getResolvedPath(root, p)
+		path, err := getResolvedPath(p)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -72,7 +72,7 @@ func getLintTargets(root string, paths []string) ([]string, []string, error) {
 			}
 			target = filepath.Dir(path)
 		}
-		base, err := filepath.Abs(resolveRoot(root))
+		base, err := filepath.Abs(resolveRoot())
 		if err != nil {
 			return nil, nil, err
 		}

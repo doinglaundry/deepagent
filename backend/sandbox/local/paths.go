@@ -24,37 +24,30 @@ type resolved struct {
 
 // findPathMapping returns the longest-prefix mapping for path; nil on no match.
 func findPathMapping(mappings []PathMapping, path string) (*PathMapping, string) {
-	sorted := make([]PathMapping, len(mappings))
-	copy(sorted, mappings)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return len(strings.TrimRight(sorted[i].ContainerPath, "/")) >
-			len(strings.TrimRight(sorted[j].ContainerPath, "/"))
-	})
-
-	for i := range sorted {
-		m := &sorted[i]
-		container := strings.TrimRight(m.ContainerPath, "/")
-		if container == "" {
-			if strings.HasPrefix(path, "/") {
-				return &mappings[indexOf(mappings, *m)], strings.TrimPrefix(path, "/")
-			}
-			continue
-		}
-		if path == container || strings.HasPrefix(path, container+"/") {
-			rel := strings.TrimPrefix(path[len(container):], "/")
-			return &mappings[indexOf(mappings, *m)], rel
+	var best *PathMapping
+	bestRel := ""
+	bestLen := -1
+	for i := range mappings {
+		rel, ok := containerRel(mappings[i].ContainerPath, path)
+		if n := len(strings.TrimRight(mappings[i].ContainerPath, "/")); ok && n > bestLen {
+			best, bestRel, bestLen = &mappings[i], rel, n
 		}
 	}
-	return nil, ""
+	return best, bestRel
 }
 
-func indexOf(mappings []PathMapping, m PathMapping) int {
-	for i, x := range mappings {
-		if x.ContainerPath == m.ContainerPath && x.LocalPath == m.LocalPath {
-			return i
-		}
+func containerRel(container, path string) (string, bool) {
+	container = strings.TrimRight(container, "/")
+	if container == "" {
+		return strings.TrimPrefix(path, "/"), strings.HasPrefix(path, "/")
 	}
-	return 0
+	if path == container {
+		return "", true
+	}
+	if strings.HasPrefix(path, container+"/") {
+		return strings.TrimPrefix(path[len(container):], "/"), true
+	}
+	return "", false
 }
 
 // resolvePath maps a container path to its host path; rejects `..` escapes.
@@ -92,37 +85,15 @@ func isUnder(child, parent string) bool {
 
 // reverseResolvePath maps a host path back to its container path; longest mapping wins.
 func reverseResolvePath(mappings []PathMapping, path string) string {
-	cleaned, err := filepath.Abs(filepath.FromSlash(path))
-	if err != nil {
-		cleaned = path
+	cleaned := absPath(filepath.FromSlash(path))
+	m, rel := findLocalPathMapping(mappings, cleaned)
+	if m == nil {
+		return cleaned
 	}
-
-	sorted := make([]PathMapping, len(mappings))
-	copy(sorted, mappings)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		ai, _ := filepath.Abs(sorted[i].LocalPath)
-		aj, _ := filepath.Abs(sorted[j].LocalPath)
-		return len(ai) > len(aj)
-	})
-
-	for _, m := range sorted {
-		local, err := filepath.Abs(m.LocalPath)
-		if err != nil {
-			continue
-		}
-		if cleaned == local {
-			return m.ContainerPath
-		}
-		if strings.HasPrefix(cleaned, local+string(filepath.Separator)) {
-			rel := strings.TrimPrefix(cleaned[len(local):], string(filepath.Separator))
-			rel = filepath.ToSlash(rel)
-			if rel == "" {
-				return m.ContainerPath
-			}
-			return strings.TrimRight(m.ContainerPath, "/") + "/" + rel
-		}
+	if rel == "" {
+		return m.ContainerPath
 	}
-	return cleaned
+	return strings.TrimRight(m.ContainerPath, "/") + "/" + filepath.ToSlash(rel)
 }
 
 // reverseResolvePathsInOutput rewrites host paths back to container paths in arbitrary text.
@@ -130,13 +101,10 @@ func reverseResolvePathsInOutput(mappings []PathMapping, output string) string {
 	if len(mappings) == 0 || output == "" {
 		return output
 	}
-	sorted := make([]PathMapping, len(mappings))
-	copy(sorted, mappings)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return len(sorted[i].LocalPath) > len(sorted[j].LocalPath)
-	})
 	result := output
-	for _, m := range sorted {
+	for _, m := range sortedMappings(mappings, func(a, b PathMapping) bool {
+		return len(a.LocalPath) > len(b.LocalPath)
+	}) {
 		local, err := filepath.Abs(m.LocalPath)
 		if err != nil {
 			continue
@@ -167,10 +135,8 @@ func rewriteContainerPaths(mappings []PathMapping, src, boundary string, forward
 	if len(mappings) == 0 || src == "" {
 		return src
 	}
-	sorted := make([]PathMapping, len(mappings))
-	copy(sorted, mappings)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return len(sorted[i].ContainerPath) > len(sorted[j].ContainerPath)
+	sorted := sortedMappings(mappings, func(a, b PathMapping) bool {
+		return len(a.ContainerPath) > len(b.ContainerPath)
 	})
 
 	var alts []string
@@ -212,26 +178,48 @@ func rewriteContainerPaths(mappings []PathMapping, src, boundary string, forward
 
 // isReadOnlyPath returns the ReadOnly flag of the longest mapping containing path.
 func isReadOnlyPath(mappings []PathMapping, resolvedPath string) bool {
-	cleaned, err := filepath.Abs(resolvedPath)
-	if err != nil {
-		cleaned = resolvedPath
-	}
+	m, _ := findLocalPathMapping(mappings, absPath(resolvedPath))
+	return m != nil && m.ReadOnly
+}
+
+func findLocalPathMapping(mappings []PathMapping, path string) (*PathMapping, string) {
 	var best *PathMapping
+	bestRel := ""
 	bestLen := -1
 	for i := range mappings {
 		local, err := filepath.Abs(mappings[i].LocalPath)
 		if err != nil {
 			continue
 		}
-		if cleaned == local || strings.HasPrefix(cleaned, local+string(filepath.Separator)) {
-			if len(local) > bestLen {
-				bestLen = len(local)
-				best = &mappings[i]
-			}
+		if rel, ok := localRel(local, path); ok && len(local) > bestLen {
+			best, bestRel, bestLen = &mappings[i], rel, len(local)
 		}
 	}
-	if best == nil {
-		return false
+	return best, bestRel
+}
+
+func localRel(local, path string) (string, bool) {
+	if path == local {
+		return "", true
 	}
-	return best.ReadOnly
+	if strings.HasPrefix(path, local+string(filepath.Separator)) {
+		return strings.TrimPrefix(path[len(local):], string(filepath.Separator)), true
+	}
+	return "", false
+}
+
+func absPath(path string) string {
+	cleaned, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return cleaned
+}
+
+func sortedMappings(mappings []PathMapping, less func(a, b PathMapping) bool) []PathMapping {
+	sorted := append([]PathMapping(nil), mappings...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return less(sorted[i], sorted[j])
+	})
+	return sorted
 }

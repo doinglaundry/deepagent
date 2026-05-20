@@ -4,7 +4,6 @@ import (
 	"context"
 	"eino-cli/backend/agent/memory"
 	"log/slog"
-	"strings"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/patchtoolcalls"
@@ -30,56 +29,47 @@ func GetChatModelMiddlewares(
 
 	middlewareList = []adk.ChatModelAgentMiddleware{
 		middlewares.NewAgentState(),
-		middlewares.NewToolCallObservability(cfg.ToolObservability.Enabled),
+		middlewares.NewToolCallObservability(true),
 		middlewares.NewToolErrorHandling(),
 		patchToolCalls,
 		middlewares.NewLoopDetection(),
 	}
 
 	var (
-		store   = memorystore.NewStoreFromConfig(cfg)
+		store   = memorystore.NewStoreFromConfig()
 		updater = memory.NewMemoryUpdater(store)
+		memCfg  = getDefaultMemoryConfig()
 	)
 
-	if cfg.Memory.Enabled {
-		middlewareList = append(middlewareList, middlewares.NewMemory(middlewares.MemoryHooks{
-			Inject: func(_ context.Context, msgs []*schema.Message) []*schema.Message {
-				return memory.InjectMemory(store, cfg.Memory, agentName, msgs)
-			},
-			Extract: func(ctx context.Context, msgs []*schema.Message) {
-				err := updater.Run(ctx, chatModel, cfg.Memory, agentName, msgs, false)
-				if err != nil {
-					slog.Warn("memory update failed", "agent", agentName, "err", err)
-				}
-			},
-		}))
-	}
+	middlewareList = append(middlewareList, middlewares.NewMemory(middlewares.MemoryHooks{
+		Inject: func(_ context.Context, msgs []*schema.Message) []*schema.Message {
+			return memory.InjectMemory(store, memCfg, agentName, msgs)
+		},
+		Extract: func(ctx context.Context, msgs []*schema.Message) {
+			err := updater.Run(ctx, chatModel, memCfg, agentName, msgs, false)
+			if err != nil {
+				slog.Warn("memory update failed", "agent", agentName, "err", err)
+			}
+		},
+	}))
 
 	var tokenUsage *middlewares.TokenUsage
-	if cfg.TokenUsage.Enabled {
-		tokenUsage = middlewares.NewTokenUsage()
-		middlewareList = append(middlewareList, tokenUsage)
-	}
+	tokenUsage = middlewares.NewTokenUsage()
+	middlewareList = append(middlewareList, tokenUsage)
 
-	if cfg.ToolSearch.Enabled {
-		if names := DeferredToolNamesFromConfig(cfg); names != nil {
-			middlewareList = append(middlewareList, middlewares.NewDeferredTools(names))
-		}
+	if names := defaultDeferredToolNames(); names != nil {
+		middlewareList = append(middlewareList, middlewares.NewDeferredTools(names))
 	}
 
 	if isSubagentEnabled {
-		middlewareList = append(middlewareList, middlewares.NewSubagentLimit(effectiveMaxSubagents(cfg)))
+		middlewareList = append(middlewareList, middlewares.NewSubagentLimit(getMaxSubagents()))
 	}
 
-	if len(cfg.HITLTools) > 0 {
-		middlewareList = append(middlewareList, middlewares.NewHITL(cfg.HITLTools, HITLApprover))
-	}
+	middlewareList = append(middlewareList, middlewares.NewHITL(getDefaultHITLTools(), HITLApprover))
 
-	if cfg.Summarization.Enabled {
-		summaryMW, err := middlewares.NewSummarization(ctx, cfg, updater, buildSummaryChatModel(ctx, cfg))
-		if err == nil {
-			middlewareList = append(middlewareList, summaryMW)
-		}
+	summaryMW, err := middlewares.NewSummarization(ctx, memCfg, updater, buildSummaryChatModel(ctx, cfg))
+	if err == nil {
+		middlewareList = append(middlewareList, summaryMW)
 	}
 
 	middlewareList = append(middlewareList, middlewares.NewPlanReminder(getPlanModeFunc))
@@ -88,11 +78,7 @@ func GetChatModelMiddlewares(
 
 	// Sandbox before Trace; the Trace→Clarification invariant is asserted in middleware_chain_test.go.
 	middlewareList = append(middlewareList, middlewares.NewSandbox(sandboxManager))
-	messagesLogPath := ""
-	if cfg != nil && strings.TrimSpace(cfg.RootDir) != "" {
-		messagesLogPath = config.AgentMessagesLogPath(cfg)
-	}
-	middlewareList = append(middlewareList, middlewares.NewMessagesLog(messagesLogPath))
+	middlewareList = append(middlewareList, middlewares.NewMessagesLog(config.AgentMessagesLogPath()))
 
 	trace := middlewares.NewTrace(agentName)
 	if tokenUsage != nil {
@@ -101,4 +87,32 @@ func GetChatModelMiddlewares(
 	middlewareList = append(middlewareList, trace)
 	middlewareList = append(middlewareList, middlewares.NewClarification())
 	return
+}
+
+func getDefaultMemoryConfig() config.Memory {
+	return config.Memory{
+		Enabled:                   true,
+		InjectionEnabled:          true,
+		DebounceSeconds:           60,
+		MaxInjectionTokens:        2000,
+		MaxFacts:                  100,
+		FactConfidenceThreshold:   0.7,
+		DedupEnabled:              true,
+		EpisodicDefaultTTLSeconds: 30 * 24 * 60 * 60,
+	}
+}
+
+func defaultDeferredToolNames() []string {
+	return nil
+}
+
+func getDefaultHITLTools() []string {
+	return []string{
+		"write_file",
+		"edit_file",
+		"delete_file",
+		"apply_patch",
+		"execute",
+		"shell",
+	}
 }

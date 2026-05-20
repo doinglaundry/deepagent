@@ -119,29 +119,15 @@ func TestTodoPanelHeight_MatchesRenderer(t *testing.T) {
 	}
 }
 
-// Trace events with TracePhaseTodos must update m.todos even when
-// m.debug is off — the panel is independent of the debug toggle.
-func TestHandleTraceEvent_TodosUpdateWhenDebugOff(t *testing.T) {
-	m := &Model{debug: false, messages: freshMessages(0, "", "")}
+func TestHandleTraceEvent_TodosUpdate(t *testing.T) {
+	m := &Model{messages: freshMessages(0, "", "")}
 	ev := middlewares.TraceEvent{
 		Phase: middlewares.TracePhaseTodos,
 		Todos: sampleTodos(),
 	}
 	_, _ = m.handleTraceEvent(ev)
 	if len(m.todos) != len(sampleTodos()) {
-		t.Errorf("m.todos must update with debug off; got len=%d", len(m.todos))
-	}
-}
-
-// Conversely Before/After events must be dropped when m.debug is off
-// (no debug-input / debug-output rows pushed into the scrollback).
-func TestHandleTraceEvent_BeforeAfterGatedByDebug(t *testing.T) {
-	m := &Model{debug: false, messages: freshMessages(0, "", "")}
-	startLen := len(m.messages)
-	_, _ = m.handleTraceEvent(middlewares.TraceEvent{Phase: middlewares.TracePhaseBefore})
-	_, _ = m.handleTraceEvent(middlewares.TraceEvent{Phase: middlewares.TracePhaseAfter})
-	if got := len(m.messages); got != startLen {
-		t.Errorf("Before/After with debug off must not push messages; was %d, now %d", startLen, got)
+		t.Errorf("m.todos must update from trace event; got len=%d", len(m.todos))
 	}
 }
 

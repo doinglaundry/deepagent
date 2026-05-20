@@ -24,7 +24,7 @@ type shellArgs struct {
 	Description string `json:"description,omitempty" jsonschema:"description=Short human-readable command description"`
 }
 
-func GetShellTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
+func GetShellTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool("shell", shellToolDesc,
 		func(ctx context.Context, in shellArgs) (string, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
@@ -37,7 +37,7 @@ func GetShellTool(root string, sandboxManager sandbox.SandboxManager) (tool.Base
 			if sb := getSandbox(ctx, sandboxManager); sb != nil {
 				return sb.ExecuteCommand(ctx, in.Command)
 			}
-			return runShell(root, in)
+			return runShell(resolveRoot(), in)
 		})
 }
 
@@ -45,10 +45,10 @@ func runShell(root string, in shellArgs) (string, error) {
 	if strings.TrimSpace(in.Command) == "" {
 		return "", fmt.Errorf("command must not be empty")
 	}
-	workingDir := resolveRoot(root)
+	workingDir := resolveRoot()
 	if strings.TrimSpace(in.WorkingDir) != "" {
 		var err error
-		workingDir, err = getResolvedPath(root, in.WorkingDir)
+		workingDir, err = getResolvedPath(in.WorkingDir)
 		if err != nil {
 			return "", err
 		}

@@ -196,7 +196,9 @@ func TestStartPersistsTotalTokens(t *testing.T) {
 
 func TestStartCapturesRollbackSnapshot(t *testing.T) {
 	root := t.TempDir()
-	runStore := runs.NewStore(config.RunsDir(&config.Config{RootDir: root}))
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	runStore := runs.NewStore(config.RunsDir())
 	runtime := testRuntime{run: func(ctx context.Context, _ string, _ rt.StreamChunkHandler) (rt.Result, error) {
 		if !runtimecontext.IsRollbackProtected(ctx) {
 			t.Fatal("run context should be rollback protected")
@@ -232,7 +234,9 @@ func TestStartCapturesRollbackSnapshot(t *testing.T) {
 
 func TestStartDoesNotRollbackAfterUnsafeToolBlocked(t *testing.T) {
 	root := t.TempDir()
-	runStore := runs.NewStore(config.RunsDir(&config.Config{RootDir: root}))
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	runStore := runs.NewStore(config.RunsDir())
 	runtime := testRuntime{run: func(ctx context.Context, _ string, _ rt.StreamChunkHandler) (rt.Result, error) {
 		runtimecontext.MarkRollbackUnsafeToolBlocked(ctx)
 		return rt.Result{Success: true, Output: "answer"}, nil

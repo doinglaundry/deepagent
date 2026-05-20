@@ -53,7 +53,7 @@ func NormalizeFilename(filename string) (string, error) {
 }
 
 // PathFor returns the host path for filename under (tid, uid) without creating anything.
-func PathFor(cfg *config.Config, tid, uid, filename string) (string, error) {
+func PathFor(tid, uid, filename string) (string, error) {
 	if err := ValidateThreadID(tid); err != nil {
 		return "", err
 	}
@@ -61,7 +61,7 @@ func PathFor(cfg *config.Config, tid, uid, filename string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	base := config.SandboxUploadsDir(cfg, tid, uid)
+	base := config.SandboxUploadsDir(tid, uid)
 	dest := filepath.Join(base, safe)
 	if err := guardTraversal(dest, base); err != nil {
 		return "", err
@@ -70,8 +70,8 @@ func PathFor(cfg *config.Config, tid, uid, filename string) (string, error) {
 }
 
 // Write streams src into uploads/<filename> with O_NOFOLLOW; returns the host path.
-func Write(cfg *config.Config, tid, uid, filename string, src io.Reader) (string, error) {
-	dest, err := PathFor(cfg, tid, uid, filename)
+func Write(tid, uid, filename string, src io.Reader) (string, error) {
+	dest, err := PathFor(tid, uid, filename)
 	if err != nil {
 		return "", err
 	}
@@ -101,11 +101,11 @@ type FileInfo struct {
 }
 
 // List enumerates regular files in the thread's uploads dir, sorted by name; symlinks are skipped.
-func List(cfg *config.Config, tid, uid string) ([]FileInfo, error) {
+func List(tid, uid string) ([]FileInfo, error) {
 	if err := ValidateThreadID(tid); err != nil {
 		return nil, err
 	}
-	base := config.SandboxUploadsDir(cfg, tid, uid)
+	base := config.SandboxUploadsDir(tid, uid)
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -135,8 +135,8 @@ func List(cfg *config.Config, tid, uid string) ([]FileInfo, error) {
 }
 
 // Delete removes a single file with the same safety profile as Write; already-gone is fine.
-func Delete(cfg *config.Config, tid, uid, filename string) error {
-	dest, err := PathFor(cfg, tid, uid, filename)
+func Delete(tid, uid, filename string) error {
+	dest, err := PathFor(tid, uid, filename)
 	if err != nil {
 		return err
 	}

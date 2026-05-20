@@ -21,10 +21,7 @@ func buildSummaryChatModel(
 	ctx context.Context,
 	cfg *config.Config,
 ) model.BaseChatModel {
-	summaryModelName := strings.TrimSpace(cfg.Summarization.ModelName)
-	if summaryModelName == "" {
-		summaryModelName = cfg.DefaultModel
-	}
+	summaryModelName := strings.TrimSpace(cfg.DefaultModel)
 	summaryModelCfg := cfg.Models[summaryModelName]
 	summaryModel, err := buildChatModel(ctx, summaryModelCfg)
 	if err != nil {

@@ -55,14 +55,21 @@ func invokeWithContext(t *testing.T, ctx context.Context, bt tool.BaseTool, args
 	return out
 }
 
+func setToolRoot(t *testing.T, root string) {
+	t.Helper()
+	cleanup := config.SetRootDirForTest(root)
+	t.Cleanup(cleanup)
+}
+
 func TestLs(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	for _, name := range []string{"a.txt", "b.txt"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	bt, err := GetLsTool(root, nil)
+	bt, err := GetLsTool(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +80,8 @@ func TestLs(t *testing.T) {
 	}
 
 	emptyDir := t.TempDir()
-	bt2, _ := GetLsTool(emptyDir, nil)
+	setToolRoot(t, emptyDir)
+	bt2, _ := GetLsTool(nil)
 	if got := invoke(t, bt2, `{"path":"."}`); got != consts.NoFilesFound {
 		t.Fatalf("empty dir: got %q want %q", got, consts.NoFilesFound)
 	}
@@ -81,11 +89,12 @@ func TestLs(t *testing.T) {
 
 func TestReadFile(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	body := "line1\nline2\nline3"
 	if err := os.WriteFile(filepath.Join(root, "f.txt"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetReadFileTool(root, nil)
+	bt, _ := GetReadFileTool(nil)
 
 	got := invoke(t, bt, `{"file_path":"f.txt"}`)
 	want := "     1\tline1\n     2\tline2\n     3\tline3"
@@ -114,7 +123,8 @@ func TestReadFile(t *testing.T) {
 
 func TestWriteFile(t *testing.T) {
 	root := t.TempDir()
-	bt, _ := GetWriteFileTool(root, nil)
+	setToolRoot(t, root)
+	bt, _ := GetWriteFileTool(nil)
 
 	got := invoke(t, bt, `{"file_path":"sub/new.txt","content":"hello"}`)
 	if got != "Updated file sub/new.txt" {
@@ -131,11 +141,12 @@ func TestWriteFile(t *testing.T) {
 
 func TestEditFile(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	p := filepath.Join(root, "f.txt")
 	if err := os.WriteFile(p, []byte("foo bar foo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetEditFileTool(root, nil)
+	bt, _ := GetEditFileTool(nil)
 
 	// 2 occurrences without replace_all → ambiguity error.
 	err := invokeExpectErr(t, bt, `{"file_path":"f.txt","old_string":"foo","new_string":"baz"}`)
@@ -156,12 +167,13 @@ func TestEditFile(t *testing.T) {
 
 func TestGlob(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	for _, name := range []string{"a.go", "b.go", "c.txt"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	bt, _ := GetGlobTool(root, nil)
+	bt, _ := GetGlobTool(nil)
 	got := invoke(t, bt, `{"pattern":"*.go","path":""}`)
 	// Glob returns absolute paths so follow-up tool calls can reuse them.
 	want := filepath.Join(root, "a.go") + "\n" + filepath.Join(root, "b.go")
@@ -176,13 +188,14 @@ func TestGlob(t *testing.T) {
 
 func TestGlobDefaultsToRecursiveSearch(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	if err := os.MkdirAll(filepath.Join(root, "yaml"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "yaml", "CHANGELOG.md"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetGlobTool(root, nil)
+	bt, _ := GetGlobTool(nil)
 
 	got := invoke(t, bt, `{"pattern":"CHANGELOG.md","path":""}`)
 	want := filepath.Join(root, "yaml", "CHANGELOG.md")
@@ -193,11 +206,12 @@ func TestGlobDefaultsToRecursiveSearch(t *testing.T) {
 
 func TestDeleteFile(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	path := filepath.Join(root, "old.txt")
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetDeleteFileTool(root)
+	bt, _ := GetDeleteFileTool()
 
 	got := invoke(t, bt, `{"file_path":"old.txt"}`)
 	if got != "Deleted file "+path {
@@ -213,7 +227,8 @@ func TestDeleteFile(t *testing.T) {
 
 func TestApplyPatchAddAndUpdate(t *testing.T) {
 	root := t.TempDir()
-	bt, _ := GetApplyPatchTool(root)
+	setToolRoot(t, root)
+	bt, _ := GetApplyPatchTool()
 	addPatch := `*** Begin Patch
 *** Add File: new.txt
 +hello
@@ -251,13 +266,14 @@ func TestApplyPatchAddAndUpdate(t *testing.T) {
 
 func TestGrepFilesWithMatches(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello world\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("nothing here\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetGrepTool(root, nil)
+	bt, _ := GetGrepTool(nil)
 
 	// Default output_mode is files_with_matches; "Found N file" header.
 	got := invoke(t, bt, `{"pattern":"hello"}`)
@@ -269,10 +285,11 @@ func TestGrepFilesWithMatches(t *testing.T) {
 
 func TestGrepContent(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetGrepTool(root, nil)
+	bt, _ := GetGrepTool(nil)
 
 	got := invoke(t, bt, `{"pattern":"hello","output_mode":"content"}`)
 	want := "a.txt:1:hello"
@@ -283,10 +300,11 @@ func TestGrepContent(t *testing.T) {
 
 func TestGrepFallsBackToLiteralPattern(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\n\\Middleware\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetGrepTool(root, nil)
+	bt, _ := GetGrepTool(nil)
 
 	got := invoke(t, bt, `{"pattern":"\\Middleware","output_mode":"content"}`)
 	want := "a.txt:2:\\Middleware"
@@ -297,10 +315,11 @@ func TestGrepFallsBackToLiteralPattern(t *testing.T) {
 
 func TestGrepCount(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x\nx\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetGrepTool(root, nil)
+	bt, _ := GetGrepTool(nil)
 
 	got := invoke(t, bt, `{"pattern":"x","output_mode":"count"}`)
 	if !strings.Contains(got, "a.txt:2") {
@@ -313,10 +332,11 @@ func TestGrepCount(t *testing.T) {
 
 func TestRgContent(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetRgTool(root)
+	bt, _ := GetRgTool()
 
 	got := invoke(t, bt, `{"pattern":"hello","output_mode":"content"}`)
 	if !strings.Contains(got, "a.txt:1:hello") {
@@ -329,7 +349,8 @@ func TestRgContent(t *testing.T) {
 
 func TestExecute(t *testing.T) {
 	root := t.TempDir()
-	bt, _ := GetExecuteTool(root, nil)
+	setToolRoot(t, root)
+	bt, _ := GetExecuteTool(nil)
 
 	got := invoke(t, bt, `{"command":"echo hi"}`)
 	if !strings.HasPrefix(got, "hi") {
@@ -348,7 +369,8 @@ func TestExecute(t *testing.T) {
 }
 
 func TestExecuteDeniedWhenRollbackProtected(t *testing.T) {
-	bt, _ := GetExecuteTool(t.TempDir(), nil)
+	setToolRoot(t, t.TempDir())
+	bt, _ := GetExecuteTool(nil)
 	ctx := runtimecontext.WithRollbackProtected(context.Background(), true)
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi"}`)
 	if !strings.Contains(got, "disabled in rollback-protected runs") {
@@ -358,7 +380,8 @@ func TestExecuteDeniedWhenRollbackProtected(t *testing.T) {
 
 func TestShellAndAwaitShell(t *testing.T) {
 	root := t.TempDir()
-	bt, _ := GetShellTool(root, nil)
+	setToolRoot(t, root)
+	bt, _ := GetShellTool(nil)
 
 	got := invoke(t, bt, `{"command":"echo hi","timeout_ms":1000}`)
 	if !strings.HasPrefix(got, "hi") {
@@ -370,7 +393,7 @@ func TestShellAndAwaitShell(t *testing.T) {
 		t.Fatalf("shell background: %q", got)
 	}
 	taskID := strings.TrimSpace(strings.TrimPrefix(got, "Command is still running in background. task_id="))
-	await, _ := GetAwaitShellTool(root)
+	await, _ := GetAwaitShellTool()
 	got = invoke(t, await, `{"task_id":"`+taskID+`","pattern":"ready","timeout_ms":1000}`)
 	if !strings.Contains(got, "ready") {
 		t.Fatalf("await_shell: %q", got)
@@ -378,7 +401,8 @@ func TestShellAndAwaitShell(t *testing.T) {
 }
 
 func TestShellDeniedWhenRollbackProtected(t *testing.T) {
-	bt, _ := GetShellTool(t.TempDir(), nil)
+	setToolRoot(t, t.TempDir())
+	bt, _ := GetShellTool(nil)
 	ctx := runtimecontext.WithRollbackProtected(context.Background(), true)
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
 	if !strings.Contains(got, "disabled in rollback-protected runs") {
@@ -388,10 +412,11 @@ func TestShellDeniedWhenRollbackProtected(t *testing.T) {
 
 func TestSemanticSearch(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	if err := os.WriteFile(filepath.Join(root, "tool.go"), []byte("func buildToolCall() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetSemanticSearchTool(root)
+	bt, _ := GetSemanticSearchTool()
 
 	got := invoke(t, bt, `{"query":"where is tool call built"}`)
 	if !strings.Contains(got, "tool.go:1") {
@@ -401,6 +426,7 @@ func TestSemanticSearch(t *testing.T) {
 
 func TestReadLintsTargets(t *testing.T) {
 	root := t.TempDir()
+	setToolRoot(t, root)
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +491,9 @@ func quoteJSON(t *testing.T, s string) string {
 }
 
 func TestBuildBuiltinToolsCount(t *testing.T) {
-	got := BuildBuiltinTools(&config.Config{RootDir: t.TempDir()}, nil)
+	cleanup := config.SetRootDirForTest(t.TempDir())
+	defer cleanup()
+	got := BuildBuiltinTools(&config.Config{}, nil)
 	if len(got) != 15 {
 		t.Fatalf("BuildBuiltinTools: got %d tools, want 15", len(got))
 	}
@@ -489,9 +517,10 @@ func TestBuildBuiltinToolsCount(t *testing.T) {
 // AND tail name — drift between flag and prompt tool list is the bug.
 func TestBuildBuiltinToolsWithWebSearch(t *testing.T) {
 	cfg := &config.Config{
-		RootDir:   t.TempDir(),
 		WebSearch: config.WebSearch{Enabled: true, APIKey: "stub", MaxResults: 5},
 	}
+	cleanup := config.SetRootDirForTest(t.TempDir())
+	defer cleanup()
 	got := BuildBuiltinTools(cfg, nil)
 	if len(got) != 16 {
 		t.Fatalf("BuildBuiltinTools(enabled): got %d tools, want 16", len(got))

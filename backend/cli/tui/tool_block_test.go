@@ -7,10 +7,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cloudwego/eino/schema"
-	"gopkg.in/yaml.v3"
 
 	"eino-cli/backend/agent/middlewares"
-	"eino-cli/backend/config"
 )
 
 func TestExtractToolBlocksSingleCall(t *testing.T) {
@@ -217,23 +215,10 @@ func TestFooterHintExpires(t *testing.T) {
 	}
 }
 
-func TestToolBlockSettingsDefaultAndDisabled(t *testing.T) {
-	enabled, previewLines, argsMaxChars := toolBlockSettings(&config.Config{})
+func TestToolBlockSettingsDefault(t *testing.T) {
+	enabled, previewLines, argsMaxChars := getToolBlockSettings()
 	if !enabled || previewLines != 5 || argsMaxChars != 60 {
 		t.Fatalf("unexpected defaults: %v %d %d", enabled, previewLines, argsMaxChars)
-	}
-
-	var cfg config.Config
-	if err := yaml.Unmarshal([]byte(`tool_blocks:
-  enabled: false
-  preview_lines: 7
-  args_max_chars: 30
-`), &cfg); err != nil {
-		t.Fatalf("yaml.Unmarshal: %v", err)
-	}
-	enabled, previewLines, argsMaxChars = toolBlockSettings(&cfg)
-	if enabled || previewLines != 7 || argsMaxChars != 30 {
-		t.Fatalf("unexpected configured values: %v %d %d", enabled, previewLines, argsMaxChars)
 	}
 }
 

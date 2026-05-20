@@ -18,8 +18,8 @@ func NewStore(dir string) *Store {
 	return &Store{dir: dir}
 }
 
-func NewStoreFromConfig(cfg *config.Config) *Store {
-	return NewStore(config.MemoryDir(cfg))
+func NewStoreFromConfig() *Store {
+	return NewStore(config.MemoryDir())
 }
 
 func (s *Store) Load(agentName string) (MemoryData, error) {

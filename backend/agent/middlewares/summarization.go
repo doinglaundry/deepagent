@@ -4,6 +4,7 @@ import (
 	"context"
 	"eino-cli/backend/agent/memory"
 	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 	"fmt"
 	"time"
 
@@ -14,13 +15,10 @@ import (
 
 func NewSummarization(
 	ctx context.Context,
-	cfg *config.Config,
+	memCfg config.Memory,
 	updater *memory.MemoryUpdater,
 	summaryModel model.BaseChatModel,
 ) (adk.ChatModelAgentMiddleware, error) {
-	if !cfg.Summarization.Enabled {
-		return nil, nil
-	}
 	if summaryModel == nil {
 		return nil, fmt.Errorf("summarization enabled but no chat model provided")
 	}
@@ -31,16 +29,15 @@ func NewSummarization(
 	}
 
 	mw, err := summarization.New(ctx, &summarization.Config{
-		Model:           summaryModel,
-		Trigger:         condition,
-		UserInstruction: cfg.Summarization.SummaryPrompt,
+		Model:   summaryModel,
+		Trigger: condition,
 		Callback: func(ctx context.Context, before, _ adk.ChatModelAgentState) error {
 			if updater == nil {
 				return nil
 			}
 			flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
-			return updater.Run(flushCtx, summaryModel, cfg.Memory, cfg.DefaultAgent, before.Messages, true)
+			return updater.Run(flushCtx, summaryModel, memCfg, consts.DefaultAgentKey, before.Messages, true)
 		},
 	})
 	if err != nil {

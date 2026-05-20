@@ -90,7 +90,7 @@ type grepMatch struct {
 }
 
 // GetGrepTool returns the grep tool with eino's OutputMode formats.
-func GetGrepTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
+func GetGrepTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGrep, filesystem.GrepToolDesc,
 		func(ctx context.Context, in grepArgs) (string, error) {
 			if in.Path != nil && shouldUseSandbox(*in.Path) {
@@ -100,7 +100,7 @@ func GetGrepTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseT
 					}
 				}
 			}
-			matches, err := runGrep(root, in)
+			matches, err := runGrep(resolveRoot(), in)
 			if err != nil {
 				return "", err
 			}
@@ -129,8 +129,8 @@ func runGrep(root string, in grepArgs) ([]grepMatch, error) {
 		return nil, err
 	}
 
-	base := resolveRoot(root)
-	searchRoot := resolvePath(root, valueOr(in.Path, ""))
+	base := resolveRoot()
+	searchRoot := resolvePath(valueOr(in.Path, ""))
 
 	var matches []grepMatch
 	walkErr := filepath.WalkDir(searchRoot, func(p string, d fs.DirEntry, err error) error {

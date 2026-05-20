@@ -5,13 +5,10 @@ import (
 	"time"
 
 	"eino-cli/backend/consts"
+
+	"gopkg.in/yaml.v3"
 )
 
-// TestNormalizeSandbox_DefaultsAndOverrides locks the contract Provider-side
-// code relies on: zero-value fields get filled, user-set fields are kept.
-// If this drifts, the aio manager's "read cfg.Image / cfg.IdleTimeout
-// directly" assumption breaks and a fresh install boots with an empty
-// container image.
 func TestNormalizeSandbox_DefaultsAndOverrides(t *testing.T) {
 	t.Run("fills zero values", func(t *testing.T) {
 		s := &SandboxConfig{}
@@ -65,4 +62,55 @@ func TestNormalizeSandbox_DefaultsAndOverrides(t *testing.T) {
 			t.Error("AllowHostBash flipped to false")
 		}
 	})
+}
+
+func TestConfigParsesSandbox(t *testing.T) {
+	var cfg Config
+	err := yaml.Unmarshal([]byte(`
+default_model: test
+log_level: debug
+models:
+  - name: test
+    provider: openai
+    model: gpt
+    base_url: https://example.com
+    api_key: key
+sandbox:
+  use: aio
+  allow_host_bash: true
+  image: custom
+  container_prefix: prefix
+  replicas: 2
+  idle_timeout: 5m
+  mounts:
+    - host_path: /tmp
+      container_path: /mnt/tmp
+      read_only: true
+  environment:
+    KEY: value
+`), &cfg)
+	if err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if cfg.LogLevel != "debug" {
+		t.Fatalf("LogLevel = %q, want debug", cfg.LogLevel)
+	}
+	if cfg.Sandbox.Use != "aio" {
+		t.Fatalf("Sandbox.Use = %q, want aio", cfg.Sandbox.Use)
+	}
+	if !cfg.Sandbox.AllowHostBash {
+		t.Fatal("AllowHostBash should parse true")
+	}
+	if cfg.Sandbox.Image != "custom" || cfg.Sandbox.ContainerPrefix != "prefix" {
+		t.Fatalf("sandbox image/prefix mismatch: %+v", cfg.Sandbox)
+	}
+	if cfg.Sandbox.IdleTimeout != 5*time.Minute || cfg.Sandbox.Replicas != 2 {
+		t.Fatalf("sandbox timeout/replicas mismatch: %+v", cfg.Sandbox)
+	}
+	if len(cfg.Sandbox.Mounts) != 1 || cfg.Sandbox.Mounts[0].ContainerPath != "/mnt/tmp" || !cfg.Sandbox.Mounts[0].ReadOnly {
+		t.Fatalf("sandbox mounts mismatch: %+v", cfg.Sandbox.Mounts)
+	}
+	if cfg.Sandbox.Environment["KEY"] != "value" {
+		t.Fatalf("sandbox env mismatch: %+v", cfg.Sandbox.Environment)
+	}
 }

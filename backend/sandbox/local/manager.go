@@ -15,16 +15,12 @@ import (
 	"eino-cli/backend/sandbox"
 )
 
-// Manager is the per-thread Sandbox factory plus LRU cache.
-type Manager struct {
-	cfg            *config.Config
-	staticMappings []PathMapping
-
-	mu              sync.Mutex
-	generic         *Sandbox
-	cache           map[string]*list.Element
-	order           *list.List
-	maxCachedThread int
+type SandboxManager struct {
+	mu                sync.Mutex
+	generic           *Sandbox
+	entriesByThreadId map[string]*list.Element
+	order             *list.List
+	maxCachedThread   int
 }
 
 type cacheEntry struct {
@@ -32,171 +28,124 @@ type cacheEntry struct {
 	sandbox *Sandbox
 }
 
-// New builds the local Manager from cfg.
-func New(cfg *config.Config) (sandbox.SandboxManager, error) {
-	m := &Manager{
-		cfg:             cfg,
-		staticMappings:  setupStaticMappings(cfg),
-		cache:           map[string]*list.Element{},
-		order:           list.New(),
-		maxCachedThread: consts.DefaultMaxCachedThreads,
-	}
-	return m, nil
+// New builds the local SandboxManager from cfg.
+func New() (sandbox.SandboxManager, error) {
+	return &SandboxManager{
+		generic:           newSandbox(consts.GenericLocalSandboxID, GetSkillPathMappings()),
+		entriesByThreadId: map[string]*list.Element{},
+		order:             list.New(),
+		maxCachedThread:   consts.DefaultMaxCachedThreads,
+	}, nil
 }
 
 // Acquire returns "local" for empty tid, or "local:<tid>" with per-thread mappings.
-func (m *Manager) Acquire(ctx context.Context, tid string) (string, error) {
+func (m *SandboxManager) Acquire(ctx context.Context, tid string) (string, error) {
 	if tid == "" {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if m.generic == nil {
-			m.generic = newSandbox(consts.GenericLocalSandboxID, append([]PathMapping{}, m.staticMappings...))
-		}
 		return m.generic.id, nil
 	}
 
-	m.mu.Lock()
-	if el, ok := m.cache[tid]; ok {
-		m.order.MoveToFront(el)
-		id := el.Value.(*cacheEntry).sandbox.id
-		m.mu.Unlock()
-		return id, nil
+	if sb := m.getCachedLocked(tid); sb != nil {
+		return sb.id, nil
 	}
-	m.mu.Unlock()
 
 	// Build outside the lock — touches the filesystem.
 	uid := runtime.GetEffectiveUserID(ctx)
-	threadMappings, err := buildThreadPathMappings(m.cfg, tid, uid)
+	userDataPathMappings, err := getUserDataPathMappings(tid, uid)
 	if err != nil {
 		return "", err
 	}
-	all := append([]PathMapping{}, m.staticMappings...)
-	all = append(all, threadMappings...)
+	all := make([]PathMapping, 0)
+	all = append(all, GetSkillPathMappings()...)
+	all = append(all, userDataPathMappings...)
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if el, ok := m.cache[tid]; ok {
-		m.order.MoveToFront(el)
-		return el.Value.(*cacheEntry).sandbox.id, nil
-	}
 	sb := newSandbox(consts.LocalThreadIDPrefix+tid, all)
-	el := m.order.PushFront(&cacheEntry{tid: tid, sandbox: sb})
-	m.cache[tid] = el
-	m.evictLocked()
+	m.putCachedLocked(tid, sb)
 	return sb.id, nil
 }
 
-func (m *Manager) evictLocked() {
+func (m *SandboxManager) getCachedLocked(tid string) *Sandbox {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	elem, ok := m.entriesByThreadId[tid]
+	if !ok {
+		return nil
+	}
+	m.order.MoveToFront(elem)
+	return elem.Value.(*cacheEntry).sandbox
+}
+
+func (m *SandboxManager) putCachedLocked(tid string, sb *Sandbox) {
+	m.entriesByThreadId[tid] = m.order.PushFront(&cacheEntry{tid: tid, sandbox: sb})
+	m.evictLocked()
+}
+
+func (m *SandboxManager) evictLocked() {
 	for m.order.Len() > m.maxCachedThread {
 		el := m.order.Back()
 		if el == nil {
 			return
 		}
 		entry := el.Value.(*cacheEntry)
-		delete(m.cache, entry.tid)
+		delete(m.entriesByThreadId, entry.tid)
 		m.order.Remove(el)
 	}
 }
 
-// Get returns the Sandbox by id, bumping its LRU position.
-func (m *Manager) Get(ctx context.Context, sandboxID string) (sandbox.Sandbox, error) {
+func (m *SandboxManager) Get(ctx context.Context, sandboxID string) (sandbox.Sandbox, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if sandboxID == consts.GenericLocalSandboxID {
-		if m.generic == nil {
-			return nil, sandbox.NewNotFoundError(sandboxID)
-		}
+	if sandboxID == consts.GenericLocalSandboxID && m.generic != nil {
 		return m.generic, nil
 	}
-	if tid, ok := strings.CutPrefix(sandboxID, consts.LocalThreadIDPrefix); ok {
-		if el, ok := m.cache[tid]; ok {
-			m.order.MoveToFront(el)
-			return el.Value.(*cacheEntry).sandbox, nil
-		}
+
+	tid, ok := strings.CutPrefix(sandboxID, consts.LocalThreadIDPrefix)
+	if sb := m.getCachedLocked(tid); ok && sb != nil {
+		return sb, nil
 	}
+
 	return nil, sandbox.NewNotFoundError(sandboxID)
 }
 
-// Release is a no-op; LRU eviction in Acquire is the only path that drops entries.
-func (m *Manager) Release(ctx context.Context, sandboxID string) error { return nil }
+func (m *SandboxManager) Release(ctx context.Context, sandboxID string) error { return nil }
 
-// Reset clears every cached sandbox.
-func (m *Manager) Reset() {
+func (m *SandboxManager) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.generic = nil
-	m.cache = map[string]*list.Element{}
+	m.entriesByThreadId = map[string]*list.Element{}
 	m.order = list.New()
 }
 
-// UsesThreadDataMounts reports true; local always reverse-maps /mnt paths.
-func (m *Manager) UsesThreadDataMounts() bool { return true }
+func (m *SandboxManager) UsesThreadDataMounts() bool { return true }
 
-// setupStaticMappings derives skills + custom mounts (no per-thread paths).
-func setupStaticMappings(cfg *config.Config) []PathMapping {
-	var out []PathMapping
-	out = append(out, skillsMapping(cfg)...)
-
-	reserved := map[string]bool{
-		"/mnt/user-data": true,
-		"/mnt/skills":    true,
+func GetSkillPathMappings() (res []PathMapping) {
+	res = make([]PathMapping, 0)
+	p := filepath.Join(config.RootDir(), "backend", "skills")
+	info, err := os.Stat(p)
+	if err != nil || !info.IsDir() {
+		return nil
 	}
-	for _, mount := range cfg.Sandbox.Mounts {
-		host := mount.HostPath
-		container := strings.TrimRight(mount.ContainerPath, "/")
-		if container == "" {
-			container = "/"
-		}
-		if !filepath.IsAbs(host) || !strings.HasPrefix(container, "/") {
-			continue
-		}
-		if reserved[container] {
-			continue
-		}
-		if _, err := os.Stat(host); err != nil {
-			continue
-		}
-		abs, err := filepath.Abs(host)
-		if err != nil {
-			continue
-		}
-		out = append(out, PathMapping{
-			ContainerPath: container,
-			LocalPath:     abs,
-			ReadOnly:      mount.ReadOnly,
-		})
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return
 	}
-	return out
+	res = append(res, PathMapping{
+		ContainerPath: "/mnt/skills",
+		LocalPath:     abs,
+		ReadOnly:      true,
+	})
+	return
 }
 
-// skillsMapping returns the first existing cfg.Skills.Paths bound read-only at /mnt/skills.
-func skillsMapping(cfg *config.Config) []PathMapping {
-	for _, p := range cfg.Skills.Paths {
-		if info, err := os.Stat(p); err == nil && info.IsDir() {
-			abs, err := filepath.Abs(p)
-			if err != nil {
-				continue
-			}
-			return []PathMapping{{
-				ContainerPath: "/mnt/skills",
-				LocalPath:     abs,
-				ReadOnly:      true,
-			}}
-		}
-	}
-	return nil
-}
-
-// buildThreadPathMappings builds the four /mnt/user-data/* mappings for (tid, uid).
-func buildThreadPathMappings(cfg *config.Config, tid, uid string) ([]PathMapping, error) {
-	if err := config.EnsureThreadDirs(cfg, tid, uid); err != nil {
+func getUserDataPathMappings(tid, uid string) ([]PathMapping, error) {
+	if err := config.EnsureThreadDirs(tid, uid); err != nil {
 		return nil, fmt.Errorf("local manager: ensure dirs: %w", err)
 	}
 	return []PathMapping{
-		// Parent first so Glob/ListDir on /mnt/user-data has a real dir to walk.
-		{ContainerPath: "/mnt/user-data", LocalPath: config.SandboxUserDataDir(cfg, tid, uid)},
-		{ContainerPath: "/mnt/user-data/workspace", LocalPath: config.SandboxWorkDir(cfg, tid, uid)},
-		{ContainerPath: "/mnt/user-data/uploads", LocalPath: config.SandboxUploadsDir(cfg, tid, uid)},
-		{ContainerPath: "/mnt/user-data/outputs", LocalPath: config.SandboxOutputsDir(cfg, tid, uid)},
+		{ContainerPath: "/mnt/user-data", LocalPath: config.SandboxUserDataDir(tid, uid)},
+		{ContainerPath: "/mnt/user-data/workspace", LocalPath: config.SandboxWorkDir(tid, uid)},
+		{ContainerPath: "/mnt/user-data/uploads", LocalPath: config.SandboxUploadsDir(tid, uid)},
+		{ContainerPath: "/mnt/user-data/outputs", LocalPath: config.SandboxOutputsDir(tid, uid)},
 	}, nil
 }

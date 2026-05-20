@@ -22,7 +22,7 @@ import (
 
 func main() {
 	args := os.Args[1:]
-	root, mode, addr, err := parseFlags(args, os.Getenv, os.Getwd)
+	root, mode, addr, err := parseFlags(args)
 	if err != nil {
 		log.Fatalf("parse flags: %v", err)
 	}
@@ -52,13 +52,17 @@ func main() {
 }
 
 func buildSandboxManager(cfg *config.Config) (sandbox.SandboxManager, error) {
-	switch cfg.Sandbox.Use {
+	use := ""
+	if cfg != nil {
+		use = strings.TrimSpace(cfg.Sandbox.Use)
+	}
+	switch use {
 	case "", "local":
-		return local.New(cfg)
+		return local.New()
 	case "aio":
 		return aio.New(cfg)
 	default:
-		return nil, fmt.Errorf("sandbox: unknown sandbox.use %q (allowed: local, aio)", cfg.Sandbox.Use)
+		return nil, fmt.Errorf("sandbox: unknown sandbox.use %q (allowed: local, aio)", use)
 	}
 }
 
@@ -76,15 +80,15 @@ func runServer(cfg *config.Config, addr string) {
 	router := deepagent.NewRouter(cfg)
 	defer router.Shutdown()
 
-	srv := gateway.New(cfg, router)
+	srv := gateway.New(router)
 	log.Printf("eino-cli gateway listening on %s", addr)
 	if err := srv.ListenAndServe(addr); err != nil {
 		log.Fatalf("gateway: %v", err)
 	}
 }
 
-// parseFlags reads --root / --mode / --addr; getenv/getwd are passed in for tests.
-func parseFlags(args []string, getenv func(string) string, getwd func() (string, error)) (root, mode, addr string, err error) {
+// parseFlags reads --root / --mode / --addr.
+func parseFlags(args []string) (root, mode, addr string, err error) {
 	flags := flag.NewFlagSet("eino-cli", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 
@@ -96,7 +100,7 @@ func parseFlags(args []string, getenv func(string) string, getwd func() (string,
 		return "", "", "", err
 	}
 
-	root, err = getRoot(*rootFlag, getenv, getwd)
+	root, err = getRoot(*rootFlag)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -105,13 +109,10 @@ func parseFlags(args []string, getenv func(string) string, getwd func() (string,
 	return root, mode, addr, nil
 }
 
-func getRoot(flagRoot string, getenv func(string) string, getwd func() (string, error)) (string, error) {
+func getRoot(flagRoot string) (string, error) {
 	root := strings.TrimSpace(flagRoot)
 	if root == "" {
-		root = strings.TrimSpace(getenv("SGADK_ROOT"))
-	}
-	if root == "" {
-		wd, err := getwd()
+		wd, err := os.Getwd()
 		if err != nil {
 			return "", err
 		}

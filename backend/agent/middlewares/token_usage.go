@@ -24,7 +24,7 @@ type TokenUsage struct {
 	stats  TokenUsageStats
 }
 
-// NewTokenUsage returns a TokenUsage middleware; attach when AppConfig.TokenUsage.Enabled.
+// NewTokenUsage returns the default-on TokenUsage middleware.
 func NewTokenUsage() *TokenUsage {
 	return &TokenUsage{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},

@@ -22,11 +22,6 @@ var (
 			Background(lipgloss.Color("236")).
 			Padding(0, 1)
 
-	// Debug trace styling: keep trace metadata visually secondary.
-	debugInputMarkerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	debugOutputMarkerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	debugBodyStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Faint(true)
-
 	// Tool blocks are trace metadata, so the whole block stays grey.
 	toolHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	toolBodyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))

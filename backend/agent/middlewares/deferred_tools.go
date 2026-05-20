@@ -17,8 +17,7 @@ type DeferredTools struct {
 	Logger *slog.Logger
 }
 
-// NewDeferredTools returns a DeferredTools middleware. Only attach when
-// AppConfig.ToolSearch.Enabled is true.
+// NewDeferredTools returns a DeferredTools middleware for code-defined deferred tools.
 func NewDeferredTools(names []string) *DeferredTools {
 	return &DeferredTools{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},

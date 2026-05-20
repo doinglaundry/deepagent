@@ -29,24 +29,24 @@ type patchLine struct {
 	text string
 }
 
-func GetApplyPatchTool(root string) (tool.BaseTool, error) {
+func GetApplyPatchTool() (tool.BaseTool, error) {
 	return utils.InferTool("apply_patch", applyPatchToolDesc,
 		func(ctx context.Context, in applyPatchArgs) (string, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
-			return applyPatch(root, in.Patch)
+			return applyPatch(in.Patch)
 		})
 }
 
-func applyPatch(root, patch string) (string, error) {
+func applyPatch(patch string) (string, error) {
 	ops, err := parsePatch(patch)
 	if err != nil {
 		return "", err
 	}
 	writes := make(map[string]string, len(ops))
 	for _, op := range ops {
-		path, err := getResolvedPath(root, op.path)
+		path, err := getResolvedPath(op.path)
 		if err != nil {
 			return "", err
 		}

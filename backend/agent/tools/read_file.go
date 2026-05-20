@@ -49,7 +49,7 @@ type readFileArgs struct {
 // 使用示例:
 //   - 读取文件前10行: file_path="test.txt", offset=1, limit=10
 //   - 从第50行开始读取: file_path="test.txt", offset=50, limit=100
-func GetReadFileTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
+func GetReadFileTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	// 使用 InferTool 创建工具，该函数封装了工具注册、参数验证等通用逻辑
 	return utils.InferTool(filesystem.ToolNameReadFile, filesystem.ReadFileToolDesc,
 		// 工具执行函数，处理实际的文件读取逻辑
@@ -70,7 +70,7 @@ func GetReadFileTool(root string, sandboxManager sandbox.SandboxManager) (tool.B
 				}
 			}
 
-			path, err := getResolvedPath(root, in.FilePath)
+			path, err := getResolvedPath(in.FilePath)
 			if err != nil {
 				return "", fmt.Errorf("路径解析失败: %w", err)
 			}

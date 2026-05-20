@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"eino-cli/backend/sandbox/search"
 )
@@ -40,45 +39,47 @@ func traverse(root, current string, depth, maxDepth int, out *[]string) error {
 		return nil
 	}
 	for _, e := range entries {
-		name := e.Name()
-		if search.ShouldIgnoreName(name) {
+		if search.ShouldIgnoreName(e.Name()) {
 			continue
 		}
-		full := filepath.Join(current, name)
-		info, err := os.Lstat(full)
-		if err != nil {
+		full := filepath.Join(current, e.Name())
+		listed, isDir, descend, ok := listEntry(root, full)
+		if !ok {
 			continue
 		}
-		// Symlinks: only keep targets under root to avoid leaking /tmp via a workspace link.
-		if info.Mode()&os.ModeSymlink != 0 {
-			target, err := filepath.EvalSymlinks(full)
-			if err != nil {
-				continue
-			}
-			if !strings.HasPrefix(target, root+string(filepath.Separator)) && target != root {
-				continue
-			}
-			targetInfo, err := os.Stat(target)
-			if err != nil {
-				continue
-			}
-			suffix := ""
-			if targetInfo.IsDir() {
-				suffix = "/"
-			}
-			*out = append(*out, target+suffix)
-			continue
-		}
-		suffix := ""
-		if info.IsDir() {
-			suffix = "/"
-		}
-		*out = append(*out, full+suffix)
-		if info.IsDir() && depth < maxDepth {
+		*out = append(*out, listed)
+		if descend && isDir && depth < maxDepth {
 			if err := traverse(root, full, depth+1, maxDepth, out); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func listEntry(root, full string) (listed string, isDir, descend, ok bool) {
+	info, err := os.Lstat(full)
+	if err != nil {
+		return "", false, false, false
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return full + dirSuffix(info), info.IsDir(), true, true
+	}
+
+	target, err := filepath.EvalSymlinks(full)
+	if err != nil || !isUnder(target, root) {
+		return "", false, false, false
+	}
+	targetInfo, err := os.Stat(target)
+	if err != nil {
+		return "", false, false, false
+	}
+	return target + dirSuffix(targetInfo), targetInfo.IsDir(), false, true
+}
+
+func dirSuffix(info os.FileInfo) string {
+	if info.IsDir() {
+		return "/"
+	}
+	return ""
 }

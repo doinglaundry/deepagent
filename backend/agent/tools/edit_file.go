@@ -21,7 +21,7 @@ type editFileArgs struct {
 }
 
 // GetEditFileTool returns the edit_file tool; ReplaceAll=false requires a unique old_string.
-func GetEditFileTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
+func GetEditFileTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameEditFile, filesystem.EditFileToolDesc,
 		func(ctx context.Context, in editFileArgs) (string, error) {
 			if in.OldString == "" {
@@ -46,7 +46,7 @@ func GetEditFileTool(root string, sandboxManager sandbox.SandboxManager) (tool.B
 					return fmt.Sprintf("Successfully replaced the string in '%s'", in.FilePath), nil
 				}
 			}
-			p := resolvePath(root, in.FilePath)
+			p := resolvePath(in.FilePath)
 			data, err := os.ReadFile(p)
 			if err != nil {
 				return "", err

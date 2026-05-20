@@ -19,7 +19,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
-	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
 	rt "eino-cli/backend/runtime"
 	runtimeRun "eino-cli/backend/runtime/run"
@@ -27,19 +26,14 @@ import (
 	"eino-cli/backend/session/runs"
 )
 
-// Per-message / tool-arg caps for the debug panel; sized so a 2-4 KB
-// system prompt fits on first turn but later turns stay on-screen.
 const (
-	debugBodyMaxBytes    = 4 << 10
-	debugToolArgMaxBytes = 1 << 10
-
 	defaultToolPreviewLines = 5
 	defaultToolArgsMaxChars = 60
 )
 
 // chatMessage caches the markdown-rendered body so View doesn't re-render per keystroke.
 type chatMessage struct {
-	Role     string // "user" | "assistant" | "system" | "debug-input" | "debug-output" | "thinking-summary" | "tool-block" | "banner"
+	Role     string // "user" | "assistant" | "system" | "thinking-summary" | "tool-block" | "banner"
 	Content  string // raw text (or pre-rendered ANSI for "banner")
 	Rendered string // post-markdown, for assistant only
 }
@@ -93,9 +87,6 @@ type Model struct {
 
 	lastErr error
 
-	// debug toggles inline LLM input/output panels via /debug.
-	debug bool
-
 	// planMode mirrors the runtime-side flag so the footer and /plan
 	// echo can read it without round-tripping through the runtime. The
 	// runtime stays the source of truth (atomic.Bool); planSetMsg
@@ -139,8 +130,7 @@ type Model struct {
 	// only writer is Update itself.
 	hitlQueue []approvalRequest
 
-	// todos is the latest in-flight todo list, written by every
-	// TracePhaseTodos event regardless of m.debug. Empty → no panel.
+	// todos is the latest in-flight todo list. Empty → no panel.
 	todos []deep.TODO
 	// todoExpanded toggles the panel between collapsed (single-line) and
 	// expanded (full list) layouts; flipped by /todos.
@@ -162,7 +152,7 @@ func New(runtime rt.Runtime, cfgs ...*config.Config) (*Model, error) {
 	if len(cfgs) > 0 {
 		cfg = cfgs[0]
 	}
-	toolBlocksEnabled, toolPreviewLines, toolArgsMaxChars := toolBlockSettings(cfg)
+	toolBlocksEnabled, toolPreviewLines, toolArgsMaxChars := getToolBlockSettings()
 
 	ti := textinput.New()
 	ti.Placeholder = "Ask anything... (/help for commands)"
@@ -187,7 +177,7 @@ func New(runtime rt.Runtime, cfgs ...*config.Config) (*Model, error) {
 		cfg:               cfg,
 		cwd:               cwd,
 		modelName:         runtime.Name(),
-		runs:              newRunManager(cfg),
+		runs:              newRunManager(),
 		input:             ti,
 		viewport:          vp,
 		spin:              sp,
@@ -196,25 +186,18 @@ func New(runtime rt.Runtime, cfgs ...*config.Config) (*Model, error) {
 		toolBlocksEnabled: toolBlocksEnabled,
 		toolPreviewLines:  toolPreviewLines,
 		toolArgsMaxChars:  toolArgsMaxChars,
-		inputHistory:      loadInputHistory(rootFromConfig(cfg)),
+		inputHistory:      loadInputHistory(config.RootDir()),
 		historyIndex:      -1,
 		commands:          buildSlashCommands(cfg),
 	}, nil
 }
 
-func newRunManager(cfg *config.Config) *runtimeRun.Manager {
-	root := rootFromConfig(cfg)
+func newRunManager() *runtimeRun.Manager {
+	root := config.RootDir()
 	return runtimeRun.NewManagerWithStore(
-		runs.NewStore(config.RunsDir(&config.Config{RootDir: root})),
+		runs.NewStore(config.RunsDir()),
 		rollback.NewStore(root),
 	)
-}
-
-func rootFromConfig(cfg *config.Config) string {
-	if cfg != nil && strings.TrimSpace(cfg.RootDir) != "" {
-		return cfg.RootDir
-	}
-	return "."
 }
 
 func (m *Model) availableCommands() []slashCommand {
@@ -226,22 +209,10 @@ func (m *Model) availableCommands() []slashCommand {
 	return commands
 }
 
-func toolBlockSettings(cfg *config.Config) (enabled bool, previewLines int, argsMaxChars int) {
+func getToolBlockSettings() (enabled bool, previewLines int, argsMaxChars int) {
 	enabled = true
 	previewLines = defaultToolPreviewLines
 	argsMaxChars = defaultToolArgsMaxChars
-	if cfg == nil {
-		return enabled, previewLines, argsMaxChars
-	}
-	if cfg.ToolBlocks.Configured() {
-		enabled = cfg.ToolBlocks.Enabled
-	}
-	if cfg.ToolBlocks.PreviewLines > 0 {
-		previewLines = cfg.ToolBlocks.PreviewLines
-	}
-	if cfg.ToolBlocks.ArgsMaxChars > 0 {
-		argsMaxChars = cfg.ToolBlocks.ArgsMaxChars
-	}
 	return enabled, previewLines, argsMaxChars
 }
 
@@ -422,10 +393,6 @@ func (m *Model) renderMessage(msg chatMessage) string {
 		return assistantPrefixStyle.Render("⏺ ") + body
 	case "system":
 		return systemPrefixStyle.Render("• ") + msg.Content
-	case "debug-input":
-		return debugInputMarkerStyle.Render("▶ ") + debugBodyStyle.Render(msg.Content)
-	case "debug-output":
-		return debugOutputMarkerStyle.Render("◀ ") + debugBodyStyle.Render(msg.Content)
 	case "tool-block":
 		id, ok := parseToolPlaceholder(msg.Content)
 		if !ok {
@@ -476,7 +443,7 @@ func (m *Model) saveInputHistoryEntry(text string) {
 	if len(m.inputHistory) > maxInputHistory {
 		m.inputHistory = m.inputHistory[len(m.inputHistory)-maxInputHistory:]
 	}
-	saveInputHistory(rootFromConfig(m.cfg), m.inputHistory)
+	saveInputHistory(config.RootDir(), m.inputHistory)
 	m.historyIndex = -1
 	m.historyDraft = ""
 }
@@ -582,60 +549,4 @@ func (m *Model) builtinHelp(target string) string {
 
 func builtinHelp() string {
 	return (&Model{commands: commands}).builtinHelp("")
-}
-
-// formatDebugInput renders a TracePhaseBefore event; [agentname] prefix
-// disambiguates interleaved subagent / lead-agent turns.
-func formatDebugInput(ev middlewares.TraceEvent) string {
-	var sb strings.Builder
-	var totalBytes int
-	for _, msg := range ev.Messages {
-		totalBytes += len(msg.Content)
-	}
-	fmt.Fprintf(&sb, "[%s] turn %d input · %d messages · %s\n",
-		ev.AgentName, ev.Turn, len(ev.Messages), humanBytes(totalBytes))
-	for _, msg := range ev.Messages {
-		fmt.Fprintf(&sb, "[%s] %s\n", msg.Role, truncate(msg.Content, debugBodyMaxBytes))
-		for _, call := range msg.ToolCalls {
-			fmt.Fprintf(&sb, "  ↳ tool_call %s(%s)\n",
-				call.Function.Name,
-				truncate(call.Function.Arguments, debugToolArgMaxBytes))
-		}
-	}
-	return strings.TrimRight(sb.String(), "\n")
-}
-
-// formatDebugOutput renders a TracePhaseAfter event (one assistant message + tool calls).
-func formatDebugOutput(ev middlewares.TraceEvent) string {
-	if len(ev.Messages) == 0 {
-		return ""
-	}
-	last := ev.Messages[0]
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "[%s] turn %d output\n", ev.AgentName, ev.Turn)
-	if c := strings.TrimSpace(last.Content); c != "" {
-		fmt.Fprintf(&sb, "[%s] %s\n", last.Role, truncate(last.Content, debugBodyMaxBytes))
-	}
-	for _, call := range last.ToolCalls {
-		fmt.Fprintf(&sb, "  ↳ tool_call %s(%s)\n",
-			call.Function.Name,
-			truncate(call.Function.Arguments, debugToolArgMaxBytes))
-	}
-	return strings.TrimRight(sb.String(), "\n")
-}
-
-// truncate clips to n bytes (UTF-8 boundary unaware) with a "(…N more)" tail.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + fmt.Sprintf(" …(%d more bytes)", len(s)-n)
-}
-
-// humanBytes formats bytes as "1.2 KB" / "456 B" for debug headers.
-func humanBytes(n int) string {
-	if n < 1024 {
-		return fmt.Sprintf("%d B", n)
-	}
-	return fmt.Sprintf("%.1f KB", float64(n)/1024)
 }

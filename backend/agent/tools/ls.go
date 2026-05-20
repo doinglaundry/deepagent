@@ -19,7 +19,7 @@ type lsArgs struct {
 }
 
 // GetLsTool returns the ls tool.
-func GetLsTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
+func GetLsTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameLs, filesystem.ListFilesToolDesc,
 		func(ctx context.Context, in lsArgs) (string, error) {
 			if shouldUseSandbox(in.Path) {
@@ -33,7 +33,7 @@ func GetLsTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseToo
 					}
 				}
 			}
-			entries, err := os.ReadDir(resolvePath(root, in.Path))
+			entries, err := os.ReadDir(resolvePath(in.Path))
 			if err != nil {
 				return "", err
 			}

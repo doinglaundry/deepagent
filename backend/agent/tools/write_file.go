@@ -19,7 +19,7 @@ type writeFileArgs struct {
 }
 
 // GetWriteFileTool returns the write_file tool routed through sandbox or host fs.
-func GetWriteFileTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
+func GetWriteFileTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameWriteFile, filesystem.WriteFileToolDesc,
 		func(ctx context.Context, in writeFileArgs) (string, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
@@ -33,7 +33,7 @@ func GetWriteFileTool(root string, sandboxManager sandbox.SandboxManager) (tool.
 					return fmt.Sprintf("Updated file %s", in.FilePath), nil
 				}
 			}
-			p := resolvePath(root, in.FilePath)
+			p := resolvePath(in.FilePath)
 			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 				return "", err
 			}
