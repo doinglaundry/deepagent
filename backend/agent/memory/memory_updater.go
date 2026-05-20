@@ -12,7 +12,6 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"eino-cli/backend/config"
 	memorystore "eino-cli/backend/memory/store"
 )
 
@@ -34,12 +33,11 @@ func NewMemoryUpdater(store *memorystore.Store) *MemoryUpdater {
 func (u *MemoryUpdater) Run(
 	ctx context.Context,
 	chatModel model.BaseChatModel,
-	cfg config.Memory,
 	agentName string,
 	messages []*schema.Message,
 	force bool,
 ) error {
-	if !cfg.Enabled || chatModel == nil || u == nil || u.store == nil {
+	if chatModel == nil || u == nil || u.store == nil {
 		return nil
 	}
 	if len(messages) == 0 {
@@ -49,8 +47,8 @@ func (u *MemoryUpdater) Run(
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
-	if !force && cfg.DebounceSeconds > 0 {
-		if time.Since(u.lastRunAt) < time.Duration(cfg.DebounceSeconds)*time.Second {
+	if !force {
+		if time.Since(u.lastRunAt) < time.Duration(60)*time.Second {
 			return nil
 		}
 	}
@@ -90,7 +88,7 @@ func (u *MemoryUpdater) Run(
 		return fmt.Errorf("parse update: %w", err)
 	}
 
-	updated := applyUpdate(current, payload, cfg)
+	updated := applyUpdate(current, payload)
 
 	err = u.store.Save(agentName, updated)
 	if err != nil {
@@ -162,7 +160,7 @@ func parseUpdatePayload(raw string) (updatePayload, error) {
 func applyUpdate(
 	current memorystore.MemoryData,
 	upd updatePayload,
-	cfg config.Memory,
+
 ) memorystore.MemoryData {
 	now := utcNowISO()
 	out := current
@@ -208,7 +206,7 @@ func applyUpdate(
 			continue
 		}
 		conf := memorystore.CoerceConfidence(nf.Confidence)
-		if conf < cfg.FactConfidenceThreshold {
+		if conf < 0.7 {
 			continue
 		}
 		category := strings.TrimSpace(nf.Category)
@@ -216,20 +214,18 @@ func applyUpdate(
 			category = "context"
 		}
 
-		if cfg.DedupEnabled {
-			idx := findDuplicateFact(out.Facts, normalizeFactContent(content))
-			if idx >= 0 {
-				merged := out.Facts[idx].Confidence
-				if conf > merged {
-					merged = conf
-				}
-				merged += 0.05
-				if merged > 0.99 {
-					merged = 0.99
-				}
-				out.Facts[idx].Confidence = merged
-				continue
+		idx := findDuplicateFact(out.Facts, normalizeFactContent(content))
+		if idx >= 0 {
+			merged := out.Facts[idx].Confidence
+			if conf > merged {
+				merged = conf
 			}
+			merged += 0.05
+			if merged > 0.99 {
+				merged = 0.99
+			}
+			out.Facts[idx].Confidence = merged
+			continue
 		}
 
 		kind := nf.Kind
@@ -237,8 +233,8 @@ func applyUpdate(
 			kind = memorystore.FactKindEnduring
 		}
 		expiresAt := nf.ExpiresAt
-		if kind == memorystore.FactKindEpisodic && expiresAt == "" && cfg.EpisodicDefaultTTLSeconds > 0 {
-			ttl := time.Duration(cfg.EpisodicDefaultTTLSeconds) * time.Second
+		if kind == memorystore.FactKindEpisodic && expiresAt == "" {
+			ttl := time.Duration(30*24*60*60) * time.Second
 			expiresAt = time.Now().UTC().Add(ttl).Format("2006-01-02T15:04:05Z")
 		}
 
@@ -255,11 +251,11 @@ func applyUpdate(
 		})
 	}
 
-	if cfg.MaxFacts > 0 && len(out.Facts) > cfg.MaxFacts {
+	if len(out.Facts) > 100 {
 		sort.SliceStable(out.Facts, func(i, j int) bool {
 			return out.Facts[i].Confidence > out.Facts[j].Confidence
 		})
-		out.Facts = out.Facts[:cfg.MaxFacts]
+		out.Facts = out.Facts[:100]
 	}
 
 	live := make([]memorystore.Fact, 0, len(out.Facts))

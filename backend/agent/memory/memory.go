@@ -3,7 +3,6 @@ package memory
 import (
 	"github.com/cloudwego/eino/schema"
 
-	"eino-cli/backend/config"
 	memorystore "eino-cli/backend/memory/store"
 )
 
@@ -31,14 +30,10 @@ func GetMemoryPromptBlock(store *memorystore.Store, agentName string, maxTokens 
 // in unconditionally; falsy config / empty memory both return msgs unchanged.
 func InjectMemory(
 	store *memorystore.Store,
-	cfg config.Memory,
 	agentName string,
 	msgs []*schema.Message,
 ) []*schema.Message {
-	if !cfg.Enabled || !cfg.InjectionEnabled {
-		return msgs
-	}
-	block := GetMemoryPromptBlock(store, agentName, cfg.MaxInjectionTokens)
+	block := GetMemoryPromptBlock(store, agentName, 2000)
 	if block == "" {
 		return msgs
 	}

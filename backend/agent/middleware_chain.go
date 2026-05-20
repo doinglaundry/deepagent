@@ -29,24 +29,24 @@ func GetChatModelMiddlewares(
 
 	middlewareList = []adk.ChatModelAgentMiddleware{
 		middlewares.NewAgentState(),
-		middlewares.NewToolCallObservability(true),
+		middlewares.NewToolCallObservability(),
 		middlewares.NewToolErrorHandling(),
 		patchToolCalls,
 		middlewares.NewLoopDetection(),
 	}
 
 	var (
-		store   = memorystore.NewStoreFromConfig()
+		store   = memorystore.NewStore()
 		updater = memory.NewMemoryUpdater(store)
 		memCfg  = getDefaultMemoryConfig()
 	)
 
 	middlewareList = append(middlewareList, middlewares.NewMemory(middlewares.MemoryHooks{
 		Inject: func(_ context.Context, msgs []*schema.Message) []*schema.Message {
-			return memory.InjectMemory(store, memCfg, agentName, msgs)
+			return memory.InjectMemory(store, agentName, msgs)
 		},
 		Extract: func(ctx context.Context, msgs []*schema.Message) {
-			err := updater.Run(ctx, chatModel, memCfg, agentName, msgs, false)
+			err := updater.Run(ctx, chatModel, agentName, msgs, false)
 			if err != nil {
 				slog.Warn("memory update failed", "agent", agentName, "err", err)
 			}

@@ -113,7 +113,7 @@ func TestGetSystemPrompt_DoesNotInjectMemory(t *testing.T) {
 	defer cleanup()
 	data := memorystore.GetEmptyMemoryData()
 	data.User.WorkContext = memorystore.Section{Summary: "memory belongs in middleware"}
-	if err := memorystore.NewStoreFromConfig().Save("default", data); err != nil {
+	if err := memorystore.NewStore().Save("default", data); err != nil {
 		t.Fatal(err)
 	}
 

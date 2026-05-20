@@ -9,8 +9,6 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-
-	"eino-cli/backend/config"
 )
 
 type errorReason string
@@ -31,18 +29,16 @@ type errorHandlingModel struct {
 	cb          *circuitBreaker
 }
 
-func wrapErrorHandling(m model.BaseChatModel, cfg config.ErrorHandling) model.BaseChatModel {
-	if !cfg.Enabled || cfg.Retry.MaxAttempts <= 0 {
-		return m
-	}
+func wrapErrorHandling(m model.BaseChatModel) model.BaseChatModel {
+
 	return &errorHandlingModel{
 		m:           m,
-		maxAttempts: cfg.Retry.MaxAttempts,
-		baseDelay:   time.Duration(cfg.Retry.BaseDelayMS) * time.Millisecond,
-		capDelay:    time.Duration(cfg.Retry.CapDelayMS) * time.Millisecond,
+		maxAttempts: 3,
+		baseDelay:   time.Duration(1000) * time.Millisecond,
+		capDelay:    time.Duration(8000) * time.Millisecond,
 		cb: &circuitBreaker{
-			threshold: cfg.CircuitBreaker.FailureThreshold,
-			recovery:  time.Duration(cfg.CircuitBreaker.RecoverySeconds) * time.Second,
+			threshold: 5,
+			recovery:  time.Duration(60) * time.Second,
 			state:     cbClosed,
 		},
 	}

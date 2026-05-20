@@ -2,11 +2,9 @@ package sandbox
 
 import (
 	"context"
-	"sync/atomic"
+	"sync"
 )
 
-// SandboxManager owns Sandbox instances. UsesThreadDataMounts tells tools
-// whether to reverse-map /mnt/user-data/... to a per-thread host dir.
 type SandboxManager interface {
 	Acquire(ctx context.Context, threadID string) (string, error)
 	Get(ctx context.Context, sandboxID string) (Sandbox, error)
@@ -16,41 +14,33 @@ type SandboxManager interface {
 	UsesThreadDataMounts() bool
 }
 
-// Wrapped in a struct so atomic.Pointer holds a concrete (non-interface) type.
-var defaultManager atomic.Pointer[managerHandle]
-
-type managerHandle struct{ m SandboxManager }
+var defaultManager struct {
+	sync.RWMutex
+	m SandboxManager
+}
 
 // Default returns the process-wide manager, or nil when none is registered.
 func Default() SandboxManager {
-	h := defaultManager.Load()
-	if h == nil {
-		return nil
-	}
-	return h.m
+	defaultManager.RLock()
+	defer defaultManager.RUnlock()
+	return defaultManager.m
 }
 
-// SetDefault swaps the active manager; passing nil clears it.
 func SetDefault(m SandboxManager) {
-	if m == nil {
-		defaultManager.Store(nil)
-		return
-	}
-	defaultManager.Store(&managerHandle{m: m})
+	defaultManager.Lock()
+	defer defaultManager.Unlock()
+	defaultManager.m = m
 }
 
-// Shutdowner is the optional teardown hook managers may implement.
 type Shutdowner interface{ Shutdown() }
 
-// ShutdownDefault invokes Shutdown on the registered manager when it
-// implements Shutdowner, then clears the registration.
 func ShutdownDefault() {
-	h := defaultManager.Load()
-	if h == nil {
-		return
-	}
-	if s, ok := h.m.(Shutdowner); ok {
+	defaultManager.Lock()
+	m := defaultManager.m
+	defaultManager.m = nil
+	defaultManager.Unlock()
+
+	if s, ok := m.(Shutdowner); ok {
 		s.Shutdown()
 	}
-	defaultManager.Store(nil)
 }

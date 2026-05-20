@@ -14,12 +14,8 @@ type Store struct {
 	dir string
 }
 
-func NewStore(dir string) *Store {
-	return &Store{dir: dir}
-}
-
-func NewStoreFromConfig() *Store {
-	return NewStore(config.MemoryDir())
+func NewStore() *Store {
+	return &Store{dir: config.MemoryDir()}
 }
 
 func (s *Store) Load(agentName string) (MemoryData, error) {

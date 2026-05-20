@@ -29,7 +29,7 @@ func MakeLeadAgent(
 	if err != nil {
 		return nil, nil, err
 	}
-	chatModel = wrapErrorHandling(chatModel, getDefaultErrorHandlingConfig())
+	chatModel = wrapErrorHandling(chatModel)
 
 	sandboxManager := sandbox.Default()
 	handlers := GetChatModelMiddlewares(ctx, agentName, isSubagentEnabled, getPlanMode, cfg, chatModel, sandboxManager)
@@ -55,19 +55,4 @@ func MakeLeadAgent(
 		return nil, nil, fmt.Errorf("build deep agent: %w", err)
 	}
 	return agentImpl, middlewares.FindTrace(handlers), nil
-}
-
-func getDefaultErrorHandlingConfig() config.ErrorHandling {
-	return config.ErrorHandling{
-		Enabled: true,
-		Retry: config.RetryConfig{
-			MaxAttempts: 3,
-			BaseDelayMS: 1000,
-			CapDelayMS:  8000,
-		},
-		CircuitBreaker: config.CircuitBreakerConfig{
-			FailureThreshold: 5,
-			RecoverySeconds:  60,
-		},
-	}
 }

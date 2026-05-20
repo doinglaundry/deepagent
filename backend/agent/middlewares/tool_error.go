@@ -27,15 +27,14 @@ func (m *ToolErrorHandling) WrapInvokableToolCall(
 	endpoint adk.InvokableToolCallEndpoint,
 	tCtx *adk.ToolContext,
 ) (adk.InvokableToolCallEndpoint, error) {
-	name := ""
-	if tCtx != nil {
-		name = tCtx.Name
-	}
+
 	return func(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+		name := ""
+		if tCtx != nil {
+			name = tCtx.Name
+		}
 		out, err := endpoint(ctx, argumentsInJSON, opts...)
 		if err != nil {
-			m.Logger.Warn("tool call failed; converting to ToolMessage",
-				"tool", name, "err", err)
 			return fmt.Sprintf("Error executing tool %q: %s", name, err.Error()), nil
 		}
 		return out, nil

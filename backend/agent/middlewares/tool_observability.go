@@ -11,13 +11,11 @@ import (
 
 type ToolCallObservability struct {
 	*adk.BaseChatModelAgentMiddleware
-	enabled bool
 }
 
-func NewToolCallObservability(enabled bool) *ToolCallObservability {
+func NewToolCallObservability() *ToolCallObservability {
 	return &ToolCallObservability{
 		BaseChatModelAgentMiddleware: &adk.BaseChatModelAgentMiddleware{},
-		enabled:                      enabled,
 	}
 }
 
@@ -26,14 +24,11 @@ func (o *ToolCallObservability) WrapInvokableToolCall(
 	endpoint adk.InvokableToolCallEndpoint,
 	tCtx *adk.ToolContext,
 ) (adk.InvokableToolCallEndpoint, error) {
-	if !o.enabled {
-		return endpoint, nil
-	}
-	name := ""
-	if tCtx != nil {
-		name = tCtx.Name
-	}
 	return func(ctx context.Context, args string, opts ...tool.Option) (string, error) {
+		name := ""
+		if tCtx != nil {
+			name = tCtx.Name
+		}
 		start := time.Now()
 		out, err := endpoint(ctx, args, opts...)
 		dur := time.Since(start)
