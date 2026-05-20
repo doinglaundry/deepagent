@@ -7,11 +7,13 @@ const (
 	DefaultUserID     = "local"
 )
 
+type PermissionMode string
+
 const (
-	ModeDefault     = "default"
-	ModeAcceptEdits = "acceptEdits"
-	ModePlan        = "plan"
-	ModeBypass      = "bypassPermissions"
+	ModeDefault     PermissionMode = "default"
+	ModeAcceptEdits PermissionMode = "acceptEdits"
+	ModePlan        PermissionMode = "plan"
+	ModeBypass      PermissionMode = "bypassPermissions"
 )
 
 const PlanModeDeniedMessage = "This action is blocked by plan mode. Switch to default or acceptEdits mode to perform writes."

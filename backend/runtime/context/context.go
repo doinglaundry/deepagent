@@ -7,14 +7,7 @@ import (
 	"eino-cli/backend/consts"
 )
 
-type PermissionMode string
-
-const (
-	ModeDefault     PermissionMode = consts.ModeDefault
-	ModeAcceptEdits PermissionMode = consts.ModeAcceptEdits
-	ModePlan        PermissionMode = consts.ModePlan
-	ModeBypass      PermissionMode = consts.ModeBypass
-)
+type PermissionMode = consts.PermissionMode
 
 type (
 	threadIDKey          struct{}
@@ -30,7 +23,7 @@ type RollbackPolicyState struct {
 
 func IsKnownMode(m PermissionMode) bool {
 	switch m {
-	case ModeDefault, ModeAcceptEdits, ModePlan, ModeBypass:
+	case consts.ModeDefault, consts.ModeAcceptEdits, consts.ModePlan, consts.ModeBypass:
 		return true
 	}
 	return false
@@ -61,7 +54,7 @@ func WithPermissionMode(ctx stdctx.Context, mode PermissionMode) stdctx.Context 
 func GetPermissionMode(ctx stdctx.Context) PermissionMode {
 	v, ok := ctx.Value(permissionModeKey{}).(PermissionMode)
 	if !ok {
-		return ModeDefault
+		return consts.ModeDefault
 	}
 	return v
 }

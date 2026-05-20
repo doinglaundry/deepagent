@@ -32,7 +32,7 @@ func getSandbox(ctx context.Context, manager sandbox.SandboxManager) sandbox.San
 
 // denyOnPlanMode returns (msg, true) when ctx is in plan mode; write tools short-circuit on true.
 func denyOnPlanMode(ctx context.Context) (string, bool) {
-	if runtimecontext.GetPermissionMode(ctx) == runtimecontext.ModePlan {
+	if runtimecontext.GetPermissionMode(ctx) == consts.ModePlan {
 		return consts.PlanModeDeniedMessage, true
 	}
 	return "", false
