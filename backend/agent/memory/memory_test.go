@@ -10,9 +10,16 @@ import (
 	memorystore "eino-cli/backend/memory/store"
 )
 
+func newMemoryStore(t *testing.T) *memorystore.Store {
+	t.Helper()
+	cleanup := config.SetRootDirForTest(t.TempDir())
+	t.Cleanup(cleanup)
+	return memorystore.NewStore()
+}
+
 func seedStore(t *testing.T, agentName string, data memorystore.MemoryData) *memorystore.Store {
 	t.Helper()
-	s := memorystore.NewStore(t.TempDir())
+	s := newMemoryStore(t)
 	err := s.Save(agentName, data)
 	if err != nil {
 		t.Fatalf("seed store: %v", err)
@@ -27,7 +34,7 @@ func TestGetMemoryPromptBlock_NilStore(t *testing.T) {
 }
 
 func TestGetMemoryPromptBlock_EmptyData(t *testing.T) {
-	s := memorystore.NewStore(t.TempDir())
+	s := newMemoryStore(t)
 	if got := GetMemoryPromptBlock(s, "alice", 0); got != "" {
 		t.Errorf("empty store should yield empty block, got %q", got)
 	}
@@ -53,33 +60,13 @@ func TestGetMemoryPromptBlock_RendersUserAndFacts(t *testing.T) {
 	}
 }
 
-func TestInjectMemory_DisabledByConfig(t *testing.T) {
-	data := memorystore.GetEmptyMemoryData()
-	data.User.WorkContext = memorystore.Section{Summary: "stuff"}
-	s := seedStore(t, "alice", data)
-
-	in := []*schema.Message{schema.UserMessage("hi")}
-
-	cases := []config.Memory{
-		{Enabled: false, InjectionEnabled: true},
-		{Enabled: true, InjectionEnabled: false},
-	}
-	for _, cfg := range cases {
-		out := InjectMemory(s, cfg, "alice", in)
-		if len(out) != 1 || out[0].Role != schema.User {
-			t.Errorf("InjectMemory should pass through when disabled (%+v), got %d msgs", cfg, len(out))
-		}
-	}
-}
-
 func TestInjectMemory_AppendsSystemMessage(t *testing.T) {
 	data := memorystore.GetEmptyMemoryData()
 	data.User.WorkContext = memorystore.Section{Summary: "Go backend dev"}
 	s := seedStore(t, "alice", data)
 
-	cfg := config.Memory{Enabled: true, InjectionEnabled: true, MaxInjectionTokens: 0}
 	in := []*schema.Message{schema.UserMessage("hi")}
-	out := InjectMemory(s, cfg, "alice", in)
+	out := InjectMemory(s, "alice", in)
 
 	if len(out) != 2 {
 		t.Fatalf("expected 2 messages after inject, got %d", len(out))
@@ -97,10 +84,9 @@ func TestInjectMemory_AppendsSystemMessage(t *testing.T) {
 }
 
 func TestInjectMemory_NoOpWhenEmpty(t *testing.T) {
-	s := memorystore.NewStore(t.TempDir())
-	cfg := config.Memory{Enabled: true, InjectionEnabled: true}
+	s := newMemoryStore(t)
 	in := []*schema.Message{schema.UserMessage("hi")}
-	out := InjectMemory(s, cfg, "alice", in)
+	out := InjectMemory(s, "alice", in)
 	if len(out) != 1 {
 		t.Errorf("expected pass-through for empty store, got %d", len(out))
 	}

@@ -5,10 +5,20 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"eino-cli/backend/config"
 )
 
+func newTestStore(t *testing.T) (*Store, string) {
+	t.Helper()
+	cleanup := config.SetRootDirForTest(t.TempDir())
+	t.Cleanup(cleanup)
+	s := NewStore()
+	return s, s.dir
+}
+
 func TestStore_LoadMissingReturnsEmpty(t *testing.T) {
-	s := NewStore(t.TempDir())
+	s, _ := newTestStore(t)
 	data, err := s.Load("")
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -25,11 +35,12 @@ func TestStore_LoadMissingReturnsEmpty(t *testing.T) {
 }
 
 func TestStore_LoadCorruptReturnsEmptyNoError(t *testing.T) {
-	dir := t.TempDir()
-	s := NewStore(dir)
+	s, dir := newTestStore(t)
 
-	err := os.WriteFile(filepath.Join(dir, "global.json"), []byte("{not json"), 0o644)
-	if err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir memory dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "global.json"), []byte("{not json"), 0o644); err != nil {
 		t.Fatalf("seed bad file: %v", err)
 	}
 
@@ -43,7 +54,7 @@ func TestStore_LoadCorruptReturnsEmptyNoError(t *testing.T) {
 }
 
 func TestStore_SaveLoadRoundTrip(t *testing.T) {
-	s := NewStore(t.TempDir())
+	s, _ := newTestStore(t)
 
 	in := GetEmptyMemoryData()
 	in.User.WorkContext = Section{Summary: "Go backend dev", UpdatedAt: "2026-05-10T08:00:00Z"}
@@ -74,8 +85,7 @@ func TestStore_SaveLoadRoundTrip(t *testing.T) {
 }
 
 func TestStore_GlobalAndAgentSeparated(t *testing.T) {
-	dir := t.TempDir()
-	s := NewStore(dir)
+	s, dir := newTestStore(t)
 
 	err := s.Save("", GetEmptyMemoryData())
 	if err != nil {
@@ -95,7 +105,7 @@ func TestStore_GlobalAndAgentSeparated(t *testing.T) {
 }
 
 func TestStore_RejectsInvalidAgentName(t *testing.T) {
-	s := NewStore(t.TempDir())
+	s, _ := newTestStore(t)
 	bad := []string{"../etc/passwd", "foo/bar", "_leading", "with space", "a" + string(make([]byte, 100))}
 	for _, name := range bad {
 		err := s.Save(name, GetEmptyMemoryData())
@@ -110,8 +120,7 @@ func TestStore_RejectsInvalidAgentName(t *testing.T) {
 }
 
 func TestStore_SaveLeavesNoTmpResidue(t *testing.T) {
-	dir := t.TempDir()
-	s := NewStore(dir)
+	s, dir := newTestStore(t)
 	err := s.Save("alice", GetEmptyMemoryData())
 	if err != nil {
 		t.Fatalf("Save: %v", err)
@@ -151,8 +160,7 @@ func TestCoerceConfidence(t *testing.T) {
 }
 
 func TestStore_LoadCoercesFactConfidence(t *testing.T) {
-	dir := t.TempDir()
-	s := NewStore(dir)
+	s, _ := newTestStore(t)
 
 	in := GetEmptyMemoryData()
 	in.Facts = []Fact{

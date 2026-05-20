@@ -9,8 +9,6 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-
-	"eino-cli/backend/config"
 )
 
 type mockChatModel struct {
@@ -39,21 +37,23 @@ func (m *mockChatModel) Stream(context.Context, []*schema.Message, ...model.Opti
 	return nil, errors.New("stream unused")
 }
 
-func errResp(text string) mockResponse           { return mockResponse{err: errors.New(text)} }
-func okResp(content string) mockResponse         { return mockResponse{msg: &schema.Message{Role: schema.Assistant, Content: content}} }
+func errResp(text string) mockResponse { return mockResponse{err: errors.New(text)} }
+func okResp(content string) mockResponse {
+	return mockResponse{msg: &schema.Message{Role: schema.Assistant, Content: content}}
+}
 func mockResponses(rs ...mockResponse) []mockResponse { return rs }
 
 func newWrapper(t *testing.T, inner *mockChatModel, maxAttempts, cbThreshold int) *errorHandlingModel {
 	t.Helper()
-	cfg := config.ErrorHandling{
-		Enabled:        true,
-		Retry:          config.RetryConfig{MaxAttempts: maxAttempts, BaseDelayMS: 1, CapDelayMS: 4},
-		CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: cbThreshold, RecoverySeconds: 60},
-	}
-	w, ok := wrapErrorHandling(inner, cfg).(*errorHandlingModel)
+	w, ok := wrapErrorHandling(inner).(*errorHandlingModel)
 	if !ok {
 		t.Fatalf("wrapErrorHandling did not return *errorHandlingModel")
 	}
+	w.maxAttempts = maxAttempts
+	w.baseDelay = time.Millisecond
+	w.capDelay = 4 * time.Millisecond
+	w.cb.threshold = cbThreshold
+	w.cb.recovery = 60 * time.Second
 	return w
 }
 
@@ -149,13 +149,10 @@ func TestGenerate_NonRetryableNoRetry(t *testing.T) {
 }
 
 func TestGenerate_CtxCanceledDuringBackoff(t *testing.T) {
-	cfg := config.ErrorHandling{
-		Enabled:        true,
-		Retry:          config.RetryConfig{MaxAttempts: 3, BaseDelayMS: 50, CapDelayMS: 200},
-		CircuitBreaker: config.CircuitBreakerConfig{FailureThreshold: 999, RecoverySeconds: 60},
-	}
 	inner := &mockChatModel{responses: mockResponses(errResp(" 503"))}
-	w := wrapErrorHandling(inner, cfg)
+	w := newWrapper(t, inner, 3, 999)
+	w.baseDelay = 50 * time.Millisecond
+	w.capDelay = 200 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		time.Sleep(10 * time.Millisecond)
@@ -215,19 +212,5 @@ func TestGenerate_QuotaCountsTowardCircuitBreaker(t *testing.T) {
 	}
 	if !w.cb.shouldFastFail() {
 		t.Error("quota errors must count toward circuit breaker (deer-flow alignment)")
-	}
-}
-
-func TestWrapErrorHandling_DisabledReturnsInner(t *testing.T) {
-	inner := &mockChatModel{}
-	cases := []config.ErrorHandling{
-		{Enabled: false, Retry: config.RetryConfig{MaxAttempts: 3}},
-		{Enabled: true, Retry: config.RetryConfig{MaxAttempts: 0}},
-	}
-	for _, cfg := range cases {
-		got, ok := wrapErrorHandling(inner, cfg).(*mockChatModel)
-		if !ok || got != inner {
-			t.Errorf("cfg=%+v: should return inner unchanged", cfg)
-		}
 	}
 }

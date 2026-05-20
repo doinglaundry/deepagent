@@ -39,19 +39,10 @@ func (f *fakeChatModel) Stream(_ context.Context, _ []*schema.Message, _ ...mode
 
 func newUpdaterAndStore(t *testing.T) (*MemoryUpdater, *memorystore.Store) {
 	t.Helper()
-	store := memorystore.NewStore(t.TempDir())
+	cleanup := config.SetRootDirForTest(t.TempDir())
+	t.Cleanup(cleanup)
+	store := memorystore.NewStore()
 	return NewMemoryUpdater(store), store
-}
-
-func enabledMemoryCfg() config.Memory {
-	return config.Memory{
-		Enabled:                 true,
-		InjectionEnabled:        true,
-		MaxInjectionTokens:      0,
-		DebounceSeconds:         0,
-		MaxFacts:                10,
-		FactConfidenceThreshold: 0.5,
-	}
 }
 
 func basicConversation() []*schema.Message {
@@ -61,26 +52,24 @@ func basicConversation() []*schema.Message {
 	}
 }
 
-// Run skips when memory is disabled / chatModel is nil / messages empty,
-// and returns nil error so callers don't log noise.
-func TestMemoryUpdater_RunSkipsWhenDisabled(t *testing.T) {
+// Run skips when chatModel is nil / messages empty, and returns nil error so
+// callers don't log noise.
+func TestMemoryUpdater_RunSkipsWhenNoModelOrMessages(t *testing.T) {
 	updater, store := newUpdaterAndStore(t)
 
 	chat := &fakeChatModel{response: "{}"}
 
 	cases := []struct {
 		name string
-		cfg  config.Memory
 		chat model.BaseChatModel
 		msgs []*schema.Message
 	}{
-		{"disabled", config.Memory{Enabled: false}, chat, basicConversation()},
-		{"nil chatModel", enabledMemoryCfg(), nil, basicConversation()},
-		{"empty messages", enabledMemoryCfg(), chat, nil},
+		{"nil chatModel", nil, basicConversation()},
+		{"empty messages", chat, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := updater.Run(context.Background(), c.chat, c.cfg, "alice", c.msgs, false)
+			err := updater.Run(context.Background(), c.chat, "alice", c.msgs, false)
 			if err != nil {
 				t.Errorf("Run should be a no-op (no error), got %v", err)
 			}
@@ -98,11 +87,8 @@ func TestMemoryUpdater_DebounceSkips(t *testing.T) {
 	updater, _ := newUpdaterAndStore(t)
 	updater.lastRunAt = time.Now()
 
-	cfg := enabledMemoryCfg()
-	cfg.DebounceSeconds = 60
-
 	chat := &fakeChatModel{response: "{}"}
-	err := updater.Run(context.Background(), chat, cfg, "alice", basicConversation(), false)
+	err := updater.Run(context.Background(), chat, "alice", basicConversation(), false)
 	if err != nil {
 		t.Fatalf("debounced Run should not error, got %v", err)
 	}
@@ -115,9 +101,6 @@ func TestMemoryUpdater_ForceBypassesDebounce(t *testing.T) {
 	updater, store := newUpdaterAndStore(t)
 	updater.lastRunAt = time.Now()
 
-	cfg := enabledMemoryCfg()
-	cfg.DebounceSeconds = 60
-
 	resp := mustMarshal(t, updatePayload{
 		User: map[string]sectionUpdate{
 			"workContext": {Summary: "Go backend dev", ShouldUpdate: true},
@@ -125,7 +108,7 @@ func TestMemoryUpdater_ForceBypassesDebounce(t *testing.T) {
 	})
 	chat := &fakeChatModel{response: resp}
 
-	err := updater.Run(context.Background(), chat, cfg, "alice", basicConversation(), true)
+	err := updater.Run(context.Background(), chat, "alice", basicConversation(), true)
 	if err != nil {
 		t.Fatalf("force Run failed: %v", err)
 	}
@@ -148,7 +131,7 @@ func TestMemoryUpdater_StripsCodeFenceAroundJSON(t *testing.T) {
 	})
 	chat := &fakeChatModel{response: "```json\n" + body + "\n```"}
 
-	err := updater.Run(context.Background(), chat, enabledMemoryCfg(), "alice", basicConversation(), false)
+	err := updater.Run(context.Background(), chat, "alice", basicConversation(), false)
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -162,7 +145,7 @@ func TestMemoryUpdater_BadJSONReturnsErrAndDoesNotAdvance(t *testing.T) {
 	updater, store := newUpdaterAndStore(t)
 	chat := &fakeChatModel{response: "not json"}
 
-	err := updater.Run(context.Background(), chat, enabledMemoryCfg(), "alice", basicConversation(), false)
+	err := updater.Run(context.Background(), chat, "alice", basicConversation(), false)
 	if err == nil {
 		t.Fatalf("expected parse error")
 	}
@@ -179,7 +162,7 @@ func TestMemoryUpdater_LLMErrorReturnsErrAndDoesNotAdvance(t *testing.T) {
 	updater, _ := newUpdaterAndStore(t)
 	chat := &fakeChatModel{err: errors.New("boom")}
 
-	err := updater.Run(context.Background(), chat, enabledMemoryCfg(), "alice", basicConversation(), false)
+	err := updater.Run(context.Background(), chat, "alice", basicConversation(), false)
 	if err == nil {
 		t.Fatalf("expected LLM error")
 	}
@@ -196,7 +179,7 @@ func TestMemoryUpdater_EmptyResponseIsPlannedSkip(t *testing.T) {
 
 	for _, resp := range []string{"", "   ", "\n\t\n"} {
 		chat := &fakeChatModel{response: resp}
-		err := updater.Run(context.Background(), chat, enabledMemoryCfg(), "alice", basicConversation(), false)
+		err := updater.Run(context.Background(), chat, "alice", basicConversation(), false)
 		if err != nil {
 			t.Errorf("response=%q: empty content should be silent skip, got %v", resp, err)
 		}
@@ -222,7 +205,7 @@ func TestApplyUpdate_ShouldUpdateFalseLeavesSectionAlone(t *testing.T) {
 			"workContext": {Summary: "new", ShouldUpdate: false},
 		},
 	}
-	out := applyUpdate(current, upd, enabledMemoryCfg())
+	out := applyUpdate(current, upd)
 	if out.User.WorkContext.Summary != "old" {
 		t.Errorf("shouldUpdate=false should not overwrite, got %q", out.User.WorkContext.Summary)
 	}
@@ -231,16 +214,13 @@ func TestApplyUpdate_ShouldUpdateFalseLeavesSectionAlone(t *testing.T) {
 func TestApplyUpdate_NewFactBelowThresholdDropped(t *testing.T) {
 	current := memorystore.GetEmptyMemoryData()
 
-	cfg := enabledMemoryCfg()
-	cfg.FactConfidenceThreshold = 0.7
-
 	upd := updatePayload{
 		NewFacts: []factUpdate{
 			{Content: "low", Category: "preference", Confidence: 0.5},
 			{Content: "high", Category: "preference", Confidence: 0.9},
 		},
 	}
-	out := applyUpdate(current, upd, cfg)
+	out := applyUpdate(current, upd)
 	if len(out.Facts) != 1 || out.Facts[0].Content != "high" {
 		t.Errorf("expected only high-confidence fact, got %+v", out.Facts)
 	}
@@ -254,7 +234,7 @@ func TestApplyUpdate_FactsToRemoveByID(t *testing.T) {
 	}
 	upd := updatePayload{FactsToRemove: []string{"fact_drop"}}
 
-	out := applyUpdate(current, upd, enabledMemoryCfg())
+	out := applyUpdate(current, upd)
 	if len(out.Facts) != 1 || out.Facts[0].ID != "fact_keep" {
 		t.Errorf("factsToRemove did not drop expected id: %+v", out.Facts)
 	}
@@ -262,28 +242,25 @@ func TestApplyUpdate_FactsToRemoveByID(t *testing.T) {
 
 func TestApplyUpdate_MaxFactsKeepsHighestConfidence(t *testing.T) {
 	current := memorystore.GetEmptyMemoryData()
-	current.Facts = []memorystore.Fact{
-		{ID: "fact_a", Content: "a", Confidence: 0.5},
-		{ID: "fact_b", Content: "b", Confidence: 0.9},
-		{ID: "fact_c", Content: "c", Confidence: 0.7},
+	for i := range 101 {
+		current.Facts = append(current.Facts, memorystore.Fact{
+			ID:         string(rune('a' + i)),
+			Content:    string(rune('a' + i)),
+			Confidence: float64(i) / 100,
+		})
 	}
-	cfg := enabledMemoryCfg()
-	cfg.MaxFacts = 2
 
-	out := applyUpdate(current, updatePayload{}, cfg)
-	if len(out.Facts) != 2 {
-		t.Fatalf("MaxFacts=2 should cap to 2, got %d", len(out.Facts))
+	out := applyUpdate(current, updatePayload{})
+	if len(out.Facts) != 100 {
+		t.Fatalf("default max facts should cap to 100, got %d", len(out.Facts))
 	}
-	got := []string{out.Facts[0].Content, out.Facts[1].Content}
-	if !(slices.Contains(got, "b") && slices.Contains(got, "c")) {
-		t.Errorf("MaxFacts should keep highest confidence (b,c), got %+v", got)
+	if !slices.ContainsFunc(out.Facts, func(f memorystore.Fact) bool { return f.Content == string(rune('a'+100)) }) {
+		t.Errorf("max facts should keep highest confidence fact")
 	}
 }
 
 func TestApplyUpdate_DefaultCategoryAndCorrectionSourceError(t *testing.T) {
 	current := memorystore.GetEmptyMemoryData()
-	cfg := enabledMemoryCfg()
-	cfg.FactConfidenceThreshold = 0
 
 	upd := updatePayload{
 		NewFacts: []factUpdate{
@@ -291,7 +268,7 @@ func TestApplyUpdate_DefaultCategoryAndCorrectionSourceError(t *testing.T) {
 			{Content: "use spaces", Category: "correction", Confidence: 0.95, SourceError: "tabs broke build"},
 		},
 	}
-	out := applyUpdate(current, upd, cfg)
+	out := applyUpdate(current, upd)
 	if len(out.Facts) != 2 {
 		t.Fatalf("expected 2 facts, got %d", len(out.Facts))
 	}
@@ -403,15 +380,13 @@ func TestApplyUpdate_DedupMergesIdenticalContent(t *testing.T) {
 	current.Facts = []memorystore.Fact{
 		{ID: "fact_old", Content: "用户对 Git 感兴趣", Confidence: 0.80, Kind: memorystore.FactKindEnduring},
 	}
-	cfg := enabledMemoryCfg()
-	cfg.DedupEnabled = true
 
 	upd := updatePayload{
 		NewFacts: []factUpdate{
 			{Content: "用户对 git 感兴趣", Category: "knowledge", Confidence: 0.70},
 		},
 	}
-	out := applyUpdate(current, upd, cfg)
+	out := applyUpdate(current, upd)
 	if len(out.Facts) != 1 {
 		t.Fatalf("expected dedup → 1 fact, got %d", len(out.Facts))
 	}
@@ -426,13 +401,11 @@ func TestApplyUpdate_DedupRespectsCeiling(t *testing.T) {
 	current.Facts = []memorystore.Fact{
 		{ID: "fact_high", Content: "x", Confidence: 0.97, Kind: memorystore.FactKindEnduring},
 	}
-	cfg := enabledMemoryCfg()
-	cfg.DedupEnabled = true
 
 	upd := updatePayload{
 		NewFacts: []factUpdate{{Content: "x", Confidence: 0.96}},
 	}
-	out := applyUpdate(current, upd, cfg)
+	out := applyUpdate(current, upd)
 	if len(out.Facts) != 1 {
 		t.Fatalf("expected 1 merged fact, got %d", len(out.Facts))
 	}
@@ -441,31 +414,13 @@ func TestApplyUpdate_DedupRespectsCeiling(t *testing.T) {
 	}
 }
 
-func TestApplyUpdate_DedupDisabledAppendsBoth(t *testing.T) {
-	current := memorystore.GetEmptyMemoryData()
-	current.Facts = []memorystore.Fact{
-		{ID: "fact_old", Content: "用户对 Git 感兴趣", Confidence: 0.80},
-	}
-	cfg := enabledMemoryCfg()
-	cfg.DedupEnabled = false
-
-	upd := updatePayload{
-		NewFacts: []factUpdate{{Content: "用户对 git 感兴趣", Confidence: 0.70}},
-	}
-	out := applyUpdate(current, upd, cfg)
-	if len(out.Facts) != 2 {
-		t.Errorf("DedupEnabled=false should append, got %d facts: %+v", len(out.Facts), out.Facts)
-	}
-}
-
 func TestApplyUpdate_KindDefaultsToEnduring(t *testing.T) {
 	current := memorystore.GetEmptyMemoryData()
-	cfg := enabledMemoryCfg()
 
 	upd := updatePayload{
 		NewFacts: []factUpdate{{Content: "no kind", Confidence: 0.9}},
 	}
-	out := applyUpdate(current, upd, cfg)
+	out := applyUpdate(current, upd)
 	if len(out.Facts) != 1 {
 		t.Fatalf("expected 1 fact, got %d", len(out.Facts))
 	}
@@ -479,15 +434,13 @@ func TestApplyUpdate_KindDefaultsToEnduring(t *testing.T) {
 
 func TestApplyUpdate_EpisodicTTLBackfilled(t *testing.T) {
 	current := memorystore.GetEmptyMemoryData()
-	cfg := enabledMemoryCfg()
-	cfg.EpisodicDefaultTTLSeconds = 3600
 
 	upd := updatePayload{
 		NewFacts: []factUpdate{
 			{Content: "find changelog line count", Confidence: 0.85, Kind: memorystore.FactKindEpisodic},
 		},
 	}
-	out := applyUpdate(current, upd, cfg)
+	out := applyUpdate(current, upd)
 	if len(out.Facts) != 1 {
 		t.Fatalf("expected 1 fact, got %d", len(out.Facts))
 	}
@@ -503,25 +456,8 @@ func TestApplyUpdate_EpisodicTTLBackfilled(t *testing.T) {
 		t.Fatalf("ExpiresAt not ISO-8601: %q (%v)", out.Facts[0].ExpiresAt, err)
 	}
 	delta := time.Until(parsed)
-	if delta < 30*time.Minute || delta > 90*time.Minute {
-		t.Errorf("ExpiresAt = now+%v, want ≈ now+1h", delta)
-	}
-}
-
-func TestApplyUpdate_EpisodicNoTTLNoBackfill(t *testing.T) {
-	current := memorystore.GetEmptyMemoryData()
-	cfg := enabledMemoryCfg()
-	cfg.EpisodicDefaultTTLSeconds = 0
-
-	upd := updatePayload{
-		NewFacts: []factUpdate{{Content: "x", Confidence: 0.9, Kind: memorystore.FactKindEpisodic}},
-	}
-	out := applyUpdate(current, upd, cfg)
-	if len(out.Facts) != 1 {
-		t.Fatalf("expected 1 fact, got %d", len(out.Facts))
-	}
-	if out.Facts[0].ExpiresAt != "" {
-		t.Errorf("TTL=0 must not backfill, got %q", out.Facts[0].ExpiresAt)
+	if delta < 29*24*time.Hour || delta > 31*24*time.Hour {
+		t.Errorf("ExpiresAt = now+%v, want ≈ now+30d", delta)
 	}
 }
 
@@ -532,9 +468,8 @@ func TestApplyUpdate_SweepRemovesExpiredEpisodic(t *testing.T) {
 		{ID: "drop_expired", Content: "old episodic", Confidence: 0.9, Kind: memorystore.FactKindEpisodic, ExpiresAt: "2020-01-01T00:00:00Z"},
 		{ID: "keep_future", Content: "fresh episodic", Confidence: 0.9, Kind: memorystore.FactKindEpisodic, ExpiresAt: "2099-01-01T00:00:00Z"},
 	}
-	cfg := enabledMemoryCfg()
 
-	out := applyUpdate(current, updatePayload{}, cfg)
+	out := applyUpdate(current, updatePayload{})
 	if len(out.Facts) != 2 {
 		t.Fatalf("expected sweep to drop 1 expired episodic, got %d facts", len(out.Facts))
 	}

@@ -38,27 +38,10 @@ func errEndpoint(err error) adk.InvokableToolCallEndpoint {
 	}
 }
 
-func TestToolCallObservability_DisabledIsPassthrough(t *testing.T) {
-	buf := captureSlog(t)
-
-	mw := NewToolCallObservability(false)
-	wrapped, err := mw.WrapInvokableToolCall(context.Background(), okEndpoint("hello"), &adk.ToolContext{Name: "ls"})
-	if err != nil {
-		t.Fatalf("WrapInvokableToolCall: %v", err)
-	}
-	got, err := wrapped(context.Background(), `{"path":"."}`)
-	if err != nil || got != "hello" {
-		t.Fatalf("disabled passthrough: got %q err=%v", got, err)
-	}
-	if buf.Len() != 0 {
-		t.Fatalf("disabled middleware should not log; got %q", buf.String())
-	}
-}
-
 func TestToolCallObservability_EnabledLogsExit(t *testing.T) {
 	buf := captureSlog(t)
 
-	mw := NewToolCallObservability(true)
+	mw := NewToolCallObservability()
 	wrapped, _ := mw.WrapInvokableToolCall(context.Background(), okEndpoint("hello"), &adk.ToolContext{Name: "ls"})
 	got, err := wrapped(context.Background(), `{"path":"."}`)
 	if err != nil || got != "hello" {
@@ -82,7 +65,7 @@ func TestToolCallObservability_EnabledLogsExit(t *testing.T) {
 func TestToolCallObservability_EnabledLogsError(t *testing.T) {
 	buf := captureSlog(t)
 
-	mw := NewToolCallObservability(true)
+	mw := NewToolCallObservability()
 	wrapped, _ := mw.WrapInvokableToolCall(context.Background(), errEndpoint(errors.New("boom")), &adk.ToolContext{Name: "execute"})
 	out, err := wrapped(context.Background(), `{"command":"false"}`)
 	if err == nil || out != "" {
