@@ -37,6 +37,10 @@ func LogPath(cfg *Config) string {
 	return filepath.Join(BaseDir(cfg), "eino-cli.log")
 }
 
+func AgentMessagesLogPath(cfg *Config) string {
+	return filepath.Join(BaseDir(cfg), "agent-messages.log")
+}
+
 func SkillDir(cfg *Config, name string) string {
 	return filepath.Join(BaseDir(cfg), name)
 }

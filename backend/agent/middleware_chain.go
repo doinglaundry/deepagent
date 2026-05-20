@@ -4,6 +4,7 @@ import (
 	"context"
 	"eino-cli/backend/agent/memory"
 	"log/slog"
+	"strings"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/patchtoolcalls"
@@ -86,6 +87,11 @@ func GetChatModelMiddlewares(
 
 	// Sandbox before Trace; the Trace→Clarification invariant is asserted in middleware_chain_test.go.
 	middlewareList = append(middlewareList, middlewares.NewSandbox(sandbox.Default()))
+	messagesLogPath := ""
+	if cfg != nil && strings.TrimSpace(cfg.RootDir) != "" {
+		messagesLogPath = config.AgentMessagesLogPath(cfg)
+	}
+	middlewareList = append(middlewareList, middlewares.NewMessagesLog(messagesLogPath))
 
 	trace := middlewares.NewTrace(agentName)
 	if tokenUsage != nil {
