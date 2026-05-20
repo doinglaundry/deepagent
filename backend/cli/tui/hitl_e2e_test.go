@@ -58,7 +58,7 @@ func runHITLE2E(t *testing.T) (*teatest.TestModel, <-chan bool) {
 	// would land us in the compact fallback. Either works for HITL but
 	// 120 matches what most users see.
 	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(120, 40))
-	installTUIApproval(tm.GetProgram())
+	t.Cleanup(installTUIApproval(tm.GetProgram()))
 
 	decisionCh := make(chan bool, 1)
 	go func() {

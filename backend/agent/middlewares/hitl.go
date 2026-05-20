@@ -2,7 +2,6 @@ package middlewares
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 
@@ -49,7 +48,6 @@ func (m *HITL) AfterModelRewriteState(
 	}
 
 	kept := make([]schema.ToolCall, 0, len(lastMsg.ToolCalls))
-	deniedMessages := make([]*schema.Message, 0)
 	denied := 0
 
 	for _, call := range lastMsg.ToolCalls {
@@ -68,14 +66,6 @@ func (m *HITL) AfterModelRewriteState(
 		denied++
 		m.Logger.Warn("HITL: tool call denied by approval callback",
 			"tool", call.Function.Name, "call_id", call.ID)
-		deniedMessages = append(deniedMessages, &schema.Message{
-			Role:       schema.Tool,
-			ToolCallID: call.ID,
-			ToolName:   call.Function.Name,
-			Content: fmt.Sprintf(
-				"User denied the call to %q. Do not retry; respond to the user explaining the situation or proceeding without that tool.",
-				call.Function.Name),
-		})
 	}
 
 	if denied == 0 {
@@ -83,10 +73,11 @@ func (m *HITL) AfterModelRewriteState(
 	}
 
 	lastMsg.ToolCalls = kept
-	if len(kept) == 0 && strings.TrimSpace(lastMsg.Content) == "" {
-		lastMsg.Content = "(tool execution denied by user — the agent will respond without invoking the requested tools)"
+	denial := "Tool execution denied by user. Do not retry denied tools; respond explaining the situation or proceed without them."
+	if strings.TrimSpace(lastMsg.Content) == "" {
+		lastMsg.Content = denial
+	} else {
+		lastMsg.Content = strings.TrimSpace(lastMsg.Content) + "\n\n" + denial
 	}
-
-	state.Messages = append(state.Messages, deniedMessages...)
 	return ctx, state, nil
 }

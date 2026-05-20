@@ -64,7 +64,7 @@ func TestRenderFooter_IdleShowsHelpHint(t *testing.T) {
 	}
 }
 
-// Token total > 0 → "<x>k tokens" segment appears next to modelName.
+// Token total > 0 → "<x>k tokens" segment appears in the footer.
 // Decimal kilo-format is the band-of-interest for typical LLM turns
 // (1k–100k); below 1k falls back to plain integer count.
 func TestRenderFooter_ShowsTokenTotalWhenPresent(t *testing.T) {
@@ -82,6 +82,9 @@ func TestRenderFooter_HidesTokenTotalAtZero(t *testing.T) {
 	got := m.renderFooter()
 	if strings.Contains(got, "tokens") {
 		t.Errorf("zero-token footer must not include 'tokens'; got %q", got)
+	}
+	if strings.Contains(got, "kimi") {
+		t.Errorf("zero-token footer must not include model name; got %q", got)
 	}
 }
 

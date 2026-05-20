@@ -2,13 +2,14 @@ package middlewares
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestHITL_DenyRemovesGatedCallAndAppendsToolMessage(t *testing.T) {
+func TestHITL_DenyRemovesGatedCallWithoutOrphanToolMessage(t *testing.T) {
 	mw := NewHITL([]string{"shell.execute"}, func(_ context.Context, _ string, _ string) bool {
 		return false
 	})
@@ -36,12 +37,11 @@ func TestHITL_DenyRemovesGatedCallAndAppendsToolMessage(t *testing.T) {
 	if assistant.Content == "" {
 		t.Fatalf("expected fallback Content when all calls denied")
 	}
-	if len(out.Messages) != 3 {
-		t.Fatalf("expected synthetic tool message appended, got %d total", len(out.Messages))
+	if len(out.Messages) != 2 {
+		t.Fatalf("denied calls should not append orphan tool messages, got %d total", len(out.Messages))
 	}
-	tm := out.Messages[2]
-	if tm.Role != schema.Tool || tm.ToolCallID != "t1" {
-		t.Fatalf("unexpected synthetic tool message: %+v", tm)
+	if !strings.Contains(assistant.Content, "denied by user") {
+		t.Fatalf("assistant content should explain denial, got %q", assistant.Content)
 	}
 }
 

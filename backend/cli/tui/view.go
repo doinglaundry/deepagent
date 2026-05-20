@@ -14,10 +14,6 @@ func (m *Model) View() string {
 
 	var sb strings.Builder
 	sb.WriteString(m.viewport.View())
-	if streamPanel := m.renderStreamPanel(); streamPanel != "" {
-		sb.WriteString("\n")
-		sb.WriteString(streamPanel)
-	}
 	if todoPanel := m.renderTodoPanel(); todoPanel != "" {
 		sb.WriteString("\n")
 		sb.WriteString(todoPanel)
@@ -25,6 +21,11 @@ func (m *Model) View() string {
 	if approvalPanel := m.renderApprovalPanel(); approvalPanel != "" {
 		sb.WriteString("\n")
 		sb.WriteString(approvalPanel)
+		return sb.String()
+	}
+	if streamPanel := m.renderStreamPanel(); streamPanel != "" {
+		sb.WriteString("\n")
+		sb.WriteString(streamPanel)
 	}
 	if historyPanel := m.renderRunHistoryPanel(); historyPanel != "" {
 		sb.WriteString("\n")
@@ -117,13 +118,9 @@ func (m *Model) renderInputText(value string, cursor int) string {
 }
 
 func (m *Model) renderFooter() string {
-	left := footerStyle.Render(m.modelName)
-	// Token total rides the left segment with modelName because both
-	// are session metadata; pushing it into a third center segment
-	// would force a 3-way gap calculation. Hidden when 0 so empty
-	// sessions stay quiet.
+	left := ""
 	if m.tokenTotal > 0 {
-		left += footerStyle.Render(" · " + formatTokenCount(m.tokenTotal))
+		left = footerStyle.Render(formatTokenCount(m.tokenTotal))
 	}
 	// Streaming shows a single actionable hint; idle is the meta-hint
 	// "you can type / for commands". Old footer concatenated three

@@ -106,20 +106,25 @@ func (m *Model) recomputeLayout() {
 		return
 	}
 	// Layout budget: viewport(flex) + stream(0-1) + todoPanel(0..N)
-	// + popup/history + input(3) + footer(1).
+	// + popup/history + input(3) + footer(1). HITL approval is an
+	// exclusive input state, so its own y/n panel replaces stream/input/footer.
 	streamH := 0
-	if m.streaming || m.lastErr != nil {
+	if len(m.hitlQueue) == 0 && (m.streaming || m.lastErr != nil) {
 		streamH = 1 // single-line thinking indicator (was 3 with preview)
 	}
 	todoH := m.todoPanelHeight()
 	popupH := m.popupHeight()
 	approvalH := 0
-	if len(m.hitlQueue) > 0 {
-		approvalH = approvalPromptHeight + 1 // prompt + one separator newline View() inserts
-	}
 	runHistoryH := m.runHistoryPanelHeight()
 	inputH := 3
 	footerH := 1
+	if len(m.hitlQueue) > 0 {
+		approvalH = approvalPromptHeight + 1 // prompt + one separator newline View() inserts
+		popupH = 0
+		runHistoryH = 0
+		inputH = 0
+		footerH = 0
+	}
 	chrome := streamH + todoH + popupH + approvalH + runHistoryH + inputH + footerH
 
 	vpMax := m.height - chrome
@@ -169,6 +174,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if len(m.hitlQueue) > 0 {
 		if cmd, handled := m.handleApprovalKey(msg); handled {
 			return m, cmd
+		}
+		if msg.Type == tea.KeyCtrlC {
+			m.abortStream()
 		}
 		return m, nil
 	}
@@ -297,9 +305,9 @@ func (m *Model) handleApprovalRequest(req approvalRequest) (tea.Model, tea.Cmd) 
 }
 
 // handleApprovalKey routes keys while the front of m.hitlQueue is
-// awaiting a decision. Returns (cmd, true) when the key was an actual
-// decision; (nil, false) when the key isn't part of the y/n alphabet
-// and Ctrl-C should fall through to the abort-stream chain.
+// awaiting a decision. Returns (cmd, true) when the key was a self-contained
+// decision; Ctrl-C returns handled=false after denying so handleKey can abort
+// the streaming turn too.
 //
 // Decision contract:
 //   - y / Y               → approve  (true)

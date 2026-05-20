@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -55,6 +57,35 @@ func TestHandleApprovalRequest_EnqueuesAndShowsPanel(t *testing.T) {
 	}
 	if !strings.Contains(panel, "y = allow") {
 		t.Errorf("panel must show the y/n hint; got:\n%s", panel)
+	}
+}
+
+func TestView_ApprovalReplacesInputFooterAndThinking(t *testing.T) {
+	ti := textinput.New()
+	ti.Placeholder = "Ask anything... (/help for commands)"
+	m := &Model{
+		width:       100,
+		height:      40,
+		ready:       true,
+		streaming:   true,
+		input:       ti,
+		viewport:    viewport.New(100, 5),
+		verbPresent: "Scheming",
+		hitlQueue: []approvalRequest{{
+			toolName: "execute",
+			args:     `{"command":"pwd"}`,
+			reply:    make(chan bool, 1),
+		}},
+	}
+
+	got := m.View()
+	for _, hidden := range []string{"Ask anything", "esc to interrupt", "thinking"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("approval view must hide %q; got:\n%s", hidden, got)
+		}
+	}
+	if !strings.Contains(got, `Approve tool "execute"`) {
+		t.Fatalf("approval view missing prompt; got:\n%s", got)
 	}
 }
 
@@ -123,6 +154,27 @@ func TestHandleApprovalKey_CtrlCDeniesAndFallsThrough(t *testing.T) {
 	got, ok := recvDecision(t, reply)
 	if !ok || got != false {
 		t.Errorf("Ctrl-C must deny synchronously; got=%v ok=%v", got, ok)
+	}
+}
+
+func TestHandleKey_CtrlCDuringApprovalDeniesAndAborts(t *testing.T) {
+	m := hitlTestModel()
+	m.streaming = true
+	cancelled := false
+	m.cancel = func() { cancelled = true }
+	reply := enqueueRequest(t, m, "shell", "{}")
+
+	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_ = cmd
+	got, ok := recvDecision(t, reply)
+	if !ok || got != false {
+		t.Fatalf("Ctrl-C must deny synchronously; got=%v ok=%v", got, ok)
+	}
+	if !cancelled {
+		t.Fatal("Ctrl-C during approval must abort the streaming turn")
+	}
+	if len(m.hitlQueue) != 0 {
+		t.Fatalf("approval queue should be drained after abort; len=%d", len(m.hitlQueue))
 	}
 }
 

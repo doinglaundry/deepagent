@@ -43,7 +43,8 @@ const approvalPromptHeight = 3
 // returns false (deny is the safe default). Stale entries in
 // m.hitlQueue are drained when the stream finishes; nobody else needs
 // to read the orphaned reply channel.
-func installTUIApproval(prog *tea.Program) {
+func installTUIApproval(prog *tea.Program) func() {
+	previous := agent.HITLApprover
 	agent.HITLApprover = func(ctx context.Context, toolName, args string) bool {
 		reply := make(chan bool, 1)
 		prog.Send(approvalRequest{
@@ -57,6 +58,9 @@ func installTUIApproval(prog *tea.Program) {
 		case <-ctx.Done():
 			return false
 		}
+	}
+	return func() {
+		agent.HITLApprover = previous
 	}
 }
 
