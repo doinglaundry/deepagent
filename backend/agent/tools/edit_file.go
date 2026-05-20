@@ -9,6 +9,8 @@ import (
 	"github.com/cloudwego/eino/adk/middlewares/filesystem"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/sandbox"
 )
 
 type editFileArgs struct {
@@ -19,7 +21,7 @@ type editFileArgs struct {
 }
 
 // GetEditFileTool returns the edit_file tool; ReplaceAll=false requires a unique old_string.
-func GetEditFileTool(root string) (tool.BaseTool, error) {
+func GetEditFileTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameEditFile, filesystem.EditFileToolDesc,
 		func(ctx context.Context, in editFileArgs) (string, error) {
 			if in.OldString == "" {
@@ -29,7 +31,7 @@ func GetEditFileTool(root string) (tool.BaseTool, error) {
 				return msg, nil
 			}
 			if shouldUseSandbox(in.FilePath) {
-				if sb := sandboxFromCtx(ctx); sb != nil {
+				if sb := getSandbox(ctx, sandboxManager); sb != nil {
 					content, err := sb.ReadFile(ctx, in.FilePath)
 					if err != nil {
 						return "", err

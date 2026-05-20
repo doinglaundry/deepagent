@@ -10,8 +10,7 @@ import (
 	"eino-cli/backend/sandbox"
 )
 
-// SandboxMiddleware acquires a per-thread sandbox in BeforeAgent and
-// stamps the sid onto ctx for downstream tools.
+// SandboxMiddleware acquires a per-thread sandbox in BeforeAgent and stamps the sid onto ctx.
 type SandboxMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
 
@@ -36,7 +35,6 @@ func (m *SandboxMiddleware) BeforeAgent(
 	if m.Manager == nil {
 		return ctx, runCtx, nil
 	}
-	ctx = runtimecontext.WithSandboxManager(ctx, m.Manager)
 	if runtimecontext.GetSandboxID(ctx) != "" {
 		return ctx, runCtx, nil
 	}

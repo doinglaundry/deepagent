@@ -9,6 +9,8 @@ import (
 	"github.com/cloudwego/eino/adk/middlewares/filesystem"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/sandbox"
 )
 
 type writeFileArgs struct {
@@ -17,14 +19,14 @@ type writeFileArgs struct {
 }
 
 // GetWriteFileTool returns the write_file tool routed through sandbox or host fs.
-func GetWriteFileTool(root string) (tool.BaseTool, error) {
+func GetWriteFileTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameWriteFile, filesystem.WriteFileToolDesc,
 		func(ctx context.Context, in writeFileArgs) (string, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
 			if shouldUseSandbox(in.FilePath) {
-				if sb := sandboxFromCtx(ctx); sb != nil {
+				if sb := getSandbox(ctx, sandboxManager); sb != nil {
 					if err := sb.WriteFile(ctx, in.FilePath, in.Content, false); err != nil {
 						return "", err
 					}

@@ -90,11 +90,11 @@ type grepMatch struct {
 }
 
 // GetGrepTool returns the grep tool with eino's OutputMode formats.
-func GetGrepTool(root string) (tool.BaseTool, error) {
+func GetGrepTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGrep, filesystem.GrepToolDesc,
 		func(ctx context.Context, in grepArgs) (string, error) {
 			if in.Path != nil && shouldUseSandbox(*in.Path) {
-				if sb := sandboxFromCtx(ctx); sb != nil {
+				if sb := getSandbox(ctx, sandboxManager); sb != nil {
 					if out, ok := sandboxGrep(ctx, sb, in); ok {
 						return out, nil
 					}

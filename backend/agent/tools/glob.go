@@ -23,11 +23,11 @@ type globArgs struct {
 }
 
 // GetGlobTool returns the glob tool; results are absolute paths.
-func GetGlobTool(root string) (tool.BaseTool, error) {
+func GetGlobTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGlob, filesystem.GlobToolDesc,
 		func(ctx context.Context, in globArgs) (string, error) {
 			if shouldUseSandbox(in.Path) {
-				if sb := sandboxFromCtx(ctx); sb != nil {
+				if sb := getSandbox(ctx, sandboxManager); sb != nil {
 					matches, _, err := sb.Glob(ctx, in.Path, normalizeGlobPattern(in.Pattern), sandbox.GlobOpts{})
 					if err == nil {
 						if len(matches) == 0 {

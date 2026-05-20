@@ -10,6 +10,7 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 
 	"eino-cli/backend/consts"
+	"eino-cli/backend/sandbox"
 )
 
 // No description tag — matches eino's schema byte-for-byte.
@@ -18,11 +19,11 @@ type lsArgs struct {
 }
 
 // GetLsTool returns the ls tool.
-func GetLsTool(root string) (tool.BaseTool, error) {
+func GetLsTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameLs, filesystem.ListFilesToolDesc,
 		func(ctx context.Context, in lsArgs) (string, error) {
 			if shouldUseSandbox(in.Path) {
-				if sb := sandboxFromCtx(ctx); sb != nil {
+				if sb := getSandbox(ctx, sandboxManager); sb != nil {
 					entries, err := sb.ListDir(ctx, in.Path, 1)
 					if err == nil {
 						if len(entries) == 0 {

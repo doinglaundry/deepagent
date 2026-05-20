@@ -11,6 +11,7 @@ import (
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/agent/tools"
 	"eino-cli/backend/config"
+	"eino-cli/backend/sandbox"
 )
 
 // MakeLeadAgent assembles the deep agent for rt.AgentName and returns
@@ -39,7 +40,8 @@ func MakeLeadAgent(
 	}
 	chatModel = wrapErrorHandling(chatModel, cfg.ErrorHandling)
 
-	handlers := GetChatModelMiddlewares(ctx, agentName, IsSubagentEnabled, getPlanMode, cfg, chatModel)
+	sandboxManager := sandbox.Default()
+	handlers := GetChatModelMiddlewares(ctx, agentName, IsSubagentEnabled, getPlanMode, cfg, chatModel, sandboxManager)
 
 	deepCfg := &deep.Config{
 		Name:                   agentName,
@@ -52,7 +54,7 @@ func MakeLeadAgent(
 		Handlers:               handlers,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: tools.BuildBuiltinTools(cfg),
+				Tools: tools.BuildBuiltinTools(cfg, sandboxManager),
 			},
 		},
 	}

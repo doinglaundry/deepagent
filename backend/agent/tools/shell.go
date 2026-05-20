@@ -11,6 +11,8 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/sandbox"
 )
 
 const shellToolDesc = `Execute a shell command in the workspace. Short commands return output directly. Commands still running after timeout_ms continue in the background and return a task_id for await_shell.`
@@ -22,7 +24,7 @@ type shellArgs struct {
 	Description string `json:"description,omitempty" jsonschema:"description=Short human-readable command description"`
 }
 
-func GetShellTool(root string) (tool.BaseTool, error) {
+func GetShellTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool("shell", shellToolDesc,
 		func(ctx context.Context, in shellArgs) (string, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
@@ -32,7 +34,7 @@ func GetShellTool(root string) (tool.BaseTool, error) {
 				return msg, nil
 			}
 			// Sandbox path is sync; background-job semantics only via host fs.
-			if sb := sandboxFromCtx(ctx); sb != nil {
+			if sb := getSandbox(ctx, sandboxManager); sb != nil {
 				return sb.ExecuteCommand(ctx, in.Command)
 			}
 			return runShell(root, in)

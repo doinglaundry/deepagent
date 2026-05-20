@@ -62,7 +62,7 @@ func TestLs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	bt, err := GetLsTool(root)
+	bt, err := GetLsTool(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestLs(t *testing.T) {
 	}
 
 	emptyDir := t.TempDir()
-	bt2, _ := GetLsTool(emptyDir)
+	bt2, _ := GetLsTool(emptyDir, nil)
 	if got := invoke(t, bt2, `{"path":"."}`); got != consts.NoFilesFound {
 		t.Fatalf("empty dir: got %q want %q", got, consts.NoFilesFound)
 	}
@@ -85,7 +85,7 @@ func TestReadFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "f.txt"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetReadFileTool(root)
+	bt, _ := GetReadFileTool(root, nil)
 
 	got := invoke(t, bt, `{"file_path":"f.txt"}`)
 	want := "     1\tline1\n     2\tline2\n     3\tline3"
@@ -114,7 +114,7 @@ func TestReadFile(t *testing.T) {
 
 func TestWriteFile(t *testing.T) {
 	root := t.TempDir()
-	bt, _ := GetWriteFileTool(root)
+	bt, _ := GetWriteFileTool(root, nil)
 
 	got := invoke(t, bt, `{"file_path":"sub/new.txt","content":"hello"}`)
 	if got != "Updated file sub/new.txt" {
@@ -135,7 +135,7 @@ func TestEditFile(t *testing.T) {
 	if err := os.WriteFile(p, []byte("foo bar foo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetEditFileTool(root)
+	bt, _ := GetEditFileTool(root, nil)
 
 	// 2 occurrences without replace_all → ambiguity error.
 	err := invokeExpectErr(t, bt, `{"file_path":"f.txt","old_string":"foo","new_string":"baz"}`)
@@ -161,7 +161,7 @@ func TestGlob(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	bt, _ := GetGlobTool(root)
+	bt, _ := GetGlobTool(root, nil)
 	got := invoke(t, bt, `{"pattern":"*.go","path":""}`)
 	// Glob returns absolute paths so follow-up tool calls can reuse them.
 	want := filepath.Join(root, "a.go") + "\n" + filepath.Join(root, "b.go")
@@ -182,7 +182,7 @@ func TestGlobDefaultsToRecursiveSearch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "yaml", "CHANGELOG.md"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetGlobTool(root)
+	bt, _ := GetGlobTool(root, nil)
 
 	got := invoke(t, bt, `{"pattern":"CHANGELOG.md","path":""}`)
 	want := filepath.Join(root, "yaml", "CHANGELOG.md")
@@ -257,7 +257,7 @@ func TestGrepFilesWithMatches(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("nothing here\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetGrepTool(root)
+	bt, _ := GetGrepTool(root, nil)
 
 	// Default output_mode is files_with_matches; "Found N file" header.
 	got := invoke(t, bt, `{"pattern":"hello"}`)
@@ -272,7 +272,7 @@ func TestGrepContent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetGrepTool(root)
+	bt, _ := GetGrepTool(root, nil)
 
 	got := invoke(t, bt, `{"pattern":"hello","output_mode":"content"}`)
 	want := "a.txt:1:hello"
@@ -286,7 +286,7 @@ func TestGrepFallsBackToLiteralPattern(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\n\\Middleware\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetGrepTool(root)
+	bt, _ := GetGrepTool(root, nil)
 
 	got := invoke(t, bt, `{"pattern":"\\Middleware","output_mode":"content"}`)
 	want := "a.txt:2:\\Middleware"
@@ -300,7 +300,7 @@ func TestGrepCount(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x\nx\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetGrepTool(root)
+	bt, _ := GetGrepTool(root, nil)
 
 	got := invoke(t, bt, `{"pattern":"x","output_mode":"count"}`)
 	if !strings.Contains(got, "a.txt:2") {
@@ -329,7 +329,7 @@ func TestRgContent(t *testing.T) {
 
 func TestExecute(t *testing.T) {
 	root := t.TempDir()
-	bt, _ := GetExecuteTool(root)
+	bt, _ := GetExecuteTool(root, nil)
 
 	got := invoke(t, bt, `{"command":"echo hi"}`)
 	if !strings.HasPrefix(got, "hi") {
@@ -348,7 +348,7 @@ func TestExecute(t *testing.T) {
 }
 
 func TestExecuteDeniedWhenRollbackProtected(t *testing.T) {
-	bt, _ := GetExecuteTool(t.TempDir())
+	bt, _ := GetExecuteTool(t.TempDir(), nil)
 	ctx := runtimecontext.WithRollbackProtected(context.Background(), true)
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi"}`)
 	if !strings.Contains(got, "disabled in rollback-protected runs") {
@@ -358,7 +358,7 @@ func TestExecuteDeniedWhenRollbackProtected(t *testing.T) {
 
 func TestShellAndAwaitShell(t *testing.T) {
 	root := t.TempDir()
-	bt, _ := GetShellTool(root)
+	bt, _ := GetShellTool(root, nil)
 
 	got := invoke(t, bt, `{"command":"echo hi","timeout_ms":1000}`)
 	if !strings.HasPrefix(got, "hi") {
@@ -378,7 +378,7 @@ func TestShellAndAwaitShell(t *testing.T) {
 }
 
 func TestShellDeniedWhenRollbackProtected(t *testing.T) {
-	bt, _ := GetShellTool(t.TempDir())
+	bt, _ := GetShellTool(t.TempDir(), nil)
 	ctx := runtimecontext.WithRollbackProtected(context.Background(), true)
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
 	if !strings.Contains(got, "disabled in rollback-protected runs") {
@@ -465,7 +465,7 @@ func quoteJSON(t *testing.T, s string) string {
 }
 
 func TestBuildBuiltinToolsCount(t *testing.T) {
-	got := BuildBuiltinTools(&config.Config{RootDir: t.TempDir()})
+	got := BuildBuiltinTools(&config.Config{RootDir: t.TempDir()}, nil)
 	if len(got) != 15 {
 		t.Fatalf("BuildBuiltinTools: got %d tools, want 15", len(got))
 	}
@@ -492,7 +492,7 @@ func TestBuildBuiltinToolsWithWebSearch(t *testing.T) {
 		RootDir:   t.TempDir(),
 		WebSearch: config.WebSearch{Enabled: true, APIKey: "stub", MaxResults: 5},
 	}
-	got := BuildBuiltinTools(cfg)
+	got := BuildBuiltinTools(cfg, nil)
 	if len(got) != 16 {
 		t.Fatalf("BuildBuiltinTools(enabled): got %d tools, want 16", len(got))
 	}

@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 
 	"eino-cli/backend/consts"
-	"eino-cli/backend/sandbox"
 )
 
 type PermissionMode string
@@ -23,7 +22,6 @@ type (
 	permissionModeKey    struct{}
 	rollbackProtectedKey struct{}
 	rollbackPolicyKey    struct{}
-	sandboxManagerKey    struct{}
 )
 
 type RollbackPolicyState struct {
@@ -54,15 +52,6 @@ func WithSandboxID(ctx stdctx.Context, sid string) stdctx.Context {
 func GetSandboxID(ctx stdctx.Context) string {
 	v, _ := ctx.Value(sandboxIDKey{}).(string)
 	return v
-}
-
-func WithSandboxManager(ctx stdctx.Context, manager sandbox.SandboxManager) stdctx.Context {
-	return stdctx.WithValue(ctx, sandboxManagerKey{}, manager)
-}
-
-func GetSandboxManager(ctx stdctx.Context) sandbox.SandboxManager {
-	manager, _ := ctx.Value(sandboxManagerKey{}).(sandbox.SandboxManager)
-	return manager
 }
 
 func WithPermissionMode(ctx stdctx.Context, mode PermissionMode) stdctx.Context {

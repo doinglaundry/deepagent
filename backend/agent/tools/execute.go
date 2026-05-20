@@ -10,6 +10,8 @@ import (
 	"github.com/cloudwego/eino/adk/middlewares/filesystem"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/sandbox"
 )
 
 type executeArgs struct {
@@ -17,7 +19,7 @@ type executeArgs struct {
 }
 
 // GetExecuteTool returns the execute tool; sandbox routes when wired, else bash -lc.
-func GetExecuteTool(root string) (tool.BaseTool, error) {
+func GetExecuteTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	cwd := resolveRoot(root)
 	return utils.InferTool(filesystem.ToolNameExecute, filesystem.ExecuteToolDesc,
 		func(ctx context.Context, in executeArgs) (string, error) {
@@ -27,7 +29,7 @@ func GetExecuteTool(root string) (tool.BaseTool, error) {
 			if msg, denied := denyOnRollbackProtected(ctx); denied {
 				return msg, nil
 			}
-			if sb := sandboxFromCtx(ctx); sb != nil {
+			if sb := getSandbox(ctx, sandboxManager); sb != nil {
 				return sb.ExecuteCommand(ctx, in.Command)
 			}
 			cmd := exec.CommandContext(ctx, "bash", "-lc", in.Command)

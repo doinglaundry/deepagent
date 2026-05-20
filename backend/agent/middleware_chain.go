@@ -24,6 +24,7 @@ func GetChatModelMiddlewares(
 	getPlanModeFunc func() bool,
 	cfg *config.Config,
 	chatModel model.BaseChatModel,
+	sandboxManager sandbox.SandboxManager,
 ) (middlewareList []adk.ChatModelAgentMiddleware) {
 	patchToolCalls, _ := patchtoolcalls.New(ctx, nil)
 
@@ -86,7 +87,7 @@ func GetChatModelMiddlewares(
 	middlewareList = append(middlewareList, middlewares.NewTodoReminder())
 
 	// Sandbox before Trace; the Trace→Clarification invariant is asserted in middleware_chain_test.go.
-	middlewareList = append(middlewareList, middlewares.NewSandbox(sandbox.Default()))
+	middlewareList = append(middlewareList, middlewares.NewSandbox(sandboxManager))
 	messagesLogPath := ""
 	if cfg != nil && strings.TrimSpace(cfg.RootDir) != "" {
 		messagesLogPath = config.AgentMessagesLogPath(cfg)

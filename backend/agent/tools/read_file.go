@@ -9,6 +9,8 @@ import (
 	"github.com/cloudwego/eino/adk/middlewares/filesystem"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/sandbox"
 )
 
 // readFileArgs 定义了 read_file 工具的输入参数结构。
@@ -17,14 +19,14 @@ import (
 type readFileArgs struct {
 	// FilePath 要读取的文件路径，可以是绝对路径或相对于根目录的相对路径
 	FilePath string `json:"file_path" jsonschema:"description=The path to the file to read"`
-	
+
 	// Offset 起始行号，从1开始计数。仅当文件过大需要分页读取时提供
 	// 默认值: 1（从文件开头开始读取）
-	Offset   int    `json:"offset"    jsonschema:"description=The line number to start reading from. Only provide if the file is too large to read at once"`
-	
+	Offset int `json:"offset"    jsonschema:"description=The line number to start reading from. Only provide if the file is too large to read at once"`
+
 	// Limit 要读取的行数。仅当文件过大需要限制读取量时提供
 	// 默认值: 2000（最多读取2000行）
-	Limit    int    `json:"limit"     jsonschema:"description=The number of lines to read. Only provide if the file is too large to read at once."`
+	Limit int `json:"limit"     jsonschema:"description=The number of lines to read. Only provide if the file is too large to read at once."`
 }
 
 // GetReadFileTool 创建并返回 "read_file" 文件读取工具。
@@ -38,16 +40,16 @@ type readFileArgs struct {
 //   - error: 工具创建过程中的错误
 //
 // 功能特点:
-//   1. 输出格式采用 cat -n 风格，每行显示6位右对齐的行号（格式: "%6d\t"）
-//   2. 默认值: Offset <= 0 时设为 1（从第1行开始），Limit <= 0 时设为 2000（最多读取2000行）
-//   3. 路径解析: 使用 getResolvedPath 确保文件路径在 root 目录内，防止目录遍历攻击
-//   4. 错误处理: 文件不存在时返回友好提示，目录路径返回错误
-//   5. 内存优化: 使用分页读取避免大文件内存溢出
+//  1. 输出格式采用 cat -n 风格，每行显示6位右对齐的行号（格式: "%6d\t"）
+//  2. 默认值: Offset <= 0 时设为 1（从第1行开始），Limit <= 0 时设为 2000（最多读取2000行）
+//  3. 路径解析: 使用 getResolvedPath 确保文件路径在 root 目录内，防止目录遍历攻击
+//  4. 错误处理: 文件不存在时返回友好提示，目录路径返回错误
+//  5. 内存优化: 使用分页读取避免大文件内存溢出
 //
 // 使用示例:
 //   - 读取文件前10行: file_path="test.txt", offset=1, limit=10
 //   - 从第50行开始读取: file_path="test.txt", offset=50, limit=100
-func GetReadFileTool(root string) (tool.BaseTool, error) {
+func GetReadFileTool(root string, sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	// 使用 InferTool 创建工具，该函数封装了工具注册、参数验证等通用逻辑
 	return utils.InferTool(filesystem.ToolNameReadFile, filesystem.ReadFileToolDesc,
 		// 工具执行函数，处理实际的文件读取逻辑
@@ -60,7 +62,7 @@ func GetReadFileTool(root string) (tool.BaseTool, error) {
 			}
 
 			if shouldUseSandbox(in.FilePath) {
-				if sb := sandboxFromCtx(ctx); sb != nil {
+				if sb := getSandbox(ctx, sandboxManager); sb != nil {
 					content, err := sb.ReadFile(ctx, in.FilePath)
 					if err == nil {
 						return paginateLines(content, in.Offset, in.Limit), nil

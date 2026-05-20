@@ -4,6 +4,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 
 	"eino-cli/backend/config"
+	"eino-cli/backend/sandbox"
 )
 
 // BuildBuiltinTools returns the fixed built-in tool set; root is read
@@ -11,23 +12,23 @@ import (
 // less data"). Optional tools (web_search) are appended only when their
 // yaml flag is on, so the LLM does not see a tool that would always
 // error out.
-func BuildBuiltinTools(cfg *config.Config) []tool.BaseTool {
+func BuildBuiltinTools(cfg *config.Config, sandboxManager sandbox.SandboxManager) []tool.BaseTool {
 	root := cfg.RootDir
 	tools := []tool.BaseTool{
 		mustBuild(GetAskClarificationTool()),
-		mustBuild(GetLsTool(root)),
-		mustBuild(GetReadFileTool(root)),
-		mustBuild(GetWriteFileTool(root)),
-		mustBuild(GetEditFileTool(root)),
-		mustBuild(GetGlobTool(root)),
-		mustBuild(GetGrepTool(root)),
-		mustBuild(GetExecuteTool(root)),
+		mustBuild(GetLsTool(root, sandboxManager)),
+		mustBuild(GetReadFileTool(root, sandboxManager)),
+		mustBuild(GetWriteFileTool(root, sandboxManager)),
+		mustBuild(GetEditFileTool(root, sandboxManager)),
+		mustBuild(GetGlobTool(root, sandboxManager)),
+		mustBuild(GetGrepTool(root, sandboxManager)),
+		mustBuild(GetExecuteTool(root, sandboxManager)),
 		mustBuild(GetApplyPatchTool(root)),
 		mustBuild(GetDeleteFileTool(root)),
 		mustBuild(GetRgTool(root)),
 		mustBuild(GetSemanticSearchTool(root)),
 		mustBuild(GetReadLintsTool(root)),
-		mustBuild(GetShellTool(root)),
+		mustBuild(GetShellTool(root, sandboxManager)),
 		mustBuild(GetAwaitShellTool(root)),
 	}
 	if cfg.WebSearch.Enabled {

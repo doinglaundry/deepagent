@@ -14,14 +14,10 @@ func shouldUseSandbox(path string) bool {
 	return strings.HasPrefix(path, "/mnt/")
 }
 
-// sandboxFromCtx returns nil when no manager or no sid — caller falls back to host fs.
-func sandboxFromCtx(ctx context.Context) sandbox.Sandbox {
-	manager := runtimecontext.GetSandboxManager(ctx)
+// getSandbox returns nil when no manager or sid is available; callers fall back to host fs.
+func getSandbox(ctx context.Context, manager sandbox.SandboxManager) sandbox.Sandbox {
 	if manager == nil {
-		manager = sandbox.Default()
-		if manager == nil {
-			return nil
-		}
+		return nil
 	}
 	sid := runtimecontext.GetSandboxID(ctx)
 	if sid == "" {
