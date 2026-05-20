@@ -76,3 +76,30 @@ func TestMessagesLogKeepsMultilineContentReadable(t *testing.T) {
 		t.Fatalf("messages log should preserve multiline content with safe fence: %s", body)
 	}
 }
+
+func TestMessagesLogUsesToolCallAsContent(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "agent-messages.md")
+	mw := NewMessagesLog(logPath)
+	state := &adk.ChatModelAgentState{
+		Messages: []*schema.Message{{
+			Role: schema.Assistant,
+			ToolCalls: []schema.ToolCall{
+				{ID: "call-1", Function: schema.FunctionCall{Name: "shell.execute", Arguments: `{"cmd":"pwd"}`}},
+			},
+		}},
+	}
+
+	_, _, err := mw.AfterModelRewriteState(context.Background(), state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "tool: shell.execute") || !strings.Contains(body, `{"cmd":"pwd"}`) {
+		t.Fatalf("messages log missing tool call body: %s", body)
+	}
+}

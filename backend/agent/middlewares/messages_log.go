@@ -75,7 +75,7 @@ func formatMessageLogEntry(msg *schema.Message) string {
 	content := ""
 	if msg != nil {
 		role = fmt.Sprint(msg.Role)
-		content = msg.Content
+		content = getMessageLogContent(msg)
 	}
 	fence := markdownFence(content)
 	return fmt.Sprintf("## %s · %s\n\n%stext\n%s\n%s\n\n---\n\n",
@@ -85,6 +85,20 @@ func formatMessageLogEntry(msg *schema.Message) string {
 		content,
 		fence,
 	)
+}
+
+func getMessageLogContent(msg *schema.Message) string {
+	if len(msg.ToolCalls) == 0 {
+		return msg.Content
+	}
+	var sb strings.Builder
+	for i, call := range msg.ToolCalls {
+		if i > 0 {
+			sb.WriteString("\n\n")
+		}
+		fmt.Fprintf(&sb, "tool: %s\narguments:\n%s", call.Function.Name, call.Function.Arguments)
+	}
+	return sb.String()
 }
 
 func markdownFence(content string) string {
