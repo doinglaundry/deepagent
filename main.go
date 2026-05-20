@@ -112,11 +112,10 @@ func parseFlags(args []string) (root, mode, addr string, err error) {
 func getRoot(flagRoot string) (string, error) {
 	root := strings.TrimSpace(flagRoot)
 	if root == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		root = wd
+		root = strings.TrimSpace(os.Getenv("SGADK_ROOT"))
+	}
+	if root == "" {
+		return os.Getwd()
 	}
 	return filepath.Abs(root)
 }

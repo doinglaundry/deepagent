@@ -18,6 +18,14 @@ func RootDir() string {
 	return wd
 }
 
+func SetRootDirForTest(root string) func() {
+	previous := rootDirOverride
+	rootDirOverride = root
+	return func() {
+		rootDirOverride = previous
+	}
+}
+
 func BaseDir() string {
 	return filepath.Join(RootDir(), ".eino-cli")
 }
