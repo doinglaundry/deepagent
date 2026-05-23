@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
+
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
 )
@@ -68,5 +71,46 @@ func TestGetChatModelMiddlewares_SummarizationSkippedWithoutModel(t *testing.T) 
 		if reflect.TypeOf(mw).String() == "*summarization.middleware" {
 			t.Fatalf("summarization slot should be skipped without a summary model")
 		}
+	}
+}
+
+func TestGetChatModelMiddlewares_HITLUsesCurrentApprover(t *testing.T) {
+	previous := HITLApprover
+	t.Cleanup(func() { HITLApprover = previous })
+
+	chain := GetChatModelMiddlewares(context.Background(), "default", false, nil, makeChainTestCfg(), nil, nil)
+	HITLApprover = func(_ context.Context, toolName, args string) bool {
+		return toolName == "shell" && args == `{"command":"pwd"}`
+	}
+
+	var hitl *middlewares.HITL
+	for _, mw := range chain {
+		if found, ok := mw.(*middlewares.HITL); ok {
+			hitl = found
+			break
+		}
+	}
+	if hitl == nil {
+		t.Fatalf("HITL middleware not found")
+	}
+
+	state := &adk.ChatModelAgentState{
+		Messages: []*schema.Message{{
+			Role: schema.Assistant,
+			ToolCalls: []schema.ToolCall{{
+				ID: "call-1",
+				Function: schema.FunctionCall{
+					Name:      "shell",
+					Arguments: `{"command":"pwd"}`,
+				},
+			}},
+		}},
+	}
+	_, out, err := hitl.AfterModelRewriteState(context.Background(), state, nil)
+	if err != nil {
+		t.Fatalf("AfterModelRewriteState: %v", err)
+	}
+	if len(out.Messages[0].ToolCalls) != 1 {
+		t.Fatalf("current HITLApprover was not used")
 	}
 }

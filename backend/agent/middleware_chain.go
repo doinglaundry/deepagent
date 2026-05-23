@@ -66,7 +66,7 @@ func GetChatModelMiddlewares(
 		middlewareList = append(middlewareList, middlewares.NewSubagentLimit(getMaxSubagents()))
 	}
 
-	middlewareList = append(middlewareList, middlewares.NewHITL(getDefaultHITLTools(), HITLApprover))
+	middlewareList = append(middlewareList, middlewares.NewHITL(getDefaultHITLTools(), approveToolCall))
 
 	summaryMW, err := middlewares.NewSummarization(ctx, memCfg, updater, buildSummaryChatModel(ctx, cfg))
 	if err == nil {
@@ -105,6 +105,10 @@ func getDefaultMemoryConfig() config.Memory {
 
 func defaultDeferredToolNames() []string {
 	return nil
+}
+
+func approveToolCall(ctx context.Context, toolName, args string) bool {
+	return HITLApprover(ctx, toolName, args)
 }
 
 func getDefaultHITLTools() []string {
