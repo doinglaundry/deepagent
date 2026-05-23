@@ -25,6 +25,10 @@ func (r *historyRuntime) ExecuteStream(context.Context, string, rt.StreamChunkHa
 	return rt.Result{}, nil
 }
 
+func (r *historyRuntime) RunDream(context.Context) (rt.Result, error) {
+	return rt.Result{Success: true}, nil
+}
+
 func (r *historyRuntime) ClearHistory() {}
 
 func (r *historyRuntime) ExportHistory() ([]byte, error) { return []byte("[]"), nil }

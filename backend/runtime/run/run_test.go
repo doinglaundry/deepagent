@@ -26,6 +26,10 @@ func (r testRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk r
 	return r.run(ctx, prompt, onChunk)
 }
 
+func (r testRuntime) RunDream(context.Context) (rt.Result, error) {
+	return rt.Result{Success: true}, nil
+}
+
 func (r testRuntime) ClearHistory() {}
 
 func (r testRuntime) ExportHistory() ([]byte, error) { return []byte("[]"), nil }

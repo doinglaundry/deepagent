@@ -25,6 +25,9 @@ func (stubRuntime) Execute(ctx context.Context, prompt string) (rt.Result, error
 func (stubRuntime) ExecuteStream(ctx context.Context, prompt string, onChunk rt.StreamChunkHandler) (rt.Result, error) {
 	return rt.Result{}, nil
 }
+func (stubRuntime) RunDream(context.Context) (rt.Result, error) {
+	return rt.Result{Success: true}, nil
+}
 func (stubRuntime) ClearHistory()                  {}
 func (stubRuntime) ExportHistory() ([]byte, error) { return []byte("[]"), nil }
 func (stubRuntime) ImportHistory([]byte) error     { return nil }

@@ -15,12 +15,50 @@ import (
 	"eino-cli/backend/agent"
 	"eino-cli/backend/agent/autodream"
 	"eino-cli/backend/config"
+	rt "eino-cli/backend/runtime"
 	runtimecontext "eino-cli/backend/runtime/context"
 )
 
 type autoDreamState struct {
 	lastSessionScanAt time.Time
 	mu                sync.Mutex
+}
+
+func (r *Runtime) RunDream(ctx context.Context) (rt.Result, error) {
+	memoryRoot := config.DreamMemoryDir()
+	lastConsolidatedAt, err := autodream.ReadLastConsolidatedAt(memoryRoot)
+	if err != nil {
+		return rt.Result{}, fmt.Errorf("read dream lock: %w", err)
+	}
+	candidates, err := autodream.ListJSONLSessionCandidates(config.TranscriptDir())
+	if err != nil {
+		return rt.Result{}, fmt.Errorf("list dream sessions: %w", err)
+	}
+	sessionIDs := autodream.FilterSessionsTouchedSince(candidates, lastConsolidatedAt, "")
+	if len(sessionIDs) == 0 {
+		return rt.Result{Success: true, Output: "dream: no transcript sessions to consolidate"}, nil
+	}
+	lock, err := autodream.TryAcquireConsolidationLock(memoryRoot)
+	if err != nil {
+		return rt.Result{}, fmt.Errorf("acquire dream lock: %w", err)
+	}
+	if lock == nil {
+		return rt.Result{Success: true, Output: "dream: another consolidation is already running"}, nil
+	}
+	prompt := autodream.BuildConsolidationPrompt(memoryRoot, config.TranscriptDir(), sessionIDs)
+	result, err := runAutoDreamFork(ctx, r, []*schema.Message{schema.UserMessage(prompt)})
+	if err != nil {
+		autodream.RollbackConsolidationLock(lock)
+		return rt.Result{}, err
+	}
+	appendAutoDreamCompletionMessage(r, result)
+	if len(result.FilesTouched) == 0 {
+		return rt.Result{Success: true, Output: "dream: completed; no memory files changed"}, nil
+	}
+	return rt.Result{
+		Success: true,
+		Output:  fmt.Sprintf("dream: improved %d memory files: %s", len(result.FilesTouched), strings.Join(result.FilesTouched, ", ")),
+	}, nil
 }
 
 func runAutoDream(ctx context.Context, r *Runtime, state *autoDreamState) {

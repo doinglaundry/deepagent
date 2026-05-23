@@ -31,6 +31,8 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 		return m, waitForStreamMsg(m.streamCh)
 	case doneMsg:
 		return m.handleDone(msg)
+	case dreamDoneMsg:
+		return m.handleDreamDone(msg)
 	case approvalRequest:
 		return m.handleApprovalRequest(msg)
 	case middlewares.TraceEvent:
@@ -537,6 +539,19 @@ func (m *Model) handleTodosCmd(text string) tea.Cmd {
 	}
 	m.pushMessage("system", fmt.Sprintf("todos panel = %s", state))
 	return nil
+}
+
+func (m *Model) handleDreamDone(msg dreamDoneMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.pushMessage("system", fmt.Sprintf("dream: %v", msg.err))
+		return m, nil
+	}
+	if strings.TrimSpace(msg.output) == "" {
+		m.pushMessage("system", "dream: complete")
+		return m, nil
+	}
+	m.pushMessage("system", msg.output)
+	return m, nil
 }
 
 // handlePlanCmd processes "/plan [on|off|toggle]"; empty arg toggles.

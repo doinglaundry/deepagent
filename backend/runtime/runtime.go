@@ -20,6 +20,7 @@ type Result struct {
 
 type Runtime interface {
 	ExecuteStream(ctx context.Context, prompt string, onChunk StreamChunkHandler) (Result, error)
+	RunDream(ctx context.Context) (Result, error)
 	ClearHistory()
 	ExportHistory() ([]byte, error)
 	ImportHistory(payload []byte) error

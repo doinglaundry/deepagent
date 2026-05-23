@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,6 +26,7 @@ type slashCommand struct {
 
 var builtinCommands = []slashCommand{
 	{Name: "clear", Desc: "clear the in-memory conversation history", Type: "builtin"},
+	{Name: "dream", Desc: "consolidate transcript history into dream memory", Type: "builtin"},
 	{Name: "exit", Desc: "exit the TUI session", Type: "builtin"},
 	{Name: "help", Args: "[name]", Desc: "show slash commands, or details for one command", Type: "builtin"},
 	{Name: "history", Desc: "browse past runs and rollback", Type: "builtin"},
@@ -66,6 +69,8 @@ func attachBuiltinHandlers(commands []slashCommand) {
 		switch commands[i].Name {
 		case "clear":
 			commands[i].Handler = handleClearCommand
+		case "dream":
+			commands[i].Handler = handleDreamCommand
 		case "exit", "quit":
 			commands[i].Handler = handleExitCommand
 		case "help":
@@ -141,6 +146,30 @@ func handleClearCommand(m *Model, _ string) tea.Cmd {
 	m.resetConversationView()
 	m.rt.ClearHistory()
 	return nil
+}
+
+type dreamDoneMsg struct {
+	output string
+	err    error
+}
+
+func handleDreamCommand(m *Model, text string) tea.Cmd {
+	m.pushMessage("user", text)
+	m.pushMessage("system", "dream: running memory consolidation")
+	return func() tea.Msg {
+		result, err := m.rt.RunDream(context.Background())
+		if err != nil {
+			return dreamDoneMsg{err: err}
+		}
+		if !result.Success {
+			message := strings.TrimSpace(result.Message)
+			if message == "" {
+				message = "dream failed"
+			}
+			return dreamDoneMsg{err: errors.New(message)}
+		}
+		return dreamDoneMsg{output: result.Output}
+	}
 }
 
 func handleHelpCommand(m *Model, text string) tea.Cmd {

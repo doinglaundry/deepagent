@@ -99,9 +99,10 @@ func (r *Runtime) ExecuteStream(ctx context.Context, prompt string, onChunk rt.S
 	r.mu.Lock()
 	r.history = append(r.history, schema.UserMessage(prompt), schema.AssistantMessage(summary.Output, nil))
 	r.mu.Unlock()
-	if runtimecontext.GetQuerySource(ctx) != runtimecontext.QuerySourceAutoDream {
-		go runAutoDream(context.Background(), r, &r.autoDreamState)
-	}
+	// Auto-dream is temporarily disabled; use /dream to trigger it manually.
+	// if runtimecontext.GetQuerySource(ctx) != runtimecontext.QuerySourceAutoDream {
+	// 	go runAutoDream(context.Background(), r, &r.autoDreamState)
+	// }
 
 	return rt.Result{Success: true, Output: summary.Output}, nil
 }
