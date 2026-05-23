@@ -316,11 +316,14 @@ func TestDoneDrainsQueuedToolTraceBeforeAssistant(t *testing.T) {
 
 	_, _ = m.handleDone(doneMsg{output: "answer"})
 	live := m.liveMessages()
-	if len(live) != 2 || live[0].Role != "tool-block" || live[1].Role != "assistant" {
-		t.Fatalf("queued tool trace must render before done answer, got %#v", live)
+	if len(live) != 0 {
+		t.Fatalf("done must flush completed turn out of live viewport, got %#v", live)
 	}
-	if len(m.pendingScrollback) != 0 {
-		t.Fatalf("done must not flush this turn before ordered live render, got %d pending", len(m.pendingScrollback))
+	if len(m.pendingScrollback) != 2 {
+		t.Fatalf("done must queue tool trace and answer for scrollback, got %d pending", len(m.pendingScrollback))
+	}
+	if !strings.Contains(m.pendingScrollback[0], "web_search") || !strings.Contains(m.pendingScrollback[1], "answer") {
+		t.Fatalf("scrollback order must be tool trace before answer, got %#v", m.pendingScrollback)
 	}
 }
 

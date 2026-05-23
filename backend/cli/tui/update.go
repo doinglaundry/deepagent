@@ -611,6 +611,7 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		m.pushMessage("system", fmt.Sprintf("error: %s", msg.err))
 		m.streamBuf.Reset()
 		m.streaming = false
+		m.queueCompletedTurnScrollback()
 		// Error path skips the thinking-summary — the error line is
 		// already enough noise; "Verbed for 3s" on top reads as gloating.
 		return m, drainedCmd
@@ -636,6 +637,7 @@ func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 
 	m.streamBuf.Reset()
 	m.streaming = false
+	m.queueCompletedTurnScrollback()
 	return m, drainedCmd
 }
 

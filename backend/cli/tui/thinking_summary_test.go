@@ -52,6 +52,26 @@ func TestHandleDone_NoSummaryBelowThreshold(t *testing.T) {
 	}
 }
 
+func TestHandleDone_QueuesFinalAnswerForScrollback(t *testing.T) {
+	answer := "start\n" + strings.Repeat("middle\n", 40) + "end"
+	m := &Model{
+		streaming:   true,
+		streamStart: time.Now(),
+	}
+
+	_, _ = m.handleDone(doneMsg{output: answer})
+
+	if len(m.pendingScrollback) != 1 {
+		t.Fatalf("final answer must be queued for scrollback, got %#v", m.pendingScrollback)
+	}
+	if !strings.Contains(m.pendingScrollback[0], "start") || !strings.Contains(m.pendingScrollback[0], "end") {
+		t.Fatalf("scrollback must contain the full answer, got %q", m.pendingScrollback[0])
+	}
+	if live := m.liveMessages(); len(live) != 0 {
+		t.Fatalf("completed answer should not stay clipped in live viewport: %#v", live)
+	}
+}
+
 // Error path → assistant fallback + system error, but NO thinking-summary
 // (already-noisy line gets gloating "Verbed for 3s" on top otherwise).
 func TestHandleDone_ErrorPathSkipsSummary(t *testing.T) {

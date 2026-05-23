@@ -327,9 +327,7 @@ func (m *Model) queueScrollback() {
 	}
 	if len(m.messages) == 1 {
 		if m.flushedMsgCount == 0 {
-			if text := strings.TrimSpace(m.renderMessage(m.messages[0])); text != "" {
-				m.pendingScrollback = append(m.pendingScrollback, text)
-			}
+			m.queueScrollbackMessage(m.messages[0])
 			m.flushedMsgCount = 1
 		}
 		return
@@ -344,18 +342,35 @@ func (m *Model) queueScrollback() {
 		return
 	}
 	for _, msg := range m.messages[m.flushedMsgCount:target] {
-		if text := strings.TrimSpace(m.renderMessage(msg)); text != "" {
-			m.pendingScrollback = append(m.pendingScrollback, text)
-		}
-		if msg.Role == "tool-block" {
-			if id, ok := parseToolPlaceholder(msg.Content); ok {
-				if block := m.findToolBlockByID(id); block != nil {
-					block.flushed = true
-				}
-			}
-		}
+		m.queueScrollbackMessage(msg)
 	}
 	m.flushedMsgCount = target
+}
+
+func (m *Model) queueCompletedTurnScrollback() {
+	if m.flushedMsgCount < 0 {
+		m.flushedMsgCount = 0
+	}
+	for _, msg := range m.messages[m.flushedMsgCount:] {
+		m.queueScrollbackMessage(msg)
+	}
+	m.flushedMsgCount = len(m.messages)
+	m.viewport.SetContent("")
+	m.recomputeLayout()
+}
+
+func (m *Model) queueScrollbackMessage(msg chatMessage) {
+	if text := strings.TrimSpace(m.renderMessage(msg)); text != "" {
+		m.pendingScrollback = append(m.pendingScrollback, text)
+	}
+	if msg.Role != "tool-block" {
+		return
+	}
+	if id, ok := parseToolPlaceholder(msg.Content); ok {
+		if block := m.findToolBlockByID(id); block != nil {
+			block.flushed = true
+		}
+	}
 }
 
 func (m *Model) flushScrollbackCmd() tea.Cmd {
