@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 )
 
 func TestNewRuntimeUnsupportedProvider(t *testing.T) {
@@ -116,6 +117,39 @@ func TestCollectAgentEventsIgnoresToolResultsAndToolCallTurns(t *testing.T) {
 		t.Fatalf("unexpected output: %q", summary.Output)
 	}
 	if len(chunks) != 1 || chunks[0] != summary.Output {
+		t.Fatalf("unexpected chunks: %#v", chunks)
+	}
+}
+
+func TestCollectAgentEventsUsesClarificationToolCall(t *testing.T) {
+	iter, gen := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
+	msg := schema.AssistantMessage("", nil)
+	msg.ToolCalls = []schema.ToolCall{{
+		ID: "call-1",
+		Function: schema.FunctionCall{
+			Name: consts.AskClarificationToolName,
+			Arguments: `{
+				"question":"Which environment should I deploy to?",
+				"context":"I need the target environment.",
+				"options":["development","staging","production"]
+			}`,
+		},
+	}}
+	gen.Send(&adk.AgentEvent{Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: msg}}})
+	gen.Close()
+
+	var chunks []string
+	summary, err := collectAgentEventsWithSink(iter, func(chunk string) {
+		chunks = append(chunks, chunk)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "I need the target environment.\n\nWhich environment should I deploy to?\n\n1. development\n2. staging\n3. production"
+	if summary.Output != want {
+		t.Fatalf("clarification output:\ngot:  %q\nwant: %q", summary.Output, want)
+	}
+	if len(chunks) != 1 || chunks[0] != want {
 		t.Fatalf("unexpected chunks: %#v", chunks)
 	}
 }

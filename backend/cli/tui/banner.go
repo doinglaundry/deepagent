@@ -12,7 +12,7 @@ import (
 // in the compact fallback's right column. Bump it in the same commit you
 // prepend a banner_notes.go entry — drift between the two is a code
 // review red flag (see yaml/CHANGELOG.md style of pairing version + diff).
-const bannerVersion = "1.1.0"
+const bannerVersion = "1.2.0"
 
 // bannerASCII is "SGADK" in figlet "standard" font; backtick-literal preserves
 // figlet's trailing-space spacing columns.
@@ -174,7 +174,7 @@ const (
 	bannerMaxWidth = 120
 	bannerLeftMin  = 32
 	bannerLeftMax  = 48
-	bannerMaxNotes = 3
+	bannerMaxNotes = 5
 )
 
 // renderWelcomeCard renders the boxed two-column welcome card for a wide

@@ -9,6 +9,9 @@ package tui
 // accurate when the right column word-wraps; Chinese / emoji content goes
 // into a spec doc instead.
 var releaseNotes = []string{
+	"/dream manually consolidates transcript history into markdown memory",
+	"dream memory lives under .eino-cli/dream-memory and is prompt-injected",
+	"per-session transcript JSONL files power memory consolidation",
 	"yaml/config.yaml now only carries models and web_search",
 	"rebuilt fs/shell tools; tool-call slog.Debug observability hook",
 }

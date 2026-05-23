@@ -94,25 +94,29 @@ func (m *Model) renderInputText(value string, cursor int) string {
 		if placeholder != "" {
 			first = placeholder[:1]
 		}
-		return m.input.Cursor.Style.Render(first) + dimStyle.Render(placeholder[1:])
+		m.input.Cursor.SetChar(first)
+		return m.input.Cursor.View() + dimStyle.Render(placeholder[1:])
 	}
 	highlightLen := 0
 	if name := highlightedCommandName(value, m.availableCommands()); name != "" {
 		highlightLen = len(name) + 1
 	}
 	var sb strings.Builder
-	for i, r := range value {
+	runes := []rune(value)
+	for i, r := range runes {
 		ch := string(r)
 		if i < highlightLen {
 			ch = popupNameStyle.Render(ch)
 		}
 		if i == cursor {
-			ch = m.input.Cursor.Style.Render(ch)
+			m.input.Cursor.SetChar(string(r))
+			ch = m.input.Cursor.View()
 		}
 		sb.WriteString(ch)
 	}
-	if cursor == len(value) {
-		sb.WriteString(m.input.Cursor.Style.Render(" "))
+	if cursor == len(runes) {
+		m.input.Cursor.SetChar(" ")
+		sb.WriteString(m.input.Cursor.View())
 	}
 	return sb.String()
 }
