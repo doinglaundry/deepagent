@@ -43,7 +43,8 @@ func GetChatModelMiddlewares(
 
 	middlewareList = append(middlewareList, middlewares.NewMemory(middlewares.MemoryHooks{
 		Inject: func(_ context.Context, msgs []*schema.Message) []*schema.Message {
-			return memory.InjectMemory(store, agentName, msgs)
+			msgs = memory.InjectMemory(store, agentName, msgs)
+			return memory.InjectDreamMemory(config.DreamMemoryDir(), msgs)
 		},
 		Extract: func(ctx context.Context, msgs []*schema.Message) {
 			err := updater.Run(ctx, chatModel, agentName, msgs, false)
@@ -78,7 +79,7 @@ func GetChatModelMiddlewares(
 
 	// Sandbox before Trace; the Trace→Clarification invariant is asserted in middleware_chain_test.go.
 	middlewareList = append(middlewareList, middlewares.NewSandbox(sandboxManager))
-	middlewareList = append(middlewareList, middlewares.NewMessagesLog(config.AgentMessagesLogPath()))
+	middlewareList = append(middlewareList, middlewares.NewMessagesLog(config.AgentMessagesLogPath(), config.TranscriptDir()))
 
 	trace := middlewares.NewTrace(agentName)
 	if tokenUsage != nil {

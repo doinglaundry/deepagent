@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,8 @@ type Runtime struct {
 	maxHistoryTurns     int
 	trace               *middlewares.Trace
 	planMode            atomic.Bool
+	sessionID           string
+	autoDreamState      autoDreamState
 }
 
 func NewRuntime(ctx context.Context, cfg *config.Config) (rt.Runtime, error) {
@@ -37,6 +40,7 @@ func NewRuntime(ctx context.Context, cfg *config.Config) (rt.Runtime, error) {
 		cfg:             cfg,
 		modelName:       cfg.DefaultModel,
 		maxHistoryTurns: 20,
+		sessionID:       fmt.Sprintf("session-%d-%d", os.Getpid(), time.Now().UnixNano()),
 	}
 	leadAgent, trace, err := agent.MakeLeadAgent(ctx, true, r.planMode.Load, cfg)
 	if err != nil {
@@ -72,6 +76,7 @@ func (r *Runtime) ExecuteStream(ctx context.Context, prompt string, onChunk rt.S
 	if runtimecontext.GetThreadID(ctx) == "" {
 		ctx = runtimecontext.WithThreadID(ctx, "cli")
 	}
+	ctx = runtimecontext.WithSessionID(ctx, r.sessionID)
 
 	checkpointID := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
 	iter := runner.Run(ctx, messages, adk.WithCheckPointID(checkpointID))
@@ -94,6 +99,9 @@ func (r *Runtime) ExecuteStream(ctx context.Context, prompt string, onChunk rt.S
 	r.mu.Lock()
 	r.history = append(r.history, schema.UserMessage(prompt), schema.AssistantMessage(summary.Output, nil))
 	r.mu.Unlock()
+	if runtimecontext.GetQuerySource(ctx) != runtimecontext.QuerySourceAutoDream {
+		go runAutoDream(context.Background(), r, &r.autoDreamState)
+	}
 
 	return rt.Result{Success: true, Output: summary.Output}, nil
 }

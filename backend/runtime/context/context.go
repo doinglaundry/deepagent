@@ -8,13 +8,21 @@ import (
 )
 
 type PermissionMode = consts.PermissionMode
+type QuerySource string
+
+const (
+	QuerySourceMain      QuerySource = "main"
+	QuerySourceAutoDream QuerySource = "auto_dream"
+)
 
 type (
 	threadIDKey          struct{}
+	sessionIDKey         struct{}
 	sandboxIDKey         struct{}
 	permissionModeKey    struct{}
 	rollbackProtectedKey struct{}
 	rollbackPolicyKey    struct{}
+	querySourceKey       struct{}
 )
 
 type RollbackPolicyState struct {
@@ -38,12 +46,33 @@ func GetThreadID(ctx stdctx.Context) string {
 	return v
 }
 
+func WithSessionID(ctx stdctx.Context, sid string) stdctx.Context {
+	return stdctx.WithValue(ctx, sessionIDKey{}, sid)
+}
+
+func GetSessionID(ctx stdctx.Context) string {
+	v, _ := ctx.Value(sessionIDKey{}).(string)
+	return v
+}
+
 func WithSandboxID(ctx stdctx.Context, sid string) stdctx.Context {
 	return stdctx.WithValue(ctx, sandboxIDKey{}, sid)
 }
 
 func GetSandboxID(ctx stdctx.Context) string {
 	v, _ := ctx.Value(sandboxIDKey{}).(string)
+	return v
+}
+
+func WithQuerySource(ctx stdctx.Context, source QuerySource) stdctx.Context {
+	return stdctx.WithValue(ctx, querySourceKey{}, source)
+}
+
+func GetQuerySource(ctx stdctx.Context) QuerySource {
+	v, ok := ctx.Value(querySourceKey{}).(QuerySource)
+	if !ok {
+		return QuerySourceMain
+	}
 	return v
 }
 

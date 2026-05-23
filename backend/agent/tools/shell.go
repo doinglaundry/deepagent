@@ -41,11 +41,10 @@ func GetShellTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) 
 		})
 }
 
-func runShell(root string, in shellArgs) (string, error) {
+func runShell(workingDir string, in shellArgs) (string, error) {
 	if strings.TrimSpace(in.Command) == "" {
 		return "", fmt.Errorf("command must not be empty")
 	}
-	workingDir := resolveRoot()
 	if strings.TrimSpace(in.WorkingDir) != "" {
 		var err error
 		workingDir, err = getResolvedPath(in.WorkingDir)

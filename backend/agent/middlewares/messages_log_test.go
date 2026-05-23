@@ -2,6 +2,7 @@ package middlewares
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,11 +10,13 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
+
+	runtimecontext "eino-cli/backend/runtime/context"
 )
 
 func TestMessagesLogWritesOnlyNewMessages(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "agent-messages.md")
-	mw := NewMessagesLog(logPath)
+	mw := NewMessagesLog(logPath, "")
 
 	first := &adk.ChatModelAgentState{
 		Messages: []*schema.Message{schema.UserMessage("hi")},
@@ -56,7 +59,7 @@ func TestMessagesLogWritesOnlyNewMessages(t *testing.T) {
 
 func TestMessagesLogKeepsMultilineContentReadable(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "agent-messages.md")
-	mw := NewMessagesLog(logPath)
+	mw := NewMessagesLog(logPath, "")
 	content := "<memory>\nUser Context:\n```"
 	state := &adk.ChatModelAgentState{
 		Messages: []*schema.Message{schema.SystemMessage(content)},
@@ -79,7 +82,7 @@ func TestMessagesLogKeepsMultilineContentReadable(t *testing.T) {
 
 func TestMessagesLogUsesToolCallAsContent(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "agent-messages.md")
-	mw := NewMessagesLog(logPath)
+	mw := NewMessagesLog(logPath, "")
 	state := &adk.ChatModelAgentState{
 		Messages: []*schema.Message{{
 			Role: schema.Assistant,
@@ -102,4 +105,35 @@ func TestMessagesLogUsesToolCallAsContent(t *testing.T) {
 	if !strings.Contains(body, "tool: shell.execute") || !strings.Contains(body, `{"cmd":"pwd"}`) {
 		t.Fatalf("messages log missing tool call body: %s", body)
 	}
+}
+
+func TestMessagesLogWritesTranscriptJSONL(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "agent-messages.md")
+	transcriptDir := filepath.Join(dir, "transcripts")
+	mw := NewMessagesLog(logPath, transcriptDir)
+	ctx := runtimecontext.WithSessionID(context.Background(), "session/1")
+	state := &adk.ChatModelAgentState{
+		Messages: []*schema.Message{schema.UserMessage("remember this")},
+	}
+
+	_, _, err := mw.AfterModelRewriteState(ctx, state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(transcriptDir, "session1.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry transcriptMessage
+	if err := json.Unmarshal(bytesTrimRightNewline(data), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Role != "user" || entry.Content != "remember this" {
+		t.Fatalf("unexpected transcript entry: %#v", entry)
+	}
+}
+
+func bytesTrimRightNewline(data []byte) []byte {
+	return []byte(strings.TrimRight(string(data), "\n"))
 }

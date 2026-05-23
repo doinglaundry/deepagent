@@ -54,3 +54,32 @@ func MakeLeadAgent(
 	}
 	return agentImpl, middlewares.FindTrace(handlers), nil
 }
+
+func MakeAutoDreamAgent(ctx context.Context, cfg *config.Config) (adk.ResumableAgent, error) {
+	agentName := "auto-dream"
+	modelConfig := cfg.Models[cfg.DefaultModel]
+	chatModel, err := buildChatModel(ctx, modelConfig)
+	if err != nil {
+		return nil, err
+	}
+	chatModel = wrapErrorHandling(chatModel)
+
+	agentImpl, err := deep.New(ctx, &deep.Config{
+		Name:                   agentName,
+		Description:            "Auto Dream Agent",
+		ChatModel:              chatModel,
+		Instruction:            "Consolidate session transcripts into markdown memory. Only write inside the dream memory root.",
+		MaxIteration:           consts.DefaultAgentIterations,
+		WithoutGeneralSubAgent: true,
+		WithoutWriteTodos:      true,
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools: tools.BuildAutoDreamTools(sandbox.Default()),
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build auto-dream agent: %w", err)
+	}
+	return agentImpl, nil
+}

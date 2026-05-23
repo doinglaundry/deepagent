@@ -133,3 +133,27 @@ func TestCollectAgentEventsInterrupted(t *testing.T) {
 		t.Fatal("expected interrupted")
 	}
 }
+
+func TestCollectAutoDreamEventsTracksTouchedFiles(t *testing.T) {
+	iter, gen := adk.NewAsyncIteratorPair[*adk.AgentEvent]()
+	toolCallMsg := schema.AssistantMessage("", nil)
+	toolCallMsg.ToolCalls = []schema.ToolCall{
+		{ID: "call-1", Function: schema.FunctionCall{Name: "write_file", Arguments: `{"file_path":"MEMORY.md"}`}},
+		{ID: "call-2", Function: schema.FunctionCall{Name: "edit_file", Arguments: `{"file_path":"topic.md"}`}},
+		{ID: "call-3", Function: schema.FunctionCall{Name: "write_file", Arguments: `{"file_path":"MEMORY.md"}`}},
+	}
+	gen.Send(&adk.AgentEvent{Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: toolCallMsg}}})
+	gen.Send(&adk.AgentEvent{Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: schema.AssistantMessage("done", nil)}}})
+	gen.Close()
+
+	result, err := collectAutoDreamEvents(iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.FilesTouched, ",") != "MEMORY.md,topic.md" {
+		t.Fatalf("files touched = %#v", result.FilesTouched)
+	}
+	if result.Output != "done" {
+		t.Fatalf("output = %q, want done", result.Output)
+	}
+}

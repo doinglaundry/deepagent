@@ -34,6 +34,20 @@ func BuildBuiltinTools(cfg *config.Config, sandboxManager sandbox.SandboxManager
 	return tools
 }
 
+func BuildAutoDreamTools(sandboxManager sandbox.SandboxManager) []tool.BaseTool {
+	memoryRoot := config.DreamMemoryDir()
+	return []tool.BaseTool{
+		mustBuild(GetLsTool(sandboxManager)),
+		mustBuild(GetReadFileTool(sandboxManager)),
+		mustBuild(GetGlobTool(sandboxManager)),
+		mustBuild(GetGrepTool(sandboxManager)),
+		mustBuild(GetRgTool()),
+		mustBuild(GetAutoDreamShellTool(sandboxManager)),
+		mustBuild(GetAutoDreamWriteFileTool(memoryRoot)),
+		mustBuild(GetAutoDreamEditFileTool(memoryRoot)),
+	}
+}
+
 // mustBuild collapses InferTool's (tool, err) into a single value. InferTool
 // only fails when struct→schema reflection breaks, which is a compile-time
 // bug — panicking at startup beats checking the same error 7 times.

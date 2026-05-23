@@ -46,6 +46,14 @@ func MemoryDir() string {
 	return filepath.Join(BaseDir(), "memory")
 }
 
+func DreamMemoryDir() string {
+	return filepath.Join(BaseDir(), "dream-memory")
+}
+
+func TranscriptDir() string {
+	return filepath.Join(BaseDir(), "transcripts")
+}
+
 func InputHistoryPath() string {
 	return filepath.Join(BaseDir(), "history.txt")
 }
