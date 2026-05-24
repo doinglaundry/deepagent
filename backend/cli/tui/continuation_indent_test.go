@@ -13,7 +13,7 @@ func TestRenderMessage_AssistantContinuationIndent(t *testing.T) {
 	// Use Content (not Rendered) so we test the indent logic directly
 	// without glamour interposing — the raw body still flows through
 	// the same continuation-indent replacement path.
-	out := m.renderMessage(chatMessage{
+	out := renderMessage(m,chatMessage{
 		Role:    "assistant",
 		Content: "first line\nsecond line\nthird line",
 	})
@@ -35,7 +35,7 @@ func TestRenderMessage_AssistantContinuationIndent(t *testing.T) {
 // background padding for the card "shadow" look, which is fine.
 func TestRenderMessage_UserContinuationNotIndented(t *testing.T) {
 	m := &Model{}
-	out := m.renderMessage(chatMessage{
+	out := renderMessage(m,chatMessage{
 		Role:    "user",
 		Content: "first line\nsecond line",
 	})

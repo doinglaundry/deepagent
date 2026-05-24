@@ -17,7 +17,7 @@ func newModelForPopupKeys(value string, sel int) *Model {
 // command list; sel 0 → 1 lands on the second entry.
 func TestHandlePopupKey_DownArrowAdvancesSelection(t *testing.T) {
 	m := newModelForPopupKeys("/", 0)
-	_, handled := m.handlePopupKey(tea.KeyMsg{Type: tea.KeyDown})
+	_, handled := applyPopupKey(m,tea.KeyMsg{Type: tea.KeyDown})
 	if !handled {
 		t.Fatal("Down must be consumed when popup is open")
 	}
@@ -30,7 +30,7 @@ func TestHandlePopupKey_DownArrowAdvancesSelection(t *testing.T) {
 // least-surprise default for short menus.
 func TestHandlePopupKey_UpArrowWraps(t *testing.T) {
 	m := newModelForPopupKeys("/", 0)
-	m.handlePopupKey(tea.KeyMsg{Type: tea.KeyUp})
+	applyPopupKey(m,tea.KeyMsg{Type: tea.KeyUp})
 	want := len(commands) - 1
 	if m.popupSel != want {
 		t.Errorf("popupSel after Up from 0 = %d, want %d (wrap to last)",
@@ -41,7 +41,7 @@ func TestHandlePopupKey_UpArrowWraps(t *testing.T) {
 // Tab accepts the selected entry by rewriting input to "/<name> ".
 func TestHandlePopupKey_TabAcceptsSelectedCommand(t *testing.T) {
 	m := newModelForPopupKeys("/pl", 0)
-	_, handled := m.handlePopupKey(tea.KeyMsg{Type: tea.KeyTab})
+	_, handled := applyPopupKey(m,tea.KeyMsg{Type: tea.KeyTab})
 	if !handled {
 		t.Fatal("Tab must be consumed when popup is open")
 	}
@@ -56,7 +56,7 @@ func TestHandlePopupKey_TabAcceptsSelectedCommand(t *testing.T) {
 // the rewrite; the outer code owns the submission.
 func TestHandlePopupKey_EnterFallsThroughForSubmit(t *testing.T) {
 	m := newModelForPopupKeys("/cl", 0)
-	cmd, handled := m.handlePopupKey(tea.KeyMsg{Type: tea.KeyEnter})
+	cmd, handled := applyPopupKey(m,tea.KeyMsg{Type: tea.KeyEnter})
 	if handled {
 		t.Error("Enter must return handled=false so outer KeyEnter submits")
 	}
@@ -74,7 +74,7 @@ func TestHandlePopupKey_EnterFallsThroughForSubmit(t *testing.T) {
 // the popup is no longer claiming the key.
 func TestHandlePopupKey_EscClosesPopupByEmptyingInput(t *testing.T) {
 	m := newModelForPopupKeys("/pl", 0)
-	_, handled := m.handlePopupKey(tea.KeyMsg{Type: tea.KeyEsc})
+	_, handled := applyPopupKey(m,tea.KeyMsg{Type: tea.KeyEsc})
 	if !handled {
 		t.Fatal("Esc must be consumed when popup is open")
 	}
@@ -93,7 +93,7 @@ func TestOnInputChanged_ResetsSelOnRangeShrink(t *testing.T) {
 	m := &Model{input: ti, popupSel: 5} // sel=5 valid for the full pool
 
 	m.input.SetValue("/pl")
-	m.onInputChanged()
+	applyInputChanged(m)
 
 	if m.popupSel != 0 {
 		t.Errorf("popupSel must reset to 0 when matches shrink below it; got %d",

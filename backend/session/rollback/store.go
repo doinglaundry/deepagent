@@ -135,7 +135,6 @@ func (s *Store) fixedRoots() []rootPair {
 		{name: "checkpoints", host: filepath.Join(s.root, ".eino-cli", "checkpoints")},
 		{name: "user-data", host: filepath.Join(s.root, ".eino-cli", "users", "local", "threads", "cli", "user-data")},
 		{name: "memory", host: filepath.Join(s.root, ".eino-cli", "memory")},
-		{name: "runs", host: filepath.Join(s.root, ".eino-cli", "runs")},
 	}
 }
 

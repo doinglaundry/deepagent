@@ -23,7 +23,7 @@ func hitlTestModel() *Model {
 func enqueueRequest(t *testing.T, m *Model, name, args string) chan bool {
 	t.Helper()
 	reply := make(chan bool, 1)
-	m.handleApprovalRequest(approvalRequest{toolName: name, args: args, reply: reply})
+	applyApprovalRequest(m,approvalRequest{toolName: name, args: args, reply: reply})
 	return reply
 }
 
@@ -42,7 +42,7 @@ func recvDecision(t *testing.T, reply chan bool) (bool, bool) {
 
 func TestHandleApprovalRequest_EnqueuesAndShowsPanel(t *testing.T) {
 	m := hitlTestModel()
-	if got := m.renderApprovalPanel(); got != "" {
+	if got := renderApprovalPanel(m); got != "" {
 		t.Fatalf("empty queue must render no panel, got %q", got)
 	}
 
@@ -51,7 +51,7 @@ func TestHandleApprovalRequest_EnqueuesAndShowsPanel(t *testing.T) {
 		t.Fatalf("expected 1 queued, got %d", len(m.hitlQueue))
 	}
 
-	panel := m.renderApprovalPanel()
+	panel := renderApprovalPanel(m)
 	if !strings.Contains(panel, `"shell"`) {
 		t.Errorf("panel must name the tool; got:\n%s", panel)
 	}
@@ -93,7 +93,7 @@ func TestHandleApprovalKey_YApprovesAndPops(t *testing.T) {
 	m := hitlTestModel()
 	reply := enqueueRequest(t, m, "shell", "{}")
 
-	cmd, handled := m.handleApprovalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	cmd, handled := applyApprovalKey(m,tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if !handled || cmd != nil {
 		t.Errorf("y should resolve & swallow; got cmd=%v handled=%v", cmd, handled)
 	}
@@ -124,7 +124,7 @@ func TestHandleApprovalKey_DenialAliases(t *testing.T) {
 			m := hitlTestModel()
 			reply := enqueueRequest(t, m, "shell", "{}")
 
-			_, handled := m.handleApprovalKey(tc.key)
+			_, handled := applyApprovalKey(m,tc.key)
 			if !handled {
 				t.Errorf("%s should be handled", tc.name)
 			}
@@ -147,7 +147,7 @@ func TestHandleApprovalKey_CtrlCDeniesAndFallsThrough(t *testing.T) {
 	m := hitlTestModel()
 	reply := enqueueRequest(t, m, "shell", "{}")
 
-	_, handled := m.handleApprovalKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, handled := applyApprovalKey(m,tea.KeyMsg{Type: tea.KeyCtrlC})
 	if handled {
 		t.Error("Ctrl-C must NOT swallow handled=true (outer abort needs to run)")
 	}
@@ -164,7 +164,7 @@ func TestHandleKey_CtrlCDuringApprovalDeniesAndAborts(t *testing.T) {
 	m.cancel = func() { cancelled = true }
 	reply := enqueueRequest(t, m, "shell", "{}")
 
-	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := applyKey(m,tea.KeyMsg{Type: tea.KeyCtrlC})
 	_ = cmd
 	got, ok := recvDecision(t, reply)
 	if !ok || got != false {
@@ -182,7 +182,7 @@ func TestHandleApprovalKey_UnrelatedKeyIgnored(t *testing.T) {
 	m := hitlTestModel()
 	reply := enqueueRequest(t, m, "shell", "{}")
 
-	_, handled := m.handleApprovalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, handled := applyApprovalKey(m,tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if handled {
 		t.Error("unrelated keys must not be 'handled' (caller still sees them)")
 	}
@@ -203,7 +203,7 @@ func TestHitl_FIFO_ResolvesInOrder(t *testing.T) {
 	}
 
 	// First decision: y. Should resolve r1 with true; r2 still queued.
-	m.handleApprovalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	applyApprovalKey(m,tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if v, ok := recvDecision(t, r1); !ok || v != true {
 		t.Errorf("r1 should be approved; got=%v ok=%v", v, ok)
 	}
@@ -215,19 +215,19 @@ func TestHitl_FIFO_ResolvesInOrder(t *testing.T) {
 	}
 
 	// Panel must now show the second request's args (FIFO front swap).
-	if got := m.renderApprovalPanel(); !strings.Contains(got, "second") {
+	if got := renderApprovalPanel(m); !strings.Contains(got, "second") {
 		t.Errorf("panel after first resolution must show 'second' request; got:\n%s", got)
 	}
 
 	// Second decision: n. Should resolve r2 with false; queue empty.
-	m.handleApprovalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	applyApprovalKey(m,tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	if v, ok := recvDecision(t, r2); !ok || v != false {
 		t.Errorf("r2 should be denied; got=%v ok=%v", v, ok)
 	}
 	if len(m.hitlQueue) != 0 {
 		t.Errorf("queue should be empty after both resolutions; len=%d", len(m.hitlQueue))
 	}
-	if got := m.renderApprovalPanel(); got != "" {
+	if got := renderApprovalPanel(m); got != "" {
 		t.Errorf("panel must vanish after queue drains; got:\n%s", got)
 	}
 }
@@ -240,7 +240,7 @@ func TestDrainApprovals_ClearsQueueWithoutSending(t *testing.T) {
 	r1 := enqueueRequest(t, m, "shell", "{}")
 	r2 := enqueueRequest(t, m, "shell", "{}")
 
-	m.drainApprovals()
+	drainApprovals(m)
 
 	if len(m.hitlQueue) != 0 {
 		t.Errorf("drain must empty the queue; len=%d", len(m.hitlQueue))
@@ -261,7 +261,7 @@ func TestHandleKey_PendingBlocksUnrelatedInput(t *testing.T) {
 	m := hitlTestModel()
 	_ = enqueueRequest(t, m, "shell", "{}")
 
-	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h', 'i'}})
+	_, cmd := applyKey(m,tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h', 'i'}})
 	// We don't strictly assert cmd==nil (handleKey may return tea.Batch
 	// of nils internally) but the queue must be intact.
 	_ = cmd

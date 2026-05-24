@@ -17,7 +17,7 @@ func newModelForPopup(value string) *Model {
 // menu stays out of the way of normal prompts.
 func TestRenderPopup_HiddenWhenNoSlash(t *testing.T) {
 	m := newModelForPopup("hello")
-	if got := m.renderPopup(); got != "" {
+	if got := renderPopup(m); got != "" {
 		t.Errorf("popup must be hidden for non-slash input; got %q", got)
 	}
 }
@@ -27,7 +27,7 @@ func TestRenderPopup_HiddenWhenNoSlash(t *testing.T) {
 // on/off/open/close without competing with name suggestions.
 func TestRenderPopup_HiddenWhenInArgRegion(t *testing.T) {
 	m := newModelForPopup("/plan on")
-	if got := m.renderPopup(); got != "" {
+	if got := renderPopup(m); got != "" {
 		t.Errorf("popup must hide once a space is typed; got %q", got)
 	}
 }
@@ -36,7 +36,7 @@ func TestRenderPopup_HiddenWhenInArgRegion(t *testing.T) {
 // at least once so the user can browse without typing further.
 func TestRenderPopup_ShowsAllOnBareSlash(t *testing.T) {
 	m := newModelForPopup("/")
-	out := m.renderPopup()
+	out := renderPopup(m)
 	for _, c := range commands {
 		if !strings.Contains(out, "/"+c.Name) {
 			t.Errorf("bare slash must list every command; missing /%s in %q",
@@ -49,7 +49,7 @@ func TestRenderPopup_ShowsAllOnBareSlash(t *testing.T) {
 // drop unrelated entries like /clear.
 func TestRenderPopup_PrefixFilters(t *testing.T) {
 	m := newModelForPopup("/pl")
-	out := m.renderPopup()
+	out := renderPopup(m)
 	if !strings.Contains(out, "/plan") {
 		t.Errorf("/pl must surface /plan; got %q", out)
 	}
@@ -68,12 +68,12 @@ func TestPopupHeight_MatchesRenderLineCount(t *testing.T) {
 	cases := []string{"/", "/pl", "/zzz", "hello", "/plan on", ""}
 	for _, value := range cases {
 		m := newModelForPopup(value)
-		out := m.renderPopup()
+		out := renderPopup(m)
 		want := 0
 		if out != "" {
 			want = strings.Count(out, "\n") + 1
 		}
-		if got := m.popupHeight(); got != want {
+		if got := getPopupHeight(m); got != want {
 			t.Errorf("popupHeight=%d but renderPopup has %d lines for input %q",
 				got, want, value)
 		}

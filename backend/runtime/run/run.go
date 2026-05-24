@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -45,10 +44,6 @@ type Manager struct {
 	current       *Record
 	store         *runs.Store
 	rollbackStore *rollback.Store
-}
-
-func NewManager() *Manager {
-	return &Manager{}
 }
 
 func NewManagerWithStore(store *runs.Store, rollbackStores ...*rollback.Store) *Manager {
@@ -104,9 +99,6 @@ type eventBridge struct {
 }
 
 func Start(ctx context.Context, runtime rt.Runtime, prompt string, mgr *Manager) (<-chan Event, context.CancelFunc, error) {
-	if mgr == nil {
-		mgr = NewManager()
-	}
 	run, runCtx, err := create(ctx, mgr, prompt)
 	if err != nil {
 		return nil, nil, err
@@ -205,9 +197,6 @@ func capturePostSnapshot(ctx context.Context, runtime rt.Runtime, mgr *Manager, 
 	rec := toRecord(run)
 	if err := store.Save(context.Background(), rec); err != nil {
 		slog.Warn("run store: save rollback metadata failed", "run_id", run.ID, "err", err)
-	}
-	if err := runs.NewStore(filepath.Join(path, "runs")).Save(context.Background(), rec); err != nil {
-		slog.Warn("rollback snapshot: save run metadata failed", "run_id", run.ID, "err", err)
 	}
 }
 

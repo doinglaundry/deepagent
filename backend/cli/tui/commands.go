@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,12 +16,11 @@ import (
 
 type slashCommandHandler func(*Model, string) tea.Cmd
 
-// slashCommand is the metadata and optional builtin handler for one slash command.
 type slashCommand struct {
-	Name    string // without the leading "/"
-	Args    string // e.g. "[on|off|toggle]"; empty when the command takes none
-	Desc    string // one short line; popup truncates to viewport width
-	Type    string // "builtin" or "skill"
+	Name    string
+	Args    string
+	Desc    string
+	Type    string
 	Handler slashCommandHandler
 }
 
@@ -143,7 +143,7 @@ func handleExitCommand(_ *Model, _ string) tea.Cmd {
 }
 
 func handleClearCommand(m *Model, _ string) tea.Cmd {
-	m.resetConversationView()
+	resetConversationView(m)
 	m.rt.ClearHistory()
 	return nil
 }
@@ -154,8 +154,8 @@ type dreamDoneMsg struct {
 }
 
 func handleDreamCommand(m *Model, text string) tea.Cmd {
-	m.pushMessage("user", text)
-	m.pushMessage("system", "dream: running memory consolidation")
+	pushMessage(m, "user", text)
+	pushMessage(m, "system", "dream: running memory consolidation")
 	return func() tea.Msg {
 		result, err := m.rt.RunDream(context.Background())
 		if err != nil {
@@ -173,29 +173,96 @@ func handleDreamCommand(m *Model, text string) tea.Cmd {
 }
 
 func handleHelpCommand(m *Model, text string) tea.Cmd {
-	m.pushMessage("user", text)
+	pushMessage(m, "user", text)
 	arg := strings.TrimSpace(strings.TrimPrefix(text, "/help"))
-	m.pushMessage("assistant", m.builtinHelp(arg))
+	pushMessage(m, "assistant", buildBuiltinHelp(getAvailableCommands(m), arg))
 	return nil
 }
 
 func handleHistoryCommand(m *Model, _ string) tea.Cmd {
-	return m.handleHistoryCmd()
+	rows, err := m.runs.ListRuns(context.Background())
+	if err != nil {
+		pushMessage(m, "system", fmt.Sprintf("history: %v", err))
+		return nil
+	}
+	if len(rows) == 0 {
+		pushMessage(m, "system", "history: no runs yet")
+		return nil
+	}
+	m.runHistoryRows = rows
+	m.runHistorySel = 0
+	m.runHistoryOpen = true
+	m.input.Reset()
+	recomputeLayout(m)
+	return nil
 }
 
 func handlePlanCommand(m *Model, text string) tea.Cmd {
-	return m.handlePlanCmd(text)
+	arg := strings.TrimSpace(strings.TrimPrefix(text, "/plan"))
+	want := m.planMode
+	switch strings.ToLower(arg) {
+	case "", "toggle":
+		want = !m.planMode
+	case "on":
+		want = true
+	case "off":
+		want = false
+	default:
+		pushMessage(m, "system", "usage: /plan [on|off|toggle]")
+		return nil
+	}
+	got, err := m.rt.SetPlanMode(context.Background(), want)
+	if err != nil {
+		pushMessage(m, "system", fmt.Sprintf("plan: %v", err))
+		return nil
+	}
+	m.planMode = got
+	state := "off"
+	if got {
+		state = "on"
+	}
+	pushMessage(m, "system", fmt.Sprintf("plan mode = %s", state))
+	return nil
 }
 
 func handleTodosCommand(m *Model, text string) tea.Cmd {
-	return m.handleTodosCmd(text)
+	arg := strings.TrimSpace(strings.TrimPrefix(text, "/todos"))
+	prevH := getTodoPanelHeight(m)
+	switch strings.ToLower(arg) {
+	case "", "toggle":
+		m.todoExpanded = !m.todoExpanded
+	case "open":
+		m.todoExpanded = true
+	case "close":
+		m.todoExpanded = false
+	default:
+		pushMessage(m, "system", "usage: /todos [open|close|toggle]")
+		return nil
+	}
+	if getTodoPanelHeight(m) != prevH {
+		recomputeLayout(m)
+	}
+	state := "closed"
+	if m.todoExpanded {
+		state = "open"
+	}
+	pushMessage(m, "system", fmt.Sprintf("todos panel = %s", state))
+	return nil
 }
 
-// shouldShowPopup gates popup visibility on the input value alone. The
-// rule: input must start with "/" AND have no whitespace yet (still in
-// the command-name region). Once the user types a space we're in the
-// argument region — the menu disappears so /plan, /todos etc. can take
-// their on/off/toggle freely.
+func applyBuiltin(m *Model, text string) (tea.Cmd, bool) {
+	if !strings.HasPrefix(text, "/") {
+		return nil, false
+	}
+	name := strings.TrimSpace(strings.TrimPrefix(strings.SplitN(text, " ", 2)[0], "/"))
+	command, ok := getCommand(getAvailableCommands(m), name)
+	if !ok || command.Handler == nil {
+		return nil, false
+	}
+	return command.Handler(m, text), true
+}
+
+// shouldShowPopup: input starts with "/" and has no whitespace yet.
 func shouldShowPopup(input string) bool {
 	if !strings.HasPrefix(input, "/") {
 		return false
@@ -203,11 +270,10 @@ func shouldShowPopup(input string) bool {
 	return !strings.ContainsAny(input, " \t")
 }
 
-// filterCommands returns the entries whose Name starts with the slash-
-// stripped query, case-insensitive. Empty query returns the full list
-// so a bare "/" pops the whole menu (matches Claude Code's UX). The
-// returned slice may alias the input on empty-query — callers must not
-// mutate it.
+func getPopupMatches(m *Model) []slashCommand {
+	return filterCommands(getAvailableCommands(m), m.input.Value())
+}
+
 func filterCommands(all []slashCommand, query string) []slashCommand {
 	query = strings.ToLower(strings.TrimPrefix(query, "/"))
 	if query == "" {
@@ -241,7 +307,7 @@ func filterCommands(all []slashCommand, query string) []slashCommand {
 	return out
 }
 
-func findCommand(commands []slashCommand, name string) (slashCommand, bool) {
+func getCommand(commands []slashCommand, name string) (slashCommand, bool) {
 	name = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(name), "/"))
 	for _, command := range commands {
 		if strings.ToLower(command.Name) == name {
@@ -260,8 +326,52 @@ func highlightedCommandName(text string, commands []slashCommand) string {
 		return ""
 	}
 	name := strings.TrimPrefix(token, "/")
-	if _, found := findCommand(commands, name); !found {
+	if _, found := getCommand(commands, name); !found {
 		return ""
 	}
 	return name
+}
+
+func buildBuiltinHelp(commands []slashCommand, target string) string {
+	if target != "" {
+		if command, ok := getCommand(commands, target); ok {
+			kind := "Built-in command"
+			if command.Type == "skill" {
+				kind = "Skill"
+			}
+			args := ""
+			if command.Args != "" {
+				args = " " + command.Args
+			}
+			return fmt.Sprintf("**/%s%s** — _%s_\n\n%s", command.Name, args, kind, command.Desc)
+		}
+		return fmt.Sprintf("Unknown command: `/%s`. Run `/help` to see available commands.", strings.TrimPrefix(target, "/"))
+	}
+
+	var builtins, skills []string
+	for _, command := range commands {
+		args := ""
+		if command.Args != "" {
+			args = " " + command.Args
+		}
+		line := fmt.Sprintf("- `/%s%s` — %s", command.Name, args, command.Desc)
+		if command.Type == "skill" {
+			skills = append(skills, line)
+		} else {
+			builtins = append(builtins, line)
+		}
+	}
+	var sb strings.Builder
+	sb.WriteString("**Available slash commands**\n\n_Built-in_\n")
+	sb.WriteString(strings.Join(builtins, "\n"))
+	if len(skills) > 0 {
+		sb.WriteString("\n\n_Skills_\n")
+		sb.WriteString(strings.Join(skills, "\n"))
+	}
+	sb.WriteString("\n\nRun `/help <name>` for details. Press Ctrl-C during a response to abort, Ctrl-O to expand the latest tool block, or Ctrl-C twice from idle to quit.")
+	return sb.String()
+}
+
+func builtinHelp() string {
+	return buildBuiltinHelp(commands, "")
 }

@@ -14,35 +14,17 @@ import (
 const runHistoryMaxRows = 8
 const runHistorySuccessStatus = "success"
 
-func (m *Model) handleHistoryCmd() tea.Cmd {
-	rows, err := m.runs.ListRuns(context.Background())
-	if err != nil {
-		m.pushMessage("system", fmt.Sprintf("history: %v", err))
-		return nil
-	}
-	if len(rows) == 0 {
-		m.pushMessage("system", "history: no runs yet")
-		return nil
-	}
-	m.runHistoryRows = rows
-	m.runHistorySel = 0
-	m.runHistoryOpen = true
-	m.input.Reset()
-	m.recomputeLayout()
-	return nil
-}
-
-func (m *Model) handleRunHistoryKey(msg tea.KeyMsg) (tea.Cmd, bool) {
+func applyRunHistoryKey(m *Model, msg tea.KeyMsg) (tea.Cmd, bool) {
 	if len(m.runHistoryRows) == 0 {
-		m.closeRunHistory()
+		closeRunHistory(m)
 		return nil, true
 	}
 	switch msg.Type {
 	case tea.KeyEsc:
-		m.closeRunHistory()
+		closeRunHistory(m)
 		return nil, true
 	case tea.KeyEnter:
-		m.rollbackSelectedRun()
+		rollbackSelectedRun(m)
 		return nil, true
 	case tea.KeyUp, tea.KeyCtrlP:
 		m.runHistorySel = (m.runHistorySel - 1 + len(m.runHistoryRows)) % len(m.runHistoryRows)
@@ -52,23 +34,23 @@ func (m *Model) handleRunHistoryKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return nil, true
 	case tea.KeyRunes:
 		if strings.EqualFold(string(msg.Runes), "q") {
-			m.closeRunHistory()
+			closeRunHistory(m)
 			return nil, true
 		}
 	}
 	return nil, false
 }
 
-func (m *Model) closeRunHistory() {
+func closeRunHistory(m *Model) {
 	m.runHistoryOpen = false
 	m.runHistoryRows = nil
 	m.runHistorySel = 0
-	m.recomputeLayout()
+	recomputeLayout(m)
 }
 
-func (m *Model) rollbackSelectedRun() {
+func rollbackSelectedRun(m *Model) {
 	if m.runHistorySel < 0 || m.runHistorySel >= len(m.runHistoryRows) {
-		m.closeRunHistory()
+		closeRunHistory(m)
 		return
 	}
 	selected := m.runHistoryRows[m.runHistorySel]
@@ -77,35 +59,29 @@ func (m *Model) rollbackSelectedRun() {
 		if selected.RollbackError != "" {
 			msg += ": " + selected.RollbackError
 		}
-		m.pushMessage("system", msg)
-		m.closeRunHistory()
+		pushMessage(m, "system", msg)
+		closeRunHistory(m)
 		return
 	}
 	history, err := m.runs.RestoreSnapshot(context.Background(), selected.ID)
 	if err != nil {
-		m.pushMessage("system", fmt.Sprintf("rollback: %v", err))
-		m.closeRunHistory()
+		pushMessage(m, "system", fmt.Sprintf("rollback: %v", err))
+		closeRunHistory(m)
 		return
 	}
 	if err := m.rt.RollbackToHistory(history); err != nil {
-		m.pushMessage("system", fmt.Sprintf("rollback: %v", err))
-		m.closeRunHistory()
+		pushMessage(m, "system", fmt.Sprintf("rollback: %v", err))
+		closeRunHistory(m)
 		return
 	}
 	rows, _ := m.runs.ListRuns(context.Background())
-	m.rebuildAfterRollback(selected, rows)
-	m.closeRunHistory()
-	m.pushMessage("system", fmt.Sprintf("rolled back to %s", shortRunID(selected.ID)))
+	rebuildAfterRollback(m, selected, rows)
+	closeRunHistory(m)
+	pushMessage(m, "system", fmt.Sprintf("rolled back to %s", shortRunID(selected.ID)))
 }
 
-func (m *Model) rebuildAfterRollback(selected runs.Record, rows []runs.Record) {
-	m.messages = freshMessages(m.width, m.modelName, m.cwd)
-	m.toolBlocks = nil
-	m.lastSeenMsgCount = 0
-	m.toolBlockSeq = 0
-	m.flushedMsgCount = 0
-	m.pendingScrollback = nil
-	m.todos = nil
+func rebuildAfterRollback(m *Model, selected runs.Record, rows []runs.Record) {
+	resetConversationUI(m)
 	m.tokenTotal = 0
 	m.streamBuf.Reset()
 	m.streaming = false
@@ -122,20 +98,20 @@ func (m *Model) rebuildAfterRollback(selected runs.Record, rows []runs.Record) {
 		}
 	}
 	for i := len(kept) - 1; i >= 0; i-- {
-		m.pushMessage("user", kept[i].Prompt)
-		m.pushMessage("assistant", kept[i].Output)
+		pushMessage(m, "user", kept[i].Prompt)
+		pushMessage(m, "assistant", kept[i].Output)
 	}
 }
 
-func (m *Model) runHistoryPanelHeight() int {
-	panel := m.renderRunHistoryPanel()
+func getRunHistoryPanelHeight(m *Model) int {
+	panel := renderRunHistoryPanel(m)
 	if panel == "" {
 		return 0
 	}
 	return strings.Count(panel, "\n") + 1
 }
 
-func (m *Model) renderRunHistoryPanel() string {
+func renderRunHistoryPanel(m *Model) string {
 	if !m.runHistoryOpen {
 		return ""
 	}

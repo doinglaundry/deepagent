@@ -16,7 +16,7 @@ func TestRenderStreamPanel_DuringStreamingContainsVerbAndElapsed(t *testing.T) {
 		verbPresent: "Moonwalking",
 		elapsed:     6 * time.Second,
 	}
-	got := m.renderStreamPanel()
+	got := renderStreamPanel(m)
 	for _, want := range []string{"✶", "Moonwalking…", "6s", "thinking"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("indicator missing %q; got: %q", want, got)
@@ -28,7 +28,7 @@ func TestRenderStreamPanel_DuringStreamingContainsVerbAndElapsed(t *testing.T) {
 // frees the line for viewport / todo panel use.
 func TestRenderStreamPanel_IdleEmpty(t *testing.T) {
 	m := &Model{streaming: false}
-	if got := m.renderStreamPanel(); got != "" {
+	if got := renderStreamPanel(m); got != "" {
 		t.Errorf("idle panel must be empty; got: %q", got)
 	}
 }
@@ -38,7 +38,7 @@ func TestRenderStreamPanel_IdleEmpty(t *testing.T) {
 // streaming).
 func TestRenderStreamPanel_ErrorRendersWhenNotStreaming(t *testing.T) {
 	m := &Model{streaming: false, lastErr: errFixed("rate limited")}
-	got := m.renderStreamPanel()
+	got := renderStreamPanel(m)
 	if !strings.Contains(got, "rate limited") {
 		t.Errorf("expected error body in panel; got %q", got)
 	}

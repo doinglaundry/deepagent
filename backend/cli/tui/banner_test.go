@@ -44,7 +44,7 @@ func TestFreshMessages_SingleBannerEntry(t *testing.T) {
 func TestRenderMessage_BannerVerbatim(t *testing.T) {
 	m := &Model{}
 	body := renderBanner(120, "test-model", "/tmp/test")
-	got := m.renderMessage(chatMessage{Role: "banner", Content: body})
+	got := renderMessage(m,chatMessage{Role: "banner", Content: body})
 	if got != body {
 		t.Errorf("renderMessage(banner) altered the content:\nwant: %q\n got: %q", body, got)
 	}
@@ -162,7 +162,7 @@ func TestHandleResize_RebakesBannerForNewWidth(t *testing.T) {
 		t.Fatalf("setup: width-0 banner should be compact (no ╭), got:\n%s", m.messages[0].Content)
 	}
 
-	_, _ = m.handleResize(tea.WindowSizeMsg{Width: 120, Height: 30})
+	_, _ = applyResize(m,tea.WindowSizeMsg{Width: 120, Height: 30})
 
 	if !strings.Contains(m.messages[0].Content, "╭") {
 		t.Errorf("after resize to width=120, banner should be boxed; got:\n%s", m.messages[0].Content)

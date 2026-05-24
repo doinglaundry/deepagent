@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -55,17 +54,17 @@ func TestRunHistoryRenderAndKeys(t *testing.T) {
 			{ID: "run-older", Status: "success", Prompt: "older prompt"},
 		},
 	}
-	panel := m.renderRunHistoryPanel()
+	panel := renderRunHistoryPanel(m)
 	if !strings.Contains(panel, "Run history") || !strings.Contains(panel, "newest prompt") {
 		t.Fatalf("unexpected history panel:\n%s", panel)
 	}
-	if _, handled := m.handleRunHistoryKey(tea.KeyMsg{Type: tea.KeyDown}); !handled {
+	if _, handled := applyRunHistoryKey(m, tea.KeyMsg{Type: tea.KeyDown}); !handled {
 		t.Fatal("down key should be handled")
 	}
 	if m.runHistorySel != 1 {
 		t.Fatalf("selection = %d, want 1", m.runHistorySel)
 	}
-	if _, handled := m.handleRunHistoryKey(tea.KeyMsg{Type: tea.KeyEsc}); !handled {
+	if _, handled := applyRunHistoryKey(m, tea.KeyMsg{Type: tea.KeyEsc}); !handled {
 		t.Fatal("esc key should be handled")
 	}
 	if m.runHistoryOpen {
@@ -117,7 +116,7 @@ func TestRunHistoryRollbackRestoresSelectedPostRun(t *testing.T) {
 		runHistorySel:  1,
 	}
 
-	m.rollbackSelectedRun()
+	rollbackSelectedRun(m)
 
 	if !strings.Contains(rt.payload, "history-one") {
 		t.Fatalf("runtime payload = %s", rt.payload)
@@ -146,9 +145,6 @@ func saveRollbackableRecord(t *testing.T, runStore *runs.Store, rollbackStore *r
 	rec.Rollbackable = true
 	rec.RollbackPath = path
 	if err := runStore.Save(context.Background(), *rec); err != nil {
-		t.Fatal(err)
-	}
-	if err := runs.NewStore(filepath.Join(path, "runs")).Save(context.Background(), *rec); err != nil {
 		t.Fatal(err)
 	}
 }

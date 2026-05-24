@@ -239,7 +239,7 @@ func parseToolPlaceholder(content string) (int, bool) {
 	return id, true
 }
 
-func (m *Model) findToolBlockByID(id int) *toolBlock {
+func getToolBlockByID(m *Model, id int) *toolBlock {
 	for _, block := range m.toolBlocks {
 		if block.id == id {
 			return block
@@ -248,7 +248,7 @@ func (m *Model) findToolBlockByID(id int) *toolBlock {
 	return nil
 }
 
-func (m *Model) latestCollapsibleToolBlock() *toolBlock {
+func getLatestCollapsibleToolBlock(m *Model) *toolBlock {
 	previewLines := m.toolPreviewLines
 	if previewLines <= 0 {
 		previewLines = defaultToolPreviewLines

@@ -7,10 +7,7 @@ import (
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 )
 
-// renderTodoPanel returns the empty string when there are no todos so the
-// panel disappears cleanly between conversations. Otherwise it renders the
-// expanded or collapsed layout based on m.todoExpanded.
-func (m *Model) renderTodoPanel() string {
+func renderTodoPanel(m *Model) string {
 	if len(m.todos) == 0 {
 		return ""
 	}
@@ -20,11 +17,6 @@ func (m *Model) renderTodoPanel() string {
 	return renderTodoPanelCollapsed(m.todos)
 }
 
-// renderTodoPanelCollapsed: single line. Format:
-//
-//	▶ Todos 2/5 · in_progress: Write reminder middleware
-//
-// Falls back to "all done" / "N pending" when no in_progress item exists.
 func renderTodoPanelCollapsed(todos []deep.TODO) string {
 	done, total := countTodos(todos)
 	prefix := headerTitleStyle.Render("▶ Todos")
@@ -42,9 +34,6 @@ func renderTodoPanelCollapsed(todos []deep.TODO) string {
 	return fmt.Sprintf("%s %s · %s", prefix, progress, detail)
 }
 
-// renderTodoPanelExpanded: borderless multi-line list with progress bar.
-// Each item is "  <symbol> <styled content>". completed items get
-// strikethrough via todoCompletedStyle.
 func renderTodoPanelExpanded(todos []deep.TODO) string {
 	done, total := countTodos(todos)
 	header := fmt.Sprintf("  %s · %d/%d  %s",
@@ -60,8 +49,6 @@ func renderTodoPanelExpanded(todos []deep.TODO) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderTodoBar prints `width` cells, filled proportionally to done/total.
-// totals==0 is treated as 0/0 (all empty).
 func renderTodoBar(done, total, width int) string {
 	if width <= 0 {
 		return ""
@@ -84,7 +71,7 @@ func renderTodoLine(t deep.TODO) string {
 	case "in_progress":
 		return todoInProgressStyle.Render("◐ "+t.Content) +
 			todoPendingStyle.Render("  in_progress")
-	default: // pending or unknown
+	default:
 		return todoPendingStyle.Render("○ " + t.Content)
 	}
 }

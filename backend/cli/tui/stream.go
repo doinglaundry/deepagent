@@ -9,17 +9,13 @@ import (
 	runtimeRun "eino-cli/backend/runtime/run"
 )
 
-// chunkMsg is one streamed text chunk from the runtime's onChunk callback.
 type chunkMsg string
 
-// doneMsg fires once per prompt after the runtime call returns; err is non-nil
-// on failure or user cancel.
 type doneMsg struct {
 	output string
 	err    error
 }
 
-// startStream starts a runtime run and converts run events into Bubble Tea messages.
 func startStream(runtime rt.Runtime, prompt string, runs *runtimeRun.Manager) (<-chan tea.Msg, context.CancelFunc) {
 	streamCh := make(chan tea.Msg, 64)
 	events, cancel, err := runtimeRun.Start(context.Background(), runtime, prompt, runs)
@@ -50,7 +46,6 @@ func consumeRunEvents(streamCh chan<- tea.Msg, events <-chan runtimeRun.Event) {
 	}
 }
 
-// waitForStreamMsg reads one ordered runtime event; closed channel ends the pump.
 func waitForStreamMsg(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		v, ok := <-ch

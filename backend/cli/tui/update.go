@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -18,25 +17,25 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 			model = m
 		}
 		if next, ok := model.(*Model); ok {
-			cmd = tea.Batch(cmd, next.flushScrollbackCmd())
+			cmd = tea.Batch(cmd, flushScrollbackCmd(next))
 		}
 	}()
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		return m.handleResize(msg)
+		return applyResize(m, msg)
 	case tea.KeyMsg:
-		return m.handleKey(msg)
+		return applyKey(m, msg)
 	case chunkMsg:
 		m.streamBuf.WriteString(string(msg))
 		return m, waitForStreamMsg(m.streamCh)
 	case doneMsg:
-		return m.handleDone(msg)
+		return applyDone(m, msg)
 	case dreamDoneMsg:
-		return m.handleDreamDone(msg)
+		return applyDreamDone(m, msg)
 	case approvalRequest:
-		return m.handleApprovalRequest(msg)
+		return applyApprovalRequest(m, msg)
 	case middlewares.TraceEvent:
-		model, cmd = m.handleTraceEvent(msg)
+		model, cmd = applyTraceEvent(m, msg)
 		if m.streaming {
 			cmd = tea.Batch(cmd, waitForStreamMsg(m.streamCh))
 		}
@@ -46,12 +45,8 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 		return m, nil
 	case spinner.TickMsg:
 		if !m.streaming {
-			return m, nil // self-terminate the tick chain
+			return m, nil
 		}
-		// Spinner is no longer rendered (the thinking indicator owns
-		// the line), but its 100ms tick still drives elapsed-second
-		// refresh and shimmer-window advance — cheaper than spinning
-		// up a dedicated tea.Tick.
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		m.elapsed = time.Since(m.streamStart).Round(time.Second)
@@ -68,60 +63,41 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+func applyResize(m *Model, msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.width = msg.Width
 	m.height = msg.Height
+	recomputeLayout(m)
 
-	m.recomputeLayout()
-
-	// Rebuild markdown at new width so wrapping is correct. Banner is
-	// pre-rendered (verbatim in renderMessage), so a width change has to
-	// re-bake its content here too — otherwise a session that started
-	// narrow would stay on the compact fallback forever even after the
-	// user maximises the window (boxed form expects width >= 80).
 	m.mdRenderer = nil
 	for i := range m.messages {
 		switch m.messages[i].Role {
 		case "banner":
 			m.messages[i].Content = renderBanner(m.width, m.modelName, m.cwd)
 		case "assistant":
-			m.messages[i].Rendered = m.renderMarkdown(m.messages[i].Content)
+			m.messages[i].Rendered = renderMarkdown(m, m.messages[i].Content)
 		}
 	}
-	m.rebuildHistory()
+	rebuildHistory(m)
 	m.ready = true
 	return m, nil
 }
 
-// recomputeLayout sizes viewport / input from m.width / m.height and the
-// current panel states (stream + todo). Called from handleResize and from
-// any handler that flips a panel-affecting flag (todos / todoExpanded /
-// streaming). Cheap enough to run on every relevant edge.
-//
-// viewport.Height shrinks to fit the actual content so the input box sits
-// flush under the last message instead of being padded to the screen
-// bottom with blank lines (Claude Code-style "input glued to content").
-// Once content exceeds the available budget the height is clamped and
-// viewport starts scrolling normally.
-func (m *Model) recomputeLayout() {
+func recomputeLayout(m *Model) {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	// Layout budget: viewport(flex) + stream(0-1) + todoPanel(0..N)
-	// + popup/history + input(3) + footer(1). HITL approval is an
-	// exclusive input state, so its own y/n panel replaces stream/input/footer.
 	streamH := 0
 	if len(m.hitlQueue) == 0 && (m.streaming || m.lastErr != nil) {
-		streamH = 1 // single-line thinking indicator (was 3 with preview)
+		streamH = 1
 	}
-	todoH := m.todoPanelHeight()
-	popupH := m.popupHeight()
+	todoH := getTodoPanelHeight(m)
+	popupH := getPopupHeight(m)
 	approvalH := 0
-	runHistoryH := m.runHistoryPanelHeight()
+	runHistoryH := getRunHistoryPanelHeight(m)
 	inputH := 3
 	footerH := 1
 	if len(m.hitlQueue) > 0 {
-		approvalH = approvalPromptHeight + 1 // prompt + one separator newline View() inserts
+		approvalH = approvalPromptHeight + 1
 		popupH = 0
 		runHistoryH = 0
 		inputH = 0
@@ -135,10 +111,6 @@ func (m *Model) recomputeLayout() {
 	}
 	m.viewport.Width = m.width
 
-	// Fit-to-content: shrink down to actual line count when below max,
-	// otherwise clamp at max and let viewport scroll. TotalLineCount
-	// reflects whatever was last SetContent'd, so callers that mutate
-	// content (rebuildHistory) must invoke recomputeLayout afterwards.
 	want := m.viewport.TotalLineCount()
 	if want < 1 {
 		want = 1
@@ -150,14 +122,7 @@ func (m *Model) recomputeLayout() {
 	m.input.Width = m.width - 4
 }
 
-// todoPanelHeight matches what renderTodoPanel actually emits:
-//
-//	0 lines when len(todos) == 0
-//	1 line when collapsed
-//	2 + len(todos) lines when expanded (header + blank + one line per todo)
-//
-// Drift between this and the renderer would silently misalign chrome.
-func (m *Model) todoPanelHeight() int {
+func getTodoPanelHeight(m *Model) int {
 	if len(m.todos) == 0 {
 		return 0
 	}
@@ -167,81 +132,49 @@ func (m *Model) todoPanelHeight() int {
 	return 2 + len(m.todos)
 }
 
-func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// HITL approval beats everything else when active: the agent
-	// goroutine is blocked on the front request's reply chan, so any
-	// keystroke that isn't an explicit y/n/Enter/Esc/Ctrl-C is dropped
-	// (no input echo, no popup nav, no submit). This keeps the user's
-	// next keystroke unambiguously a decision.
+func applyKey(m *Model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if len(m.hitlQueue) > 0 {
-		if cmd, handled := m.handleApprovalKey(msg); handled {
+		if cmd, handled := applyApprovalKey(m, msg); handled {
 			return m, cmd
 		}
 		if msg.Type == tea.KeyCtrlC {
-			m.abortStream()
+			abortStream(m)
 		}
 		return m, nil
 	}
 	if m.runHistoryOpen {
-		if cmd, handled := m.handleRunHistoryKey(msg); handled {
+		if cmd, handled := applyRunHistoryKey(m, msg); handled {
 			return m, cmd
 		}
 		return m, nil
 	}
 
-	// Popup-active keys claim priority. With the menu up, Up/Down,
-	// Tab, Esc and Enter all mean things specific to the popup; falling
-	// through to textinput would (a) hide-move the cursor invisibly and
-	// (b) submit half-typed command names. Enter is special: the popup
-	// rewrites input to the full /<name> and returns handled=false so
-	// the outer KeyEnter below picks it up and runs submit normally
-	// (one path through submit, not two).
-	if m.popupHeight() > 0 {
-		if cmd, handled := m.handlePopupKey(msg); handled {
+	if getPopupHeight(m) > 0 {
+		if cmd, handled := applyPopupKey(m, msg); handled {
 			return m, cmd
 		}
 	}
 	switch msg.String() {
 	case "alt+b", "esc+b":
-		m.moveInputWord(-1)
+		moveInputWord(m, -1)
 		return m, nil
 	case "alt+f", "esc+f":
-		m.moveInputWord(1)
+		moveInputWord(m, 1)
 		return m, nil
 	}
-	if m.popupHeight() == 0 {
-		switch msg.Type {
-		case tea.KeyUp:
-			if m.input.Value() == "" || m.historyIndex >= 0 {
-				m.browseInputHistory(-1)
-				m.onInputChanged()
-				return m, nil
-			}
-		case tea.KeyDown:
-			if m.historyIndex >= 0 {
-				m.browseInputHistory(1)
-				m.onInputChanged()
-				return m, nil
-			}
-		}
-	}
-
 	switch msg.Type {
 	case tea.KeyCtrlC:
-		if m.abortStream() {
+		if abortStream(m) {
 			return m, nil
 		}
 		if m.pendingExit {
 			return m, tea.Quit
 		}
 		m.pendingExit = true
-		m.pushMessage("system", "Press Ctrl-C again to quit, or type /exit.")
+		pushMessage(m, "system", "Press Ctrl-C again to quit, or type /exit.")
 		return m, nil
 	case tea.KeyEsc:
-		// Streaming → ESC aborts the in-flight call. Idle → clear the
-		// input so the user gets a fresh prompt instead of mid-typed
-		// garbage (mirrors Ctrl-U in most shells).
-		if m.abortStream() {
+		if abortStream(m) {
 			return m, nil
 		}
 		m.input.SetValue("")
@@ -254,27 +187,25 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-		m.saveInputHistoryEntry(text)
 		m.input.Reset()
 		m.pendingExit = false
-		return m.submit(text)
+		return submit(m, text)
 	}
 	if msg.String() == "ctrl+o" {
-		if block := m.latestCollapsibleToolBlock(); block != nil {
+		if block := getLatestCollapsibleToolBlock(m); block != nil {
 			if block.flushed {
 				m.pendingScrollback = append(m.pendingScrollback, renderExpandedToolBlockCopy(block))
 				m.footerHint = "printed expanded tool block"
 				return m, expireFooterHint(3 * time.Second)
 			}
 			block.collapsed = !block.collapsed
-			m.rebuildHistory()
+			rebuildHistory(m)
 			return m, nil
 		}
 		m.footerHint = "nothing to expand"
 		return m, expireFooterHint(3 * time.Second)
 	}
 
-	// Feed key to input + viewport (viewport handles PgUp/PgDn/arrows when input doesn't claim them).
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
 	prevValue := m.input.Value()
@@ -283,70 +214,40 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
 
-	// Re-derive popup state on any value edge so backspacing past "/"
-	// or typing "/" mid-edit collapses / opens the menu and rebalances
-	// chrome height before the next View.
 	if m.input.Value() != prevValue {
-		m.historyIndex = -1
-		m.historyDraft = ""
-		m.onInputChanged()
+		applyInputChanged(m)
 	}
 	return m, tea.Batch(cmds...)
 }
 
-// handleApprovalRequest enqueues a HITL request from the agent
-// goroutine and rebalances chrome so the prompt panel actually has
-// reserved cells in the next View. The Queue is a slice rather than
-// a single pointer because parallel subagents (each with HITL
-// middleware mounted) can theoretically fire concurrent gated calls;
-// FIFO is the boring-correct ordering.
-func (m *Model) handleApprovalRequest(req approvalRequest) (tea.Model, tea.Cmd) {
+func applyApprovalRequest(m *Model, req approvalRequest) (tea.Model, tea.Cmd) {
 	m.hitlQueue = append(m.hitlQueue, req)
-	m.recomputeLayout()
+	recomputeLayout(m)
 	return m, nil
 }
 
-// handleApprovalKey routes keys while the front of m.hitlQueue is
-// awaiting a decision. Returns (cmd, true) when the key was a self-contained
-// decision; Ctrl-C returns handled=false after denying so handleKey can abort
-// the streaming turn too.
-//
-// Decision contract:
-//   - y / Y               → approve  (true)
-//   - n / N / Enter / Esc → deny     (false; matches the stdin scanner
-//     default of "EOF or anything not literally y/yes denies")
-//   - Ctrl-C              → deny + signal the outer abort-stream chain
-//     so the entire turn unwinds, not just this one tool
-func (m *Model) handleApprovalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
+func applyApprovalKey(m *Model, msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch msg.Type {
 	case tea.KeyEnter, tea.KeyEsc:
-		m.resolveApproval(false)
+		resolveApproval(m, false)
 		return nil, true
 	case tea.KeyCtrlC:
-		m.resolveApproval(false)
-		// Fall through so the outer KeyCtrlC handler can abort the
-		// streaming turn (cancels agent ctx → no further approver
-		// calls hit prog.Send).
+		resolveApproval(m, false)
 		return nil, false
 	case tea.KeyRunes:
 		switch strings.ToLower(string(msg.Runes)) {
 		case "y":
-			m.resolveApproval(true)
+			resolveApproval(m, true)
 			return nil, true
 		case "n":
-			m.resolveApproval(false)
+			resolveApproval(m, false)
 			return nil, true
 		}
 	}
 	return nil, false
 }
 
-// resolveApproval sends the decision to the front request's reply chan,
-// pops the queue, and asks layout to rebalance. Send is non-blocking
-// because reply is buffered=1; if for some reason nobody reads it (the
-// approver's ctx already fired), the buffer absorbs the value and GC
-// cleans up.
-func (m *Model) resolveApproval(approved bool) {
+func resolveApproval(m *Model, approved bool) {
 	if len(m.hitlQueue) == 0 {
 		return
 	}
@@ -354,47 +255,31 @@ func (m *Model) resolveApproval(approved bool) {
 	select {
 	case front.reply <- approved:
 	default:
-		// Reply channel already had a value (impossible by contract:
-		// only resolveApproval writes), or the receiver vanished. Either
-		// way, we drop and continue — the queue must move forward.
 	}
 	m.hitlQueue = m.hitlQueue[1:]
-	m.recomputeLayout()
+	recomputeLayout(m)
 }
 
-// drainApprovals abandons every pending approval without sending a
-// decision. Used by handleDone / abortStream when the streaming turn
-// ends — the approver's ctx-done branch (which the installer's select
-// also watches) returns false, so we don't have to send anything; we
-// just need to clear the UI state.
-func (m *Model) drainApprovals() {
+func drainApprovals(m *Model) {
 	if len(m.hitlQueue) == 0 {
 		return
 	}
 	m.hitlQueue = nil
-	m.recomputeLayout()
+	recomputeLayout(m)
 }
 
-// onInputChanged runs after any keypress that mutated the input value.
-// Clamps popupSel into the (possibly shrunken) match range and asks
-// the layout to rebalance — popup growth/shrink shifts the viewport
-// budget, and missing this leaves the input box at the wrong y.
-func (m *Model) onInputChanged() {
-	matches := filterCommands(m.availableCommands(), m.input.Value())
+func applyInputChanged(m *Model) {
+	matches := getPopupMatches(m)
 	if m.popupSel < 0 || m.popupSel >= len(matches) {
 		m.popupSel = 0
 	}
-	m.recomputeLayout()
+	recomputeLayout(m)
 }
 
-// handlePopupKey routes keys while the popup is visible. Returns
-// (cmd, true) when the popup owned the key. KeyEnter intentionally
-// returns (nil, false) after rewriting input so the outer KeyEnter
-// runs submit through its single code path.
-func (m *Model) handlePopupKey(msg tea.KeyMsg) (tea.Cmd, bool) {
-	matches := filterCommands(m.availableCommands(), m.input.Value())
+func applyPopupKey(m *Model, msg tea.KeyMsg) (tea.Cmd, bool) {
+	matches := getPopupMatches(m)
 	if len(matches) == 0 {
-		return nil, false // defensive: popupShown implied >0 above
+		return nil, false
 	}
 	switch msg.Type {
 	case tea.KeyUp, tea.KeyCtrlP:
@@ -404,31 +289,22 @@ func (m *Model) handlePopupKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		m.popupSel = (m.popupSel + 1) % len(matches)
 		return nil, true
 	case tea.KeyTab:
-		m.acceptPopup(matches[m.popupSel])
-		m.onInputChanged()
+		applyPopupSelection(m, matches[m.popupSel])
+		applyInputChanged(m)
 		return nil, true
 	case tea.KeyEnter:
-		m.acceptPopup(matches[m.popupSel])
-		m.onInputChanged()
-		// Fall through to outer KeyEnter so submit() handles dispatch.
-		// Returning (nil, false) is the contract the caller looks at.
+		applyPopupSelection(m, matches[m.popupSel])
+		applyInputChanged(m)
 		return nil, false
 	case tea.KeyEsc:
-		// Esc collapses the popup by emptying input; the outer ESC chain
-		// (abort / clear) only kicks in on the *next* Esc press, when
-		// the popup is no longer in the way.
 		m.input.SetValue("")
-		m.onInputChanged()
+		applyInputChanged(m)
 		return nil, true
 	}
 	return nil, false
 }
 
-// acceptPopup replaces the entire input with "/<name>" and parks the
-// cursor at end-of-line. No trailing space: zero-arg commands let the
-// user hit Enter immediately, and arg-taking commands let the user
-// type ' on' themselves — uniformity beats clever-spacing.
-func (m *Model) acceptPopup(c slashCommand) {
+func applyPopupSelection(m *Model, c slashCommand) {
 	m.input.SetValue("/" + c.Name)
 	if c.Type == "builtin" || c.Type == "skill" {
 		m.input.SetValue("/" + c.Name + " ")
@@ -436,20 +312,16 @@ func (m *Model) acceptPopup(c slashCommand) {
 	m.input.CursorEnd()
 }
 
-// submit handles slash commands inline; otherwise streams via the runtime.
-func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
-	if cmd, handled := m.handleBuiltin(text); handled {
+func submit(m *Model, text string) (tea.Model, tea.Cmd) {
+	if cmd, handled := applyBuiltin(m, text); handled {
 		return m, cmd
 	}
 
-	m.pushMessage("user", text)
+	pushMessage(m, "user", text)
 	m.streaming = true
 	m.streamBuf.Reset()
 	m.lastErr = nil
 
-	// Pick a verb pair once per turn; the present form drives the live
-	// indicator and the past form lands in scrollback when handleDone
-	// surfaces a thinking-summary above the threshold.
 	m.verbPresent, m.verbPast = pickVerb()
 	m.streamStart = time.Now()
 	m.elapsed = 0
@@ -460,29 +332,24 @@ func (m *Model) submit(text string) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(waitForStreamMsg(ch), m.spin.Tick)
 }
 
-// handleTraceEvent dispatches a TraceEvent. Before powers user-facing tool blocks.
-func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd) {
+func applyTraceEvent(m *Model, ev middlewares.TraceEvent) (tea.Model, tea.Cmd) {
 	switch ev.Phase {
 	case middlewares.TracePhaseBefore:
 		if m.toolBlocksEnabled {
 			blocks := extractNewToolBlocks(ev.Messages, m.lastSeenMsgCount, &m.toolBlockSeq, m.toolArgsMaxChars)
 			for _, block := range blocks {
 				m.toolBlocks = append(m.toolBlocks, block)
-				m.pushToolBlockMessage(fmt.Sprintf("%s%d]", toolPlaceholderPrefix, block.id))
+				pushToolBlockMessage(m, fmt.Sprintf("%s%d]", toolPlaceholderPrefix, block.id))
 			}
 		}
 		m.lastSeenMsgCount = len(ev.Messages)
 	case middlewares.TracePhaseTodos:
-		prevH := m.todoPanelHeight()
+		prevH := getTodoPanelHeight(m)
 		m.todos = ev.Todos
-		// Only relayout when the panel's height actually changes; avoids
-		// a viewport reflow on every status flip within an unchanged list.
-		if m.todoPanelHeight() != prevH {
-			m.recomputeLayout()
+		if getTodoPanelHeight(m) != prevH {
+			recomputeLayout(m)
 		}
 	case middlewares.TracePhaseTokens:
-		// Footer height is constant 1 line; token segment swap is just a
-		// character rerender, no layout work.
 		if ev.Tokens != nil {
 			m.tokenTotal = ev.Tokens.TotalTokens
 		}
@@ -490,158 +357,71 @@ func (m *Model) handleTraceEvent(ev middlewares.TraceEvent) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
-func (m *Model) pushToolBlockMessage(content string) {
+func pushToolBlockMessage(m *Model, content string) {
 	if n := len(m.messages); n > 0 && m.messages[n-1].Role == "assistant" {
 		m.messages = append(m.messages, chatMessage{})
 		copy(m.messages[n:], m.messages[n-1:])
 		m.messages[n-1] = chatMessage{Role: "tool-block", Content: content}
-		m.rebuildHistory()
+		rebuildHistory(m)
 		return
 	}
-	m.pushMessage("tool-block", content)
+	pushMessage(m, "tool-block", content)
 }
 
-func (m *Model) handleBuiltin(text string) (tea.Cmd, bool) {
-	if !strings.HasPrefix(text, "/") {
-		return nil, false
-	}
-	name := strings.TrimSpace(strings.TrimPrefix(strings.SplitN(text, " ", 2)[0], "/"))
-	command, ok := findCommand(m.availableCommands(), name)
-	if !ok || command.Handler == nil {
-		return nil, false
-	}
-	return command.Handler(m, text), true
-}
-
-// handleTodosCmd processes "/todos [open|close|toggle]"; empty arg toggles.
-// "open" / "close" use those words (not on/off) to match the visual model
-// (a panel is open or closed, not on or off).
-func (m *Model) handleTodosCmd(text string) tea.Cmd {
-	arg := strings.TrimSpace(strings.TrimPrefix(text, "/todos"))
-	prevH := m.todoPanelHeight()
-	switch strings.ToLower(arg) {
-	case "", "toggle":
-		m.todoExpanded = !m.todoExpanded
-	case "open":
-		m.todoExpanded = true
-	case "close":
-		m.todoExpanded = false
-	default:
-		m.pushMessage("system", "usage: /todos [open|close|toggle]")
-		return nil
-	}
-	if m.todoPanelHeight() != prevH {
-		m.recomputeLayout()
-	}
-	state := "closed"
-	if m.todoExpanded {
-		state = "open"
-	}
-	m.pushMessage("system", fmt.Sprintf("todos panel = %s", state))
-	return nil
-}
-
-func (m *Model) handleDreamDone(msg dreamDoneMsg) (tea.Model, tea.Cmd) {
+func applyDreamDone(m *Model, msg dreamDoneMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
-		m.pushMessage("system", fmt.Sprintf("dream: %v", msg.err))
+		pushMessage(m, "system", fmt.Sprintf("dream: %v", msg.err))
 		return m, nil
 	}
 	if strings.TrimSpace(msg.output) == "" {
-		m.pushMessage("system", "dream: complete")
+		pushMessage(m, "system", "dream: complete")
 		return m, nil
 	}
-	m.pushMessage("system", msg.output)
+	pushMessage(m, "system", msg.output)
 	return m, nil
 }
 
-// handlePlanCmd processes "/plan [on|off|toggle]"; empty arg toggles.
-// Forwards to the runtime's atomic flip and mirrors the result into
-// m.planMode for footer / system-message rendering. Inline (not a
-// tea.Cmd) because SetPlanMode is O(1) — async would only buy a
-// rendering frame nobody asked for.
-func (m *Model) handlePlanCmd(text string) tea.Cmd {
-	arg := strings.TrimSpace(strings.TrimPrefix(text, "/plan"))
-	want := m.planMode
-	switch strings.ToLower(arg) {
-	case "", "toggle":
-		want = !m.planMode
-	case "on":
-		want = true
-	case "off":
-		want = false
-	default:
-		m.pushMessage("system", "usage: /plan [on|off|toggle]")
-		return nil
-	}
-	got, err := m.rt.SetPlanMode(context.Background(), want)
-	if err != nil {
-		m.pushMessage("system", fmt.Sprintf("plan: %v", err))
-		return nil
-	}
-	m.planMode = got
-	state := "off"
-	if got {
-		state = "on"
-	}
-	m.pushMessage("system", fmt.Sprintf("plan mode = %s", state))
-	return nil
-}
-
-func (m *Model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
-	// Snapshot elapsed BEFORE flipping streaming off so a slow handleDone
-	// doesn't drift the summary downward.
+func applyDone(m *Model, msg doneMsg) (tea.Model, tea.Cmd) {
 	elapsed := time.Since(m.streamStart).Round(time.Second)
-	drainedCmd := m.drainQueuedStreamMessages()
+	drainedCmd := drainQueuedStreamMessages(m)
 
 	m.cancel = nil
 	m.streamCh = nil
-	// Stream done = no more approver calls coming. Anything still in
-	// the queue is from a turn that just unwound (cancellation or hard
-	// failure); the approver's ctx-done branch already returned false
-	// for them, so the reply chans are orphaned safely. Drop the rows
-	// so the prompt panel doesn't linger past the turn.
-	m.drainApprovals()
+	drainApprovals(m)
 
 	if msg.err != nil {
 		m.lastErr = msg.err
-		// Surface any partial content as an assistant message before the error.
 		if buf := strings.TrimSpace(m.streamBuf.String()); buf != "" {
-			m.pushMessage("assistant", buf)
+			pushMessage(m, "assistant", buf)
 		}
-		m.pushMessage("system", fmt.Sprintf("error: %s", msg.err))
+		pushMessage(m, "system", fmt.Sprintf("error: %s", msg.err))
 		m.streamBuf.Reset()
 		m.streaming = false
-		m.queueCompletedTurnScrollback()
-		// Error path skips the thinking-summary — the error line is
-		// already enough noise; "Verbed for 3s" on top reads as gloating.
+		queueCompletedTurnScrollback(m)
 		return m, drainedCmd
 	}
 
-	// Prefer the runtime's authoritative final output over the chunk buffer.
 	final := strings.TrimSpace(msg.output)
 	if final == "" {
 		final = strings.TrimSpace(m.streamBuf.String())
 	}
 	if final != "" {
-		m.pushMessage("assistant", final)
+		pushMessage(m, "assistant", final)
 	}
 
-	// Short turns (< summaryThreshold) don't warrant a "for 0s" summary —
-	// visual noise without info. The 2s line is a single point of tuning
-	// — if user feedback says even 2s is too chatty, raise the bar here.
 	const summaryThreshold = 2 * time.Second
 	if elapsed >= summaryThreshold && m.verbPast != "" {
-		m.pushMessage("thinking-summary",
+		pushMessage(m, "thinking-summary",
 			fmt.Sprintf("%s for %ds", m.verbPast, int(elapsed.Seconds())))
 	}
 
 	m.streamBuf.Reset()
 	m.streaming = false
-	m.queueCompletedTurnScrollback()
+	queueCompletedTurnScrollback(m)
 	return m, drainedCmd
 }
 
-func (m *Model) drainQueuedStreamMessages() tea.Cmd {
+func drainQueuedStreamMessages(m *Model) tea.Cmd {
 	var cmds []tea.Cmd
 	for m.streamCh != nil {
 		select {
@@ -651,7 +431,7 @@ func (m *Model) drainQueuedStreamMessages() tea.Cmd {
 			}
 			switch v := queued.(type) {
 			case middlewares.TraceEvent:
-				_, cmd := m.handleTraceEvent(v)
+				_, cmd := applyTraceEvent(m, v)
 				cmds = append(cmds, cmd)
 			case chunkMsg:
 				m.streamBuf.WriteString(string(v))
@@ -661,22 +441,4 @@ func (m *Model) drainQueuedStreamMessages() tea.Cmd {
 		}
 	}
 	return tea.Batch(cmds...)
-}
-
-// resetConversationView wipes UI state that should not survive a /clear:
-// the chat scroll, tool-block panels, scrollback queue, todo panel.
-// Counterpart to ClearHistory on the runtime side, which drops the
-// in-memory message log; calling both keeps prompt history and TUI in
-// sync.
-func (m *Model) resetConversationView() {
-	m.messages = freshMessages(m.width, m.modelName, m.cwd)
-	m.toolBlocks = nil
-	m.lastSeenMsgCount = 0
-	m.toolBlockSeq = 0
-	m.footerHint = ""
-	m.flushedMsgCount = 0
-	m.pendingScrollback = nil
-	m.todos = nil
-	m.todoExpanded = false
-	m.rebuildHistory()
 }

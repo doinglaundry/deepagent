@@ -20,7 +20,7 @@ func TestRenderMarkdown_HardWrapsLongCJKLine(t *testing.T) {
 	// 60 Chinese chars (≈120 cells) — well over the 38-cell budget.
 	long := strings.Repeat("中", 60)
 
-	out := m.renderMarkdown(long)
+	out := renderMarkdown(m,long)
 
 	if !strings.Contains(out, "\n") {
 		t.Fatalf("expected wrap-induced newlines in long CJK output; got single line of len=%d:\n%q",
@@ -38,7 +38,7 @@ func TestRenderMarkdown_AsciiWrapStaysReasonable(t *testing.T) {
 		viewport: viewport.New(80, 10),
 		mdStyle:  "dark",
 	}
-	out := m.renderMarkdown("hello world hello world hello world")
+	out := renderMarkdown(m,"hello world hello world hello world")
 
 	// One line at ~80 cells — no spurious wrap-on-every-word.
 	if strings.Count(out, "\n") > 1 {

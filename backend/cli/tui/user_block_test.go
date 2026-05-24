@@ -30,7 +30,7 @@ func TestUserBlockStyle_HasHorizontalPadding(t *testing.T) {
 // the wrapping style mustn't drop characters or duplicate the prefix.
 func TestRenderMessage_UserContainsPromptAndPrefix(t *testing.T) {
 	m := &Model{}
-	out := m.renderMessage(chatMessage{Role: "user", Content: "你好呀"})
+	out := renderMessage(m,chatMessage{Role: "user", Content: "你好呀"})
 	for _, want := range []string{"❯", "你好呀"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("user render missing %q; got: %q", want, out)

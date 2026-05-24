@@ -47,7 +47,7 @@ func TestStartPublishesOrderedEvents(t *testing.T) {
 		onChunk("hello")
 		return rt.Result{Success: true, Output: "hello"}, nil
 	}}
-	mgr := NewManager()
+	mgr := NewManagerWithStore(nil)
 
 	events, _, err := Start(context.Background(), runtime, "hi", mgr)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestStartPublishesErrorThenEnd(t *testing.T) {
 	runtime := testRuntime{run: func(context.Context, string, rt.StreamChunkHandler) (rt.Result, error) {
 		return rt.Result{}, wantErr
 	}}
-	mgr := NewManager()
+	mgr := NewManagerWithStore(nil)
 
 	events, _, err := Start(context.Background(), runtime, "hi", mgr)
 	if err != nil {
@@ -279,7 +279,7 @@ func TestStartRejectsInFlightRun(t *testing.T) {
 			return rt.Result{NeedsUser: true}, nil
 		}
 	}}
-	mgr := NewManager()
+	mgr := NewManagerWithStore(nil)
 
 	events, cancel, err := Start(context.Background(), runtime, "first", mgr)
 	if err != nil {

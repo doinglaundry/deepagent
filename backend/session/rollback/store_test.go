@@ -37,7 +37,8 @@ func TestStoreSavePostRestorePost(t *testing.T) {
 	assertTestFile(t, root, ".eino-cli/memory/memory.json", "memory-1")
 	assertTestFile(t, root, ".eino-cli/skill-build/artifact.txt", "artifact-1")
 	assertMissing(t, root, ".eino-cli/skill-extra")
-	assertMissing(t, root, ".eino-cli/runs/run-2.json")
+	assertTestFile(t, root, ".eino-cli/runs/run-2.json", "run-2")
+	assertMissing(t, root, ".eino-cli/rollback/run-1/post/runs")
 }
 
 func writeTestFile(t *testing.T, root, rel, body string) {

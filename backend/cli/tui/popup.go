@@ -5,24 +5,14 @@ import (
 	"strings"
 )
 
-// popupMaxRows caps visible rows. Current pool is 9; 10 leaves headroom
-// without pagination — bump this if the registry grows, then revisit
-// scrolling.
 const popupMaxRows = 10
 
-// renderPopup returns the slash-command candidate menu, or "" when the
-// popup is hidden (no '/', or arg region, or zero matches). Callers can
-// concat unconditionally.
-//
-// IMPORTANT: line count must stay in lockstep with popupHeight — the
-// layout subtracts popupHeight from the viewport budget, and any drift
-// shoves the input box off-screen.
-func (m *Model) renderPopup() string {
+func renderPopup(m *Model) string {
 	input := m.input.Value()
 	if !shouldShowPopup(input) {
 		return ""
 	}
-	matches := filterCommands(m.availableCommands(), input)
+	matches := getPopupMatches(m)
 	if len(matches) == 0 {
 		return ""
 	}
@@ -36,12 +26,12 @@ func (m *Model) renderPopup() string {
 
 	sel := m.popupSel
 	if sel < 0 || sel >= len(visible) {
-		sel = 0 // defensive: handleKey clamps too, but render must not panic
+		sel = 0
 	}
 
 	lines := make([]string, 0, len(visible)+1)
 	for i, c := range visible {
-		body := popupRowBody(c)
+		body := buildPopupRowBody(c)
 		if i == sel {
 			lines = append(lines, popupSelectedRow.Render(body))
 		} else {
@@ -55,13 +45,7 @@ func (m *Model) renderPopup() string {
 	return strings.Join(lines, "\n")
 }
 
-// popupRowBody renders one row sans row-level background. Format:
-//
-//	/<name> [args]  — <desc>
-//
-// Args is dropped when empty so /clear reads as "/clear  — clear …"
-// instead of carrying a hanging gap.
-func popupRowBody(c slashCommand) string {
+func buildPopupRowBody(c slashCommand) string {
 	name := popupNameStyle.Render("/" + c.Name)
 	kind := popupArgsStyle.Render("[" + c.Type + "]")
 	if c.Args == "" {
@@ -75,18 +59,16 @@ func popupRowBody(c slashCommand) string {
 	)
 }
 
-// popupHeight returns the line count renderPopup will emit; consumed by
-// recomputeLayout. Must match renderPopup line-for-line.
-func (m *Model) popupHeight() int {
+func getPopupHeight(m *Model) int {
 	if !shouldShowPopup(m.input.Value()) {
 		return 0
 	}
-	matches := filterCommands(m.availableCommands(), m.input.Value())
+	matches := getPopupMatches(m)
 	if len(matches) == 0 {
 		return 0
 	}
 	if len(matches) > popupMaxRows {
-		return popupMaxRows + 1 // visible rows + "+N more" tail
+		return popupMaxRows + 1
 	}
 	return len(matches)
 }

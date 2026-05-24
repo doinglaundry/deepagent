@@ -18,7 +18,7 @@ func TestRecomputeLayout_ShrinksViewportToContent(t *testing.T) {
 	}
 	m.viewport.SetContent("only a few\nshort lines\nhere")
 
-	m.recomputeLayout()
+	recomputeLayout(m)
 
 	if m.viewport.Height >= 25 {
 		t.Errorf("viewport must shrink to fit content; got Height=%d (want < 25)",
@@ -42,7 +42,7 @@ func TestRecomputeLayout_ClampsViewportAtBudget(t *testing.T) {
 	// 200 short lines — exceeds the budget for any plausible chrome.
 	m.viewport.SetContent(strings.Repeat("filler line\n", 200))
 
-	m.recomputeLayout()
+	recomputeLayout(m)
 
 	// Chrome = stream(0) + todo(0) + input(3) + footer(1) = 4.
 	// So vpMax = 30 - 4 = 26.
@@ -64,7 +64,7 @@ func TestRecomputeLayout_EmptyContentFloorsAtOne(t *testing.T) {
 	}
 	m.viewport.SetContent("")
 
-	m.recomputeLayout()
+	recomputeLayout(m)
 
 	if m.viewport.Height < 1 {
 		t.Errorf("viewport height must be >= 1 on empty content; got %d",
@@ -85,13 +85,13 @@ func TestRebuildHistory_SyncsViewportHeight(t *testing.T) {
 	m.messages = []chatMessage{
 		{Role: "system", Content: "line1\nline2\nline3"},
 	}
-	m.rebuildHistory()
+	rebuildHistory(m)
 	first := m.viewport.Height
 
 	m.messages = append(m.messages,
 		chatMessage{Role: "system", Content: strings.Repeat("x\n", 50)},
 	)
-	m.rebuildHistory()
+	rebuildHistory(m)
 
 	if m.viewport.Height <= first {
 		t.Errorf("viewport must grow as content grows; first=%d after=%d",

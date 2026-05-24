@@ -21,14 +21,14 @@ func sampleTodos() []deep.TODO {
 
 func TestRenderTodoPanel_EmptyTodosReturnsEmpty(t *testing.T) {
 	m := &Model{}
-	if got := m.renderTodoPanel(); got != "" {
+	if got := renderTodoPanel(m); got != "" {
 		t.Errorf("empty todos must produce no panel; got %q", got)
 	}
 }
 
 func TestRenderTodoPanel_CollapsedSingleLine(t *testing.T) {
 	m := &Model{todos: sampleTodos(), todoExpanded: false}
-	got := m.renderTodoPanel()
+	got := renderTodoPanel(m)
 	if strings.Count(got, "\n") != 0 {
 		t.Errorf("collapsed panel must be single-line; got %d newlines: %q", strings.Count(got, "\n"), got)
 	}
@@ -45,7 +45,7 @@ func TestRenderTodoPanel_CollapsedAllDone(t *testing.T) {
 		{Content: "B", Status: "completed"},
 	}
 	m := &Model{todos: todos, todoExpanded: false}
-	got := m.renderTodoPanel()
+	got := renderTodoPanel(m)
 	if !strings.Contains(got, "all done") {
 		t.Errorf("collapsed panel must say 'all done' when 100%% complete; got: %q", got)
 	}
@@ -58,7 +58,7 @@ func TestRenderTodoPanel_CollapsedNoInProgress(t *testing.T) {
 		{Content: "C", Status: "completed"},
 	}
 	m := &Model{todos: todos, todoExpanded: false}
-	got := m.renderTodoPanel()
+	got := renderTodoPanel(m)
 	if !strings.Contains(got, "2 pending") {
 		t.Errorf("collapsed panel must say 'N pending' when no in_progress; got: %q", got)
 	}
@@ -66,7 +66,7 @@ func TestRenderTodoPanel_CollapsedNoInProgress(t *testing.T) {
 
 func TestRenderTodoPanel_ExpandedShowsAllItems(t *testing.T) {
 	m := &Model{todos: sampleTodos(), todoExpanded: true}
-	got := m.renderTodoPanel()
+	got := renderTodoPanel(m)
 	for _, t1 := range sampleTodos() {
 		if !strings.Contains(got, t1.Content) {
 			t.Errorf("expanded panel missing %q; got:\n%s", t1.Content, got)
@@ -102,12 +102,12 @@ func TestTodoPanelHeight_MatchesRenderer(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &Model{todos: tc.todos, todoExpanded: tc.expanded}
-			if h := m.todoPanelHeight(); h != tc.wantH {
+			if h := getTodoPanelHeight(m); h != tc.wantH {
 				t.Errorf("todoPanelHeight = %d, want %d", h, tc.wantH)
 			}
 			// Sanity: actual rendered line count must match the claim
 			// (a drift here would silently break viewport sizing).
-			rendered := m.renderTodoPanel()
+			rendered := renderTodoPanel(m)
 			gotLines := 0
 			if rendered != "" {
 				gotLines = strings.Count(rendered, "\n") + 1
@@ -125,7 +125,7 @@ func TestHandleTraceEvent_TodosUpdate(t *testing.T) {
 		Phase: middlewares.TracePhaseTodos,
 		Todos: sampleTodos(),
 	}
-	_, _ = m.handleTraceEvent(ev)
+	_, _ = applyTraceEvent(m,ev)
 	if len(m.todos) != len(sampleTodos()) {
 		t.Errorf("m.todos must update from trace event; got len=%d", len(m.todos))
 	}
@@ -134,11 +134,11 @@ func TestHandleTraceEvent_TodosUpdate(t *testing.T) {
 func TestHandleTodosCmd_Toggle(t *testing.T) {
 	m := &Model{todos: sampleTodos(), messages: freshMessages(0, "", "")}
 
-	m.handleTodosCmd("/todos")
+	handleTodosCommand(m,"/todos")
 	if !m.todoExpanded {
 		t.Errorf("/todos must toggle from collapsed → expanded")
 	}
-	m.handleTodosCmd("/todos")
+	handleTodosCommand(m,"/todos")
 	if m.todoExpanded {
 		t.Errorf("/todos must toggle from expanded → collapsed")
 	}
@@ -147,15 +147,15 @@ func TestHandleTodosCmd_Toggle(t *testing.T) {
 func TestHandleTodosCmd_ExplicitOpenClose(t *testing.T) {
 	m := &Model{todos: sampleTodos(), messages: freshMessages(0, "", "")}
 
-	m.handleTodosCmd("/todos open")
+	handleTodosCommand(m,"/todos open")
 	if !m.todoExpanded {
 		t.Errorf("/todos open must expand")
 	}
-	m.handleTodosCmd("/todos open") // idempotent
+	handleTodosCommand(m,"/todos open") // idempotent
 	if !m.todoExpanded {
 		t.Errorf("repeated /todos open must stay expanded")
 	}
-	m.handleTodosCmd("/todos close")
+	handleTodosCommand(m,"/todos close")
 	if m.todoExpanded {
 		t.Errorf("/todos close must collapse")
 	}
@@ -163,7 +163,7 @@ func TestHandleTodosCmd_ExplicitOpenClose(t *testing.T) {
 
 func TestHandleTodosCmd_BadArg(t *testing.T) {
 	m := &Model{todos: sampleTodos(), messages: freshMessages(0, "", "")}
-	m.handleTodosCmd("/todos banana")
+	handleTodosCommand(m,"/todos banana")
 	last := m.messages[len(m.messages)-1]
 	if last.Role != "system" || !strings.Contains(last.Content, "usage:") {
 		t.Errorf("bad arg should surface usage; got %+v", last)

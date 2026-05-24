@@ -166,7 +166,7 @@ func TestLatestCollapsibleToolBlockPicksLastLong(t *testing.T) {
 		},
 	}
 
-	if got := m.latestCollapsibleToolBlock(); got != m.toolBlocks[2] {
+	if got := getLatestCollapsibleToolBlock(m); got != m.toolBlocks[2] {
 		t.Fatalf("expected latest long block, got %#v", got)
 	}
 }
@@ -177,7 +177,7 @@ func TestLatestCollapsibleToolBlockNoneCollapsible(t *testing.T) {
 		toolBlocks:       []*toolBlock{{lines: []string{"1"}}, {lines: []string{"1", "2"}}},
 	}
 
-	if got := m.latestCollapsibleToolBlock(); got != nil {
+	if got := getLatestCollapsibleToolBlock(m); got != nil {
 		t.Fatalf("expected nil, got %#v", got)
 	}
 }
@@ -189,7 +189,7 @@ func TestHandleKeyCtrlOToggles(t *testing.T) {
 		viewport:         viewport.New(80, 10),
 	}
 
-	_, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	_, _ = applyKey(m,tea.KeyMsg{Type: tea.KeyCtrlO})
 	if m.toolBlocks[0].collapsed {
 		t.Fatal("Ctrl-O should expand latest block")
 	}
@@ -198,7 +198,7 @@ func TestHandleKeyCtrlOToggles(t *testing.T) {
 func TestHandleKeyCtrlONoBlocksSetsHint(t *testing.T) {
 	m := &Model{toolPreviewLines: 1, viewport: viewport.New(80, 10)}
 
-	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	_, cmd := applyKey(m,tea.KeyMsg{Type: tea.KeyCtrlO})
 	if m.footerHint != "nothing to expand" {
 		t.Fatalf("unexpected footer hint %q", m.footerHint)
 	}
@@ -215,10 +215,9 @@ func TestFooterHintExpires(t *testing.T) {
 	}
 }
 
-func TestToolBlockSettingsDefault(t *testing.T) {
-	enabled, previewLines, argsMaxChars := getToolBlockSettings()
-	if !enabled || previewLines != 5 || argsMaxChars != 60 {
-		t.Fatalf("unexpected defaults: %v %d %d", enabled, previewLines, argsMaxChars)
+func TestToolBlockDefaults(t *testing.T) {
+	if defaultToolPreviewLines != 5 || defaultToolArgsMaxChars != 60 {
+		t.Fatalf("unexpected defaults: preview=%d args=%d", defaultToolPreviewLines, defaultToolArgsMaxChars)
 	}
 }
 
@@ -244,7 +243,7 @@ func TestHandleTraceEventExtractsAndPushesBlock(t *testing.T) {
 		},
 	}
 
-	_, _ = m.handleTraceEvent(ev)
+	_, _ = applyTraceEvent(m,ev)
 	if len(m.toolBlocks) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(m.toolBlocks))
 	}
@@ -275,8 +274,8 @@ func TestToolBlockStaysLiveBeforeFinalAssistant(t *testing.T) {
 		flushedMsgCount: 1,
 	}
 
-	m.pushMessage("assistant", "answer")
-	live := m.liveMessages()
+	pushMessage(m,"assistant", "answer")
+	live := getLiveMessages(m)
 	if len(live) != 2 || live[0].Role != "tool-block" || live[1].Role != "assistant" {
 		t.Fatalf("tool block must stay live before final assistant, got %#v", live)
 	}
@@ -314,8 +313,8 @@ func TestDoneDrainsQueuedToolTraceBeforeAssistant(t *testing.T) {
 		flushedMsgCount:   1,
 	}
 
-	_, _ = m.handleDone(doneMsg{output: "answer"})
-	live := m.liveMessages()
+	_, _ = applyDone(m,doneMsg{output: "answer"})
+	live := getLiveMessages(m)
 	if len(live) != 0 {
 		t.Fatalf("done must flush completed turn out of live viewport, got %#v", live)
 	}
@@ -342,7 +341,7 @@ func TestLateToolTraceInsertsBeforeTrailingAssistant(t *testing.T) {
 		flushedMsgCount: 1,
 	}
 
-	_, _ = m.handleTraceEvent(middlewares.TraceEvent{
+	_, _ = applyTraceEvent(m,middlewares.TraceEvent{
 		Phase: middlewares.TracePhaseBefore,
 		Messages: []*schema.Message{
 			{
@@ -354,7 +353,7 @@ func TestLateToolTraceInsertsBeforeTrailingAssistant(t *testing.T) {
 			{Role: schema.Tool, ToolCallID: "call-1", Content: "result"},
 		},
 	})
-	live := m.liveMessages()
+	live := getLiveMessages(m)
 	if len(live) != 2 || live[0].Role != "tool-block" || live[1].Role != "assistant" {
 		t.Fatalf("late tool trace must be inserted before trailing assistant, got %#v", live)
 	}
@@ -374,7 +373,7 @@ func TestClearResetsToolBlocks(t *testing.T) {
 		footerHint:       "nothing to expand",
 	}
 
-	_, handled := m.handleBuiltin("/clear")
+	_, handled := applyBuiltin(m,"/clear")
 	if !handled {
 		t.Fatal("/clear should be handled")
 	}

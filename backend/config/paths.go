@@ -54,14 +54,6 @@ func TranscriptDir() string {
 	return filepath.Join(BaseDir(), "transcripts")
 }
 
-func InputHistoryPath() string {
-	return filepath.Join(BaseDir(), "history.txt")
-}
-
-func LogPath() string {
-	return filepath.Join(BaseDir(), "eino-cli.log")
-}
-
 func AgentMessagesLogPath() string {
 	return filepath.Join(BaseDir(), "agent-messages.md")
 }

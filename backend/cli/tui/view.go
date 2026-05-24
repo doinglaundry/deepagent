@@ -14,54 +14,42 @@ func (m *Model) View() string {
 
 	var sb strings.Builder
 	sb.WriteString(m.viewport.View())
-	if todoPanel := m.renderTodoPanel(); todoPanel != "" {
+	if todoPanel := renderTodoPanel(m); todoPanel != "" {
 		sb.WriteString("\n")
 		sb.WriteString(todoPanel)
 	}
-	if approvalPanel := m.renderApprovalPanel(); approvalPanel != "" {
+	if approvalPanel := renderApprovalPanel(m); approvalPanel != "" {
 		sb.WriteString("\n")
 		sb.WriteString(approvalPanel)
 		return sb.String()
 	}
-	if streamPanel := m.renderStreamPanel(); streamPanel != "" {
+	if streamPanel := renderStreamPanel(m); streamPanel != "" {
 		sb.WriteString("\n")
 		sb.WriteString(streamPanel)
 	}
-	if historyPanel := m.renderRunHistoryPanel(); historyPanel != "" {
+	if historyPanel := renderRunHistoryPanel(m); historyPanel != "" {
 		sb.WriteString("\n")
 		sb.WriteString(historyPanel)
 	}
-	if popup := m.renderPopup(); popup != "" {
+	if popup := renderPopup(m); popup != "" {
 		sb.WriteString("\n")
 		sb.WriteString(popup)
 	}
 	sb.WriteString("\n")
-	sb.WriteString(m.renderInput())
+	sb.WriteString(renderInput(m))
 	sb.WriteString("\n")
-	sb.WriteString(m.renderFooter())
+	sb.WriteString(renderFooter(m))
 	return sb.String()
 }
 
-// renderApprovalPanel returns the empty string when no HITL request is
-// pending; otherwise renders the front of m.hitlQueue. recomputeLayout
-// reserves approvalPromptHeight cells (+ separator) when the queue is
-// non-empty — keep the rendered line count in lockstep with that
-// reservation or the input box drifts.
-func (m *Model) renderApprovalPanel() string {
+func renderApprovalPanel(m *Model) string {
 	if len(m.hitlQueue) == 0 {
 		return ""
 	}
 	return renderApprovalPrompt(m.hitlQueue[0], m.width)
 }
 
-// renderStreamPanel shows a single-line thinking indicator while a turn is
-// in flight. The previous behaviour streamed dim partial output below a
-// spinner; we dropped that because (a) half-rendered code fences and
-// markdown looked broken, and (b) the indicator-only layout reads as a
-// more decisive "the model is working" without competing for attention
-// with the input box. m.streamBuf is still populated for handleDone's
-// error fallback path — just no longer rendered here.
-func (m *Model) renderStreamPanel() string {
+func renderStreamPanel(m *Model) string {
 	if m.streaming {
 		secs := int(m.elapsed.Seconds())
 		verb := renderShimmer(m.verbPresent+"…", m.shimmerOffset,
@@ -78,13 +66,13 @@ func (m *Model) renderStreamPanel() string {
 	return ""
 }
 
-func (m *Model) renderInput() string {
+func renderInput(m *Model) string {
 	value := m.input.Value()
-	body := "❯ " + m.renderInputText(value, m.input.Position())
+	body := "❯ " + renderInputText(m, value, m.input.Position())
 	return inputBorderStyle.Width(m.width).Render(body)
 }
 
-func (m *Model) renderInputText(value string, cursor int) string {
+func renderInputText(m *Model, value string, cursor int) string {
 	if value == "" {
 		placeholder := m.input.Placeholder
 		if placeholder == "" {
@@ -98,7 +86,7 @@ func (m *Model) renderInputText(value string, cursor int) string {
 		return m.input.Cursor.View() + dimStyle.Render(placeholder[1:])
 	}
 	highlightLen := 0
-	if name := highlightedCommandName(value, m.availableCommands()); name != "" {
+	if name := highlightedCommandName(value, getAvailableCommands(m)); name != "" {
 		highlightLen = len(name) + 1
 	}
 	var sb strings.Builder
@@ -121,14 +109,11 @@ func (m *Model) renderInputText(value string, cursor int) string {
 	return sb.String()
 }
 
-func (m *Model) renderFooter() string {
+func renderFooter(m *Model) string {
 	left := ""
 	if m.tokenTotal > 0 {
 		left = footerStyle.Render(formatTokenCount(m.tokenTotal))
 	}
-	// Streaming shows a single actionable hint; idle is the meta-hint
-	// "you can type / for commands". Old footer concatenated three
-	// hints, which read as a tutorial banner.
 	hint := "/help · ctrl-c to quit"
 	if m.streaming {
 		hint = "esc to interrupt"
@@ -143,10 +128,6 @@ func (m *Model) renderFooter() string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// formatTokenCount: >=1000 → "3.4k tokens"; <1000 → "<n> tokens".
-// Single decimal place is enough at thousand-scale and stays under 10
-// chars so the footer doesn't crowd the right-hand hint at narrow
-// widths.
 func formatTokenCount(n int64) string {
 	if n >= 1000 {
 		return fmt.Sprintf("%.1fk tokens", float64(n)/1000)

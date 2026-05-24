@@ -17,8 +17,8 @@ func TestRenderMessage_AssistantPrefixSameLine(t *testing.T) {
 	m.viewport.Width = 80
 
 	const reply = "Why don't scientists trust atoms? Because they make up everything!"
-	rendered := m.renderMarkdown(reply)
-	out := m.renderMessage(chatMessage{Role: "assistant", Content: reply, Rendered: rendered})
+	rendered := renderMarkdown(m,reply)
+	out := renderMessage(m,chatMessage{Role: "assistant", Content: reply, Rendered: rendered})
 
 	if strings.HasPrefix(out, "\n") || strings.HasPrefix(rendered, "\n") {
 		t.Fatalf("assistant render starts with newline; marker and body should share line 1.\nrendered=%q\nout=%q", rendered, out)
