@@ -67,6 +67,10 @@ func buildSandboxManager(cfg *config.Config) (sandbox.SandboxManager, error) {
 }
 
 func runCLI(cfg *config.Config) {
+	if err := resetAgentMessagesLog(); err != nil {
+		log.Fatalf("reset agent messages log: %v", err)
+	}
+
 	rt, err := deepagent.NewRuntime(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("build runtime: %v", err)
@@ -74,6 +78,14 @@ func runCLI(cfg *config.Config) {
 	if err := tui.Run(rt, cfg); err != nil {
 		os.Exit(1)
 	}
+}
+
+func resetAgentMessagesLog() error {
+	path := config.AgentMessagesLogPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, nil, 0o644)
 }
 
 func runServer(cfg *config.Config, addr string) {

@@ -84,3 +84,28 @@ func TestBuildSandboxManagerRejectsUnknownUse(t *testing.T) {
 		t.Fatalf("error should mention sandbox.use, got %v", err)
 	}
 }
+
+func TestResetAgentMessagesLogClearsExistingFile(t *testing.T) {
+	root := t.TempDir()
+	restore := config.SetRootDirForTest(root)
+	t.Cleanup(restore)
+
+	path := config.AgentMessagesLogPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("old messages"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := resetAgentMessagesLog(); err != nil {
+		t.Fatalf("resetAgentMessagesLog: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("log should be empty after reset, got %q", data)
+	}
+}

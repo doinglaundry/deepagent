@@ -97,9 +97,21 @@ func formatMessageLogEntry(msg *schema.Message) string {
 }
 
 func getMessageLogContent(msg *schema.Message) string {
+	body := getMessageLogBody(msg)
+	if strings.TrimSpace(msg.ReasoningContent) == "" {
+		return body
+	}
+	if strings.TrimSpace(body) == "" {
+		return fmt.Sprintf("reasoning:\n%s", msg.ReasoningContent)
+	}
+	return fmt.Sprintf("reasoning:\n%s\n\ncontent:\n%s", msg.ReasoningContent, body)
+}
+
+func getMessageLogBody(msg *schema.Message) string {
 	if len(msg.ToolCalls) == 0 {
 		return msg.Content
 	}
+
 	var sb strings.Builder
 	for i, call := range msg.ToolCalls {
 		if i > 0 {

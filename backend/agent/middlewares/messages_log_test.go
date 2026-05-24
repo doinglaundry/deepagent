@@ -107,6 +107,37 @@ func TestMessagesLogUsesToolCallAsContent(t *testing.T) {
 	}
 }
 
+func TestMessagesLogIncludesReasoningContent(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "agent-messages.md")
+	mw := NewMessagesLog(logPath, "")
+	state := &adk.ChatModelAgentState{
+		Messages: []*schema.Message{{
+			Role:             schema.Assistant,
+			ReasoningContent: "I need to inspect the config first.",
+			Content:          "The config is ready.",
+		}},
+	}
+
+	_, _, err := mw.AfterModelRewriteState(context.Background(), state, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	for _, want := range []string{
+		"reasoning:\nI need to inspect the config first.",
+		"content:\nThe config is ready.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("messages log missing %q: %s", want, body)
+		}
+	}
+}
+
 func TestMessagesLogWritesTranscriptJSONL(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "agent-messages.md")
