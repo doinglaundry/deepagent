@@ -100,8 +100,12 @@ func (m *SandboxManager) Get(ctx context.Context, sandboxID string) (sandbox.San
 	}
 
 	tid, ok := strings.CutPrefix(sandboxID, consts.LocalThreadIDPrefix)
-	if sb := m.getCachedLocked(tid); ok && sb != nil {
-		return sb, nil
+	if ok {
+		elem, ok := m.entriesByThreadId[tid]
+		if ok {
+			m.order.MoveToFront(elem)
+			return elem.Value.(*cacheEntry).sandbox, nil
+		}
 	}
 
 	return nil, sandbox.NewNotFoundError(sandboxID)

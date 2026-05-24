@@ -65,10 +65,14 @@ func setToolRoot(t *testing.T, root string) {
 type fakeSandboxManager struct {
 	box          sandbox.Sandbox
 	isolatedExec bool
+	getCalled    *bool
 }
 
 func (m fakeSandboxManager) Acquire(context.Context, string) (string, error) { return "sandbox", nil }
 func (m fakeSandboxManager) Get(context.Context, string) (sandbox.Sandbox, error) {
+	if m.getCalled != nil {
+		*m.getCalled = true
+	}
 	return m.box, nil
 }
 func (m fakeSandboxManager) Release(context.Context, string) error { return nil }
@@ -419,13 +423,17 @@ func TestExecuteDeniedWhenRollbackProtected(t *testing.T) {
 
 func TestExecuteDeniedInNonIsolatedSandboxWhenRollbackProtected(t *testing.T) {
 	box := &fakeSandbox{}
-	bt, _ := GetExecuteTool(fakeSandboxManager{box: box})
+	getCalled := false
+	bt, _ := GetExecuteTool(fakeSandboxManager{box: box, getCalled: &getCalled})
 	ctx := runtimecontext.WithSandboxID(context.Background(), "sandbox")
 	ctx = runtimecontext.WithRollbackProtected(ctx, true)
 
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi"}`)
 	if !strings.Contains(got, "disabled in rollback-protected runs") {
 		t.Fatalf("execute rollback denial: %q", got)
+	}
+	if getCalled {
+		t.Fatal("non-isolated sandbox should not be fetched before rollback denial")
 	}
 	if box.command != "" {
 		t.Fatalf("non-isolated sandbox should not execute command, got %q", box.command)
@@ -481,13 +489,17 @@ func TestShellDeniedWhenRollbackProtected(t *testing.T) {
 
 func TestShellDeniedInNonIsolatedSandboxWhenRollbackProtected(t *testing.T) {
 	box := &fakeSandbox{}
-	bt, _ := GetShellTool(fakeSandboxManager{box: box})
+	getCalled := false
+	bt, _ := GetShellTool(fakeSandboxManager{box: box, getCalled: &getCalled})
 	ctx := runtimecontext.WithSandboxID(context.Background(), "sandbox")
 	ctx = runtimecontext.WithRollbackProtected(ctx, true)
 
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
 	if !strings.Contains(got, "disabled in rollback-protected runs") {
 		t.Fatalf("shell rollback denial: %q", got)
+	}
+	if getCalled {
+		t.Fatal("non-isolated sandbox should not be fetched before rollback denial")
 	}
 	if box.command != "" {
 		t.Fatalf("non-isolated sandbox should not execute command, got %q", box.command)

@@ -26,8 +26,10 @@ func GetExecuteTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
-			if sb := getSandbox(ctx, sandboxManager); allowsIsolatedExec(sandboxManager) && sb != nil {
-				return sb.ExecuteCommand(ctx, in.Command)
+			if allowsIsolatedExec(sandboxManager) {
+				if sb := getSandbox(ctx, sandboxManager); sb != nil {
+					return sb.ExecuteCommand(ctx, in.Command)
+				}
 			}
 			if msg, denied := denyOnRollbackProtected(ctx); denied {
 				return msg, nil

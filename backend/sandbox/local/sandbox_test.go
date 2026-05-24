@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"eino-cli/backend/sandbox"
 )
@@ -64,5 +65,36 @@ func TestSandboxListDir(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected a.txt in entries, got %v", entries)
+	}
+}
+
+func TestManagerGetThreadSandboxDoesNotDeadlock(t *testing.T) {
+	mgr, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := mgr.Acquire(context.Background(), "thread-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	var got sandbox.Sandbox
+	var getErr error
+	go func() {
+		got, getErr = mgr.Get(context.Background(), sid)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Get deadlocked for thread sandbox")
+	}
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if got == nil || got.ID() != sid {
+		t.Fatalf("Get returned %v, want sandbox id %q", got, sid)
 	}
 }
