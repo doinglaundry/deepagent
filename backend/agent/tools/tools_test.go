@@ -13,6 +13,7 @@ import (
 	"eino-cli/backend/config"
 	"eino-cli/backend/consts"
 	runtimecontext "eino-cli/backend/runtime/context"
+	"eino-cli/backend/sandbox"
 )
 
 // invoke is a small helper: every tool here is built via utils.InferTool
@@ -59,6 +60,44 @@ func setToolRoot(t *testing.T, root string) {
 	t.Helper()
 	cleanup := config.SetRootDirForTest(root)
 	t.Cleanup(cleanup)
+}
+
+type fakeSandboxManager struct {
+	box          sandbox.Sandbox
+	isolatedExec bool
+}
+
+func (m fakeSandboxManager) Acquire(context.Context, string) (string, error) { return "sandbox", nil }
+func (m fakeSandboxManager) Get(context.Context, string) (sandbox.Sandbox, error) {
+	return m.box, nil
+}
+func (m fakeSandboxManager) Release(context.Context, string) error { return nil }
+func (m fakeSandboxManager) Reset()                                {}
+func (m fakeSandboxManager) UsesThreadDataMounts() bool            { return true }
+func (m fakeSandboxManager) AllowsIsolatedExec() bool              { return m.isolatedExec }
+
+type fakeSandbox struct {
+	command string
+}
+
+func (s *fakeSandbox) ID() string { return "sandbox" }
+func (s *fakeSandbox) ExecuteCommand(_ context.Context, command string) (string, error) {
+	s.command = command
+	return "sandbox: " + command, nil
+}
+func (s *fakeSandbox) ReadFile(context.Context, string) (string, error) { return "", nil }
+func (s *fakeSandbox) WriteFile(context.Context, string, string, bool) error {
+	return nil
+}
+func (s *fakeSandbox) UpdateFile(context.Context, string, []byte) error { return nil }
+func (s *fakeSandbox) ListDir(context.Context, string, int) ([]string, error) {
+	return nil, nil
+}
+func (s *fakeSandbox) Glob(context.Context, string, string, sandbox.GlobOpts) ([]string, bool, error) {
+	return nil, false, nil
+}
+func (s *fakeSandbox) Grep(context.Context, string, string, sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
+	return nil, false, nil
 }
 
 func TestLs(t *testing.T) {
@@ -378,6 +417,36 @@ func TestExecuteDeniedWhenRollbackProtected(t *testing.T) {
 	}
 }
 
+func TestExecuteDeniedInNonIsolatedSandboxWhenRollbackProtected(t *testing.T) {
+	box := &fakeSandbox{}
+	bt, _ := GetExecuteTool(fakeSandboxManager{box: box})
+	ctx := runtimecontext.WithSandboxID(context.Background(), "sandbox")
+	ctx = runtimecontext.WithRollbackProtected(ctx, true)
+
+	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi"}`)
+	if !strings.Contains(got, "disabled in rollback-protected runs") {
+		t.Fatalf("execute rollback denial: %q", got)
+	}
+	if box.command != "" {
+		t.Fatalf("non-isolated sandbox should not execute command, got %q", box.command)
+	}
+}
+
+func TestExecuteAllowedInIsolatedSandboxWhenRollbackProtected(t *testing.T) {
+	box := &fakeSandbox{}
+	bt, _ := GetExecuteTool(fakeSandboxManager{box: box, isolatedExec: true})
+	ctx := runtimecontext.WithSandboxID(context.Background(), "sandbox")
+	ctx = runtimecontext.WithRollbackProtected(ctx, true)
+
+	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi"}`)
+	if got != "sandbox: echo hi" {
+		t.Fatalf("execute should use aio sandbox, got %q", got)
+	}
+	if box.command != "echo hi" {
+		t.Fatalf("sandbox command = %q", box.command)
+	}
+}
+
 func TestShellAndAwaitShell(t *testing.T) {
 	root := t.TempDir()
 	setToolRoot(t, root)
@@ -407,6 +476,36 @@ func TestShellDeniedWhenRollbackProtected(t *testing.T) {
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
 	if !strings.Contains(got, "disabled in rollback-protected runs") {
 		t.Fatalf("shell rollback denial: %q", got)
+	}
+}
+
+func TestShellDeniedInNonIsolatedSandboxWhenRollbackProtected(t *testing.T) {
+	box := &fakeSandbox{}
+	bt, _ := GetShellTool(fakeSandboxManager{box: box})
+	ctx := runtimecontext.WithSandboxID(context.Background(), "sandbox")
+	ctx = runtimecontext.WithRollbackProtected(ctx, true)
+
+	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
+	if !strings.Contains(got, "disabled in rollback-protected runs") {
+		t.Fatalf("shell rollback denial: %q", got)
+	}
+	if box.command != "" {
+		t.Fatalf("non-isolated sandbox should not execute command, got %q", box.command)
+	}
+}
+
+func TestShellAllowedInIsolatedSandboxWhenRollbackProtected(t *testing.T) {
+	box := &fakeSandbox{}
+	bt, _ := GetShellTool(fakeSandboxManager{box: box, isolatedExec: true})
+	ctx := runtimecontext.WithSandboxID(context.Background(), "sandbox")
+	ctx = runtimecontext.WithRollbackProtected(ctx, true)
+
+	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
+	if got != "sandbox: echo hi" {
+		t.Fatalf("shell should use aio sandbox, got %q", got)
+	}
+	if box.command != "echo hi" {
+		t.Fatalf("sandbox command = %q", box.command)
 	}
 }
 

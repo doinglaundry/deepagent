@@ -224,6 +224,8 @@ func (m *Manager) Reset() {
 // UsesThreadDataMounts reports true — aio bind-mounts per-thread dirs.
 func (m *Manager) UsesThreadDataMounts() bool { return true }
 
+func (m *Manager) AllowsIsolatedExec() bool { return true }
+
 // Shutdown is idempotent; tears down every container the manager knows about.
 func (m *Manager) Shutdown() {
 	m.shutdown.Do(func() {

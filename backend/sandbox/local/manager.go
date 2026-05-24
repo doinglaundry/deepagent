@@ -119,6 +119,8 @@ func (m *SandboxManager) Reset() {
 
 func (m *SandboxManager) UsesThreadDataMounts() bool { return true }
 
+func (m *SandboxManager) AllowsIsolatedExec() bool { return false }
+
 func GetSkillPathMappings() (res []PathMapping) {
 	res = make([]PathMapping, 0)
 	p := filepath.Join(config.RootDir(), "backend", "skills")

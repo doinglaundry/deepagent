@@ -12,6 +12,7 @@ type SandboxManager interface {
 
 	Reset()
 	UsesThreadDataMounts() bool
+	AllowsIsolatedExec() bool
 }
 
 var defaultManager struct {

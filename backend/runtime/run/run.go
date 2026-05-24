@@ -104,7 +104,7 @@ func Start(ctx context.Context, runtime rt.Runtime, prompt string, mgr *Manager)
 		return nil, nil, err
 	}
 	bridge := &eventBridge{ch: make(chan Event, 64)}
-	go startWorker(runCtx, runtime, prompt, mgr, run, bridge)
+	go startWorker(runCtx, runtime, prompt, mgr, bridge)
 	return bridge.ch, run.Cancel, nil
 }
 
@@ -237,10 +237,18 @@ func (c traceConsumer) Send(ev middlewares.TraceEvent) {
 	}
 }
 
-func startWorker(ctx context.Context, runtime rt.Runtime, prompt string, mgr *Manager, run *Record, bridge *eventBridge) {
+func startWorker(ctx context.Context, runtime rt.Runtime, prompt string, mgr *Manager, bridge *eventBridge) {
 	defer close(bridge.ch)
 
 	mgr.mu.Lock()
+	run := mgr.current
+	if run == nil {
+		mgr.mu.Unlock()
+		err := fmt.Errorf("run worker started without current run")
+		publish(context.Background(), bridge, Event{Type: EventError, Err: err})
+		publish(context.Background(), bridge, Event{Type: EventEnd})
+		return
+	}
 	run.Status = Running
 	run.UpdatedAt = time.Now()
 	rollbackProtected := mgr.rollbackStore != nil
