@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"eino-cli/backend/consts"
@@ -28,6 +29,29 @@ func getSandbox(ctx context.Context, manager sandbox.SandboxManager) sandbox.San
 		return nil
 	}
 	return sb
+}
+
+func getRequiredSandbox(ctx context.Context, manager sandbox.SandboxManager) (sandbox.Sandbox, error) {
+	if manager == nil {
+		return nil, fmt.Errorf("sandbox manager is not configured")
+	}
+	sid := runtimecontext.GetSandboxID(ctx)
+	if sid == "" {
+		tid := runtimecontext.GetThreadID(ctx)
+		if tid == "" {
+			return nil, sandbox.ErrThreadIDRequired
+		}
+		var err error
+		sid, err = manager.Acquire(ctx, tid)
+		if err != nil {
+			return nil, fmt.Errorf("acquire sandbox: %w", err)
+		}
+	}
+	sb, err := manager.Get(ctx, sid)
+	if err != nil {
+		return nil, fmt.Errorf("get sandbox %s: %w", sid, err)
+	}
+	return sb, nil
 }
 
 func allowsIsolatedExec(manager sandbox.SandboxManager) bool {

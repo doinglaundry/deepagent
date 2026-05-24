@@ -63,12 +63,18 @@ func setToolRoot(t *testing.T, root string) {
 }
 
 type fakeSandboxManager struct {
-	box          sandbox.Sandbox
-	isolatedExec bool
-	getCalled    *bool
+	box           sandbox.Sandbox
+	isolatedExec  bool
+	acquireCalled *bool
+	getCalled     *bool
 }
 
-func (m fakeSandboxManager) Acquire(context.Context, string) (string, error) { return "sandbox", nil }
+func (m fakeSandboxManager) Acquire(context.Context, string) (string, error) {
+	if m.acquireCalled != nil {
+		*m.acquireCalled = true
+	}
+	return "sandbox", nil
+}
 func (m fakeSandboxManager) Get(context.Context, string) (sandbox.Sandbox, error) {
 	if m.getCalled != nil {
 		*m.getCalled = true
@@ -455,6 +461,25 @@ func TestExecuteAllowedInIsolatedSandboxWhenRollbackProtected(t *testing.T) {
 	}
 }
 
+func TestExecuteAllowedInIsolatedSandboxWithoutStampedIDWhenRollbackProtected(t *testing.T) {
+	box := &fakeSandbox{}
+	acquireCalled := false
+	bt, _ := GetExecuteTool(fakeSandboxManager{box: box, isolatedExec: true, acquireCalled: &acquireCalled})
+	ctx := runtimecontext.WithThreadID(context.Background(), "thread-a")
+	ctx = runtimecontext.WithRollbackProtected(ctx, true)
+
+	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi"}`)
+	if got != "sandbox: echo hi" {
+		t.Fatalf("execute should acquire aio sandbox, got %q", got)
+	}
+	if !acquireCalled {
+		t.Fatal("execute should acquire sandbox when ctx has no sandbox id")
+	}
+	if box.command != "echo hi" {
+		t.Fatalf("sandbox command = %q", box.command)
+	}
+}
+
 func TestShellAndAwaitShell(t *testing.T) {
 	root := t.TempDir()
 	setToolRoot(t, root)
@@ -515,6 +540,25 @@ func TestShellAllowedInIsolatedSandboxWhenRollbackProtected(t *testing.T) {
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
 	if got != "sandbox: echo hi" {
 		t.Fatalf("shell should use aio sandbox, got %q", got)
+	}
+	if box.command != "echo hi" {
+		t.Fatalf("sandbox command = %q", box.command)
+	}
+}
+
+func TestShellAllowedInIsolatedSandboxWithoutStampedIDWhenRollbackProtected(t *testing.T) {
+	box := &fakeSandbox{}
+	acquireCalled := false
+	bt, _ := GetShellTool(fakeSandboxManager{box: box, isolatedExec: true, acquireCalled: &acquireCalled})
+	ctx := runtimecontext.WithThreadID(context.Background(), "thread-a")
+	ctx = runtimecontext.WithRollbackProtected(ctx, true)
+
+	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
+	if got != "sandbox: echo hi" {
+		t.Fatalf("shell should acquire aio sandbox, got %q", got)
+	}
+	if !acquireCalled {
+		t.Fatal("shell should acquire sandbox when ctx has no sandbox id")
 	}
 	if box.command != "echo hi" {
 		t.Fatalf("sandbox command = %q", box.command)

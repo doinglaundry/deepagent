@@ -27,9 +27,11 @@ func GetExecuteTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error
 				return msg, nil
 			}
 			if allowsIsolatedExec(sandboxManager) {
-				if sb := getSandbox(ctx, sandboxManager); sb != nil {
-					return sb.ExecuteCommand(ctx, in.Command)
+				sb, err := getRequiredSandbox(ctx, sandboxManager)
+				if err != nil {
+					return "", err
 				}
+				return sb.ExecuteCommand(ctx, in.Command)
 			}
 			if msg, denied := denyOnRollbackProtected(ctx); denied {
 				return msg, nil

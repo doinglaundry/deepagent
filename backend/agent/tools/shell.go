@@ -32,9 +32,11 @@ func GetShellTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) 
 			}
 			// Sandbox path is sync; background-job semantics only via host fs.
 			if allowsIsolatedExec(sandboxManager) {
-				if sb := getSandbox(ctx, sandboxManager); sb != nil {
-					return sb.ExecuteCommand(ctx, in.Command)
+				sb, err := getRequiredSandbox(ctx, sandboxManager)
+				if err != nil {
+					return "", err
 				}
+				return sb.ExecuteCommand(ctx, in.Command)
 			}
 			if msg, denied := denyOnRollbackProtected(ctx); denied {
 				return msg, nil
