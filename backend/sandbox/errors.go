@@ -116,5 +116,5 @@ func truncate(s string, n int) string {
 // Sentinels for errors.Is.
 var (
 	ErrSandboxNotFound  = errors.New("sandbox not found")
-	ErrThreadIDRequired = errors.New("thread_id required")
+	ErrSessionIDRequired = errors.New("session_id required")
 )

@@ -1,4 +1,4 @@
-// Package uploads owns the per-thread file upload directory with traversal/symlink guards.
+// Package uploads owns the per-session file upload directory with traversal/symlink guards.
 package uploads
 
 import (
@@ -14,22 +14,21 @@ import (
 	"eino-cli/backend/config"
 )
 
-// ErrPathTraversal signals a destination outside the thread's uploads dir.
+// ErrPathTraversal signals a destination outside the session's uploads dir.
 var ErrPathTraversal = errors.New("path traversal detected")
 
 // ErrUnsafeFilename signals an empty / "." / ".." / overlong / backslash filename.
 var ErrUnsafeFilename = errors.New("unsafe filename")
 
-// safeThreadID restricts tids to alphanumeric + `_`, `-`, `.`.
-var safeThreadID = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+var safeSessionID = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
-// ValidateThreadID rejects tids that would escape the threads/ tree.
-func ValidateThreadID(tid string) error {
-	if tid == "" {
-		return fmt.Errorf("invalid thread_id: empty")
+// ValidateSessionID rejects session ids that would escape the sessions/ tree.
+func ValidateSessionID(sessionID string) error {
+	if sessionID == "" {
+		return fmt.Errorf("invalid session_id: empty")
 	}
-	if !safeThreadID.MatchString(tid) {
-		return fmt.Errorf("invalid thread_id: %q", tid)
+	if !safeSessionID.MatchString(sessionID) {
+		return fmt.Errorf("invalid session_id: %q", sessionID)
 	}
 	return nil
 }
@@ -52,16 +51,16 @@ func NormalizeFilename(filename string) (string, error) {
 	return safe, nil
 }
 
-// PathFor returns the host path for filename under (tid, uid) without creating anything.
-func PathFor(tid, uid, filename string) (string, error) {
-	if err := ValidateThreadID(tid); err != nil {
+// PathFor returns the host path for filename under (sessionID, uid) without creating anything.
+func PathFor(sessionID, uid, filename string) (string, error) {
+	if err := ValidateSessionID(sessionID); err != nil {
 		return "", err
 	}
 	safe, err := NormalizeFilename(filename)
 	if err != nil {
 		return "", err
 	}
-	base := config.SandboxUploadsDir(tid, uid)
+	base := config.SandboxUploadsDir(sessionID, uid)
 	dest := filepath.Join(base, safe)
 	if err := guardTraversal(dest, base); err != nil {
 		return "", err
@@ -70,15 +69,14 @@ func PathFor(tid, uid, filename string) (string, error) {
 }
 
 // Write streams src into uploads/<filename> with O_NOFOLLOW; returns the host path.
-func Write(tid, uid, filename string, src io.Reader) (string, error) {
-	dest, err := PathFor(tid, uid, filename)
+func Write(sessionID, uid, filename string, src io.Reader) (string, error) {
+	dest, err := PathFor(sessionID, uid, filename)
 	if err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return "", err
 	}
-	// O_NOFOLLOW: a sandboxed agent must not plant a symlink at dest to escape via the upload process.
 	flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC | osNoFollow()
 	f, err := os.OpenFile(dest, flag, 0o600)
 	if err != nil {
@@ -97,15 +95,15 @@ type FileInfo struct {
 	Size      int64
 	Path      string
 	Extension string
-	Modified  int64 // unix seconds
+	Modified  int64
 }
 
-// List enumerates regular files in the thread's uploads dir, sorted by name; symlinks are skipped.
-func List(tid, uid string) ([]FileInfo, error) {
-	if err := ValidateThreadID(tid); err != nil {
+// List enumerates regular files in the session's uploads dir, sorted by name; symlinks are skipped.
+func List(sessionID, uid string) ([]FileInfo, error) {
+	if err := ValidateSessionID(sessionID); err != nil {
 		return nil, err
 	}
-	base := config.SandboxUploadsDir(tid, uid)
+	base := config.SandboxUploadsDir(sessionID, uid)
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -135,8 +133,8 @@ func List(tid, uid string) ([]FileInfo, error) {
 }
 
 // Delete removes a single file with the same safety profile as Write; already-gone is fine.
-func Delete(tid, uid, filename string) error {
-	dest, err := PathFor(tid, uid, filename)
+func Delete(sessionID, uid, filename string) error {
+	dest, err := PathFor(sessionID, uid, filename)
 	if err != nil {
 		return err
 	}
@@ -153,7 +151,6 @@ func Delete(tid, uid, filename string) error {
 	return os.Remove(dest)
 }
 
-// guardTraversal asserts dest resolves under base.
 func guardTraversal(dest, base string) error {
 	absBase, err := filepath.Abs(base)
 	if err != nil {

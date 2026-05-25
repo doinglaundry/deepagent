@@ -15,6 +15,7 @@ import (
 	"eino-cli/backend/agent"
 	"eino-cli/backend/agent/autodream"
 	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 	rt "eino-cli/backend/runtime"
 	runtimecontext "eino-cli/backend/runtime/context"
 )
@@ -82,7 +83,7 @@ func runAutoDream(ctx context.Context, r *Runtime, state *autoDreamState) {
 		slog.Warn("auto-dream: list sessions failed", "err", err)
 		return
 	}
-	sessionIDs := autodream.FilterSessionsTouchedSince(candidates, lastConsolidatedAt, r.sessionID)
+	sessionIDs := autodream.FilterSessionsTouchedSince(candidates, lastConsolidatedAt, consts.DefaultSessionID)
 	if len(sessionIDs) < autodream.DefaultMinSessions {
 		return
 	}

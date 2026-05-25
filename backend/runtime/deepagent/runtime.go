@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +15,7 @@ import (
 	"eino-cli/backend/agent"
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 	rt "eino-cli/backend/runtime"
 	runtimecontext "eino-cli/backend/runtime/context"
 	"eino-cli/backend/session/checkpoint"
@@ -31,7 +31,6 @@ type Runtime struct {
 	maxHistoryTurns     int
 	trace               *middlewares.Trace
 	planMode            atomic.Bool
-	sessionID           string
 	autoDreamState      autoDreamState
 }
 
@@ -40,7 +39,6 @@ func NewRuntime(ctx context.Context, cfg *config.Config) (rt.Runtime, error) {
 		cfg:             cfg,
 		modelName:       cfg.DefaultModel,
 		maxHistoryTurns: 20,
-		sessionID:       fmt.Sprintf("session-%d-%d", os.Getpid(), time.Now().UnixNano()),
 	}
 	leadAgent, trace, err := agent.MakeLeadAgent(ctx, true, r.planMode.Load, cfg)
 	if err != nil {
@@ -49,7 +47,7 @@ func NewRuntime(ctx context.Context, cfg *config.Config) (rt.Runtime, error) {
 	r.runner = adk.NewRunner(ctx, adk.RunnerConfig{
 		Agent:           leadAgent,
 		EnableStreaming: true,
-		CheckPointStore: checkpoint.NewStore(config.CheckpointsDir()),
+		CheckPointStore: checkpoint.NewStore(config.SessionCheckpointsDir(consts.DefaultSessionID)),
 	})
 	r.trace = trace
 	return r, nil
@@ -72,11 +70,9 @@ func (r *Runtime) ExecuteStream(ctx context.Context, prompt string, onChunk rt.S
 	runner := r.runner
 	r.mu.Unlock()
 
-	// CLI default tid; server mode stamps the real one via gateway middleware.
-	if runtimecontext.GetThreadID(ctx) == "" {
-		ctx = runtimecontext.WithThreadID(ctx, "cli")
+	if runtimecontext.GetSessionID(ctx) == "" {
+		ctx = runtimecontext.WithSessionID(ctx, consts.DefaultSessionID)
 	}
-	ctx = runtimecontext.WithSessionID(ctx, r.sessionID)
 
 	checkpointID := fmt.Sprintf("ckpt-%d", time.Now().UnixNano())
 	iter := runner.Run(ctx, messages, adk.WithCheckPointID(checkpointID))
@@ -99,10 +95,6 @@ func (r *Runtime) ExecuteStream(ctx context.Context, prompt string, onChunk rt.S
 	r.mu.Lock()
 	r.history = append(r.history, schema.UserMessage(prompt), schema.AssistantMessage(summary.Output, nil))
 	r.mu.Unlock()
-	// Auto-dream is temporarily disabled; use /dream to trigger it manually.
-	// if runtimecontext.GetQuerySource(ctx) != runtimecontext.QuerySourceAutoDream {
-	// 	go runAutoDream(context.Background(), r, &r.autoDreamState)
-	// }
 
 	return rt.Result{Success: true, Output: summary.Output}, nil
 }

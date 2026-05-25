@@ -9,7 +9,7 @@ type VolumeMount struct {
 	ReadOnly      bool   `yaml:"read_only,omitempty"`
 }
 
-// SandboxConfig selects and tunes the per-thread sandbox manager (use=local|aio).
+// SandboxConfig selects and tunes the per-session sandbox manager (use=local|aio).
 type SandboxConfig struct {
 	Use                    string            `yaml:"use"`
 	AllowHostBash          bool              `yaml:"allow_host_bash"`

@@ -6,25 +6,31 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 )
 
 func TestStoreSavePostRestorePost(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, root, ".eino-cli/checkpoints/state.json", "checkpoint-1")
-	writeTestFile(t, root, ".eino-cli/users/local/threads/cli/user-data/data.txt", "user-data-1")
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+	sid := consts.DefaultSessionID
+	writeTestFile(t, root, ".eino-cli/sessions/"+sid+"/checkpoints/state.json", "checkpoint-1")
+	writeTestFile(t, root, ".eino-cli/users/local/sessions/"+sid+"/user-data/data.txt", "user-data-1")
 	writeTestFile(t, root, ".eino-cli/memory/memory.json", "memory-1")
 	writeTestFile(t, root, ".eino-cli/skill-build/artifact.txt", "artifact-1")
-	writeTestFile(t, root, ".eino-cli/runs/run-1.json", "run-1")
+	writeTestFile(t, root, ".eino-cli/sessions/"+sid+"/runs/run-1.json", "run-1")
 
-	store := NewStore(root)
+	store := NewStore(root, sid)
 	if _, err := store.SavePost(context.Background(), "run-1", []byte(`["history-1"]`)); err != nil {
 		t.Fatalf("SavePost() error = %v", err)
 	}
 
-	writeTestFile(t, root, ".eino-cli/checkpoints/state.json", "checkpoint-2")
+	writeTestFile(t, root, ".eino-cli/sessions/"+sid+"/checkpoints/state.json", "checkpoint-2")
 	writeTestFile(t, root, ".eino-cli/memory/memory.json", "memory-2")
 	writeTestFile(t, root, ".eino-cli/skill-extra/artifact.txt", "artifact-2")
-	writeTestFile(t, root, ".eino-cli/runs/run-2.json", "run-2")
+	writeTestFile(t, root, ".eino-cli/sessions/"+sid+"/runs/run-2.json", "run-2")
 
 	history, err := store.RestorePost(context.Background(), "run-1")
 	if err != nil {
@@ -33,12 +39,11 @@ func TestStoreSavePostRestorePost(t *testing.T) {
 	if !strings.Contains(string(history), "history-1") {
 		t.Fatalf("history = %s", history)
 	}
-	assertTestFile(t, root, ".eino-cli/checkpoints/state.json", "checkpoint-1")
+	assertTestFile(t, root, ".eino-cli/sessions/"+sid+"/checkpoints/state.json", "checkpoint-1")
 	assertTestFile(t, root, ".eino-cli/memory/memory.json", "memory-1")
 	assertTestFile(t, root, ".eino-cli/skill-build/artifact.txt", "artifact-1")
 	assertMissing(t, root, ".eino-cli/skill-extra")
-	assertTestFile(t, root, ".eino-cli/runs/run-2.json", "run-2")
-	assertMissing(t, root, ".eino-cli/rollback/run-1/post/runs")
+	assertTestFile(t, root, ".eino-cli/sessions/"+sid+"/runs/run-2.json", "run-2")
 }
 
 func writeTestFile(t *testing.T, root, rel, body string) {

@@ -16,7 +16,6 @@ const (
 )
 
 type (
-	threadIDKey          struct{}
 	sessionIDKey         struct{}
 	sandboxIDKey         struct{}
 	permissionModeKey    struct{}
@@ -35,15 +34,6 @@ func IsKnownMode(m PermissionMode) bool {
 		return true
 	}
 	return false
-}
-
-func WithThreadID(ctx stdctx.Context, tid string) stdctx.Context {
-	return stdctx.WithValue(ctx, threadIDKey{}, tid)
-}
-
-func GetThreadID(ctx stdctx.Context) string {
-	v, _ := ctx.Value(threadIDKey{}).(string)
-	return v
 }
 
 func WithSessionID(ctx stdctx.Context, sid string) stdctx.Context {

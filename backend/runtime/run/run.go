@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"eino-cli/backend/agent/middlewares"
+	"eino-cli/backend/consts"
 	rt "eino-cli/backend/runtime"
 	runtimecontext "eino-cli/backend/runtime/context"
 	"eino-cli/backend/session/rollback"
@@ -26,6 +27,7 @@ const (
 
 type Record struct {
 	ID            string
+	SessionID     string
 	Prompt        string
 	Status        Status
 	CreatedAt     time.Time
@@ -120,6 +122,7 @@ func create(ctx context.Context, mgr *Manager, prompt string) (*Record, context.
 	now := time.Now()
 	run := &Record{
 		ID:        fmt.Sprintf("run-%d", now.UnixNano()),
+		SessionID: sessionIDFromCtx(ctx),
 		Prompt:    prompt,
 		Status:    Pending,
 		CreatedAt: now,
@@ -148,9 +151,18 @@ func finish(mgr *Manager, run *Record, status Status, output string, err error) 
 	}
 }
 
+func sessionIDFromCtx(ctx context.Context) string {
+	sid := runtimecontext.GetSessionID(ctx)
+	if sid == "" {
+		return consts.DefaultSessionID
+	}
+	return sid
+}
+
 func toRecord(run *Record) runs.Record {
 	rec := runs.Record{
 		ID:            run.ID,
+		SessionID:     run.SessionID,
 		Status:        string(run.Status),
 		Prompt:        run.Prompt,
 		CreatedAt:     run.CreatedAt,

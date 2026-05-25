@@ -30,16 +30,20 @@ func BaseDir() string {
 	return filepath.Join(RootDir(), ".eino-cli")
 }
 
-func CheckpointsDir() string {
-	return filepath.Join(BaseDir(), "checkpoints")
+func SessionTreeDir(sessionID string) string {
+	return filepath.Join(BaseDir(), "sessions", sessionID)
 }
 
-func RunsDir() string {
-	return filepath.Join(BaseDir(), "runs")
+func SessionRunsDir(sessionID string) string {
+	return filepath.Join(SessionTreeDir(sessionID), "runs")
 }
 
-func RollbackDir() string {
-	return filepath.Join(BaseDir(), "rollback")
+func SessionRollbackDir(sessionID string) string {
+	return filepath.Join(SessionTreeDir(sessionID), "rollback")
+}
+
+func SessionCheckpointsDir(sessionID string) string {
+	return filepath.Join(SessionTreeDir(sessionID), "checkpoints")
 }
 
 func MemoryDir() string {
@@ -62,31 +66,34 @@ func UserDir(uid string) string {
 	return filepath.Join(BaseDir(), "users", uid)
 }
 
-func ThreadDir(tid, uid string) string {
-	return filepath.Join(UserDir(uid), "threads", tid)
+func SessionDir(sessionID, uid string) string {
+	return filepath.Join(UserDir(uid), "sessions", sessionID)
 }
 
-func SandboxUserDataDir(tid, uid string) string {
-	return filepath.Join(ThreadDir(tid, uid), "user-data")
+func SandboxUserDataDir(sessionID, uid string) string {
+	return filepath.Join(SessionDir(sessionID, uid), "user-data")
 }
 
-func SandboxWorkDir(tid, uid string) string {
-	return filepath.Join(SandboxUserDataDir(tid, uid), "workspace")
+func SandboxWorkDir(sessionID, uid string) string {
+	return filepath.Join(SandboxUserDataDir(sessionID, uid), "workspace")
 }
 
-func SandboxUploadsDir(tid, uid string) string {
-	return filepath.Join(SandboxUserDataDir(tid, uid), "uploads")
+func SandboxUploadsDir(sessionID, uid string) string {
+	return filepath.Join(SandboxUserDataDir(sessionID, uid), "uploads")
 }
 
-func SandboxOutputsDir(tid, uid string) string {
-	return filepath.Join(SandboxUserDataDir(tid, uid), "outputs")
+func SandboxOutputsDir(sessionID, uid string) string {
+	return filepath.Join(SandboxUserDataDir(sessionID, uid), "outputs")
 }
 
-func EnsureThreadDirs(tid, uid string) error {
+func EnsureSessionDirs(sessionID, uid string) error {
 	for _, dir := range []string{
-		SandboxWorkDir(tid, uid),
-		SandboxUploadsDir(tid, uid),
-		SandboxOutputsDir(tid, uid),
+		SandboxWorkDir(sessionID, uid),
+		SandboxUploadsDir(sessionID, uid),
+		SandboxOutputsDir(sessionID, uid),
+		SessionRunsDir(sessionID),
+		SessionRollbackDir(sessionID),
+		SessionCheckpointsDir(sessionID),
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err

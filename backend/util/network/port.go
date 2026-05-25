@@ -1,4 +1,4 @@
-// Package network has small networking helpers shared by sandbox / gateway.
+// Package network has small networking helpers shared by sandbox.
 package network
 
 import (

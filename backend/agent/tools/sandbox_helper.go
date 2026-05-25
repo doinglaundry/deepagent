@@ -37,12 +37,12 @@ func getRequiredSandbox(ctx context.Context, manager sandbox.SandboxManager) (sa
 	}
 	sid := runtimecontext.GetSandboxID(ctx)
 	if sid == "" {
-		tid := runtimecontext.GetThreadID(ctx)
-		if tid == "" {
-			return nil, sandbox.ErrThreadIDRequired
+		sessionID := runtimecontext.GetSessionID(ctx)
+		if sessionID == "" {
+			sessionID = consts.DefaultSessionID
 		}
 		var err error
-		sid, err = manager.Acquire(ctx, tid)
+		sid, err = manager.Acquire(ctx, sessionID)
 		if err != nil {
 			return nil, fmt.Errorf("acquire sandbox: %w", err)
 		}

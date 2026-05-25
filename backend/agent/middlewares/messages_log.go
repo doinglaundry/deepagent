@@ -13,6 +13,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
+	"eino-cli/backend/consts"
 	runtimecontext "eino-cli/backend/runtime/context"
 )
 
@@ -187,7 +188,7 @@ func toTranscriptMessage(msg *schema.Message) transcriptMessage {
 func getTranscriptSessionID(ctx context.Context) string {
 	sessionID := runtimecontext.GetSessionID(ctx)
 	if sessionID == "" {
-		sessionID = runtimecontext.GetThreadID(ctx)
+		sessionID = consts.DefaultSessionID
 	}
 	return sanitizeTranscriptSessionID(sessionID)
 }

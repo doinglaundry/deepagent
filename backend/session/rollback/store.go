@@ -9,10 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 )
 
 type Store struct {
-	root string
+	projectRoot string
+	sessionID   string
 }
 
 type Snapshot struct {
@@ -21,8 +25,8 @@ type Snapshot struct {
 	History   json.RawMessage `json:"history,omitempty"`
 }
 
-func NewStore(root string) *Store {
-	return &Store{root: root}
+func NewStore(projectRoot, sessionID string) *Store {
+	return &Store{projectRoot: projectRoot, sessionID: sessionID}
 }
 
 func (s *Store) SavePost(ctx context.Context, runID string, history []byte) (string, error) {
@@ -70,7 +74,7 @@ func (s *Store) RestorePost(ctx context.Context, runID string) ([]byte, error) {
 }
 
 func (s *Store) snapshotDir(runID string) string {
-	return filepath.Join(s.root, ".eino-cli", "rollback", runID)
+	return filepath.Join(config.SessionRollbackDir(s.sessionID), runID)
 }
 
 func writeSnapshotMeta(dir, runID string, history []byte) error {
@@ -118,7 +122,7 @@ func (s *Store) restoreControlledRoots(ctx context.Context, src string) error {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "skill-") {
 			continue
 		}
-		if err := copyDir(ctx, filepath.Join(src, entry.Name()), filepath.Join(s.root, ".eino-cli", entry.Name())); err != nil {
+		if err := copyDir(ctx, filepath.Join(src, entry.Name()), filepath.Join(s.projectRoot, ".eino-cli", entry.Name())); err != nil {
 			return err
 		}
 	}
@@ -131,22 +135,23 @@ type rootPair struct {
 }
 
 func (s *Store) fixedRoots() []rootPair {
+	uid := consts.DefaultUserID
 	return []rootPair{
-		{name: "checkpoints", host: filepath.Join(s.root, ".eino-cli", "checkpoints")},
-		{name: "user-data", host: filepath.Join(s.root, ".eino-cli", "users", "local", "threads", "cli", "user-data")},
-		{name: "memory", host: filepath.Join(s.root, ".eino-cli", "memory")},
+		{name: "checkpoints", host: config.SessionCheckpointsDir(s.sessionID)},
+		{name: "user-data", host: config.SandboxUserDataDir(s.sessionID, uid)},
+		{name: "memory", host: config.MemoryDir()},
 	}
 }
 
 func (s *Store) skillDirs() []string {
-	entries, err := os.ReadDir(filepath.Join(s.root, ".eino-cli"))
+	entries, err := os.ReadDir(filepath.Join(s.projectRoot, ".eino-cli"))
 	if err != nil {
 		return nil
 	}
 	var out []string
 	for _, entry := range entries {
 		if entry.IsDir() && strings.HasPrefix(entry.Name(), "skill-") {
-			out = append(out, filepath.Join(s.root, ".eino-cli", entry.Name()))
+			out = append(out, filepath.Join(s.projectRoot, ".eino-cli", entry.Name()))
 		}
 	}
 	return out

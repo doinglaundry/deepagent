@@ -1,4 +1,4 @@
-// Command eino-cli: --mode=cli (default) or --mode=server runs the gateway.
+// Command eino-cli runs the interactive CLI agent.
 package main
 
 import (
@@ -13,7 +13,6 @@ import (
 
 	"eino-cli/backend/cli/tui"
 	"eino-cli/backend/config"
-	"eino-cli/backend/gateway"
 	"eino-cli/backend/runtime/deepagent"
 	"eino-cli/backend/sandbox"
 	"eino-cli/backend/sandbox/aio"
@@ -22,7 +21,7 @@ import (
 
 func main() {
 	args := os.Args[1:]
-	root, mode, addr, err := parseFlags(args)
+	root, err := parseFlags(args)
 	if err != nil {
 		log.Fatalf("parse flags: %v", err)
 	}
@@ -43,12 +42,7 @@ func main() {
 	sandbox.SetDefault(sandboxManager)
 	defer sandbox.ShutdownDefault()
 
-	switch mode {
-	case "server":
-		runServer(cfg, addr)
-	default:
-		runCLI(cfg)
-	}
+	runCLI(cfg)
 }
 
 func buildSandboxManager(cfg *config.Config) (sandbox.SandboxManager, error) {
@@ -88,37 +82,21 @@ func resetAgentMessagesLog() error {
 	return os.WriteFile(path, nil, 0o644)
 }
 
-func runServer(cfg *config.Config, addr string) {
-	router := deepagent.NewRouter(cfg)
-	defer router.Shutdown()
-
-	srv := gateway.New(router)
-	log.Printf("eino-cli gateway listening on %s", addr)
-	if err := srv.ListenAndServe(addr); err != nil {
-		log.Fatalf("gateway: %v", err)
-	}
-}
-
-// parseFlags reads --root / --mode / --addr.
-func parseFlags(args []string) (root, mode, addr string, err error) {
+func parseFlags(args []string) (root string, err error) {
 	flags := flag.NewFlagSet("eino-cli", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 
 	rootFlag := flags.String("root", "", "LLM repository root")
-	modeFlag := flags.String("mode", "cli", "Run mode: cli or server")
-	addrFlag := flags.String("addr", ":8000", "Server bind address (mode=server only)")
 
 	if err := flags.Parse(args); err != nil {
-		return "", "", "", err
+		return "", err
 	}
 
 	root, err = getRoot(*rootFlag)
 	if err != nil {
-		return "", "", "", err
+		return "", err
 	}
-	mode = getFlagValue(*modeFlag, "cli")
-	addr = getFlagValue(*addrFlag, ":8000")
-	return root, mode, addr, nil
+	return root, nil
 }
 
 func getRoot(flagRoot string) (string, error) {
@@ -130,12 +108,4 @@ func getRoot(flagRoot string) (string, error) {
 		return os.Getwd()
 	}
 	return filepath.Abs(root)
-}
-
-func getFlagValue(value, fallback string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return fallback
-	}
-	return trimmed
 }

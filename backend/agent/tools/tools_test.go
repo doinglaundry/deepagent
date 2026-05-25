@@ -83,7 +83,7 @@ func (m fakeSandboxManager) Get(context.Context, string) (sandbox.Sandbox, error
 }
 func (m fakeSandboxManager) Release(context.Context, string) error { return nil }
 func (m fakeSandboxManager) Reset()                                {}
-func (m fakeSandboxManager) UsesThreadDataMounts() bool            { return true }
+func (m fakeSandboxManager) UsesSessionDataMounts() bool           { return true }
 func (m fakeSandboxManager) AllowsIsolatedExec() bool              { return m.isolatedExec }
 
 type fakeSandbox struct {
@@ -465,7 +465,7 @@ func TestExecuteAllowedInIsolatedSandboxWithoutStampedIDWhenRollbackProtected(t 
 	box := &fakeSandbox{}
 	acquireCalled := false
 	bt, _ := GetExecuteTool(fakeSandboxManager{box: box, isolatedExec: true, acquireCalled: &acquireCalled})
-	ctx := runtimecontext.WithThreadID(context.Background(), "thread-a")
+	ctx := runtimecontext.WithSessionID(context.Background(), "session-a")
 	ctx = runtimecontext.WithRollbackProtected(ctx, true)
 
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi"}`)
@@ -550,7 +550,7 @@ func TestShellAllowedInIsolatedSandboxWithoutStampedIDWhenRollbackProtected(t *t
 	box := &fakeSandbox{}
 	acquireCalled := false
 	bt, _ := GetShellTool(fakeSandboxManager{box: box, isolatedExec: true, acquireCalled: &acquireCalled})
-	ctx := runtimecontext.WithThreadID(context.Background(), "thread-a")
+	ctx := runtimecontext.WithSessionID(context.Background(), "session-a")
 	ctx = runtimecontext.WithRollbackProtected(ctx, true)
 
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)

@@ -12,6 +12,7 @@ import (
 
 	"eino-cli/backend/agent/middlewares"
 	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 	rt "eino-cli/backend/runtime"
 	runtimecontext "eino-cli/backend/runtime/context"
 	"eino-cli/backend/session/rollback"
@@ -202,14 +203,14 @@ func TestStartCapturesRollbackSnapshot(t *testing.T) {
 	root := t.TempDir()
 	cleanup := config.SetRootDirForTest(root)
 	defer cleanup()
-	runStore := runs.NewStore(config.RunsDir())
+	runStore := runs.NewStore(config.SessionRunsDir(consts.DefaultSessionID))
 	runtime := testRuntime{run: func(ctx context.Context, _ string, _ rt.StreamChunkHandler) (rt.Result, error) {
 		if !runtimecontext.IsRollbackProtected(ctx) {
 			t.Fatal("run context should be rollback protected")
 		}
 		return rt.Result{Success: true, Output: "answer"}, nil
 	}}
-	mgr := NewManagerWithStore(runStore, rollback.NewStore(root))
+	mgr := NewManagerWithStore(runStore, rollback.NewStore(root, consts.DefaultSessionID))
 
 	events, _, err := Start(context.Background(), runtime, "prompt", mgr)
 	if err != nil {
@@ -240,12 +241,12 @@ func TestStartDoesNotRollbackAfterUnsafeToolBlocked(t *testing.T) {
 	root := t.TempDir()
 	cleanup := config.SetRootDirForTest(root)
 	defer cleanup()
-	runStore := runs.NewStore(config.RunsDir())
+	runStore := runs.NewStore(config.SessionRunsDir(consts.DefaultSessionID))
 	runtime := testRuntime{run: func(ctx context.Context, _ string, _ rt.StreamChunkHandler) (rt.Result, error) {
 		runtimecontext.MarkRollbackUnsafeToolBlocked(ctx)
 		return rt.Result{Success: true, Output: "answer"}, nil
 	}}
-	mgr := NewManagerWithStore(runStore, rollback.NewStore(root))
+	mgr := NewManagerWithStore(runStore, rollback.NewStore(root, consts.DefaultSessionID))
 
 	events, _, err := Start(context.Background(), runtime, "prompt", mgr)
 	if err != nil {

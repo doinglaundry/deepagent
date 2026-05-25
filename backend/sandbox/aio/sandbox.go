@@ -62,11 +62,11 @@ func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error
 		"timeout":    execTimeoutSeconds,
 	}
 	var data struct {
-		SessionID string `json:"session_id"`
-		Command   string `json:"command"`
-		Status    string `json:"status"`
-		Output    string `json:"output"`
-		ExitCode  *int   `json:"exit_code"`
+		ShellSessionID string `json:"session_id"`
+		Command        string `json:"command"`
+		Status         string `json:"status"`
+		Output         string `json:"output"`
+		ExitCode       *int   `json:"exit_code"`
 	}
 	if err := s.post(ctx, "/v1/shell/exec", body, &data); err != nil {
 		return "", sandbox.NewCommandError(err.Error(), cmd, -1)

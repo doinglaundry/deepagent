@@ -1,7 +1,5 @@
 // Package runs persists completed CLI run records as JSON files under
-// <RootDir>/.eino-cli/runs. The store is intentionally minimal — single
-// directory, one file per run_id, atomic-rename writes. See
-// specs/2026-05-19-cli-run-store/design.md.
+// <RootDir>/.eino-cli/sessions/<session_id>/runs. See specs/2026-05-24-session-run-unify/design.md.
 package runs
 
 import (
@@ -19,6 +17,7 @@ import (
 // so context.CancelFunc and error don't leak into JSON.
 type Record struct {
 	ID            string    `json:"id"`
+	SessionID     string    `json:"session_id"`
 	Status        string    `json:"status"`
 	Prompt        string    `json:"prompt,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`

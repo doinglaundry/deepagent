@@ -15,59 +15,54 @@ import (
 	"eino-cli/backend/sandbox"
 )
 
-type SandboxManager struct {
-	mu                sync.Mutex
-	generic           *Sandbox
-	entriesByThreadId map[string]*list.Element
-	order             *list.List
-	maxCachedThread   int
+type SandboxManagerLocal struct {
+	mu                  sync.Mutex
+	defaultSandbox      *Sandbox
+	entriesBySessionID  map[string]*list.Element
+	order               *list.List
+	maxCachedSessions   int
 }
 
 type cacheEntry struct {
-	tid     string
-	sandbox *Sandbox
+	sessionID string
+	sandbox   *Sandbox
 }
 
-// New builds the local SandboxManager from cfg.
+// New builds the local SandboxManagerLocal from cfg.
 func New() (sandbox.SandboxManager, error) {
-	return &SandboxManager{
-		generic:           newSandbox(consts.GenericLocalSandboxID, GetSkillPathMappings()),
-		entriesByThreadId: map[string]*list.Element{},
-		order:             list.New(),
-		maxCachedThread:   consts.DefaultMaxCachedThreads,
+
+	return &SandboxManagerLocal{
+		defaultSandbox:     newSandbox(consts.GenericLocalSandboxID),
+		entriesBySessionID: map[string]*list.Element{},
+		order:              list.New(),
+		maxCachedSessions:  consts.DefaultMaxCachedSessions,
 	}, nil
 }
 
-// Acquire returns "local" for empty tid, or "local:<tid>" with per-thread mappings.
-func (m *SandboxManager) Acquire(ctx context.Context, tid string) (string, error) {
-	if tid == "" {
-		return m.generic.id, nil
+// Acquire returns "local" for empty sessionID, or "local:<sessionID>" with per-session mappings.
+func (m *SandboxManagerLocal) Acquire(ctx context.Context, sessionID string) (string, error) {
+	if sessionID == "" {
+		return m.defaultSandbox.id, nil
 	}
-
-	if sb := m.getCachedLocked(tid); sb != nil {
+	if sb := m.getCachedLocked(sessionID); sb != nil {
 		return sb.id, nil
 	}
-
-	// Build outside the lock — touches the filesystem.
 	uid := runtime.GetEffectiveUserID(ctx)
-	userDataPathMappings, err := getUserDataPathMappings(tid, uid)
+	userDataPathMappings, err := getUserDataPathMappings(sessionID, uid)
 	if err != nil {
 		return "", err
 	}
-	all := make([]PathMapping, 0)
-	all = append(all, GetSkillPathMappings()...)
-	all = append(all, userDataPathMappings...)
-
-	sb := newSandbox(consts.LocalThreadIDPrefix+tid, all)
-	m.putCachedLocked(tid, sb)
+	sb := newSandbox(consts.LocalSessionIDPrefix + sessionID)
+	sb.AppendPathMappings(userDataPathMappings)
+	m.putCachedLocked(sessionID, sb)
 	return sb.id, nil
 }
 
-func (m *SandboxManager) getCachedLocked(tid string) *Sandbox {
+func (m *SandboxManagerLocal) getCachedLocked(sessionID string) *Sandbox {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	elem, ok := m.entriesByThreadId[tid]
+	elem, ok := m.entriesBySessionID[sessionID]
 	if !ok {
 		return nil
 	}
@@ -75,33 +70,33 @@ func (m *SandboxManager) getCachedLocked(tid string) *Sandbox {
 	return elem.Value.(*cacheEntry).sandbox
 }
 
-func (m *SandboxManager) putCachedLocked(tid string, sb *Sandbox) {
-	m.entriesByThreadId[tid] = m.order.PushFront(&cacheEntry{tid: tid, sandbox: sb})
+func (m *SandboxManagerLocal) putCachedLocked(sessionID string, sb *Sandbox) {
+	m.entriesBySessionID[sessionID] = m.order.PushFront(&cacheEntry{sessionID: sessionID, sandbox: sb})
 	m.evictLocked()
 }
 
-func (m *SandboxManager) evictLocked() {
-	for m.order.Len() > m.maxCachedThread {
+func (m *SandboxManagerLocal) evictLocked() {
+	for m.order.Len() > m.maxCachedSessions {
 		el := m.order.Back()
 		if el == nil {
 			return
 		}
 		entry := el.Value.(*cacheEntry)
-		delete(m.entriesByThreadId, entry.tid)
+		delete(m.entriesBySessionID, entry.sessionID)
 		m.order.Remove(el)
 	}
 }
 
-func (m *SandboxManager) Get(ctx context.Context, sandboxID string) (sandbox.Sandbox, error) {
+func (m *SandboxManagerLocal) Get(ctx context.Context, sandboxID string) (sandbox.Sandbox, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if sandboxID == consts.GenericLocalSandboxID && m.generic != nil {
-		return m.generic, nil
+	if sandboxID == consts.GenericLocalSandboxID && m.defaultSandbox != nil {
+		return m.defaultSandbox, nil
 	}
 
-	tid, ok := strings.CutPrefix(sandboxID, consts.LocalThreadIDPrefix)
+	sessionID, ok := strings.CutPrefix(sandboxID, consts.LocalSessionIDPrefix)
 	if ok {
-		elem, ok := m.entriesByThreadId[tid]
+		elem, ok := m.entriesBySessionID[sessionID]
 		if ok {
 			m.order.MoveToFront(elem)
 			return elem.Value.(*cacheEntry).sandbox, nil
@@ -111,47 +106,47 @@ func (m *SandboxManager) Get(ctx context.Context, sandboxID string) (sandbox.San
 	return nil, sandbox.NewNotFoundError(sandboxID)
 }
 
-func (m *SandboxManager) Release(ctx context.Context, sandboxID string) error { return nil }
+func (m *SandboxManagerLocal) Release(ctx context.Context, sandboxID string) error { return nil }
 
-func (m *SandboxManager) Reset() {
+func (m *SandboxManagerLocal) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.generic = nil
-	m.entriesByThreadId = map[string]*list.Element{}
+	m.defaultSandbox = nil
+	m.entriesBySessionID = map[string]*list.Element{}
 	m.order = list.New()
 }
 
-func (m *SandboxManager) UsesThreadDataMounts() bool { return true }
+func (m *SandboxManagerLocal) UsesSessionDataMounts() bool { return true }
 
-func (m *SandboxManager) AllowsIsolatedExec() bool { return false }
+func (m *SandboxManagerLocal) AllowsIsolatedExec() bool { return false }
 
-func GetSkillPathMappings() (res []PathMapping) {
-	res = make([]PathMapping, 0)
-	p := filepath.Join(config.RootDir(), "backend", "skills")
-	info, err := os.Stat(p)
+func GetSkillPathMappings() (res []*PathMapping) {
+	res = make([]*PathMapping, 0)
+	skillPath := filepath.Join(config.RootDir(), "backend", "skills")
+	info, err := os.Stat(skillPath)
 	if err != nil || !info.IsDir() {
 		return nil
 	}
-	abs, err := filepath.Abs(p)
+	absSkillPath, err := filepath.Abs(skillPath)
 	if err != nil {
 		return
 	}
-	res = append(res, PathMapping{
+	res = append(res, &PathMapping{
 		ContainerPath: "/mnt/skills",
-		LocalPath:     abs,
+		LocalPath:     absSkillPath,
 		ReadOnly:      true,
 	})
 	return
 }
 
-func getUserDataPathMappings(tid, uid string) ([]PathMapping, error) {
-	if err := config.EnsureThreadDirs(tid, uid); err != nil {
+func getUserDataPathMappings(sessionID, uid string) ([]*PathMapping, error) {
+	if err := config.EnsureSessionDirs(sessionID, uid); err != nil {
 		return nil, fmt.Errorf("local manager: ensure dirs: %w", err)
 	}
-	return []PathMapping{
-		{ContainerPath: "/mnt/user-data", LocalPath: config.SandboxUserDataDir(tid, uid)},
-		{ContainerPath: "/mnt/user-data/workspace", LocalPath: config.SandboxWorkDir(tid, uid)},
-		{ContainerPath: "/mnt/user-data/uploads", LocalPath: config.SandboxUploadsDir(tid, uid)},
-		{ContainerPath: "/mnt/user-data/outputs", LocalPath: config.SandboxOutputsDir(tid, uid)},
+	return []*PathMapping{
+		{ContainerPath: "/mnt/user-data", LocalPath: config.SandboxUserDataDir(sessionID, uid)},
+		{ContainerPath: "/mnt/user-data/workspace", LocalPath: config.SandboxWorkDir(sessionID, uid)},
+		{ContainerPath: "/mnt/user-data/uploads", LocalPath: config.SandboxUploadsDir(sessionID, uid)},
+		{ContainerPath: "/mnt/user-data/outputs", LocalPath: config.SandboxOutputsDir(sessionID, uid)},
 	}, nil
 }

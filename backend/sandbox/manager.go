@@ -6,12 +6,12 @@ import (
 )
 
 type SandboxManager interface {
-	Acquire(ctx context.Context, threadID string) (string, error)
+	Acquire(ctx context.Context, sessionID string) (string, error)
 	Get(ctx context.Context, sandboxID string) (Sandbox, error)
 	Release(ctx context.Context, sandboxID string) error
 
 	Reset()
-	UsesThreadDataMounts() bool
+	UsesSessionDataMounts() bool
 	AllowsIsolatedExec() bool
 }
 

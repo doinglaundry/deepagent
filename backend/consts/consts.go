@@ -5,6 +5,7 @@ import "time"
 const (
 	VirtualPathPrefix = "/mnt/user-data"
 	DefaultUserID     = "local"
+	DefaultSessionID  = "default_session_id"
 )
 
 type PermissionMode string
@@ -53,7 +54,7 @@ const (
 )
 
 const (
-	DefaultMaxCachedThreads = 256
-	GenericLocalSandboxID   = "local"
-	LocalThreadIDPrefix     = "local:"
+	DefaultMaxCachedSessions = 256
+	GenericLocalSandboxID    = "local"
+	LocalSessionIDPrefix     = "local:"
 )

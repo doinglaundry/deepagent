@@ -6,11 +6,12 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 
+	"eino-cli/backend/consts"
 	runtimecontext "eino-cli/backend/runtime/context"
 	"eino-cli/backend/sandbox"
 )
 
-// SandboxMiddleware acquires a per-thread sandbox in BeforeAgent and stamps the sid onto ctx.
+// SandboxMiddleware acquires a per-session sandbox in BeforeAgent and stamps the sid onto ctx.
 type SandboxMiddleware struct {
 	*adk.BaseChatModelAgentMiddleware
 
@@ -38,14 +39,17 @@ func (m *SandboxMiddleware) BeforeAgent(
 	if runtimecontext.GetSandboxID(ctx) != "" {
 		return ctx, runCtx, nil
 	}
-	tid := runtimecontext.GetThreadID(ctx)
-	sid, err := m.Manager.Acquire(ctx, tid)
+	sessionID := runtimecontext.GetSessionID(ctx)
+	if sessionID == "" {
+		sessionID = consts.DefaultSessionID
+		ctx = runtimecontext.WithSessionID(ctx, sessionID)
+	}
+	sid, err := m.Manager.Acquire(ctx, sessionID)
 	if err != nil {
-		// Acquire failure must not crash the run; tools degrade to host fs.
 		m.Logger.Warn("sandbox middleware: acquire failed, continuing without sandbox",
-			"thread_id", tid, "error", err)
+			"session_id", sessionID, "error", err)
 		return ctx, runCtx, nil
 	}
-	m.Logger.Debug("sandbox middleware: acquired", "thread_id", tid, "sandbox_id", sid)
+	m.Logger.Debug("sandbox middleware: acquired", "session_id", sessionID, "sandbox_id", sid)
 	return runtimecontext.WithSandboxID(ctx, sid), runCtx, nil
 }

@@ -1,4 +1,4 @@
-// Package local implements Sandbox on the host fs with per-thread path mappings.
+// Package local implements Sandbox on the host fs with per-session path mappings.
 package local
 
 import (
@@ -20,26 +20,47 @@ import (
 
 const commandTimeout = 10 * time.Minute
 
-// Sandbox is the per-thread (or generic "local") sandbox instance.
+// Sandbox is the per-session (or generic "local") sandbox instance.
 type Sandbox struct {
 	id        string
-	mappings  []PathMapping
+	mappings  []*PathMapping
 	writtenMu sync.RWMutex
 	written   map[string]any
 }
 
-func newSandbox(id string, mappings []PathMapping) *Sandbox {
-	return &Sandbox{
-		id:       id,
-		mappings: mappings,
-		written:  map[string]any{},
+func newSandbox(id string, initial ...[]PathMapping) *Sandbox {
+	sb := &Sandbox{
+		id:      id,
+		written: map[string]any{},
 	}
+	sb.mappings = append(sb.mappings, GetSkillPathMappings()...)
+	if len(initial) > 0 {
+		for i := range initial[0] {
+			m := initial[0][i]
+			sb.mappings = append(sb.mappings, &m)
+		}
+	}
+	return sb
+}
+
+func (s *Sandbox) flatMappings() []PathMapping {
+	out := make([]PathMapping, 0, len(s.mappings))
+	for _, m := range s.mappings {
+		if m != nil {
+			out = append(out, *m)
+		}
+	}
+	return out
+}
+
+func (s *Sandbox) AppendPathMappings(pathMappings []*PathMapping) {
+	s.mappings = append(s.mappings, pathMappings...)
 }
 
 func (s *Sandbox) ID() string { return s.id }
 
 func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error) {
-	resolved := resolvePathsInCommand(s.mappings, cmd)
+	resolved := resolvePathsInCommand(s.flatMappings(), cmd)
 	shell, err := pickShell()
 	if err != nil {
 		return "", sandbox.NewRuntimeError(err.Error())
@@ -55,7 +76,7 @@ func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error
 	}
 	stdout, stderr, exitCode, runErr := runShell(c)
 
-	out := reverseResolvePathsInOutput(s.mappings, formatCommandOutput(stdout, stderr, exitCode))
+	out := reverseResolvePathsInOutput(s.flatMappings(), formatCommandOutput(stdout, stderr, exitCode))
 	if runErr != nil && exitCode == 0 {
 		return out, sandbox.NewCommandError(runErr.Error(), cmd, exitCode)
 	}
@@ -136,7 +157,7 @@ func runShell(c *exec.Cmd) (stdout, stderr string, exitCode int, runErr error) {
 
 // ReadFile reads the host file; agent-written files get path masking on the way out.
 func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
-	r, err := resolvePath(s.mappings, path)
+	r, err := resolvePath(s.flatMappings(), path)
 	if err != nil {
 		return "", err
 	}
@@ -149,7 +170,7 @@ func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 	_, agentWritten := s.written[r.Path]
 	s.writtenMu.RUnlock()
 	if agentWritten {
-		content = reverseResolvePathsInOutput(s.mappings, content)
+		content = reverseResolvePathsInOutput(s.flatMappings(), content)
 	}
 	return content, nil
 }
@@ -171,7 +192,7 @@ func (s *Sandbox) WriteFile(ctx context.Context, path, content string, appendMod
 		return wrapFileError(err, path, "write")
 	}
 	defer f.Close()
-	if _, err := f.WriteString(resolvePathsInContent(s.mappings, content)); err != nil {
+	if _, err := f.WriteString(resolvePathsInContent(s.flatMappings(), content)); err != nil {
 		return wrapFileError(err, path, "write")
 	}
 
@@ -194,11 +215,11 @@ func (s *Sandbox) UpdateFile(ctx context.Context, path string, content []byte) e
 }
 
 func (s *Sandbox) prepareWritePath(path, op string) (resolved, error) {
-	r, err := resolvePath(s.mappings, path)
+	r, err := resolvePath(s.flatMappings(), path)
 	if err != nil {
 		return resolved{}, err
 	}
-	if r.Mapping != nil && r.Mapping.ReadOnly || isReadOnlyPath(s.mappings, r.Path) {
+	if r.Mapping != nil && r.Mapping.ReadOnly || isReadOnlyPath(s.flatMappings(), r.Path) {
 		return resolved{}, sandbox.NewPermissionError("read-only file system", path)
 	}
 	if err := os.MkdirAll(filepath.Dir(r.Path), 0o755); err != nil {
@@ -212,7 +233,7 @@ func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]str
 	if maxDepth <= 0 {
 		maxDepth = 2
 	}
-	r, err := resolvePath(s.mappings, path)
+	r, err := resolvePath(s.flatMappings(), path)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +249,7 @@ func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]str
 
 func (s *Sandbox) reverseListEntry(entry string) string {
 	isDir := strings.HasSuffix(entry, "/") || strings.HasSuffix(entry, `\`)
-	reversed := reverseResolvePath(s.mappings, strings.TrimRight(entry, `/\`))
+	reversed := reverseResolvePath(s.flatMappings(), strings.TrimRight(entry, `/\`))
 	if isDir && !strings.HasSuffix(reversed, "/") {
 		return reversed + "/"
 	}
@@ -237,7 +258,7 @@ func (s *Sandbox) reverseListEntry(entry string) string {
 
 // Glob walks path matching pattern via search.FindGlobMatches.
 func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.GlobOpts) ([]string, bool, error) {
-	r, err := resolvePath(s.mappings, path)
+	r, err := resolvePath(s.flatMappings(), path)
 	if err != nil {
 		return nil, false, err
 	}
@@ -250,14 +271,14 @@ func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.G
 	}
 	out := make([]string, len(matches))
 	for i, m := range matches {
-		out[i] = reverseResolvePath(s.mappings, m)
+		out[i] = reverseResolvePath(s.flatMappings(), m)
 	}
 	return out, truncated, nil
 }
 
 // Grep walks path matching pattern via search.FindGrepMatches.
 func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
-	r, err := resolvePath(s.mappings, path)
+	r, err := resolvePath(s.flatMappings(), path)
 	if err != nil {
 		return nil, false, err
 	}
@@ -273,7 +294,7 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.G
 	out := make([]sandbox.GrepMatch, len(matches))
 	for i, m := range matches {
 		out[i] = sandbox.GrepMatch{
-			Path:       reverseResolvePath(s.mappings, m.Path),
+			Path:       reverseResolvePath(s.flatMappings(), m.Path),
 			LineNumber: m.LineNumber,
 			Line:       m.Line,
 		}

@@ -19,6 +19,7 @@ import (
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
 	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 	rt "eino-cli/backend/runtime"
 	runtimeRun "eino-cli/backend/runtime/run"
 	"eino-cli/backend/session/rollback"
@@ -124,8 +125,8 @@ func New(runtime rt.Runtime, cfgs ...*config.Config) (*Model, error) {
 		cwd:       cwd,
 		modelName: runtime.Name(),
 		runs: runtimeRun.NewManagerWithStore(
-			runs.NewStore(config.RunsDir()),
-			rollback.NewStore(config.RootDir()),
+			runs.NewStore(config.SessionRunsDir(consts.DefaultSessionID)),
+			rollback.NewStore(config.RootDir(), consts.DefaultSessionID),
 		),
 		input:             ti,
 		viewport:          vp,

@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"eino-cli/backend/config"
+	"eino-cli/backend/consts"
 	rt "eino-cli/backend/runtime"
 	runtimeRun "eino-cli/backend/runtime/run"
 	"eino-cli/backend/session/rollback"
@@ -76,8 +77,8 @@ func TestRunHistoryRollbackRestoresSelectedPostRun(t *testing.T) {
 	root := t.TempDir()
 	cleanup := config.SetRootDirForTest(root)
 	defer cleanup()
-	runStore := runs.NewStore(config.RunsDir())
-	rollbackStore := rollback.NewStore(root)
+	runStore := runs.NewStore(config.SessionRunsDir(consts.DefaultSessionID))
+	rollbackStore := rollback.NewStore(root, consts.DefaultSessionID)
 	now := time.Now()
 	run1 := runs.Record{
 		ID:        "run-1",

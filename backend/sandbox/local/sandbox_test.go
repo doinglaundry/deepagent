@@ -68,12 +68,12 @@ func TestSandboxListDir(t *testing.T) {
 	}
 }
 
-func TestManagerGetThreadSandboxDoesNotDeadlock(t *testing.T) {
+func TestManagerGetSessionSandboxDoesNotDeadlock(t *testing.T) {
 	mgr, err := New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid, err := mgr.Acquire(context.Background(), "thread-a")
+	sid, err := mgr.Acquire(context.Background(), "session-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestManagerGetThreadSandboxDoesNotDeadlock(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("Get deadlocked for thread sandbox")
+		t.Fatal("Get deadlocked for session sandbox")
 	}
 	if getErr != nil {
 		t.Fatal(getErr)

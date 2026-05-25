@@ -11,7 +11,7 @@ import (
 
 func TestParseFlagsRootPrefersFlag(t *testing.T) {
 	t.Setenv("SGADK_ROOT", "from-env")
-	root, mode, addr, err := parseFlags([]string{"--root", "from-flag"})
+	root, err := parseFlags([]string{"--root", "from-flag"})
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
@@ -19,17 +19,11 @@ func TestParseFlagsRootPrefersFlag(t *testing.T) {
 	if root != want {
 		t.Fatalf("root: got %q, want %q", root, want)
 	}
-	if mode != "cli" {
-		t.Fatalf("default mode: got %q, want cli", mode)
-	}
-	if addr != ":8000" {
-		t.Fatalf("default addr: got %q, want :8000", addr)
-	}
 }
 
 func TestParseFlagsRootFallsBackToEnv(t *testing.T) {
 	t.Setenv("SGADK_ROOT", "from-env")
-	root, _, _, err := parseFlags(nil)
+	root, err := parseFlags(nil)
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
@@ -41,7 +35,7 @@ func TestParseFlagsRootFallsBackToEnv(t *testing.T) {
 
 func TestParseFlagsRootFallsBackToWorkingDirectory(t *testing.T) {
 	t.Setenv("SGADK_ROOT", "")
-	root, _, _, err := parseFlags(nil)
+	root, err := parseFlags(nil)
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
@@ -52,16 +46,6 @@ func TestParseFlagsRootFallsBackToWorkingDirectory(t *testing.T) {
 	want, _ = filepath.Abs(want)
 	if root != want {
 		t.Fatalf("got %q, want %q", root, want)
-	}
-}
-
-func TestParseFlagsServerMode(t *testing.T) {
-	_, mode, addr, err := parseFlags([]string{"--mode", "server", "--addr", ":9000"})
-	if err != nil {
-		t.Fatalf("parseFlags: %v", err)
-	}
-	if mode != "server" || addr != ":9000" {
-		t.Fatalf("got mode=%q addr=%q", mode, addr)
 	}
 }
 
