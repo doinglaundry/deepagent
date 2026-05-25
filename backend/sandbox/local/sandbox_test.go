@@ -14,25 +14,28 @@ import (
 
 func TestSandboxWriteReadRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
-	mappings := []PathMapping{{ContainerPath: "/mnt/user-data", LocalPath: tmp}}
-	sb := newSandbox("local:test", mappings)
+	mappings := []PathMapping{{ContainerPath: "/mnt/workspace", LocalPath: tmp}}
+	sb := newSandbox("test", "local:test", ptrMappings(mappings))
 	ctx := context.Background()
-	if err := sb.WriteFile(ctx, "/mnt/user-data/note.txt", "hello", false); err != nil {
+	if err := sb.WriteFile(ctx, "/mnt/workspace/note.txt", "hello", false); err != nil {
 		t.Fatal(err)
 	}
-	got, err := sb.ReadFile(ctx, "/mnt/user-data/note.txt")
+	got, err := sb.ReadFile(ctx, "/mnt/workspace/note.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != "hello" {
 		t.Fatalf("want hello, got %q", got)
 	}
+	if sb.SessionID() != "test" {
+		t.Fatalf("SessionID = %q, want test", sb.SessionID())
+	}
 }
 
 func TestSandboxReadOnlyMountBlocksWrite(t *testing.T) {
 	tmp := t.TempDir()
 	mappings := []PathMapping{{ContainerPath: "/mnt/skills", LocalPath: tmp, ReadOnly: true}}
-	sb := newSandbox("local:test", mappings)
+	sb := newSandbox("test", "local:test", ptrMappings(mappings))
 	err := sb.WriteFile(context.Background(), "/mnt/skills/hack.txt", "x", false)
 	if err == nil {
 		t.Fatal("expected permission error")
@@ -51,9 +54,9 @@ func TestSandboxListDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "b.log"), []byte("2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mappings := []PathMapping{{ContainerPath: "/mnt/user-data", LocalPath: tmp}}
-	sb := newSandbox("local:test", mappings)
-	entries, err := sb.ListDir(context.Background(), "/mnt/user-data", 2)
+	mappings := []PathMapping{{ContainerPath: "/mnt/workspace", LocalPath: tmp}}
+	sb := newSandbox("test", "local:test", ptrMappings(mappings))
+	entries, err := sb.ListDir(context.Background(), "/mnt/workspace", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,12 +71,43 @@ func TestSandboxListDir(t *testing.T) {
 	}
 }
 
-func TestManagerGetSessionSandboxDoesNotDeadlock(t *testing.T) {
-	mgr, err := New()
+func TestManagerReturnsStartupSandbox(t *testing.T) {
+	mgr, err := New("session-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid, err := mgr.Acquire(context.Background(), "session-a")
+	if mgr.SessionID() != "session-a" {
+		t.Fatalf("SessionID = %q", mgr.SessionID())
+	}
+	sid, err := mgr.GetSandboxIdBySessionId(context.Background(), "session-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := mgr.Get(context.Background(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ID() != sid || got.SessionID() != "session-a" {
+		t.Fatalf("Get returned %#v, want sandbox id %q session session-a", got, sid)
+	}
+}
+
+func TestManagerRejectsForeignSession(t *testing.T) {
+	mgr, err := New("session-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.GetSandboxIdBySessionId(context.Background(), "other"); err == nil {
+		t.Fatal("expected error for foreign session_id")
+	}
+}
+
+func TestManagerGetDoesNotDeadlock(t *testing.T) {
+	mgr, err := New("session-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := mgr.GetSandboxIdBySessionId(context.Background(), "session-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,12 +123,21 @@ func TestManagerGetSessionSandboxDoesNotDeadlock(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(200 * time.Millisecond):
-		t.Fatal("Get deadlocked for session sandbox")
+		t.Fatal("Get deadlocked")
 	}
 	if getErr != nil {
 		t.Fatal(getErr)
 	}
-	if got == nil || got.ID() != sid {
-		t.Fatalf("Get returned %v, want sandbox id %q", got, sid)
+	if got.SessionID() != "session-a" {
+		t.Fatalf("SessionID = %q", got.SessionID())
 	}
+}
+
+func ptrMappings(in []PathMapping) []*PathMapping {
+	out := make([]*PathMapping, len(in))
+	for i := range in {
+		m := in[i]
+		out[i] = &m
+	}
+	return out
 }

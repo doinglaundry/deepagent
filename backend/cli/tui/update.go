@@ -326,7 +326,7 @@ func submit(m *Model, text string) (tea.Model, tea.Cmd) {
 	m.streamStart = time.Now()
 	m.elapsed = 0
 
-	ch, cancel := startStream(m.rt, text, m.runs)
+	ch, cancel := startStream(m.rt, m.sessionID, text, m.runs)
 	m.streamCh = ch
 	m.cancel = cancel
 	return m, tea.Batch(waitForStreamMsg(ch), m.spin.Tick)

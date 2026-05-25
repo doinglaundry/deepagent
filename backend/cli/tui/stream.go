@@ -5,7 +5,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"eino-cli/backend/consts"
 	rt "eino-cli/backend/runtime"
 	runtimecontext "eino-cli/backend/runtime/context"
 	runtimeRun "eino-cli/backend/runtime/run"
@@ -18,9 +17,9 @@ type doneMsg struct {
 	err    error
 }
 
-func startStream(runtime rt.Runtime, prompt string, runs *runtimeRun.Manager) (<-chan tea.Msg, context.CancelFunc) {
+func startStream(runtime rt.Runtime, sessionID, prompt string, runs *runtimeRun.Manager) (<-chan tea.Msg, context.CancelFunc) {
 	streamCh := make(chan tea.Msg, 64)
-	ctx := runtimecontext.WithSessionID(context.Background(), consts.DefaultSessionID)
+	ctx := runtimecontext.WithSessionID(context.Background(), sessionID)
 	events, cancel, err := runtimeRun.Start(ctx, runtime, prompt, runs)
 	if err != nil {
 		streamCh <- doneMsg{err: err}

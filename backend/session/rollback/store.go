@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"eino-cli/backend/config"
-	"eino-cli/backend/consts"
 )
 
 type Store struct {
@@ -135,10 +134,11 @@ type rootPair struct {
 }
 
 func (s *Store) fixedRoots() []rootPair {
-	uid := consts.DefaultUserID
 	return []rootPair{
 		{name: "checkpoints", host: config.SessionCheckpointsDir(s.sessionID)},
-		{name: "user-data", host: config.SandboxUserDataDir(s.sessionID, uid)},
+		{name: "workspace", host: config.SandboxWorkDir(s.sessionID)},
+		{name: "uploads", host: config.SandboxUploadsDir(s.sessionID)},
+		{name: "outputs", host: config.SandboxOutputsDir(s.sessionID)},
 		{name: "memory", host: config.MemoryDir()},
 	}
 }

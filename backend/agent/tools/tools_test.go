@@ -69,7 +69,9 @@ type fakeSandboxManager struct {
 	getCalled     *bool
 }
 
-func (m fakeSandboxManager) Acquire(context.Context, string) (string, error) {
+func (m fakeSandboxManager) SessionID() string { return "session-a" }
+
+func (m fakeSandboxManager) GetSandboxIdBySessionId(context.Context, string) (string, error) {
 	if m.acquireCalled != nil {
 		*m.acquireCalled = true
 	}
@@ -91,6 +93,8 @@ type fakeSandbox struct {
 }
 
 func (s *fakeSandbox) ID() string { return "sandbox" }
+
+func (s *fakeSandbox) SessionID() string { return "session-a" }
 func (s *fakeSandbox) ExecuteCommand(_ context.Context, command string) (string, error) {
 	s.command = command
 	return "sandbox: " + command, nil

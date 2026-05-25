@@ -1,152 +1,78 @@
 package local
 
 import (
-	"container/list"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync"
 
 	"eino-cli/backend/config"
 	"eino-cli/backend/consts"
-	"eino-cli/backend/runtime"
 	"eino-cli/backend/sandbox"
 )
 
 type SandboxManagerLocal struct {
-	mu                  sync.Mutex
-	defaultSandbox      *Sandbox
-	entriesBySessionID  map[string]*list.Element
-	order               *list.List
-	maxCachedSessions   int
-}
-
-type cacheEntry struct {
 	sessionID string
 	sandbox   *Sandbox
 }
 
-// New builds the local SandboxManagerLocal from cfg.
-func New() (sandbox.SandboxManager, error) {
-
-	return &SandboxManagerLocal{
-		defaultSandbox:     newSandbox(consts.GenericLocalSandboxID),
-		entriesBySessionID: map[string]*list.Element{},
-		order:              list.New(),
-		maxCachedSessions:  consts.DefaultMaxCachedSessions,
-	}, nil
-}
-
-// Acquire returns "local" for empty sessionID, or "local:<sessionID>" with per-session mappings.
-func (m *SandboxManagerLocal) Acquire(ctx context.Context, sessionID string) (string, error) {
+// New builds a manager bound to one CLI session; the sandbox is created at startup.
+func New(sessionID string) (sandbox.SandboxManager, error) {
 	if sessionID == "" {
-		return m.defaultSandbox.id, nil
+		return nil, sandbox.ErrSessionIDRequired
 	}
-	if sb := m.getCachedLocked(sessionID); sb != nil {
-		return sb.id, nil
-	}
-	uid := runtime.GetEffectiveUserID(ctx)
-	userDataPathMappings, err := getUserDataPathMappings(sessionID, uid)
+	pathMappings, err := buildPathMappings(sessionID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	sb := newSandbox(consts.LocalSessionIDPrefix + sessionID)
-	sb.AppendPathMappings(userDataPathMappings)
-	m.putCachedLocked(sessionID, sb)
-	return sb.id, nil
+	sandboxID := consts.LocalSessionIDPrefix + sessionID
+	sb := newSandbox(sessionID, sandboxID, pathMappings)
+	return &SandboxManagerLocal{sessionID: sessionID, sandbox: sb}, nil
 }
 
-func (m *SandboxManagerLocal) getCachedLocked(sessionID string) *Sandbox {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *SandboxManagerLocal) SessionID() string { return m.sessionID }
 
-	elem, ok := m.entriesBySessionID[sessionID]
-	if !ok {
-		return nil
+func (m *SandboxManagerLocal) GetSandboxIdBySessionId(_ context.Context, sessionID string) (string, error) {
+	if sessionID != "" && sessionID != m.sessionID {
+		return "", fmt.Errorf("local manager: session_id %q does not match %q", sessionID, m.sessionID)
 	}
-	m.order.MoveToFront(elem)
-	return elem.Value.(*cacheEntry).sandbox
+	return m.sandbox.ID(), nil
 }
 
-func (m *SandboxManagerLocal) putCachedLocked(sessionID string, sb *Sandbox) {
-	m.entriesBySessionID[sessionID] = m.order.PushFront(&cacheEntry{sessionID: sessionID, sandbox: sb})
-	m.evictLocked()
-}
-
-func (m *SandboxManagerLocal) evictLocked() {
-	for m.order.Len() > m.maxCachedSessions {
-		el := m.order.Back()
-		if el == nil {
-			return
-		}
-		entry := el.Value.(*cacheEntry)
-		delete(m.entriesBySessionID, entry.sessionID)
-		m.order.Remove(el)
+func (m *SandboxManagerLocal) Get(_ context.Context, sandboxID string) (sandbox.Sandbox, error) {
+	if sandboxID == "" || m.sandbox == nil || sandboxID != m.sandbox.ID() {
+		return nil, sandbox.NewNotFoundError(sandboxID)
 	}
+	return m.sandbox, nil
 }
 
-func (m *SandboxManagerLocal) Get(ctx context.Context, sandboxID string) (sandbox.Sandbox, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if sandboxID == consts.GenericLocalSandboxID && m.defaultSandbox != nil {
-		return m.defaultSandbox, nil
-	}
+func (m *SandboxManagerLocal) Release(context.Context, string) error { return nil }
 
-	sessionID, ok := strings.CutPrefix(sandboxID, consts.LocalSessionIDPrefix)
-	if ok {
-		elem, ok := m.entriesBySessionID[sessionID]
-		if ok {
-			m.order.MoveToFront(elem)
-			return elem.Value.(*cacheEntry).sandbox, nil
-		}
-	}
-
-	return nil, sandbox.NewNotFoundError(sandboxID)
-}
-
-func (m *SandboxManagerLocal) Release(ctx context.Context, sandboxID string) error { return nil }
-
-func (m *SandboxManagerLocal) Reset() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.defaultSandbox = nil
-	m.entriesBySessionID = map[string]*list.Element{}
-	m.order = list.New()
-}
+func (m *SandboxManagerLocal) Reset() {}
 
 func (m *SandboxManagerLocal) UsesSessionDataMounts() bool { return true }
 
 func (m *SandboxManagerLocal) AllowsIsolatedExec() bool { return false }
 
-func GetSkillPathMappings() (res []*PathMapping) {
-	res = make([]*PathMapping, 0)
-	skillPath := filepath.Join(config.RootDir(), "backend", "skills")
-	info, err := os.Stat(skillPath)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-	absSkillPath, err := filepath.Abs(skillPath)
-	if err != nil {
-		return
-	}
-	res = append(res, &PathMapping{
-		ContainerPath: "/mnt/skills",
-		LocalPath:     absSkillPath,
-		ReadOnly:      true,
-	})
-	return
-}
-
-func getUserDataPathMappings(sessionID, uid string) ([]*PathMapping, error) {
-	if err := config.EnsureSessionDirs(sessionID, uid); err != nil {
+func buildPathMappings(sessionID string) ([]*PathMapping, error) {
+	if err := config.EnsureSessionDirs(sessionID); err != nil {
 		return nil, fmt.Errorf("local manager: ensure dirs: %w", err)
 	}
-	return []*PathMapping{
-		{ContainerPath: "/mnt/user-data", LocalPath: config.SandboxUserDataDir(sessionID, uid)},
-		{ContainerPath: "/mnt/user-data/workspace", LocalPath: config.SandboxWorkDir(sessionID, uid)},
-		{ContainerPath: "/mnt/user-data/uploads", LocalPath: config.SandboxUploadsDir(sessionID, uid)},
-		{ContainerPath: "/mnt/user-data/outputs", LocalPath: config.SandboxOutputsDir(sessionID, uid)},
-	}, nil
+	var out []*PathMapping
+	skillPath := filepath.Join(config.RootDir(), "backend", "skills")
+	if info, err := os.Stat(skillPath); err == nil && info.IsDir() {
+		if absSkillPath, err := filepath.Abs(skillPath); err == nil {
+			out = append(out, &PathMapping{
+				ContainerPath: "/mnt/skills",
+				LocalPath:     absSkillPath,
+				ReadOnly:      true,
+			})
+		}
+	}
+	out = append(out,
+		&PathMapping{ContainerPath: "/mnt/workspace", LocalPath: config.SandboxWorkDir(sessionID)},
+		&PathMapping{ContainerPath: "/mnt/uploads", LocalPath: config.SandboxUploadsDir(sessionID)},
+		&PathMapping{ContainerPath: "/mnt/outputs", LocalPath: config.SandboxOutputsDir(sessionID)},
+	)
+	return out, nil
 }

@@ -17,6 +17,7 @@ import (
 	"eino-cli/backend/sandbox"
 	"eino-cli/backend/sandbox/aio"
 	"eino-cli/backend/sandbox/local"
+	"eino-cli/backend/session"
 )
 
 func main() {
@@ -35,32 +36,38 @@ func main() {
 	}
 	config.SetLogLevel(cfg)
 
-	sandboxManager, err := buildSandboxManager(cfg)
+	ctx := context.Background()
+	sessionID, err := session.StartSession(ctx)
+	if err != nil {
+		log.Fatalf("start session: %v", err)
+	}
+
+	sandboxManager, err := buildSandboxManager(cfg, sessionID)
 	if err != nil {
 		log.Fatalf("build sandbox manager: %v", err)
 	}
 	sandbox.SetDefault(sandboxManager)
 	defer sandbox.ShutdownDefault()
 
-	runCLI(cfg)
+	runCLI(cfg, sessionID)
 }
 
-func buildSandboxManager(cfg *config.Config) (sandbox.SandboxManager, error) {
+func buildSandboxManager(cfg *config.Config, sessionID string) (sandbox.SandboxManager, error) {
 	use := ""
 	if cfg != nil {
 		use = strings.TrimSpace(cfg.Sandbox.Use)
 	}
 	switch use {
 	case "", "local":
-		return local.New()
+		return local.New(sessionID)
 	case "aio":
-		return aio.New(cfg)
+		return aio.New(cfg, sessionID)
 	default:
 		return nil, fmt.Errorf("sandbox: unknown sandbox.use %q (allowed: local, aio)", use)
 	}
 }
 
-func runCLI(cfg *config.Config) {
+func runCLI(cfg *config.Config, sessionID string) {
 	if err := resetAgentMessagesLog(); err != nil {
 		log.Fatalf("reset agent messages log: %v", err)
 	}
@@ -69,7 +76,7 @@ func runCLI(cfg *config.Config) {
 	if err != nil {
 		log.Fatalf("build runtime: %v", err)
 	}
-	if err := tui.Run(rt, cfg); err != nil {
+	if err := tui.Run(rt, sessionID, cfg); err != nil {
 		os.Exit(1)
 	}
 }

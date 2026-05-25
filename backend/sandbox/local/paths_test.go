@@ -9,24 +9,24 @@ import (
 func TestResolvePathPicksMostSpecific(t *testing.T) {
 	tmp := t.TempDir()
 	mappings := []PathMapping{
-		{ContainerPath: "/mnt/user-data", LocalPath: filepath.Join(tmp, "u")},
-		{ContainerPath: "/mnt/user-data/workspace", LocalPath: filepath.Join(tmp, "u", "workspace")},
+		{ContainerPath: "/mnt/workspace", LocalPath: filepath.Join(tmp, "root")},
+		{ContainerPath: "/mnt/workspace/deep", LocalPath: filepath.Join(tmp, "root", "deep")},
 	}
-	r, err := resolvePath(mappings, "/mnt/user-data/workspace/foo.txt")
+	r, err := resolvePath(mappings, "/mnt/workspace/deep/foo.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(r.Path, filepath.Join("u", "workspace", "foo.txt")) {
-		t.Fatalf("expected workspace mapping to win, got %s", r.Path)
+	if !strings.HasSuffix(r.Path, filepath.Join("root", "deep", "foo.txt")) {
+		t.Fatalf("expected deeper mapping to win, got %s", r.Path)
 	}
 }
 
 func TestResolvePathRejectsEscape(t *testing.T) {
 	tmp := t.TempDir()
 	mappings := []PathMapping{
-		{ContainerPath: "/mnt/user-data", LocalPath: tmp},
+		{ContainerPath: "/mnt/workspace", LocalPath: tmp},
 	}
-	_, err := resolvePath(mappings, "/mnt/user-data/../../etc/passwd")
+	_, err := resolvePath(mappings, "/mnt/workspace/../../etc/passwd")
 	if err == nil {
 		t.Fatal("expected escape error, got nil")
 	}
@@ -36,11 +36,11 @@ func TestReverseResolvePathMapsBack(t *testing.T) {
 	tmp := t.TempDir()
 	abs, _ := filepath.Abs(tmp)
 	mappings := []PathMapping{
-		{ContainerPath: "/mnt/user-data", LocalPath: abs},
+		{ContainerPath: "/mnt/workspace", LocalPath: abs},
 	}
 	hostPath := filepath.Join(abs, "subdir", "file.txt")
 	got := reverseResolvePath(mappings, hostPath)
-	want := "/mnt/user-data/subdir/file.txt"
+	want := "/mnt/workspace/subdir/file.txt"
 	if got != want {
 		t.Fatalf("reverse: want %q, got %q", want, got)
 	}
@@ -50,11 +50,11 @@ func TestReverseResolveInOutputMasksHostPaths(t *testing.T) {
 	tmp := t.TempDir()
 	abs, _ := filepath.Abs(tmp)
 	mappings := []PathMapping{
-		{ContainerPath: "/mnt/user-data", LocalPath: abs},
+		{ContainerPath: "/mnt/workspace", LocalPath: abs},
 	}
 	out := "log: " + filepath.Join(abs, "foo.txt") + " done"
 	masked := reverseResolvePathsInOutput(mappings, out)
-	if !strings.Contains(masked, "/mnt/user-data/foo.txt") {
+	if !strings.Contains(masked, "/mnt/workspace/foo.txt") {
 		t.Fatalf("expected mask, got %q", masked)
 	}
 }

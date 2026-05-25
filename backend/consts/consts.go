@@ -2,11 +2,7 @@ package consts
 
 import "time"
 
-const (
-	VirtualPathPrefix = "/mnt/user-data"
-	DefaultUserID     = "local"
-	DefaultSessionID  = "default_session_id"
-)
+const DefaultSessionID = "default_session_id"
 
 type PermissionMode string
 
@@ -54,7 +50,5 @@ const (
 )
 
 const (
-	DefaultMaxCachedSessions = 256
-	GenericLocalSandboxID    = "local"
-	LocalSessionIDPrefix     = "local:"
+	LocalSessionIDPrefix = "local:"
 )

@@ -42,7 +42,7 @@ func getRequiredSandbox(ctx context.Context, manager sandbox.SandboxManager) (sa
 			sessionID = consts.DefaultSessionID
 		}
 		var err error
-		sid, err = manager.Acquire(ctx, sessionID)
+		sid, err = manager.GetSandboxIdBySessionId(ctx, sessionID)
 		if err != nil {
 			return nil, fmt.Errorf("acquire sandbox: %w", err)
 		}

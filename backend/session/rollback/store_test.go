@@ -17,7 +17,7 @@ func TestStoreSavePostRestorePost(t *testing.T) {
 	defer cleanup()
 	sid := consts.DefaultSessionID
 	writeTestFile(t, root, ".eino-cli/sessions/"+sid+"/checkpoints/state.json", "checkpoint-1")
-	writeTestFile(t, root, ".eino-cli/users/local/sessions/"+sid+"/user-data/data.txt", "user-data-1")
+	writeTestFile(t, root, ".eino-cli/sessions/"+sid+"/workspace/data.txt", "workspace-1")
 	writeTestFile(t, root, ".eino-cli/memory/memory.json", "memory-1")
 	writeTestFile(t, root, ".eino-cli/skill-build/artifact.txt", "artifact-1")
 	writeTestFile(t, root, ".eino-cli/sessions/"+sid+"/runs/run-1.json", "run-1")

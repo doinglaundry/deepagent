@@ -2,7 +2,7 @@
 
 收敛 eino-cli 为 **CLI-only**，业务上只保留一种 **Session**（`session_id = "default_session_id"`）与多种 **Run**。去掉 `thread_id`、Gateway、`deepagent.Router`，以及 Runtime 内进程级 `session-{pid}-{nano}`。
 
-- 路径：`.eino-cli/sessions/default_session_id/runs/`、`rollback/`、`checkpoints/`；用户数据 `.eino-cli/users/<uid>/sessions/default_session_id/user-data/`
+- 路径：`.eino-cli/sessions/default_session_id/{runs,rollback,checkpoints,workspace,uploads,outputs}/`
 - aio HTTP 的 shell 会话字段在 Go 侧改为 `ShellSessionID`，与业务 Session 隔离
 
 ### Implementation

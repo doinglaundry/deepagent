@@ -52,7 +52,7 @@ func runHITLE2E(t *testing.T) (*teatest.TestModel, <-chan bool) {
 	prev := agent.HITLApprover
 	t.Cleanup(func() { agent.HITLApprover = prev })
 
-	m, err := New(stubRuntime{})
+	m, err := New(stubRuntime{}, "default_session_id")
 	if err != nil {
 		t.Fatalf("New(stubRuntime): %v", err)
 	}

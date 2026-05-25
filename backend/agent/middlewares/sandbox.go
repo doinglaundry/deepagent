@@ -41,10 +41,13 @@ func (m *SandboxMiddleware) BeforeAgent(
 	}
 	sessionID := runtimecontext.GetSessionID(ctx)
 	if sessionID == "" {
-		sessionID = consts.DefaultSessionID
+		sessionID = m.Manager.SessionID()
+		if sessionID == "" {
+			sessionID = consts.DefaultSessionID
+		}
 		ctx = runtimecontext.WithSessionID(ctx, sessionID)
 	}
-	sid, err := m.Manager.Acquire(ctx, sessionID)
+	sid, err := m.Manager.GetSandboxIdBySessionId(ctx, sessionID)
 	if err != nil {
 		m.Logger.Warn("sandbox middleware: acquire failed, continuing without sandbox",
 			"session_id", sessionID, "error", err)

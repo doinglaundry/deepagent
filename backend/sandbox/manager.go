@@ -6,7 +6,8 @@ import (
 )
 
 type SandboxManager interface {
-	Acquire(ctx context.Context, sessionID string) (string, error)
+	SessionID() string
+	GetSandboxIdBySessionId(ctx context.Context, sessionID string) (string, error)
 	Get(ctx context.Context, sandboxID string) (Sandbox, error)
 	Release(ctx context.Context, sandboxID string) error
 

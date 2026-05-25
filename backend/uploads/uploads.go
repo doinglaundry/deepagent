@@ -51,8 +51,8 @@ func NormalizeFilename(filename string) (string, error) {
 	return safe, nil
 }
 
-// PathFor returns the host path for filename under (sessionID, uid) without creating anything.
-func PathFor(sessionID, uid, filename string) (string, error) {
+// PathFor returns the host path for filename under sessionID without creating anything.
+func PathFor(sessionID, filename string) (string, error) {
 	if err := ValidateSessionID(sessionID); err != nil {
 		return "", err
 	}
@@ -60,7 +60,7 @@ func PathFor(sessionID, uid, filename string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	base := config.SandboxUploadsDir(sessionID, uid)
+	base := config.SandboxUploadsDir(sessionID)
 	dest := filepath.Join(base, safe)
 	if err := guardTraversal(dest, base); err != nil {
 		return "", err
@@ -69,8 +69,8 @@ func PathFor(sessionID, uid, filename string) (string, error) {
 }
 
 // Write streams src into uploads/<filename> with O_NOFOLLOW; returns the host path.
-func Write(sessionID, uid, filename string, src io.Reader) (string, error) {
-	dest, err := PathFor(sessionID, uid, filename)
+func Write(sessionID, filename string, src io.Reader) (string, error) {
+	dest, err := PathFor(sessionID, filename)
 	if err != nil {
 		return "", err
 	}
@@ -99,11 +99,11 @@ type FileInfo struct {
 }
 
 // List enumerates regular files in the session's uploads dir, sorted by name; symlinks are skipped.
-func List(sessionID, uid string) ([]FileInfo, error) {
+func List(sessionID string) ([]FileInfo, error) {
 	if err := ValidateSessionID(sessionID); err != nil {
 		return nil, err
 	}
-	base := config.SandboxUploadsDir(sessionID, uid)
+	base := config.SandboxUploadsDir(sessionID)
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -133,8 +133,8 @@ func List(sessionID, uid string) ([]FileInfo, error) {
 }
 
 // Delete removes a single file with the same safety profile as Write; already-gone is fine.
-func Delete(sessionID, uid, filename string) error {
-	dest, err := PathFor(sessionID, uid, filename)
+func Delete(sessionID, filename string) error {
+	dest, err := PathFor(sessionID, filename)
 	if err != nil {
 		return err
 	}

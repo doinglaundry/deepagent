@@ -20,7 +20,7 @@ func smokeBox(t *testing.T) *Sandbox {
 	if url == "" {
 		t.Skip("AIO_SMOKE_URL not set")
 	}
-	return newSandbox("smoke", url)
+	return newSandbox("smoke", "smoke", url)
 }
 
 func TestSmokeExec(t *testing.T) {

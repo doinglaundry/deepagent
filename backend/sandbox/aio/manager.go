@@ -16,41 +16,45 @@ import (
 	"golang.org/x/sys/unix"
 
 	"eino-cli/backend/config"
-	"eino-cli/backend/runtime"
 	"eino-cli/backend/sandbox"
 	"eino-cli/backend/util/network"
 )
 
-// Manager owns every aio sandbox in this process.
+// Manager owns the aio sandbox for one CLI session.
 type Manager struct {
-	cfg *config.Config
-	rt  containerRuntime
-	log *slog.Logger
+	cfg       *config.Config
+	rt        containerRuntime
+	log       *slog.Logger
+	sessionID string
+	sandboxID string
 
-	mu              sync.Mutex
-	sandboxes       map[string]*Sandbox
-	infos           map[string]SandboxInfo
-	sessionSandboxes map[string]string
-	lastActivity    map[string]time.Time
-	warmPool        map[string]warmEntry
+	mu           sync.Mutex
+	sandboxes    map[string]*Sandbox
+	infos        map[string]SandboxInfo
+	lastActivity map[string]time.Time
+	warmPool     map[string]warmEntry
 
 	sf       singleflight.Group
 	stopIdle chan struct{}
 	shutdown sync.Once
 }
 
-// New builds the aio Manager and seeds the warm pool from any orphan containers.
-func New(cfg *config.Config) (sandbox.SandboxManager, error) {
+// New builds the aio Manager bound to sessionID and seeds the warm pool from orphans.
+func New(cfg *config.Config, sessionID string) (sandbox.SandboxManager, error) {
+	if sessionID == "" {
+		return nil, sandbox.ErrSessionIDRequired
+	}
 	m := &Manager{
-		cfg:             cfg,
-		rt:              detectRuntime(),
-		log:             slog.Default(),
-		sandboxes:       map[string]*Sandbox{},
-		infos:           map[string]SandboxInfo{},
-		sessionSandboxes: map[string]string{},
-		lastActivity:    map[string]time.Time{},
-		warmPool:        map[string]warmEntry{},
-		stopIdle:        make(chan struct{}),
+		cfg:          cfg,
+		rt:           detectRuntime(),
+		log:          slog.Default(),
+		sessionID:    sessionID,
+		sandboxID:    deriveSandboxID(sessionID),
+		sandboxes:    map[string]*Sandbox{},
+		infos:        map[string]SandboxInfo{},
+		lastActivity: map[string]time.Time{},
+		warmPool:     map[string]warmEntry{},
+		stopIdle:     make(chan struct{}),
 	}
 	if m.rt == "" {
 		return nil, fmt.Errorf("aio: no container runtime (docker / container CLI)")
@@ -68,17 +72,17 @@ func deriveSandboxID(sessionID string) string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-// Acquire returns the sid for sessionID; singleflight prevents concurrent cold-starts.
-func (m *Manager) Acquire(ctx context.Context, sessionID string) (string, error) {
-	if sessionID == "" {
-		return "", sandbox.ErrSessionIDRequired
+func (m *Manager) SessionID() string { return m.sessionID }
+
+func (m *Manager) GetSandboxIdBySessionId(ctx context.Context, sessionID string) (string, error) {
+	if sessionID != "" && sessionID != m.sessionID {
+		return "", fmt.Errorf("aio manager: session_id %q does not match %q", sessionID, m.sessionID)
 	}
-	v, err, _ := m.sf.Do(sessionID, func() (any, error) {
-		sid := deriveSandboxID(sessionID)
-		if cached, ok := m.reuse(sessionID, sid); ok {
+	v, err, _ := m.sf.Do(m.sessionID, func() (any, error) {
+		if cached, ok := m.reuse(); ok {
 			return cached, nil
 		}
-		return m.discoverOrCreate(ctx, sessionID, sid)
+		return m.discoverOrCreate(ctx, m.sandboxID)
 	})
 	if err != nil {
 		return "", err
@@ -86,38 +90,30 @@ func (m *Manager) Acquire(ctx context.Context, sessionID string) (string, error)
 	return v.(string), nil
 }
 
-// reuse checks the in-process cache and warm pool under one lock.
-func (m *Manager) reuse(sessionID, sid string) (string, bool) {
+func (m *Manager) reuse() (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if cached, ok := m.sessionSandboxes[sessionID]; ok {
-		if _, alive := m.sandboxes[cached]; alive {
-			m.lastActivity[cached] = time.Now()
-			return cached, true
-		}
-		delete(m.sessionSandboxes, sessionID)
+	sid := m.sandboxID
+	if _, alive := m.sandboxes[sid]; alive {
+		m.lastActivity[sid] = time.Now()
+		return sid, true
 	}
 	entry, ok := m.warmPool[sid]
 	if !ok {
 		return "", false
 	}
 	delete(m.warmPool, sid)
-	m.attachLocked(sessionID, sid, entry.info)
+	m.attachLocked(sid, entry.info)
 	return sid, true
 }
 
-// attachLocked records the sandbox in every map; caller must hold m.mu.
-func (m *Manager) attachLocked(sessionID, sid string, info SandboxInfo) {
-	m.sandboxes[sid] = newSandbox(sid, info.SandboxURL)
+func (m *Manager) attachLocked(sid string, info SandboxInfo) {
+	m.sandboxes[sid] = newSandbox(sid, m.sessionID, info.SandboxURL)
 	m.infos[sid] = info
-	if sessionID != "" {
-		m.sessionSandboxes[sessionID] = sid
-	}
 	m.lastActivity[sid] = time.Now()
 }
 
-// discoverOrCreate adopts a peer-started container or starts one; flock blocks racing siblings.
-func (m *Manager) discoverOrCreate(ctx context.Context, sessionID, sid string) (string, error) {
+func (m *Manager) discoverOrCreate(ctx context.Context, sid string) (string, error) {
 	lockPath := filepath.Join(os.TempDir(), "eino-sandbox-"+sid+".lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -131,14 +127,14 @@ func (m *Manager) discoverOrCreate(ctx context.Context, sessionID, sid string) (
 
 	if info, ok := discoverContainer(m.rt, m.cfg.Sandbox.ContainerPrefix, sid); ok {
 		m.mu.Lock()
-		m.attachLocked(sessionID, sid, info)
+		m.attachLocked(sid, info)
 		m.mu.Unlock()
 		return sid, nil
 	}
-	return m.createSandbox(ctx, sessionID, sid)
+	return m.createSandbox(ctx, sid)
 }
 
-func (m *Manager) createSandbox(ctx context.Context, sessionID, sid string) (string, error) {
+func (m *Manager) createSandbox(ctx context.Context, sid string) (string, error) {
 	m.mu.Lock()
 	m.evictUntilWithinReplicasLocked()
 	m.mu.Unlock()
@@ -153,7 +149,7 @@ func (m *Manager) createSandbox(ctx context.Context, sessionID, sid string) (str
 		Image:   m.cfg.Sandbox.Image,
 		Name:    name,
 		Port:    port,
-		Mounts:  m.buildMounts(ctx, sessionID),
+		Mounts:  m.buildMounts(ctx),
 		Env:     m.cfg.Sandbox.Environment,
 	})
 	if err != nil {
@@ -173,7 +169,7 @@ func (m *Manager) createSandbox(ctx context.Context, sessionID, sid string) (str
 		return "", fmt.Errorf("sandbox %s not ready: %w", sid, err)
 	}
 	m.mu.Lock()
-	m.attachLocked(sessionID, sid, info)
+	m.attachLocked(sid, info)
 	m.mu.Unlock()
 	return sid, nil
 }
@@ -201,11 +197,6 @@ func (m *Manager) Release(ctx context.Context, sid string) error {
 	delete(m.sandboxes, sid)
 	delete(m.infos, sid)
 	delete(m.lastActivity, sid)
-	for sessionID, mapped := range m.sessionSandboxes {
-		if mapped == sid {
-			delete(m.sessionSandboxes, sessionID)
-		}
-	}
 	m.warmPool[sid] = warmEntry{info: info, releasedAt: time.Now()}
 	return nil
 }
@@ -216,7 +207,6 @@ func (m *Manager) Reset() {
 	defer m.mu.Unlock()
 	m.sandboxes = map[string]*Sandbox{}
 	m.infos = map[string]SandboxInfo{}
-	m.sessionSandboxes = map[string]string{}
 	m.lastActivity = map[string]time.Time{}
 	m.warmPool = map[string]warmEntry{}
 }
@@ -273,11 +263,6 @@ func (m *Manager) cleanupIdle() {
 			delete(m.sandboxes, sid)
 			delete(m.infos, sid)
 			delete(m.lastActivity, sid)
-			for sessionID, mapped := range m.sessionSandboxes {
-				if mapped == sid {
-					delete(m.sessionSandboxes, sessionID)
-				}
-			}
 			m.warmPool[sid] = warmEntry{info: info, releasedAt: time.Now()}
 		}
 	}
@@ -339,11 +324,6 @@ func (m *Manager) evictOldestActiveLocked() bool {
 	delete(m.sandboxes, victim)
 	delete(m.infos, victim)
 	delete(m.lastActivity, victim)
-	for sessionID, mapped := range m.sessionSandboxes {
-		if mapped == victim {
-			delete(m.sessionSandboxes, sessionID)
-		}
-	}
 	_ = stopContainer(m.rt, info.ContainerID)
 	return true
 }
@@ -355,18 +335,14 @@ func (m *Manager) reconcileOrphans() {
 	}
 }
 
-// buildMounts assembles per-session /mnt/user-data plus user-configured mounts.
-func (m *Manager) buildMounts(ctx context.Context, sessionID string) []mountSpec {
-	uid := runtime.GetEffectiveUserID(ctx)
-	if err := config.EnsureSessionDirs(sessionID, uid); err != nil {
-		m.log.Warn("aio: ensure session dirs", "session_id", sessionID, "error", err)
+// buildMounts assembles per-session workspace/uploads/outputs under /mnt/.
+func (m *Manager) buildMounts(ctx context.Context) []mountSpec {
+	if err := config.EnsureSessionDirs(m.sessionID); err != nil {
+		m.log.Warn("aio: ensure session dirs", "session_id", m.sessionID, "error", err)
 	}
-	out := []mountSpec{}
-	out = append(out, mountSpec{
-		Host:      config.SandboxUserDataDir(sessionID, uid),
-		Container: "/mnt/user-data",
-		ReadOnly:  false,
-	})
-
-	return out
+	return []mountSpec{
+		{Host: config.SandboxWorkDir(m.sessionID), Container: "/mnt/workspace", ReadOnly: false},
+		{Host: config.SandboxUploadsDir(m.sessionID), Container: "/mnt/uploads", ReadOnly: false},
+		{Host: config.SandboxOutputsDir(m.sessionID), Container: "/mnt/outputs", ReadOnly: false},
+	}
 }

@@ -20,26 +20,21 @@ import (
 
 const commandTimeout = 10 * time.Minute
 
-// Sandbox is the per-session (or generic "local") sandbox instance.
 type Sandbox struct {
-	id        string
+	sandboxID string
+	sessionID string
 	mappings  []*PathMapping
 	writtenMu sync.RWMutex
 	written   map[string]any
 }
 
-func newSandbox(id string, initial ...[]PathMapping) *Sandbox {
+func newSandbox(sessionID, sandboxID string, mappings []*PathMapping) *Sandbox {
 	sb := &Sandbox{
-		id:      id,
-		written: map[string]any{},
+		sandboxID: sandboxID,
+		sessionID: sessionID,
+		written:   map[string]any{},
 	}
-	sb.mappings = append(sb.mappings, GetSkillPathMappings()...)
-	if len(initial) > 0 {
-		for i := range initial[0] {
-			m := initial[0][i]
-			sb.mappings = append(sb.mappings, &m)
-		}
-	}
+	sb.mappings = append(sb.mappings, mappings...)
 	return sb
 }
 
@@ -57,7 +52,9 @@ func (s *Sandbox) AppendPathMappings(pathMappings []*PathMapping) {
 	s.mappings = append(s.mappings, pathMappings...)
 }
 
-func (s *Sandbox) ID() string { return s.id }
+func (s *Sandbox) ID() string { return s.sandboxID }
+
+func (s *Sandbox) SessionID() string { return s.sessionID }
 
 func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error) {
 	resolved := resolvePathsInCommand(s.flatMappings(), cmd)

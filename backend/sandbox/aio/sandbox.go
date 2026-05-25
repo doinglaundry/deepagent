@@ -19,9 +19,10 @@ import (
 
 // Sandbox is the per-container HTTP client implementing sandbox.Sandbox.
 type Sandbox struct {
-	id      string
-	baseURL string
-	http    *http.Client
+	id        string
+	sessionID string
+	baseURL   string
+	http      *http.Client
 
 	// shellMu serialises exec: the agent-sandbox image keeps one persistent
 	// shell session whose state can corrupt under concurrent invocation.
@@ -33,16 +34,18 @@ const (
 	execTimeoutSeconds = 600
 )
 
-func newSandbox(id, baseURL string) *Sandbox {
+func newSandbox(id, sessionID, baseURL string) *Sandbox {
 	return &Sandbox{
-		id:      id,
-		baseURL: strings.TrimRight(baseURL, "/"),
-		http:    &http.Client{Timeout: defaultHTTPTimeout},
+		id:        id,
+		sessionID: sessionID,
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		http:      &http.Client{Timeout: defaultHTTPTimeout},
 	}
 }
 
-// ID returns the sandbox id.
 func (s *Sandbox) ID() string { return s.id }
+
+func (s *Sandbox) SessionID() string { return s.sessionID }
 
 // envelope is the FastAPI response shape every endpoint returns.
 type envelope struct {

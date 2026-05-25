@@ -50,7 +50,7 @@ func TestParseFlagsRootFallsBackToWorkingDirectory(t *testing.T) {
 }
 
 func TestBuildSandboxManagerDefaultsToLocal(t *testing.T) {
-	manager, err := buildSandboxManager(&config.Config{})
+	manager, err := buildSandboxManager(&config.Config{}, "default_session_id")
 	if err != nil {
 		t.Fatalf("buildSandboxManager: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestBuildSandboxManagerDefaultsToLocal(t *testing.T) {
 }
 
 func TestBuildSandboxManagerRejectsUnknownUse(t *testing.T) {
-	_, err := buildSandboxManager(&config.Config{Sandbox: config.SandboxConfig{Use: "bad"}})
+	_, err := buildSandboxManager(&config.Config{Sandbox: config.SandboxConfig{Use: "bad"}}, "default_session_id")
 	if err == nil {
 		t.Fatal("expected unknown sandbox.use error")
 	}

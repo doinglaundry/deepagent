@@ -6,6 +6,7 @@ import "context"
 // Sandbox is the 7-method surface every concrete provider must implement.
 type Sandbox interface {
 	ID() string
+	SessionID() string
 
 	ExecuteCommand(ctx context.Context, cmd string) (string, error)
 

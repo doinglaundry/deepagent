@@ -46,6 +46,18 @@ func SessionCheckpointsDir(sessionID string) string {
 	return filepath.Join(SessionTreeDir(sessionID), "checkpoints")
 }
 
+func SandboxWorkDir(sessionID string) string {
+	return filepath.Join(SessionTreeDir(sessionID), "workspace")
+}
+
+func SandboxUploadsDir(sessionID string) string {
+	return filepath.Join(SessionTreeDir(sessionID), "uploads")
+}
+
+func SandboxOutputsDir(sessionID string) string {
+	return filepath.Join(SessionTreeDir(sessionID), "outputs")
+}
+
 func MemoryDir() string {
 	return filepath.Join(BaseDir(), "memory")
 }
@@ -62,35 +74,11 @@ func AgentMessagesLogPath() string {
 	return filepath.Join(BaseDir(), "agent-messages.md")
 }
 
-func UserDir(uid string) string {
-	return filepath.Join(BaseDir(), "users", uid)
-}
-
-func SessionDir(sessionID, uid string) string {
-	return filepath.Join(UserDir(uid), "sessions", sessionID)
-}
-
-func SandboxUserDataDir(sessionID, uid string) string {
-	return filepath.Join(SessionDir(sessionID, uid), "user-data")
-}
-
-func SandboxWorkDir(sessionID, uid string) string {
-	return filepath.Join(SandboxUserDataDir(sessionID, uid), "workspace")
-}
-
-func SandboxUploadsDir(sessionID, uid string) string {
-	return filepath.Join(SandboxUserDataDir(sessionID, uid), "uploads")
-}
-
-func SandboxOutputsDir(sessionID, uid string) string {
-	return filepath.Join(SandboxUserDataDir(sessionID, uid), "outputs")
-}
-
-func EnsureSessionDirs(sessionID, uid string) error {
+func EnsureSessionDirs(sessionID string) error {
 	for _, dir := range []string{
-		SandboxWorkDir(sessionID, uid),
-		SandboxUploadsDir(sessionID, uid),
-		SandboxOutputsDir(sessionID, uid),
+		SandboxWorkDir(sessionID),
+		SandboxUploadsDir(sessionID),
+		SandboxOutputsDir(sessionID),
 		SessionRunsDir(sessionID),
 		SessionRollbackDir(sessionID),
 		SessionCheckpointsDir(sessionID),

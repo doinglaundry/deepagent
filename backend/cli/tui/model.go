@@ -19,7 +19,6 @@ import (
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
 
 	"eino-cli/backend/config"
-	"eino-cli/backend/consts"
 	rt "eino-cli/backend/runtime"
 	runtimeRun "eino-cli/backend/runtime/run"
 	"eino-cli/backend/session/rollback"
@@ -40,6 +39,7 @@ type chatMessage struct {
 type Model struct {
 	rt        rt.Runtime
 	cfg       *config.Config
+	sessionID string
 	cwd       string
 	modelName string
 	runs      *runtimeRun.Manager
@@ -92,7 +92,7 @@ type Model struct {
 	prog              *tea.Program
 }
 
-func New(runtime rt.Runtime, cfgs ...*config.Config) (*Model, error) {
+func New(runtime rt.Runtime, sessionID string, cfgs ...*config.Config) (*Model, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
@@ -122,11 +122,12 @@ func New(runtime rt.Runtime, cfgs ...*config.Config) (*Model, error) {
 	return &Model{
 		rt:        runtime,
 		cfg:       cfg,
+		sessionID: sessionID,
 		cwd:       cwd,
 		modelName: runtime.Name(),
 		runs: runtimeRun.NewManagerWithStore(
-			runs.NewStore(config.SessionRunsDir(consts.DefaultSessionID)),
-			rollback.NewStore(config.RootDir(), consts.DefaultSessionID),
+			runs.NewStore(config.SessionRunsDir(sessionID)),
+			rollback.NewStore(config.RootDir(), sessionID),
 		),
 		input:             ti,
 		viewport:          vp,
