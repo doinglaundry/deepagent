@@ -15,12 +15,12 @@ func TestResolvePathPicksMostSpecific(t *testing.T) {
 		{VirtualPath: "/mnt/workspace", HostPath: filepath.Join(tmp, "root")},
 		{VirtualPath: "/mnt/workspace/deep", HostPath: filepath.Join(tmp, "root", "deep")},
 	}
-	r, err := resolvePath(mappings, "/mnt/workspace/deep/foo.txt")
+	resolvedPath, err := resolvePath(mappings, "/mnt/workspace/deep/foo.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(r.Path, filepath.Join("root", "deep", "foo.txt")) {
-		t.Fatalf("expected deeper mapping to win, got %s", r.Path)
+	if !strings.HasSuffix(resolvedPath.HostPath, filepath.Join("root", "deep", "foo.txt")) {
+		t.Fatalf("expected deeper mapping to win, got %s", resolvedPath.HostPath)
 	}
 }
 
