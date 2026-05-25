@@ -9,27 +9,27 @@ import (
 	"eino-cli/backend/sandboxpaths"
 )
 
-func TestResolvePathPicksMostSpecific(t *testing.T) {
+func TestGetHostPathPicksMostSpecific(t *testing.T) {
 	tmp := t.TempDir()
 	mappings := []sandboxpaths.MountMapping{
 		{VirtualPath: "/mnt/workspace", HostPath: filepath.Join(tmp, "root")},
 		{VirtualPath: "/mnt/workspace/deep", HostPath: filepath.Join(tmp, "root", "deep")},
 	}
-	resolvedPath, err := resolvePath(mappings, "/mnt/workspace/deep/foo.txt")
+	hostPath, err := getHostPath(mappings, "/mnt/workspace/deep/foo.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(resolvedPath.HostPath, filepath.Join("root", "deep", "foo.txt")) {
-		t.Fatalf("expected deeper mapping to win, got %s", resolvedPath.HostPath)
+	if !strings.HasSuffix(hostPath, filepath.Join("root", "deep", "foo.txt")) {
+		t.Fatalf("expected deeper mapping to win, got %s", hostPath)
 	}
 }
 
-func TestResolvePathRejectsEscape(t *testing.T) {
+func TestGetHostPathRejectsEscape(t *testing.T) {
 	tmp := t.TempDir()
 	mappings := []sandboxpaths.MountMapping{
 		{VirtualPath: "/mnt/workspace", HostPath: tmp},
 	}
-	_, err := resolvePath(mappings, "/mnt/workspace/../../etc/passwd")
+	_, err := getHostPath(mappings, "/mnt/workspace/../../etc/passwd")
 	if err == nil {
 		t.Fatal("expected escape error, got nil")
 	}

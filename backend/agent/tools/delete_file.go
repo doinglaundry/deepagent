@@ -40,11 +40,10 @@ func GetDeleteFileTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, er
 				if err != nil {
 					return "", err
 				}
-				resolved, err := sandboxpaths.ResolveHostPath(mappings, virtualPath)
+				hostPath, err := sandboxpaths.GetHostPath(mappings, virtualPath)
 				if err != nil {
 					return "", err
 				}
-				hostPath := resolved.HostPath
 				info, err := os.Lstat(hostPath)
 				if err != nil {
 					if os.IsNotExist(err) {

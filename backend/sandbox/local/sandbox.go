@@ -153,11 +153,11 @@ func runShell(process *exec.Cmd) (stdout, stderr string, exitCode int, startErr 
 
 // ReadFile reads text from a virtual path and masks host paths in the returned content.
 func (s *Sandbox) ReadFile(ctx context.Context, virtualPath string) (string, error) {
-	resolvedPath, err := resolvePath(s.mounts, virtualPath)
+	hostPath, err := getHostPath(s.mounts, virtualPath)
 	if err != nil {
 		return "", err
 	}
-	content, err := os.ReadFile(resolvedPath.HostPath)
+	content, err := os.ReadFile(hostPath)
 	if err != nil {
 		return "", wrapFileError(err, virtualPath, fileOperationRead)
 	}
@@ -166,46 +166,43 @@ func (s *Sandbox) ReadFile(ctx context.Context, virtualPath string) (string, err
 
 // WriteFile writes text to a virtual path after translating virtual paths in content.
 func (s *Sandbox) WriteFile(ctx context.Context, virtualPath, content string, appendMode bool) error {
-	resolvedPath, err := s.prepareWritableHostPath(virtualPath, fileOperationWrite)
+	hostPath, err := s.prepareWritableHostPath(virtualPath, fileOperationWrite)
 	if err != nil {
 		return err
 	}
 	contentWithHostPaths := replaceVirtualPathsWithHostPaths(s.mounts, content, fileContentText)
-	if err := writeTextFile(resolvedPath.HostPath, contentWithHostPaths, appendMode); err != nil {
+	if err := writeTextFile(hostPath, contentWithHostPaths, appendMode); err != nil {
 		return wrapFileError(err, virtualPath, fileOperationWrite)
 	}
 
-	s.recordWrittenHostPath(resolvedPath.HostPath)
+	s.recordWrittenHostPath(hostPath)
 	return nil
 }
 
 // UpdateFile overwrites binary content without text path translation or masking bookkeeping.
 func (s *Sandbox) UpdateFile(ctx context.Context, virtualPath string, content []byte) error {
-	resolvedPath, err := s.prepareWritableHostPath(virtualPath, fileOperationUpdate)
+	hostPath, err := s.prepareWritableHostPath(virtualPath, fileOperationUpdate)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(resolvedPath.HostPath, content, 0o644); err != nil {
+	if err := os.WriteFile(hostPath, content, 0o644); err != nil {
 		return wrapFileError(err, virtualPath, fileOperationUpdate)
 	}
 	return nil
 }
 
-func (s *Sandbox) prepareWritableHostPath(virtualPath, operation string) (resolvedHostPath, error) {
-	resolvedPath, err := resolvePath(s.mounts, virtualPath)
+func (s *Sandbox) prepareWritableHostPath(virtualPath, operation string) (string, error) {
+	hostPath, err := getHostPath(s.mounts, virtualPath)
 	if err != nil {
-		return resolvedHostPath{}, err
+		return "", err
 	}
-	if resolvedPath.Mapping != nil && resolvedPath.Mapping.ReadOnly {
-		return resolvedHostPath{}, sandbox.NewPermissionError("read-only file system", virtualPath)
+	if isReadOnlyPath(s.mounts, hostPath) {
+		return "", sandbox.NewPermissionError("read-only file system", virtualPath)
 	}
-	if isReadOnlyPath(s.mounts, resolvedPath.HostPath) {
-		return resolvedHostPath{}, sandbox.NewPermissionError("read-only file system", virtualPath)
+	if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil {
+		return "", wrapFileError(err, virtualPath, operation)
 	}
-	if err := os.MkdirAll(filepath.Dir(resolvedPath.HostPath), 0o755); err != nil {
-		return resolvedHostPath{}, wrapFileError(err, virtualPath, operation)
-	}
-	return resolvedPath, nil
+	return hostPath, nil
 }
 
 // ListDir returns virtual entries under a virtual path up to maxDepth.
@@ -213,11 +210,11 @@ func (s *Sandbox) ListDir(ctx context.Context, virtualPath string, maxDepth int)
 	if maxDepth <= 0 {
 		maxDepth = defaultListDepth
 	}
-	resolvedPath, err := resolvePath(s.mounts, virtualPath)
+	hostPath, err := getHostPath(s.mounts, virtualPath)
 	if err != nil {
 		return nil, err
 	}
-	hostEntries, err := listDir(resolvedPath.HostPath, maxDepth)
+	hostEntries, err := listDir(hostPath, maxDepth)
 	if err != nil {
 		return nil, wrapFileError(err, virtualPath, fileOperationList)
 	}
@@ -243,11 +240,11 @@ func (s *Sandbox) reverseListEntry(hostEntry string) string {
 
 // Glob returns virtual paths matching pattern under virtualPath.
 func (s *Sandbox) Glob(ctx context.Context, virtualPath, pattern string, opts sandbox.GlobOpts) ([]string, bool, error) {
-	resolvedPath, err := resolvePath(s.mounts, virtualPath)
+	hostPath, err := getHostPath(s.mounts, virtualPath)
 	if err != nil {
 		return nil, false, err
 	}
-	hostMatches, truncated, err := search.FindGlobMatches(resolvedPath.HostPath, pattern, search.GlobOpts{
+	hostMatches, truncated, err := search.FindGlobMatches(hostPath, pattern, search.GlobOpts{
 		IncludeDirs: opts.IncludeDirs,
 		MaxResults:  opts.MaxResults,
 	})
@@ -259,11 +256,11 @@ func (s *Sandbox) Glob(ctx context.Context, virtualPath, pattern string, opts sa
 
 // Grep returns virtual path matches for pattern under virtualPath.
 func (s *Sandbox) Grep(ctx context.Context, virtualPath, pattern string, opts sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
-	resolvedPath, err := resolvePath(s.mounts, virtualPath)
+	hostPath, err := getHostPath(s.mounts, virtualPath)
 	if err != nil {
 		return nil, false, err
 	}
-	hostMatches, truncated, err := search.FindGrepMatches(resolvedPath.HostPath, pattern, search.GrepOpts{
+	hostMatches, truncated, err := search.FindGrepMatches(hostPath, pattern, search.GrepOpts{
 		Glob:          opts.Glob,
 		Literal:       opts.Literal,
 		CaseSensitive: opts.CaseSensitive,

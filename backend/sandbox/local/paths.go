@@ -10,11 +10,6 @@ import (
 	"eino-cli/backend/sandboxpaths"
 )
 
-type resolvedHostPath struct {
-	HostPath string
-	Mapping  *sandboxpaths.MountMapping
-}
-
 type virtualPathTextKind int
 
 const (
@@ -22,15 +17,15 @@ const (
 	fileContentText
 )
 
-func resolvePath(mappings []sandboxpaths.MountMapping, virtualPath string) (resolvedHostPath, error) {
-	resolvedPath, err := sandboxpaths.ResolveHostPath(mappings, virtualPath)
+func getHostPath(mappings []sandboxpaths.MountMapping, virtualPath string) (string, error) {
+	hostPath, err := sandboxpaths.GetHostPath(mappings, virtualPath)
 	if err != nil {
 		if strings.Contains(err.Error(), "path escapes mount root") {
-			return resolvedHostPath{}, sandbox.NewPermissionError("path escapes mount root", virtualPath)
+			return "", sandbox.NewPermissionError("path escapes mount root", virtualPath)
 		}
-		return resolvedHostPath{}, err
+		return "", err
 	}
-	return resolvedHostPath{HostPath: resolvedPath.HostPath, Mapping: resolvedPath.Mapping}, nil
+	return hostPath, nil
 }
 
 func replaceVirtualPathsWithHostPaths(mappings []sandboxpaths.MountMapping, text string, textKind virtualPathTextKind) string {
@@ -68,11 +63,10 @@ func replaceVirtualPathsWithHostPaths(mappings []sandboxpaths.MountMapping, text
 					return mapping.HostPath
 				}
 				if rest[0] == '/' {
-					resolvedPath, err := resolvePath(mappings, match)
+					hostPath, err := getHostPath(mappings, match)
 					if err != nil {
 						return match
 					}
-					hostPath := resolvedPath.HostPath
 					if useForwardSlashes {
 						hostPath = filepath.ToSlash(hostPath)
 					}

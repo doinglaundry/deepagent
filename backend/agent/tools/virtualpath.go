@@ -98,9 +98,9 @@ func resolveHostSearchRoot(ctx context.Context, manager sandbox.SandboxManager, 
 	if err != nil {
 		return "", err
 	}
-	resolved, err := sandboxpaths.ResolveHostPath(mappings, virtualPath)
+	hostPath, err := sandboxpaths.GetHostPath(mappings, virtualPath)
 	if err != nil {
 		return "", err
 	}
-	return resolved.HostPath, nil
+	return hostPath, nil
 }
