@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 
 	"eino-cli/backend/sandbox"
+	"eino-cli/backend/sandboxpaths"
 )
 
 const autoDreamShellDenied = "auto-dream shell only allows read-only commands: ls, pwd, rg, grep"
@@ -36,7 +37,15 @@ func GetAutoDreamShellTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool
 				return autoDreamShellDenied, nil
 			}
 			if sb := getSandbox(ctx, sandboxManager); sb != nil {
-				return sb.ExecuteCommand(ctx, in.Command)
+				mappings, err := sandboxpaths.BuildMountMappings(sb.SessionID())
+				if err != nil {
+					return "", err
+				}
+				command, err := buildSandboxCommand(in.Command, in.WorkingDir, mappings)
+				if err != nil {
+					return "", err
+				}
+				return sb.ExecuteCommand(ctx, command)
 			}
 			return runShell(resolveRoot(), in)
 		})

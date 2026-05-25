@@ -63,6 +63,22 @@ func resolveToolPath(toolPath string, readOnly bool) (virtualPath string, err er
 	return virtualPath, nil
 }
 
+func buildSandboxCommand(command, workingDir string, mappings []sandboxpaths.MountMapping) (string, error) {
+	virtualWorkingDir, err := resolveToolSearchPath(workingDir, true)
+	if err != nil {
+		return "", err
+	}
+	virtualCommand := sandbox.MaskHostPathsInOutput(mappings, command)
+	return "cd " + shellQuote(virtualWorkingDir) + " && " + virtualCommand, nil
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 func resolveHostSearchRoot(ctx context.Context, manager sandbox.SandboxManager, toolPath string, readOnly bool) (string, error) {
 	if !hasSandboxManager(manager) {
 		if strings.TrimSpace(toolPath) == "" {

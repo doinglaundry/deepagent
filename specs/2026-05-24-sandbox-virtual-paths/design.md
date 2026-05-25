@@ -254,13 +254,16 @@ if hasSandboxManager(sandboxManager) {
 
 ```go
 if allowsIsolatedExec(sandboxManager) {
-	return sandbox.ExecuteCommand(ctx, in.Command) // 出口已 mask
+	command := buildSandboxCommand(in.Command, in.WorkingDir) // default cwd: /mnt/repo
+	return sandbox.ExecuteCommand(ctx, command)               // 出口已 mask
 }
 if hasSandboxManager(sandboxManager) && !cfg.Sandbox.AllowHostBash {
 	return "", fmt.Errorf("%s", consts.HostBashDisabledMessage)
 }
 return runShell(resolveRoot(), in)
 ```
+
+**`execute.go` / `auto_dream.go`** — sandbox 分支同样经 `buildSandboxCommand(command, "")`，避免 aio shell 默认 cwd 不在 `/mnt/repo` 时 `git` / 相对路径失败。
 
 **`prompt.go`** — 注入 `workingDirectoryBlock`；技能路径改 `buildSkillVirtualPath`；示例中的 `read_file("workspace/...")` 改为 `/mnt/repo/...` 或相对路径（由 `buildAbsoluteVirtualPath` 挂 repo）。
 
