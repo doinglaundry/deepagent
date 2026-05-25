@@ -14,6 +14,7 @@ import (
 	"eino-cli/backend/consts"
 	runtimecontext "eino-cli/backend/runtime/context"
 	"eino-cli/backend/sandbox"
+	"eino-cli/backend/sandboxpaths"
 )
 
 // invoke is a small helper: every tool here is built via utils.InferTool
@@ -580,6 +581,24 @@ func TestSemanticSearch(t *testing.T) {
 	got := invoke(t, bt, `{"query":"where is tool call built"}`)
 	if !strings.Contains(got, "tool.go:1") {
 		t.Fatalf("semantic_search: %q", got)
+	}
+}
+
+func TestSemanticSearchMasksSandboxHostPaths(t *testing.T) {
+	root := t.TempDir()
+	setToolRoot(t, root)
+	if err := os.WriteFile(filepath.Join(root, "tool.go"), []byte("func buildToolCall() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bt, _ := GetSemanticSearchTool(fakeSandboxManager{})
+	ctx := runtimecontext.WithSessionID(context.Background(), "session-a")
+
+	got := invokeWithContext(t, ctx, bt, `{"query":"where is tool call built"}`)
+	if !strings.Contains(got, sandboxpaths.VirtualPathPrefixRepo+"/tool.go:1") {
+		t.Fatalf("semantic_search should show virtual path: %q", got)
+	}
+	if strings.Contains(got, root) {
+		t.Fatalf("semantic_search leaked host path: %q", got)
 	}
 }
 

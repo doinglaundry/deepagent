@@ -35,7 +35,7 @@ type rgArgs struct {
 func GetRgTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool("rg", rgToolDesc,
 		func(ctx context.Context, in rgArgs) (string, error) {
-			root, err := resolveHostSearchRoot(ctx, sandboxManager, in.Path, true)
+			root, err := getHostSearchRoot(ctx, sandboxManager, in.Path, true)
 			if err != nil {
 				return "", err
 			}
@@ -43,11 +43,11 @@ func GetRgTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 		})
 }
 
-func runRipgrep(ctx context.Context, root string, in rgArgs) (string, error) {
+func runRipgrep(ctx context.Context, root hostSearchRoot, in rgArgs) (string, error) {
 	if strings.TrimSpace(in.Pattern) == "" {
 		return "", fmt.Errorf("pattern must not be empty")
 	}
-	searchPath := root
+	searchPath := root.HostPath
 	args := []string{"--color", "never"}
 	switch in.OutputMode {
 	case "", "content":
@@ -101,10 +101,11 @@ func runRipgrep(ctx context.Context, root string, in rgArgs) (string, error) {
 	if output == "" {
 		return consts.NoMatchesFound, nil
 	}
+	output = sandbox.MaskHostPathsInOutput(root.Mappings, output)
 	return paginateOutput(output, in.Offset, in.HeadLimit), nil
 }
 
-func runLocalRipgrepFallback(root string, in rgArgs) (string, error) {
+func runLocalRipgrepFallback(root hostSearchRoot, in rgArgs) (string, error) {
 	grepIn := grepArgs{
 		Pattern:         in.Pattern,
 		OutputMode:      in.OutputMode,
@@ -115,7 +116,7 @@ func runLocalRipgrepFallback(root string, in rgArgs) (string, error) {
 	if in.Path != "" {
 		grepIn.Path = &in.Path
 	}
-	matches, err := runGrep(root, grepIn)
+	matches, err := runGrep(root.HostPath, grepIn)
 	if err != nil {
 		return "", err
 	}

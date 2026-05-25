@@ -33,7 +33,7 @@ type semanticMatch struct {
 func GetSemanticSearchTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool("semantic_search", semanticSearchToolDesc,
 		func(ctx context.Context, in semanticSearchArgs) (string, error) {
-			root, err := resolveHostSearchRoot(ctx, sandboxManager, in.Path, true)
+			root, err := getHostSearchRoot(ctx, sandboxManager, in.Path, true)
 			if err != nil {
 				return "", err
 			}
@@ -41,12 +41,12 @@ func GetSemanticSearchTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool
 		})
 }
 
-func semanticSearch(root string, in semanticSearchArgs) (string, error) {
+func semanticSearch(root hostSearchRoot, in semanticSearchArgs) (string, error) {
 	terms := getSemanticTerms(in.Query)
 	if len(terms) == 0 {
 		return "", fmt.Errorf("query must include searchable terms")
 	}
-	searchPath := root
+	searchPath := root.HostPath
 	var matches []semanticMatch
 	walkErr := filepath.WalkDir(searchPath, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
@@ -86,7 +86,8 @@ func semanticSearch(root string, in semanticSearchArgs) (string, error) {
 	}
 	lines := make([]string, len(matches))
 	for i, match := range matches {
-		lines[i] = fmt.Sprintf("%s:%d: %s", match.path, match.line, match.text)
+		path := sandbox.MaskHostPathsInOutput(root.Mappings, match.path)
+		lines[i] = fmt.Sprintf("%s:%d: %s", path, match.line, match.text)
 	}
 	return strings.Join(lines, "\n"), nil
 }

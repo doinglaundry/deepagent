@@ -11,6 +11,11 @@ import (
 	"eino-cli/backend/sandboxpaths"
 )
 
+type hostSearchRoot struct {
+	HostPath string
+	Mappings []sandboxpaths.MountMapping
+}
+
 func buildAbsoluteVirtualPath(toolPath string) (string, error) {
 	if strings.HasPrefix(toolPath, "/") {
 		return toolPath, nil
@@ -80,15 +85,24 @@ func shellQuote(s string) string {
 }
 
 func resolveHostSearchRoot(ctx context.Context, manager sandbox.SandboxManager, toolPath string, readOnly bool) (string, error) {
+	hostRoot, err := getHostSearchRoot(ctx, manager, toolPath, readOnly)
+	if err != nil {
+		return "", err
+	}
+	return hostRoot.HostPath, nil
+}
+
+func getHostSearchRoot(ctx context.Context, manager sandbox.SandboxManager, toolPath string, readOnly bool) (hostSearchRoot, error) {
 	if !hasSandboxManager(manager) {
 		if strings.TrimSpace(toolPath) == "" {
-			return resolveRoot(), nil
+			return hostSearchRoot{HostPath: resolveRoot()}, nil
 		}
-		return getResolvedPath(toolPath)
+		hostPath, err := getResolvedPath(toolPath)
+		return hostSearchRoot{HostPath: hostPath}, err
 	}
 	virtualPath, err := resolveToolSearchPath(toolPath, readOnly)
 	if err != nil {
-		return "", err
+		return hostSearchRoot{}, err
 	}
 	sessionID := runtimecontext.GetSessionID(ctx)
 	if sessionID == "" {
@@ -96,11 +110,11 @@ func resolveHostSearchRoot(ctx context.Context, manager sandbox.SandboxManager, 
 	}
 	mappings, err := sandboxpaths.BuildMountMappings(sessionID)
 	if err != nil {
-		return "", err
+		return hostSearchRoot{}, err
 	}
 	hostPath, err := sandboxpaths.GetHostPath(mappings, virtualPath)
 	if err != nil {
-		return "", err
+		return hostSearchRoot{}, err
 	}
-	return hostPath, nil
+	return hostSearchRoot{HostPath: hostPath, Mappings: mappings}, nil
 }
