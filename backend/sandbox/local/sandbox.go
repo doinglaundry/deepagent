@@ -16,6 +16,7 @@ import (
 
 	"eino-cli/backend/sandbox"
 	"eino-cli/backend/sandbox/search"
+	"eino-cli/backend/sandboxpaths"
 )
 
 const commandTimeout = 10 * time.Minute
@@ -23,33 +24,18 @@ const commandTimeout = 10 * time.Minute
 type Sandbox struct {
 	sandboxID string
 	sessionID string
-	mappings  []*PathMapping
+	mounts    []sandboxpaths.MountMapping
 	writtenMu sync.RWMutex
 	written   map[string]any
 }
 
-func newSandbox(sessionID, sandboxID string, mappings []*PathMapping) *Sandbox {
-	sb := &Sandbox{
+func newSandbox(sessionID, sandboxID string, mounts []sandboxpaths.MountMapping) *Sandbox {
+	return &Sandbox{
 		sandboxID: sandboxID,
 		sessionID: sessionID,
+		mounts:    append([]sandboxpaths.MountMapping(nil), mounts...),
 		written:   map[string]any{},
 	}
-	sb.mappings = append(sb.mappings, mappings...)
-	return sb
-}
-
-func (s *Sandbox) flatMappings() []PathMapping {
-	out := make([]PathMapping, 0, len(s.mappings))
-	for _, m := range s.mappings {
-		if m != nil {
-			out = append(out, *m)
-		}
-	}
-	return out
-}
-
-func (s *Sandbox) AppendPathMappings(pathMappings []*PathMapping) {
-	s.mappings = append(s.mappings, pathMappings...)
 }
 
 func (s *Sandbox) ID() string { return s.sandboxID }
@@ -57,7 +43,7 @@ func (s *Sandbox) ID() string { return s.sandboxID }
 func (s *Sandbox) SessionID() string { return s.sessionID }
 
 func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error) {
-	resolved := resolvePathsInCommand(s.flatMappings(), cmd)
+	resolved := resolvePathsInCommand(s.mounts, cmd)
 	shell, err := pickShell()
 	if err != nil {
 		return "", sandbox.NewRuntimeError(err.Error())
@@ -73,7 +59,7 @@ func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error
 	}
 	stdout, stderr, exitCode, runErr := runShell(c)
 
-	out := reverseResolvePathsInOutput(s.flatMappings(), formatCommandOutput(stdout, stderr, exitCode))
+	out := sandbox.MaskHostPathsInOutput(s.mounts, formatCommandOutput(stdout, stderr, exitCode))
 	if runErr != nil && exitCode == 0 {
 		return out, sandbox.NewCommandError(runErr.Error(), cmd, exitCode)
 	}
@@ -154,7 +140,7 @@ func runShell(c *exec.Cmd) (stdout, stderr string, exitCode int, runErr error) {
 
 // ReadFile reads the host file; agent-written files get path masking on the way out.
 func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
-	r, err := resolvePath(s.flatMappings(), path)
+	r, err := resolvePath(s.mounts, path)
 	if err != nil {
 		return "", err
 	}
@@ -162,14 +148,7 @@ func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 	if err != nil {
 		return "", wrapFileError(err, path, "read")
 	}
-	content := string(data)
-	s.writtenMu.RLock()
-	_, agentWritten := s.written[r.Path]
-	s.writtenMu.RUnlock()
-	if agentWritten {
-		content = reverseResolvePathsInOutput(s.flatMappings(), content)
-	}
-	return content, nil
+	return sandbox.MaskHostPathsInOutput(s.mounts, string(data)), nil
 }
 
 // WriteFile creates/overwrites/appends; read-only mounts surface as PermissionError.
@@ -189,7 +168,7 @@ func (s *Sandbox) WriteFile(ctx context.Context, path, content string, appendMod
 		return wrapFileError(err, path, "write")
 	}
 	defer f.Close()
-	if _, err := f.WriteString(resolvePathsInContent(s.flatMappings(), content)); err != nil {
+	if _, err := f.WriteString(resolvePathsInContent(s.mounts, content)); err != nil {
 		return wrapFileError(err, path, "write")
 	}
 
@@ -212,11 +191,11 @@ func (s *Sandbox) UpdateFile(ctx context.Context, path string, content []byte) e
 }
 
 func (s *Sandbox) prepareWritePath(path, op string) (resolved, error) {
-	r, err := resolvePath(s.flatMappings(), path)
+	r, err := resolvePath(s.mounts, path)
 	if err != nil {
 		return resolved{}, err
 	}
-	if r.Mapping != nil && r.Mapping.ReadOnly || isReadOnlyPath(s.flatMappings(), r.Path) {
+	if r.Mapping != nil && r.Mapping.ReadOnly || isReadOnlyPath(s.mounts, r.Path) {
 		return resolved{}, sandbox.NewPermissionError("read-only file system", path)
 	}
 	if err := os.MkdirAll(filepath.Dir(r.Path), 0o755); err != nil {
@@ -230,7 +209,7 @@ func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]str
 	if maxDepth <= 0 {
 		maxDepth = 2
 	}
-	r, err := resolvePath(s.flatMappings(), path)
+	r, err := resolvePath(s.mounts, path)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +225,7 @@ func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]str
 
 func (s *Sandbox) reverseListEntry(entry string) string {
 	isDir := strings.HasSuffix(entry, "/") || strings.HasSuffix(entry, `\`)
-	reversed := reverseResolvePath(s.flatMappings(), strings.TrimRight(entry, `/\`))
+	reversed := sandbox.ReverseResolvePath(s.mounts, strings.TrimRight(entry, `/\`))
 	if isDir && !strings.HasSuffix(reversed, "/") {
 		return reversed + "/"
 	}
@@ -255,7 +234,7 @@ func (s *Sandbox) reverseListEntry(entry string) string {
 
 // Glob walks path matching pattern via search.FindGlobMatches.
 func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.GlobOpts) ([]string, bool, error) {
-	r, err := resolvePath(s.flatMappings(), path)
+	r, err := resolvePath(s.mounts, path)
 	if err != nil {
 		return nil, false, err
 	}
@@ -268,14 +247,14 @@ func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.G
 	}
 	out := make([]string, len(matches))
 	for i, m := range matches {
-		out[i] = reverseResolvePath(s.flatMappings(), m)
+		out[i] = sandbox.ReverseResolvePath(s.mounts, m)
 	}
 	return out, truncated, nil
 }
 
 // Grep walks path matching pattern via search.FindGrepMatches.
 func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
-	r, err := resolvePath(s.flatMappings(), path)
+	r, err := resolvePath(s.mounts, path)
 	if err != nil {
 		return nil, false, err
 	}
@@ -291,9 +270,9 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.G
 	out := make([]sandbox.GrepMatch, len(matches))
 	for i, m := range matches {
 		out[i] = sandbox.GrepMatch{
-			Path:       reverseResolvePath(s.flatMappings(), m.Path),
+			Path:       sandbox.ReverseResolvePath(s.mounts, m.Path),
 			LineNumber: m.LineNumber,
-			Line:       m.Line,
+			Line:       sandbox.MaskHostPathsInOutput(s.mounts, m.Line),
 		}
 	}
 	return out, truncated, nil

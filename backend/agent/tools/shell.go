@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 
+	"eino-cli/backend/config"
 	"eino-cli/backend/sandbox"
 )
 
@@ -24,7 +25,7 @@ type shellArgs struct {
 	Description string `json:"description,omitempty" jsonschema:"description=Short human-readable command description"`
 }
 
-func GetShellTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
+func GetShellTool(sandboxManager sandbox.SandboxManager, cfg *config.Config) (tool.BaseTool, error) {
 	return utils.InferTool("shell", shellToolDesc,
 		func(ctx context.Context, in shellArgs) (string, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
@@ -40,6 +41,9 @@ func GetShellTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) 
 			}
 			if msg, denied := denyOnRollbackProtected(ctx); denied {
 				return msg, nil
+			}
+			if hasSandboxManager(sandboxManager) && !sandbox.IsHostBashAllowed(cfg) {
+				return sandbox.HostBashDisabledMessage, nil
 			}
 			return runShell(resolveRoot(), in)
 		})

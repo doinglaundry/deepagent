@@ -26,17 +26,24 @@ type globArgs struct {
 func GetGlobTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGlob, filesystem.GlobToolDesc,
 		func(ctx context.Context, in globArgs) (string, error) {
-			if shouldUseSandbox(in.Path) {
-				if sb := getSandbox(ctx, sandboxManager); sb != nil {
-					matches, _, err := sb.Glob(ctx, in.Path, normalizeGlobPattern(in.Pattern), sandbox.GlobOpts{})
-					if err == nil {
-						if len(matches) == 0 {
-							return consts.NoFilesFound, nil
-						}
-						sort.Strings(matches)
-						return strings.Join(matches, "\n"), nil
-					}
+			if hasSandboxManager(sandboxManager) {
+				virtualPath, err := resolveToolSearchPath(in.Path, true)
+				if err != nil {
+					return "", err
 				}
+				sb, err := getRequiredSandbox(ctx, sandboxManager)
+				if err != nil {
+					return "", err
+				}
+				matches, _, err := sb.Glob(ctx, virtualPath, normalizeGlobPattern(in.Pattern), sandbox.GlobOpts{})
+				if err != nil {
+					return "", err
+				}
+				if len(matches) == 0 {
+					return consts.NoFilesFound, nil
+				}
+				sort.Strings(matches)
+				return strings.Join(matches, "\n"), nil
 			}
 			searchBase := resolveRoot()
 			if in.Path != "" {

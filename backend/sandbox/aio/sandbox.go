@@ -15,6 +15,7 @@ import (
 
 	"eino-cli/backend/sandbox"
 	"eino-cli/backend/sandbox/search"
+	"eino-cli/backend/sandboxpaths"
 )
 
 // Sandbox is the per-container HTTP client implementing sandbox.Sandbox.
@@ -23,6 +24,7 @@ type Sandbox struct {
 	sessionID string
 	baseURL   string
 	http      *http.Client
+	mounts    []sandboxpaths.MountMapping
 
 	// shellMu serialises exec: the agent-sandbox image keeps one persistent
 	// shell session whose state can corrupt under concurrent invocation.
@@ -34,13 +36,18 @@ const (
 	execTimeoutSeconds = 600
 )
 
-func newSandbox(id, sessionID, baseURL string) *Sandbox {
+func newSandbox(id, sessionID, baseURL string, mounts []sandboxpaths.MountMapping) *Sandbox {
 	return &Sandbox{
 		id:        id,
 		sessionID: sessionID,
 		baseURL:   strings.TrimRight(baseURL, "/"),
 		http:      &http.Client{Timeout: defaultHTTPTimeout},
+		mounts:    append([]sandboxpaths.MountMapping(nil), mounts...),
 	}
+}
+
+func (s *Sandbox) maskOutput(output string) string {
+	return sandbox.MaskHostPathsInOutput(s.mounts, output)
 }
 
 func (s *Sandbox) ID() string { return s.id }
@@ -81,7 +88,7 @@ func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error
 	if data.ExitCode != nil && *data.ExitCode != 0 {
 		out = fmt.Sprintf("%s\nExit Code: %d", out, *data.ExitCode)
 	}
-	return out, nil
+	return s.maskOutput(out), nil
 }
 
 // ReadFile reads the full file at path via POST /v1/file/read.
@@ -93,7 +100,7 @@ func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 	if err := s.post(ctx, "/v1/file/read", map[string]any{"file": path}, &data); err != nil {
 		return "", sandbox.NewFileError(err.Error(), path, "read")
 	}
-	return data.Content, nil
+	return s.maskOutput(data.Content), nil
 }
 
 // WriteFile writes content via POST /v1/file/write; appendMode uses native append:true.
@@ -147,7 +154,7 @@ func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]str
 		if f.IsDirectory && !strings.HasSuffix(entry, "/") {
 			entry += "/"
 		}
-		out = append(out, entry)
+		out = append(out, sandbox.ReverseResolvePath(s.mounts, entry))
 	}
 	return out, nil
 }
@@ -180,6 +187,9 @@ func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.G
 		if truncated {
 			filtered = filtered[:maxResults]
 		}
+		for i := range filtered {
+			filtered[i] = sandbox.ReverseResolvePath(s.mounts, filtered[i])
+		}
 		return filtered, truncated, nil
 	}
 
@@ -205,7 +215,7 @@ func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.G
 		}
 		rel := strings.TrimPrefix(strings.TrimPrefix(e.Path, root), "/")
 		if search.PathMatches(pattern, rel) {
-			matches = append(matches, e.Path)
+			matches = append(matches, sandbox.ReverseResolvePath(s.mounts, e.Path))
 			if len(matches) >= maxResults {
 				return matches, true, nil
 			}
@@ -267,9 +277,9 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.G
 		count := min(len(data.LineNumbers), len(data.Matches))
 		for i := range count {
 			matches = append(matches, sandbox.GrepMatch{
-				Path:       file,
+				Path:       sandbox.ReverseResolvePath(s.mounts, file),
 				LineNumber: data.LineNumbers[i],
-				Line:       truncateLine(data.Matches[i], 200),
+				Line:       s.maskOutput(truncateLine(data.Matches[i], 200)),
 			})
 			if len(matches) >= maxResults {
 				return matches, true, nil

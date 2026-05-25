@@ -21,7 +21,6 @@ type readFileArgs struct {
 
 func GetReadFileTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameReadFile, filesystem.ReadFileToolDesc,
-		// 工具执行函数，处理实际的文件读取逻辑
 		func(ctx context.Context, in readFileArgs) (string, error) {
 			if in.Offset <= 0 {
 				in.Offset = 1
@@ -30,13 +29,20 @@ func GetReadFileTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, erro
 				in.Limit = 2000
 			}
 
-			if shouldUseSandbox(in.FilePath) {
-				if sb := getSandbox(ctx, sandboxManager); sb != nil {
-					content, err := sb.ReadFile(ctx, in.FilePath)
-					if err == nil {
-						return paginateLines(content, in.Offset, in.Limit), nil
-					}
+			if hasSandboxManager(sandboxManager) {
+				virtualPath, err := resolveToolPath(in.FilePath, true)
+				if err != nil {
+					return "", err
 				}
+				sb, err := getRequiredSandbox(ctx, sandboxManager)
+				if err != nil {
+					return "", err
+				}
+				content, err := sb.ReadFile(ctx, virtualPath)
+				if err != nil {
+					return "", err
+				}
+				return paginateLines(content, in.Offset, in.Limit), nil
 			}
 
 			path, err := getResolvedPath(in.FilePath)
@@ -44,11 +50,9 @@ func GetReadFileTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, erro
 				return "", fmt.Errorf("路径解析失败: %w", err)
 			}
 
-			// 3. 文件存在性和类型检查
 			info, err := os.Stat(path)
 			if err != nil {
 				if os.IsNotExist(err) {
-					// 文件不存在时返回友好提示而非错误，便于工具链处理
 					return fmt.Sprintf("File not found: %s", path), nil
 				}
 				return "", fmt.Errorf("获取文件信息失败: %w", err)
@@ -57,11 +61,9 @@ func GetReadFileTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, erro
 				return "", fmt.Errorf("path is a directory: %s", path)
 			}
 
-			// 4. 读取文件内容
 			data, err := os.ReadFile(path)
 			if err != nil {
 				if os.IsNotExist(err) {
-					// 再次检查文件不存在情况（竞态条件保护）
 					return fmt.Sprintf("File not found: %s", path), nil
 				}
 				return "", fmt.Errorf("读取文件失败: %w", err)

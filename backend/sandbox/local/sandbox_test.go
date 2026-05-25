@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"eino-cli/backend/sandbox"
+	"eino-cli/backend/sandboxpaths"
 )
 
 func TestSandboxWriteReadRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
-	mappings := []PathMapping{{ContainerPath: "/mnt/workspace", LocalPath: tmp}}
-	sb := newSandbox("test", "local:test", ptrMappings(mappings))
+	mappings := []sandboxpaths.MountMapping{{VirtualPath: "/mnt/workspace", HostPath: tmp}}
+	sb := newSandbox("test", "local:test", mappings)
 	ctx := context.Background()
 	if err := sb.WriteFile(ctx, "/mnt/workspace/note.txt", "hello", false); err != nil {
 		t.Fatal(err)
@@ -34,8 +35,8 @@ func TestSandboxWriteReadRoundTrip(t *testing.T) {
 
 func TestSandboxReadOnlyMountBlocksWrite(t *testing.T) {
 	tmp := t.TempDir()
-	mappings := []PathMapping{{ContainerPath: "/mnt/skills", LocalPath: tmp, ReadOnly: true}}
-	sb := newSandbox("test", "local:test", ptrMappings(mappings))
+	mappings := []sandboxpaths.MountMapping{{VirtualPath: "/mnt/skills", HostPath: tmp, ReadOnly: true}}
+	sb := newSandbox("test", "local:test", mappings)
 	err := sb.WriteFile(context.Background(), "/mnt/skills/hack.txt", "x", false)
 	if err == nil {
 		t.Fatal("expected permission error")
@@ -54,8 +55,8 @@ func TestSandboxListDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "b.log"), []byte("2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mappings := []PathMapping{{ContainerPath: "/mnt/workspace", LocalPath: tmp}}
-	sb := newSandbox("test", "local:test", ptrMappings(mappings))
+	mappings := []sandboxpaths.MountMapping{{VirtualPath: "/mnt/workspace", HostPath: tmp}}
+	sb := newSandbox("test", "local:test", mappings)
 	entries, err := sb.ListDir(context.Background(), "/mnt/workspace", 2)
 	if err != nil {
 		t.Fatal(err)
@@ -133,11 +134,18 @@ func TestManagerGetDoesNotDeadlock(t *testing.T) {
 	}
 }
 
-func ptrMappings(in []PathMapping) []*PathMapping {
-	out := make([]*PathMapping, len(in))
-	for i := range in {
-		m := in[i]
-		out[i] = &m
+func TestBuildPathMappingsIncludesRepo(t *testing.T) {
+	mounts, err := sandboxpaths.BuildMountMappings("test-session")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return out
+	found := false
+	for _, m := range mounts {
+		if m.VirtualPath == sandboxpaths.VirtualPathPrefixRepo {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected VirtualPathPrefixRepo mapping")
+	}
 }

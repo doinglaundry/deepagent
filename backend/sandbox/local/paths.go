@@ -7,141 +7,44 @@ import (
 	"strings"
 
 	"eino-cli/backend/sandbox"
+	"eino-cli/backend/sandboxpaths"
 )
 
-// PathMapping binds a container path prefix to a host directory.
-type PathMapping struct {
-	ContainerPath string
-	LocalPath     string
-	ReadOnly      bool
-}
-
-// resolved records the rewrite result plus which mapping fired (nil for passthrough).
 type resolved struct {
 	Path    string
-	Mapping *PathMapping
+	Mapping *sandboxpaths.MountMapping
 }
 
-// findPathMapping returns the longest-prefix mapping for path; nil on no match.
-func findPathMapping(mappings []PathMapping, path string) (*PathMapping, string) {
-	var best *PathMapping
-	bestRel := ""
-	bestLen := -1
-	for i := range mappings {
-		rel, ok := containerRel(mappings[i].ContainerPath, path)
-		if n := len(strings.TrimRight(mappings[i].ContainerPath, "/")); ok && n > bestLen {
-			best, bestRel, bestLen = &mappings[i], rel, n
-		}
-	}
-	return best, bestRel
-}
-
-func containerRel(container, path string) (string, bool) {
-	container = strings.TrimRight(container, "/")
-	if container == "" {
-		return strings.TrimPrefix(path, "/"), strings.HasPrefix(path, "/")
-	}
-	if path == container {
-		return "", true
-	}
-	if strings.HasPrefix(path, container+"/") {
-		return strings.TrimPrefix(path[len(container):], "/"), true
-	}
-	return "", false
-}
-
-// resolvePath maps a container path to its host path; rejects `..` escapes.
-func resolvePath(mappings []PathMapping, path string) (resolved, error) {
-	m, rel := findPathMapping(mappings, path)
-	if m == nil {
-		return resolved{Path: path}, nil
-	}
-	localRoot, err := filepath.Abs(m.LocalPath)
+func resolvePath(mappings []sandboxpaths.MountMapping, path string) (resolved, error) {
+	r, err := sandboxpaths.ResolveHostPath(mappings, path)
 	if err != nil {
+		if strings.Contains(err.Error(), "path escapes mount root") {
+			return resolved{}, sandbox.NewPermissionError("path escapes mount root", path)
+		}
 		return resolved{}, err
 	}
-	joined := localRoot
-	if rel != "" {
-		joined = filepath.Join(localRoot, rel)
-	}
-	// Path-escape guard: Clean+Abs collapses `..`, re-check cleaned is under localRoot.
-	cleaned, err := filepath.Abs(joined)
-	if err != nil {
-		return resolved{}, err
-	}
-	if !isUnder(cleaned, localRoot) {
-		return resolved{}, sandbox.NewPermissionError("path escapes mount root", path)
-	}
-	return resolved{Path: cleaned, Mapping: m}, nil
+	return resolved{Path: r.HostPath, Mapping: r.Mapping}, nil
 }
 
-func isUnder(child, parent string) bool {
-	if child == parent {
-		return true
-	}
-	sep := string(filepath.Separator)
-	return strings.HasPrefix(child, parent+sep)
+func resolvePathsInCommand(mappings []sandboxpaths.MountMapping, command string) string {
+	return rewriteVirtualPaths(mappings, command, `(?:/|$|[\s"';&|<>()])`, false)
 }
 
-// reverseResolvePath maps a host path back to its container path; longest mapping wins.
-func reverseResolvePath(mappings []PathMapping, path string) string {
-	cleaned := absPath(filepath.FromSlash(path))
-	m, rel := findLocalPathMapping(mappings, cleaned)
-	if m == nil {
-		return cleaned
-	}
-	if rel == "" {
-		return m.ContainerPath
-	}
-	return strings.TrimRight(m.ContainerPath, "/") + "/" + filepath.ToSlash(rel)
+func resolvePathsInContent(mappings []sandboxpaths.MountMapping, content string) string {
+	return rewriteVirtualPaths(mappings, content, `(?:/|$|[^\w./-])`, true)
 }
 
-// reverseResolvePathsInOutput rewrites host paths back to container paths in arbitrary text.
-func reverseResolvePathsInOutput(mappings []PathMapping, output string) string {
-	if len(mappings) == 0 || output == "" {
-		return output
-	}
-	result := output
-	for _, m := range sortedMappings(mappings, func(a, b PathMapping) bool {
-		return len(a.LocalPath) > len(b.LocalPath)
-	}) {
-		local, err := filepath.Abs(m.LocalPath)
-		if err != nil {
-			continue
-		}
-		pattern := regexp.QuoteMeta(local) + `(?:[/\\][^\s"';&|<>()]*)?`
-		re, err := regexp.Compile(pattern)
-		if err != nil {
-			continue
-		}
-		result = re.ReplaceAllStringFunc(result, func(match string) string {
-			return reverseResolvePath(mappings, match)
-		})
-	}
-	return result
-}
-
-// resolvePathsInCommand rewrites every /mnt/* in a shell command to its host path.
-func resolvePathsInCommand(mappings []PathMapping, command string) string {
-	return rewriteContainerPaths(mappings, command, `(?:/|$|[\s"';&|<>()])`, false)
-}
-
-// resolvePathsInContent rewrites /mnt/* in file content; forward slashes only.
-func resolvePathsInContent(mappings []PathMapping, content string) string {
-	return rewriteContainerPaths(mappings, content, `(?:/|$|[^\w./-])`, true)
-}
-
-func rewriteContainerPaths(mappings []PathMapping, src, boundary string, forwardSlash bool) string {
+func rewriteVirtualPaths(mappings []sandboxpaths.MountMapping, src, boundary string, forwardSlash bool) string {
 	if len(mappings) == 0 || src == "" {
 		return src
 	}
-	sorted := sortedMappings(mappings, func(a, b PathMapping) bool {
-		return len(a.ContainerPath) > len(b.ContainerPath)
+	sorted := sortedMappings(mappings, func(a, b sandboxpaths.MountMapping) bool {
+		return len(a.VirtualPath) > len(b.VirtualPath)
 	})
 
 	var alts []string
 	for _, m := range sorted {
-		alts = append(alts, "("+regexp.QuoteMeta(m.ContainerPath)+boundary+`(?:/[^\s"';&|<>()]*)?`+")")
+		alts = append(alts, "("+regexp.QuoteMeta(m.VirtualPath)+boundary+`(?:/[^\s"';&|<>()]*)?`+")")
 	}
 	if len(alts) == 0 {
 		return src
@@ -153,10 +56,10 @@ func rewriteContainerPaths(mappings []PathMapping, src, boundary string, forward
 	return re.ReplaceAllStringFunc(src, func(match string) string {
 		core := match
 		for _, m := range sorted {
-			if strings.HasPrefix(core, m.ContainerPath) {
-				rest := core[len(m.ContainerPath):]
+			if strings.HasPrefix(core, m.VirtualPath) {
+				rest := core[len(m.VirtualPath):]
 				if rest == "" {
-					return m.LocalPath
+					return m.HostPath
 				}
 				if rest[0] == '/' {
 					r, err := resolvePath(mappings, core)
@@ -169,41 +72,40 @@ func rewriteContainerPaths(mappings []PathMapping, src, boundary string, forward
 					}
 					return out
 				}
-				return m.LocalPath + rest
+				return m.HostPath + rest
 			}
 		}
 		return match
 	})
 }
 
-// isReadOnlyPath returns the ReadOnly flag of the longest mapping containing path.
-func isReadOnlyPath(mappings []PathMapping, resolvedPath string) bool {
-	m, _ := findLocalPathMapping(mappings, absPath(resolvedPath))
+func isReadOnlyPath(mappings []sandboxpaths.MountMapping, resolvedPath string) bool {
+	m, _ := findHostPathMappingForResolved(mappings, absPath(resolvedPath))
 	return m != nil && m.ReadOnly
 }
 
-func findLocalPathMapping(mappings []PathMapping, path string) (*PathMapping, string) {
-	var best *PathMapping
+func findHostPathMappingForResolved(mappings []sandboxpaths.MountMapping, path string) (*sandboxpaths.MountMapping, string) {
+	var best *sandboxpaths.MountMapping
 	bestRel := ""
 	bestLen := -1
 	for i := range mappings {
-		local, err := filepath.Abs(mappings[i].LocalPath)
+		hostPath, err := filepath.Abs(mappings[i].HostPath)
 		if err != nil {
 			continue
 		}
-		if rel, ok := localRel(local, path); ok && len(local) > bestLen {
-			best, bestRel, bestLen = &mappings[i], rel, len(local)
+		if rel, ok := hostPathRel(hostPath, path); ok && len(hostPath) > bestLen {
+			best, bestRel, bestLen = &mappings[i], rel, len(hostPath)
 		}
 	}
 	return best, bestRel
 }
 
-func localRel(local, path string) (string, bool) {
-	if path == local {
+func hostPathRel(hostPath, path string) (string, bool) {
+	if path == hostPath {
 		return "", true
 	}
-	if strings.HasPrefix(path, local+string(filepath.Separator)) {
-		return strings.TrimPrefix(path[len(local):], string(filepath.Separator)), true
+	if strings.HasPrefix(path, hostPath+string(filepath.Separator)) {
+		return strings.TrimPrefix(path[len(hostPath):], string(filepath.Separator)), true
 	}
 	return "", false
 }
@@ -216,8 +118,16 @@ func absPath(path string) string {
 	return cleaned
 }
 
-func sortedMappings(mappings []PathMapping, less func(a, b PathMapping) bool) []PathMapping {
-	sorted := append([]PathMapping(nil), mappings...)
+func isUnder(child, parent string) bool {
+	if child == parent {
+		return true
+	}
+	sep := string(filepath.Separator)
+	return strings.HasPrefix(child, parent+sep)
+}
+
+func sortedMappings(mappings []sandboxpaths.MountMapping, less func(a, b sandboxpaths.MountMapping) bool) []sandboxpaths.MountMapping {
+	sorted := append([]sandboxpaths.MountMapping(nil), mappings...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		return less(sorted[i], sorted[j])
 	})

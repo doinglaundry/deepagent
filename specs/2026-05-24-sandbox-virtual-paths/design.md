@@ -173,15 +173,7 @@ func sortedMountMappings(mappings []sandboxpaths.MountMapping, less func(a, b sa
 **`backend/sandbox/local/`** — 删除 `PathMapping`；`resolvePath` / `findPathMapping` 等改用 `[]sandboxpaths.MountMapping`（字段 `ContainerPath`→`VirtualPath`，`LocalPath`→`HostPath`，纯 rename）。
 
 ```go
-func buildPathMappings(sessionID string) ([]sandboxpaths.MountMapping, error) {
-	mounts, err := sandboxpaths.BuildMountMappings(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("local manager: %w", err)
-	}
-	return mounts, nil
-}
-
-// newSandbox(sessionID, sandboxID, mounts []sandboxpaths.MountMapping)
+// local.New → sandboxpaths.BuildMountMappings(sessionID) → newSandbox(..., mounts)
 func (s *Sandbox) ReadFile(ctx context.Context, virtualPath string) (string, error) {
 	// resolvePath(s.mounts, virtualPath) → os.ReadFile；去掉 agentWritten 门闩
 	return sandbox.MaskHostPathsInOutput(s.mounts, content), nil
@@ -282,7 +274,7 @@ lines = append(lines, fmt.Sprintf("- %s/%s", sandboxpaths.VirtualPathPrefixUploa
 
 - `backend/sandbox/mask_test.go`：从 `local/paths_test.go` 迁 `reverseResolve` 用例，改用 `MountMapping`
 - `backend/agent/tools/virtualpath_test.go`：`backend/foo.go` → `/mnt/repo/backend/foo.go`；`/mnt/workspace/x` 合法；host 绝对路径 → `validateVirtualPath` 失败
-- `local` test：断言 `BuildMountMappings` / `buildPathMappings` 含 `VirtualPathPrefixRepo`；`paths_test` 改用 `MountMapping`
+- `local` test：断言 `BuildMountMappings` 含 `VirtualPathPrefixRepo`；`paths_test` 改用 `MountMapping`
 - `go test ./...`
 
 ### Tradeoffs
@@ -294,4 +286,4 @@ lines = append(lines, fmt.Sprintf("- %s/%s", sandboxpaths.VirtualPathPrefixUploa
 - repo 不进 rollback；workspace/uploads/outputs 进 rollback
 - 不实现 `cfg.Sandbox.Mounts`；不接受项目根 host 绝对路径（须 `/mnt/*` 或相对路径）
 - **软回滚**：无开关  
-- **硬回滚**：删 `sandboxpaths/`、`sandbox/mask.go`、`virtualpath.go`；恢复 `shouldUseSandbox`、旧 `buildPathMappings`（无 repo）、旧 prompt
+- **硬回滚**：删 `sandboxpaths/`、`sandbox/mask.go`、`virtualpath.go`；恢复 `shouldUseSandbox`、旧 local 挂载（无 repo）、旧 prompt

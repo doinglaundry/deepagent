@@ -12,6 +12,8 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/sandbox"
 )
 
 const semanticSearchToolDesc = `Find code by meaning using a local heuristic search. This CLI version does not use Cursor's private semantic index; it ranks files by query term matches in paths and content.`
@@ -28,10 +30,14 @@ type semanticMatch struct {
 	text  string
 }
 
-func GetSemanticSearchTool() (tool.BaseTool, error) {
+func GetSemanticSearchTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool("semantic_search", semanticSearchToolDesc,
 		func(ctx context.Context, in semanticSearchArgs) (string, error) {
-			return semanticSearch(resolveRoot(), in)
+			root, err := resolveHostSearchRoot(ctx, sandboxManager, in.Path, true)
+			if err != nil {
+				return "", err
+			}
+			return semanticSearch(root, in)
 		})
 }
 
@@ -40,14 +46,7 @@ func semanticSearch(root string, in semanticSearchArgs) (string, error) {
 	if len(terms) == 0 {
 		return "", fmt.Errorf("query must include searchable terms")
 	}
-	searchPath := resolveRoot()
-	if strings.TrimSpace(in.Path) != "" {
-		var err error
-		searchPath, err = getResolvedPath(in.Path)
-		if err != nil {
-			return "", err
-		}
-	}
+	searchPath := root
 	var matches []semanticMatch
 	walkErr := filepath.WalkDir(searchPath, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {

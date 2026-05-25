@@ -16,6 +16,7 @@ import (
 
 	"eino-cli/backend/consts"
 	"eino-cli/backend/sandbox"
+	"eino-cli/backend/sandboxpaths"
 )
 
 // sandboxGrep returns ok=false on any unsupported flag so the legacy path keeps schema parity.
@@ -93,11 +94,23 @@ type grepMatch struct {
 func GetGrepTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool(filesystem.ToolNameGrep, filesystem.GrepToolDesc,
 		func(ctx context.Context, in grepArgs) (string, error) {
-			if in.Path != nil && shouldUseSandbox(*in.Path) {
-				if sb := getSandbox(ctx, sandboxManager); sb != nil {
-					if out, ok := sandboxGrep(ctx, sb, in); ok {
-						return out, nil
+			if hasSandboxManager(sandboxManager) {
+				searchPath := sandboxpaths.VirtualPathPrefixRepo
+				if in.Path != nil {
+					virtualPath, err := resolveToolSearchPath(*in.Path, true)
+					if err != nil {
+						return "", err
 					}
+					searchPath = virtualPath
+				}
+				sb, err := getRequiredSandbox(ctx, sandboxManager)
+				if err != nil {
+					return "", err
+				}
+				grepIn := in
+				grepIn.Path = &searchPath
+				if out, ok := sandboxGrep(ctx, sb, grepIn); ok {
+					return out, nil
 				}
 			}
 			matches, err := runGrep(resolveRoot(), in)

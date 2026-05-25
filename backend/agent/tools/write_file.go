@@ -25,13 +25,19 @@ func GetWriteFileTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, err
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
-			if shouldUseSandbox(in.FilePath) {
-				if sb := getSandbox(ctx, sandboxManager); sb != nil {
-					if err := sb.WriteFile(ctx, in.FilePath, in.Content, false); err != nil {
-						return "", err
-					}
-					return fmt.Sprintf("Updated file %s", in.FilePath), nil
+			if hasSandboxManager(sandboxManager) {
+				virtualPath, err := resolveToolPath(in.FilePath, false)
+				if err != nil {
+					return "", err
 				}
+				sb, err := getRequiredSandbox(ctx, sandboxManager)
+				if err != nil {
+					return "", err
+				}
+				if err := sb.WriteFile(ctx, virtualPath, in.Content, false); err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("Updated file %s", virtualPath), nil
 			}
 			p := resolvePath(in.FilePath)
 			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

@@ -1,0 +1,90 @@
+package tools
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"eino-cli/backend/consts"
+	runtimecontext "eino-cli/backend/runtime/context"
+	"eino-cli/backend/sandbox"
+	"eino-cli/backend/sandboxpaths"
+)
+
+func buildAbsoluteVirtualPath(toolPath string) (string, error) {
+	if strings.HasPrefix(toolPath, "/") {
+		return toolPath, nil
+	}
+	return sandboxpaths.VirtualPathPrefixRepo + "/" + strings.TrimPrefix(toolPath, "/"), nil
+}
+
+func validateVirtualPath(virtualPath string, readOnly bool) error {
+	if strings.Contains(virtualPath, "..") {
+		return fmt.Errorf("path traversal: %s", virtualPath)
+	}
+	if strings.HasPrefix(virtualPath, sandboxpaths.VirtualPathPrefixSkills) {
+		if readOnly {
+			return nil
+		}
+		return fmt.Errorf("write not allowed: %s", virtualPath)
+	}
+	for _, prefix := range []string{
+		sandboxpaths.VirtualPathPrefixRepo,
+		sandboxpaths.VirtualPathPrefixWorkspace,
+		sandboxpaths.VirtualPathPrefixUploads,
+		sandboxpaths.VirtualPathPrefixOutputs,
+	} {
+		if virtualPath == prefix || strings.HasPrefix(virtualPath, prefix+"/") {
+			return nil
+		}
+	}
+	return fmt.Errorf("path not under allowed /mnt/*: %s", virtualPath)
+}
+
+func resolveToolSearchPath(toolPath string, readOnly bool) (string, error) {
+	if strings.TrimSpace(toolPath) == "" {
+		return sandboxpaths.VirtualPathPrefixRepo, nil
+	}
+	return resolveToolPath(toolPath, readOnly)
+}
+
+func resolveToolPath(toolPath string, readOnly bool) (virtualPath string, err error) {
+	toolPath = strings.TrimSpace(toolPath)
+	if toolPath == "" {
+		return "", fmt.Errorf("path must not be empty")
+	}
+	virtualPath, err = buildAbsoluteVirtualPath(toolPath)
+	if err != nil {
+		return "", err
+	}
+	if err := validateVirtualPath(virtualPath, readOnly); err != nil {
+		return "", err
+	}
+	return virtualPath, nil
+}
+
+func resolveHostSearchRoot(ctx context.Context, manager sandbox.SandboxManager, toolPath string, readOnly bool) (string, error) {
+	if !hasSandboxManager(manager) {
+		if strings.TrimSpace(toolPath) == "" {
+			return resolveRoot(), nil
+		}
+		return getResolvedPath(toolPath)
+	}
+	virtualPath, err := resolveToolSearchPath(toolPath, readOnly)
+	if err != nil {
+		return "", err
+	}
+	sessionID := runtimecontext.GetSessionID(ctx)
+	if sessionID == "" {
+		sessionID = consts.DefaultSessionID
+	}
+	mappings, err := sandboxpaths.BuildMountMappings(sessionID)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := sandboxpaths.ResolveHostPath(mappings, virtualPath)
+	if err != nil {
+		return "", err
+	}
+	return resolved.HostPath, nil
+}

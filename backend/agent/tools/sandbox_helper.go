@@ -3,16 +3,14 @@ package tools
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"eino-cli/backend/consts"
 	runtimecontext "eino-cli/backend/runtime/context"
 	"eino-cli/backend/sandbox"
 )
 
-// Only /mnt/* paths route through the sandbox; host paths stay on os.* fast path.
-func shouldUseSandbox(path string) bool {
-	return strings.HasPrefix(path, "/mnt/")
+func hasSandboxManager(manager sandbox.SandboxManager) bool {
+	return manager != nil
 }
 
 // getSandbox returns nil when no manager or sid is available; callers fall back to host fs.

@@ -11,6 +11,7 @@ import (
 
 	"eino-cli/backend/agent/skills"
 	"eino-cli/backend/config"
+	"eino-cli/backend/sandboxpaths"
 )
 
 // Skill mirrors deerflow.skills.Skill (only fields used by the prompt).
@@ -61,7 +62,7 @@ func buildSubagentSection(n int) string {
 	// "Available Subagents:" header when no named profiles are configured.
 	availableSubagents := "- `general-purpose`: a fresh deep-agent instance with the same toolbelt; use it for context-isolated parallel research / extraction tasks."
 	directToolExamples := "ls, read_file, web_search, etc."
-	directExecutionExample := "# User asks: \"Read the README\"\n# Thinking: Single straightforward file read\n# → Execute directly\n\nread_file(\"workspace/README.md\")  # Direct execution, not task()"
+	directExecutionExample := "# User asks: \"Read the README\"\n# Thinking: Single straightforward file read\n# → Execute directly\n\nread_file(\"README.md\")  # Resolves under /mnt/repo; direct execution, not task()"
 
 	lines := []string{
 		"<subagent_system>",
@@ -240,7 +241,7 @@ func GetSkillsPromptSection(available *AvailableSkills) string {
 			}
 			items = append(items, fmt.Sprintf(
 				"    <skill>\n        <name>%s</name>\n        <description>%s %s</description>\n        <location>%s</location>\n    </skill>",
-				s.Name, s.Description, tag, s.SkillFile,
+				s.Name, s.Description, tag, buildSkillVirtualPath(s.SkillFile),
 			))
 		}
 		skillsXML = "<available_skills>\n" + strings.Join(items, "\n") + "\n</available_skills>"
@@ -279,6 +280,15 @@ const systemPromptTemplateRaw = `
 <role>
   You are {agent_name}, an open-source super agent.
 </role>
+
+<working_directory>
+- Codebase: /mnt/repo
+- Session scratch: /mnt/workspace
+- Uploads: /mnt/uploads
+- Deliverables: /mnt/outputs
+- Skills (read-only): /mnt/skills
+Default cwd for relative paths: /mnt/repo
+</working_directory>
 
 {agents_md}
 
@@ -512,6 +522,24 @@ func GetSubagentSection(isSubagentEnabled bool, n int) string {
 
 // loadEnabledSkillsFromConfig scans the default skills path for SKILL.md files and
 // returns the enabled skills as the prompt-side Skill type. Errors yield nil.
+func buildSkillVirtualPath(skillFile string) string {
+	skillsRoot := filepath.Join(config.RootDir(), "backend", "skills")
+	skillsRootAbs, err := filepath.Abs(skillsRoot)
+	if err != nil {
+		return sandboxpaths.VirtualPathPrefixSkills
+	}
+	skillAbs, err := filepath.Abs(skillFile)
+	if err != nil {
+		return sandboxpaths.VirtualPathPrefixSkills
+	}
+	rel := strings.TrimPrefix(skillAbs, skillsRootAbs)
+	rel = strings.TrimPrefix(rel, string(filepath.Separator))
+	if rel == "" {
+		return sandboxpaths.VirtualPathPrefixSkills
+	}
+	return sandboxpaths.VirtualPathPrefixSkills + "/" + filepath.ToSlash(rel)
+}
+
 func loadEnabledSkillsFromConfig() []Skill {
 	loaded, err := skills.LoadFromPaths([]string{filepath.Join(config.RootDir(), "backend", "skills")})
 	if err != nil {

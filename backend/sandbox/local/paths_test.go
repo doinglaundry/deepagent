@@ -4,13 +4,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"eino-cli/backend/sandbox"
+	"eino-cli/backend/sandboxpaths"
 )
 
 func TestResolvePathPicksMostSpecific(t *testing.T) {
 	tmp := t.TempDir()
-	mappings := []PathMapping{
-		{ContainerPath: "/mnt/workspace", LocalPath: filepath.Join(tmp, "root")},
-		{ContainerPath: "/mnt/workspace/deep", LocalPath: filepath.Join(tmp, "root", "deep")},
+	mappings := []sandboxpaths.MountMapping{
+		{VirtualPath: "/mnt/workspace", HostPath: filepath.Join(tmp, "root")},
+		{VirtualPath: "/mnt/workspace/deep", HostPath: filepath.Join(tmp, "root", "deep")},
 	}
 	r, err := resolvePath(mappings, "/mnt/workspace/deep/foo.txt")
 	if err != nil {
@@ -23,8 +26,8 @@ func TestResolvePathPicksMostSpecific(t *testing.T) {
 
 func TestResolvePathRejectsEscape(t *testing.T) {
 	tmp := t.TempDir()
-	mappings := []PathMapping{
-		{ContainerPath: "/mnt/workspace", LocalPath: tmp},
+	mappings := []sandboxpaths.MountMapping{
+		{VirtualPath: "/mnt/workspace", HostPath: tmp},
 	}
 	_, err := resolvePath(mappings, "/mnt/workspace/../../etc/passwd")
 	if err == nil {
@@ -35,25 +38,25 @@ func TestResolvePathRejectsEscape(t *testing.T) {
 func TestReverseResolvePathMapsBack(t *testing.T) {
 	tmp := t.TempDir()
 	abs, _ := filepath.Abs(tmp)
-	mappings := []PathMapping{
-		{ContainerPath: "/mnt/workspace", LocalPath: abs},
+	mappings := []sandboxpaths.MountMapping{
+		{VirtualPath: "/mnt/workspace", HostPath: abs},
 	}
 	hostPath := filepath.Join(abs, "subdir", "file.txt")
-	got := reverseResolvePath(mappings, hostPath)
+	got := sandbox.ReverseResolvePath(mappings, hostPath)
 	want := "/mnt/workspace/subdir/file.txt"
 	if got != want {
 		t.Fatalf("reverse: want %q, got %q", want, got)
 	}
 }
 
-func TestReverseResolveInOutputMasksHostPaths(t *testing.T) {
+func TestMaskHostPathsInOutput(t *testing.T) {
 	tmp := t.TempDir()
 	abs, _ := filepath.Abs(tmp)
-	mappings := []PathMapping{
-		{ContainerPath: "/mnt/workspace", LocalPath: abs},
+	mappings := []sandboxpaths.MountMapping{
+		{VirtualPath: "/mnt/workspace", HostPath: abs},
 	}
 	out := "log: " + filepath.Join(abs, "foo.txt") + " done"
-	masked := reverseResolvePathsInOutput(mappings, out)
+	masked := sandbox.MaskHostPathsInOutput(mappings, out)
 	if !strings.Contains(masked, "/mnt/workspace/foo.txt") {
 		t.Fatalf("expected mask, got %q", masked)
 	}
@@ -62,7 +65,7 @@ func TestReverseResolveInOutputMasksHostPaths(t *testing.T) {
 func TestReadOnlyPath(t *testing.T) {
 	tmp := t.TempDir()
 	abs, _ := filepath.Abs(tmp)
-	mappings := []PathMapping{{ContainerPath: "/mnt/skills", LocalPath: abs, ReadOnly: true}}
+	mappings := []sandboxpaths.MountMapping{{VirtualPath: "/mnt/skills", HostPath: abs, ReadOnly: true}}
 	if !isReadOnlyPath(mappings, filepath.Join(abs, "x")) {
 		t.Fatal("expected read-only")
 	}

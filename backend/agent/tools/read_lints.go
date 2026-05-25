@@ -9,6 +9,8 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/sandbox"
 )
 
 const readLintsToolDesc = `Read local diagnostics for files or directories. This CLI version approximates IDE diagnostics with go test for Go packages and reports unsupported providers for other file types.`
@@ -17,15 +19,30 @@ type readLintsArgs struct {
 	Paths []string `json:"paths,omitempty" jsonschema:"description=Optional files or directories to check"`
 }
 
-func GetReadLintsTool() (tool.BaseTool, error) {
+func GetReadLintsTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool("read_lints", readLintsToolDesc,
 		func(ctx context.Context, in readLintsArgs) (string, error) {
-			return readLints(ctx, resolveRoot(), in.Paths)
+			root, err := resolveHostSearchRoot(ctx, sandboxManager, "", true)
+			if err != nil {
+				return "", err
+			}
+			return readLints(ctx, root, in.Paths, sandboxManager)
 		})
 }
 
-func readLints(ctx context.Context, root string, paths []string) (string, error) {
-	packages, unsupported, err := getLintTargets(root, paths)
+func readLints(ctx context.Context, root string, paths []string, sandboxManager sandbox.SandboxManager) (string, error) {
+	resolvedPaths := paths
+	if hasSandboxManager(sandboxManager) && len(paths) > 0 {
+		resolvedPaths = make([]string, 0, len(paths))
+		for _, p := range paths {
+			hostPath, err := resolveHostSearchRoot(ctx, sandboxManager, p, true)
+			if err != nil {
+				return "", err
+			}
+			resolvedPaths = append(resolvedPaths, hostPath)
+		}
+	}
+	packages, unsupported, err := getLintTargets(root, resolvedPaths)
 	if err != nil {
 		return "", err
 	}

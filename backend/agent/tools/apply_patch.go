@@ -9,6 +9,8 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
+
+	"eino-cli/backend/sandbox"
 )
 
 const applyPatchToolDesc = `Apply a file-oriented patch. Supports Add File and Update File hunks with exact context matching. All paths must stay inside the workspace.`
@@ -29,24 +31,24 @@ type patchLine struct {
 	text string
 }
 
-func GetApplyPatchTool() (tool.BaseTool, error) {
+func GetApplyPatchTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool("apply_patch", applyPatchToolDesc,
 		func(ctx context.Context, in applyPatchArgs) (string, error) {
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
-			return applyPatch(in.Patch)
+			return applyPatch(ctx, sandboxManager, in.Patch)
 		})
 }
 
-func applyPatch(patch string) (string, error) {
+func applyPatch(ctx context.Context, sandboxManager sandbox.SandboxManager, patch string) (string, error) {
 	ops, err := parsePatch(patch)
 	if err != nil {
 		return "", err
 	}
 	writes := make(map[string]string, len(ops))
 	for _, op := range ops {
-		path, err := getResolvedPath(op.path)
+		path, err := resolveHostSearchRoot(ctx, sandboxManager, op.path, false)
 		if err != nil {
 			return "", err
 		}

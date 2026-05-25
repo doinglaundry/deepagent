@@ -17,6 +17,7 @@ import (
 
 	"eino-cli/backend/config"
 	"eino-cli/backend/sandbox"
+	"eino-cli/backend/sandboxpaths"
 	"eino-cli/backend/util/network"
 )
 
@@ -108,7 +109,8 @@ func (m *Manager) reuse() (string, bool) {
 }
 
 func (m *Manager) attachLocked(sid string, info SandboxInfo) {
-	m.sandboxes[sid] = newSandbox(sid, m.sessionID, info.SandboxURL)
+	mounts, _ := sandboxpaths.BuildMountMappings(m.sessionID)
+	m.sandboxes[sid] = newSandbox(sid, m.sessionID, info.SandboxURL, mounts)
 	m.infos[sid] = info
 	m.lastActivity[sid] = time.Now()
 }
@@ -335,14 +337,16 @@ func (m *Manager) reconcileOrphans() {
 	}
 }
 
-// buildMounts assembles per-session workspace/uploads/outputs under /mnt/.
+// buildMounts assembles per-session mounts from sandboxpaths.BuildMountMappings.
 func (m *Manager) buildMounts(ctx context.Context) []mountSpec {
-	if err := config.EnsureSessionDirs(m.sessionID); err != nil {
-		m.log.Warn("aio: ensure session dirs", "session_id", m.sessionID, "error", err)
+	mounts, err := sandboxpaths.BuildMountMappings(m.sessionID)
+	if err != nil {
+		m.log.Warn("aio: build mount mappings", "session_id", m.sessionID, "error", err)
+		return nil
 	}
-	return []mountSpec{
-		{Host: config.SandboxWorkDir(m.sessionID), Container: "/mnt/workspace", ReadOnly: false},
-		{Host: config.SandboxUploadsDir(m.sessionID), Container: "/mnt/uploads", ReadOnly: false},
-		{Host: config.SandboxOutputsDir(m.sessionID), Container: "/mnt/outputs", ReadOnly: false},
+	out := make([]mountSpec, 0, len(mounts))
+	for _, mm := range mounts {
+		out = append(out, mountSpec{Host: mm.HostPath, Container: mm.VirtualPath, ReadOnly: mm.ReadOnly})
 	}
+	return out
 }

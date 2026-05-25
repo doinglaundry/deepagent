@@ -30,21 +30,27 @@ func GetEditFileTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, erro
 			if msg, denied := denyOnPlanMode(ctx); denied {
 				return msg, nil
 			}
-			if shouldUseSandbox(in.FilePath) {
-				if sb := getSandbox(ctx, sandboxManager); sb != nil {
-					content, err := sb.ReadFile(ctx, in.FilePath)
-					if err != nil {
-						return "", err
-					}
-					updated, err := applyEditReplacement(content, in.OldString, in.NewString, in.ReplaceAll)
-					if err != nil {
-						return "", err
-					}
-					if err := sb.WriteFile(ctx, in.FilePath, updated, false); err != nil {
-						return "", err
-					}
-					return fmt.Sprintf("Successfully replaced the string in '%s'", in.FilePath), nil
+			if hasSandboxManager(sandboxManager) {
+				virtualPath, err := resolveToolPath(in.FilePath, false)
+				if err != nil {
+					return "", err
 				}
+				sb, err := getRequiredSandbox(ctx, sandboxManager)
+				if err != nil {
+					return "", err
+				}
+				content, err := sb.ReadFile(ctx, virtualPath)
+				if err != nil {
+					return "", err
+				}
+				updated, err := applyEditReplacement(content, in.OldString, in.NewString, in.ReplaceAll)
+				if err != nil {
+					return "", err
+				}
+				if err := sb.WriteFile(ctx, virtualPath, updated, false); err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("Successfully replaced the string in '%s'", virtualPath), nil
 			}
 			p := resolvePath(in.FilePath)
 			data, err := os.ReadFile(p)

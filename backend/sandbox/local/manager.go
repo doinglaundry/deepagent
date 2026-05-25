@@ -3,12 +3,10 @@ package local
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
-	"eino-cli/backend/config"
 	"eino-cli/backend/consts"
 	"eino-cli/backend/sandbox"
+	"eino-cli/backend/sandboxpaths"
 )
 
 type SandboxManagerLocal struct {
@@ -21,12 +19,12 @@ func New(sessionID string) (sandbox.SandboxManager, error) {
 	if sessionID == "" {
 		return nil, sandbox.ErrSessionIDRequired
 	}
-	pathMappings, err := buildPathMappings(sessionID)
+	mounts, err := sandboxpaths.BuildMountMappings(sessionID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("local manager: %w", err)
 	}
 	sandboxID := consts.LocalSessionIDPrefix + sessionID
-	sb := newSandbox(sessionID, sandboxID, pathMappings)
+	sb := newSandbox(sessionID, sandboxID, mounts)
 	return &SandboxManagerLocal{sessionID: sessionID, sandbox: sb}, nil
 }
 
@@ -53,26 +51,3 @@ func (m *SandboxManagerLocal) Reset() {}
 func (m *SandboxManagerLocal) UsesSessionDataMounts() bool { return true }
 
 func (m *SandboxManagerLocal) AllowsIsolatedExec() bool { return false }
-
-func buildPathMappings(sessionID string) ([]*PathMapping, error) {
-	if err := config.EnsureSessionDirs(sessionID); err != nil {
-		return nil, fmt.Errorf("local manager: ensure dirs: %w", err)
-	}
-	var out []*PathMapping
-	skillPath := filepath.Join(config.RootDir(), "backend", "skills")
-	if info, err := os.Stat(skillPath); err == nil && info.IsDir() {
-		if absSkillPath, err := filepath.Abs(skillPath); err == nil {
-			out = append(out, &PathMapping{
-				ContainerPath: "/mnt/skills",
-				LocalPath:     absSkillPath,
-				ReadOnly:      true,
-			})
-		}
-	}
-	out = append(out,
-		&PathMapping{ContainerPath: "/mnt/workspace", LocalPath: config.SandboxWorkDir(sessionID)},
-		&PathMapping{ContainerPath: "/mnt/uploads", LocalPath: config.SandboxUploadsDir(sessionID)},
-		&PathMapping{ContainerPath: "/mnt/outputs", LocalPath: config.SandboxOutputsDir(sessionID)},
-	)
-	return out, nil
-}

@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/components/tool/utils"
 
 	"eino-cli/backend/consts"
+	"eino-cli/backend/sandbox"
 )
 
 const rgToolDesc = `Search file contents with ripgrep. Supports content, files_with_matches, and count output modes. Returns "No matches found" when ripgrep finds nothing.`
@@ -31,10 +32,14 @@ type rgArgs struct {
 	ShowLineNumbers *bool  `json:"-n,omitempty" jsonschema:"description=Show line numbers in content output"`
 }
 
-func GetRgTool() (tool.BaseTool, error) {
+func GetRgTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool, error) {
 	return utils.InferTool("rg", rgToolDesc,
 		func(ctx context.Context, in rgArgs) (string, error) {
-			return runRipgrep(ctx, resolveRoot(), in)
+			root, err := resolveHostSearchRoot(ctx, sandboxManager, in.Path, true)
+			if err != nil {
+				return "", err
+			}
+			return runRipgrep(ctx, root, in)
 		})
 }
 
@@ -42,14 +47,7 @@ func runRipgrep(ctx context.Context, root string, in rgArgs) (string, error) {
 	if strings.TrimSpace(in.Pattern) == "" {
 		return "", fmt.Errorf("pattern must not be empty")
 	}
-	searchPath := resolveRoot()
-	if strings.TrimSpace(in.Path) != "" {
-		var err error
-		searchPath, err = getResolvedPath(in.Path)
-		if err != nil {
-			return "", err
-		}
-	}
+	searchPath := root
 	args := []string{"--color", "never"}
 	switch in.OutputMode {
 	case "", "content":

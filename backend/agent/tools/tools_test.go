@@ -264,7 +264,7 @@ func TestDeleteFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetDeleteFileTool()
+	bt, _ := GetDeleteFileTool(nil)
 
 	got := invoke(t, bt, `{"file_path":"old.txt"}`)
 	if got != "Deleted file "+path {
@@ -281,7 +281,7 @@ func TestDeleteFile(t *testing.T) {
 func TestApplyPatchAddAndUpdate(t *testing.T) {
 	root := t.TempDir()
 	setToolRoot(t, root)
-	bt, _ := GetApplyPatchTool()
+	bt, _ := GetApplyPatchTool(nil)
 	addPatch := `*** Begin Patch
 *** Add File: new.txt
 +hello
@@ -389,7 +389,7 @@ func TestRgContent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetRgTool()
+	bt, _ := GetRgTool(nil)
 
 	got := invoke(t, bt, `{"pattern":"hello","output_mode":"content"}`)
 	if !strings.Contains(got, "a.txt:1:hello") {
@@ -487,7 +487,7 @@ func TestExecuteAllowedInIsolatedSandboxWithoutStampedIDWhenRollbackProtected(t 
 func TestShellAndAwaitShell(t *testing.T) {
 	root := t.TempDir()
 	setToolRoot(t, root)
-	bt, _ := GetShellTool(nil)
+	bt, _ := GetShellTool(nil, nil)
 
 	got := invoke(t, bt, `{"command":"echo hi","timeout_ms":1000}`)
 	if !strings.HasPrefix(got, "hi") {
@@ -508,7 +508,7 @@ func TestShellAndAwaitShell(t *testing.T) {
 
 func TestShellDeniedWhenRollbackProtected(t *testing.T) {
 	setToolRoot(t, t.TempDir())
-	bt, _ := GetShellTool(nil)
+	bt, _ := GetShellTool(nil, nil)
 	ctx := runtimecontext.WithRollbackProtected(context.Background(), true)
 	got := invokeWithContext(t, ctx, bt, `{"command":"echo hi","timeout_ms":1000}`)
 	if !strings.Contains(got, "disabled in rollback-protected runs") {
@@ -519,7 +519,7 @@ func TestShellDeniedWhenRollbackProtected(t *testing.T) {
 func TestShellDeniedInNonIsolatedSandboxWhenRollbackProtected(t *testing.T) {
 	box := &fakeSandbox{}
 	getCalled := false
-	bt, _ := GetShellTool(fakeSandboxManager{box: box, getCalled: &getCalled})
+	bt, _ := GetShellTool(fakeSandboxManager{box: box, getCalled: &getCalled}, nil)
 	ctx := runtimecontext.WithSandboxID(context.Background(), "sandbox")
 	ctx = runtimecontext.WithRollbackProtected(ctx, true)
 
@@ -537,7 +537,7 @@ func TestShellDeniedInNonIsolatedSandboxWhenRollbackProtected(t *testing.T) {
 
 func TestShellAllowedInIsolatedSandboxWhenRollbackProtected(t *testing.T) {
 	box := &fakeSandbox{}
-	bt, _ := GetShellTool(fakeSandboxManager{box: box, isolatedExec: true})
+	bt, _ := GetShellTool(fakeSandboxManager{box: box, isolatedExec: true}, nil)
 	ctx := runtimecontext.WithSandboxID(context.Background(), "sandbox")
 	ctx = runtimecontext.WithRollbackProtected(ctx, true)
 
@@ -553,7 +553,7 @@ func TestShellAllowedInIsolatedSandboxWhenRollbackProtected(t *testing.T) {
 func TestShellAllowedInIsolatedSandboxWithoutStampedIDWhenRollbackProtected(t *testing.T) {
 	box := &fakeSandbox{}
 	acquireCalled := false
-	bt, _ := GetShellTool(fakeSandboxManager{box: box, isolatedExec: true, acquireCalled: &acquireCalled})
+	bt, _ := GetShellTool(fakeSandboxManager{box: box, isolatedExec: true, acquireCalled: &acquireCalled}, nil)
 	ctx := runtimecontext.WithSessionID(context.Background(), "session-a")
 	ctx = runtimecontext.WithRollbackProtected(ctx, true)
 
@@ -575,7 +575,7 @@ func TestSemanticSearch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "tool.go"), []byte("func buildToolCall() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bt, _ := GetSemanticSearchTool()
+	bt, _ := GetSemanticSearchTool(nil)
 
 	got := invoke(t, bt, `{"query":"where is tool call built"}`)
 	if !strings.Contains(got, "tool.go:1") {
