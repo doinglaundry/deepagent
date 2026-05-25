@@ -123,6 +123,23 @@ func TestGetSystemPrompt_DoesNotInjectMemory(t *testing.T) {
 	}
 }
 
+func TestGetSystemPrompt_UsesVirtualRoot(t *testing.T) {
+	root := t.TempDir()
+	cleanup := config.SetRootDirForTest(root)
+	defer cleanup()
+
+	out := GetSystemPrompt("default", false, &config.Config{})
+	if !strings.Contains(out, "<root>/mnt/repo</root>") {
+		t.Fatalf("system prompt should expose virtual root:\n%s", out)
+	}
+	if strings.Contains(out, root) {
+		t.Fatalf("system prompt leaked host root %q:\n%s", root, out)
+	}
+	if !strings.Contains(out, "Never use host absolute paths") {
+		t.Fatalf("system prompt should forbid host absolute paths:\n%s", out)
+	}
+}
+
 // AGENTS.md is multi-section. Only §Agent Working Discipline§ goes into
 // the system prompt; the rest is read on demand. These tests lock that
 // contract in.

@@ -288,6 +288,7 @@ const systemPromptTemplateRaw = `
 - Deliverables: /mnt/outputs
 - Skills (read-only): /mnt/skills
 Default cwd for relative paths: /mnt/repo
+Use only these virtual paths in tool calls. Never use host absolute paths such as /Users/... .
 </working_directory>
 
 {agents_md}
@@ -373,7 +374,7 @@ Default cwd for relative paths: /mnt/repo
 
 {subagent_section}
 
-<root>{root_dir}</root>
+<root>/mnt/repo</root>
 
 {acp_section}
 
@@ -448,7 +449,6 @@ func GetSystemPrompt(agentName string, isSubagentEnabled bool, cfg *config.Confi
 		"{deferred_tools_section}", GetDeferredToolsPromptSection(),
 		"{subagent_section}", GetSubagentSection(isSubagentEnabled, n),
 		"{subagent_reminder}", GetSubagentReminder(isSubagentEnabled, n),
-		"{root_dir}", config.RootDir(),
 	)
 	prompt := replacer.Replace(strings.ReplaceAll(systemPromptTemplateRaw, "§", "`"))
 
