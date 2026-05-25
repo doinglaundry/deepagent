@@ -50,4 +50,4 @@ func (m *SandboxManagerLocal) Reset() {}
 
 func (m *SandboxManagerLocal) UsesSessionDataMounts() bool { return true }
 
-func (m *SandboxManagerLocal) AllowsIsolatedExec() bool { return false }
+func (m *SandboxManagerLocal) AllowsIsolatedExec() bool { return true }
