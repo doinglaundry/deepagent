@@ -43,10 +43,10 @@ func TestBoxTitleLine_DegenerateWidthFallsBackToPlainBorder(t *testing.T) {
 	}
 }
 
-func TestSplitColumns_PadsShorterAndKeepsTotalWidth(t *testing.T) {
+func TestBuildCardRows_PadsShorterAndKeepsTotalWidth(t *testing.T) {
 	left := []string{"abc", "de"}
 	right := []string{"x", "yy", "zzz"}
-	out := splitColumns(left, right, 5, 4)
+	out := buildCardRows(left, right, 5, 4)
 	if len(out) != 3 {
 		t.Fatalf("len(out) = %d, want 3", len(out))
 	}
@@ -61,15 +61,15 @@ func TestSplitColumns_PadsShorterAndKeepsTotalWidth(t *testing.T) {
 	}
 }
 
-func TestGetRow_PadsTruncatesAndHandlesPastEnd(t *testing.T) {
+func TestFitCardRow_PadsTruncatesAndHandlesPastEnd(t *testing.T) {
 	rows := []string{"hello"}
-	if got := getRow(rows, 0, 10); got != "hello     " {
+	if got := fitCardRow(rows, 0, 10); got != "hello     " {
 		t.Errorf("pad: got %q", got)
 	}
-	if got := getRow(rows, 0, 3); runewidth.StringWidth(got) != 3 || !strings.Contains(got, "…") {
+	if got := fitCardRow(rows, 0, 3); runewidth.StringWidth(got) != 3 || !strings.Contains(got, "…") {
 		t.Errorf("truncate: got %q (width=%d)", got, runewidth.StringWidth(got))
 	}
-	if got := getRow(rows, 5, 4); got != "    " {
+	if got := fitCardRow(rows, 5, 4); got != "    " {
 		t.Errorf("past-end: got %q", got)
 	}
 }
