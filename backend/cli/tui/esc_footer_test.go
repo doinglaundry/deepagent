@@ -17,13 +17,38 @@ func TestHandleKey_EscDuringStreamAborts(t *testing.T) {
 		streaming: true,
 		cancel:    func() { cancelled = true },
 	}
-	_, cmd := applyKey(m,tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := applyKey(m, tea.KeyMsg{Type: tea.KeyEsc})
 
 	if !cancelled {
 		t.Errorf("ESC during streaming must call cancel")
 	}
+	if !m.interrupted {
+		t.Errorf("ESC during streaming must mark the turn interrupted")
+	}
 	if cmd != nil {
 		t.Errorf("ESC abort must not return a follow-up cmd; got %v", cmd)
+	}
+}
+
+func TestHandleDone_InterruptedErrorShowsConversationInterrupted(t *testing.T) {
+	m := &Model{
+		streaming:   true,
+		interrupted: true,
+	}
+
+	_, _ = applyDone(m, doneMsg{err: errFixed("context canceled")})
+
+	if m.lastErr != nil {
+		t.Fatalf("interrupted turns should not surface cancellation as lastErr: %v", m.lastErr)
+	}
+	if len(m.pendingScrollback) < 2 {
+		t.Fatalf("interrupted turn should queue message and divider, got %#v", m.pendingScrollback)
+	}
+	if !strings.Contains(m.pendingScrollback[0], "Conversation interrupted") {
+		t.Fatalf("interrupted turn missing scrollback message: %#v", m.pendingScrollback)
+	}
+	if !strings.Contains(m.pendingScrollback[len(m.pendingScrollback)-1], "──") {
+		t.Fatalf("interrupted turn should end with a divider: %#v", m.pendingScrollback)
 	}
 }
 
@@ -34,7 +59,7 @@ func TestHandleKey_EscIdleClearsInput(t *testing.T) {
 	ti.SetValue("half-typed garbage")
 	m := &Model{streaming: false, input: ti}
 
-	_, _ = applyKey(m,tea.KeyMsg{Type: tea.KeyEsc})
+	_, _ = applyKey(m, tea.KeyMsg{Type: tea.KeyEsc})
 
 	if m.input.Value() != "" {
 		t.Errorf("ESC while idle must clear input; got %q", m.input.Value())

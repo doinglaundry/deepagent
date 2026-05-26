@@ -76,7 +76,7 @@ func renderToolBlock(block *toolBlock, previewLines int) string {
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s %s(%s)\n", toolHeaderStyle.Render("⏺"), block.name, block.argsLine)
+	fmt.Fprintf(&sb, "%s %s\n", systemPrefixStyle.Render("•"), toolHeaderStyle.Render(formatToolTitle(block)))
 
 	lines := block.lines
 	collapsed := block.collapsed && len(lines) > previewLines
@@ -96,6 +96,13 @@ func renderToolBlock(block *toolBlock, previewLines int) string {
 		return sb.String()
 	}
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+func formatToolTitle(block *toolBlock) string {
+	if block == nil {
+		return ""
+	}
+	return fmt.Sprintf("Ran %s(%s)", block.name, block.argsLine)
 }
 
 func renderExpandedToolBlockCopy(block *toolBlock) string {

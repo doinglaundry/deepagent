@@ -118,7 +118,7 @@ func TestRenderToolBlockCollapsedFooter(t *testing.T) {
 	}
 
 	got := renderToolBlock(block, 5)
-	for _, want := range []string{"⏺", "Bash(git log --oneline -30)", "  ⎿  1", "… +2 lines (ctrl+o to expand)"} {
+	for _, want := range []string{"•", "Ran Bash(git log --oneline -30)", "  ⎿  1", "… +2 lines (ctrl+o to expand)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rendered block missing %q:\n%s", want, got)
 		}
@@ -189,7 +189,7 @@ func TestHandleKeyCtrlOToggles(t *testing.T) {
 		viewport:         viewport.New(80, 10),
 	}
 
-	_, _ = applyKey(m,tea.KeyMsg{Type: tea.KeyCtrlO})
+	_, _ = applyKey(m, tea.KeyMsg{Type: tea.KeyCtrlO})
 	if m.toolBlocks[0].collapsed {
 		t.Fatal("Ctrl-O should expand latest block")
 	}
@@ -198,7 +198,7 @@ func TestHandleKeyCtrlOToggles(t *testing.T) {
 func TestHandleKeyCtrlONoBlocksSetsHint(t *testing.T) {
 	m := &Model{toolPreviewLines: 1, viewport: viewport.New(80, 10)}
 
-	_, cmd := applyKey(m,tea.KeyMsg{Type: tea.KeyCtrlO})
+	_, cmd := applyKey(m, tea.KeyMsg{Type: tea.KeyCtrlO})
 	if m.footerHint != "nothing to expand" {
 		t.Fatalf("unexpected footer hint %q", m.footerHint)
 	}
@@ -243,7 +243,7 @@ func TestHandleTraceEventExtractsAndPushesBlock(t *testing.T) {
 		},
 	}
 
-	_, _ = applyTraceEvent(m,ev)
+	_, _ = applyTraceEvent(m, ev)
 	if len(m.toolBlocks) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(m.toolBlocks))
 	}
@@ -274,7 +274,7 @@ func TestToolBlockStaysLiveBeforeFinalAssistant(t *testing.T) {
 		flushedMsgCount: 1,
 	}
 
-	pushMessage(m,"assistant", "answer")
+	pushMessage(m, "assistant", "answer")
 	live := getLiveMessages(m)
 	if len(live) != 2 || live[0].Role != "tool-block" || live[1].Role != "assistant" {
 		t.Fatalf("tool block must stay live before final assistant, got %#v", live)
@@ -313,15 +313,17 @@ func TestDoneDrainsQueuedToolTraceBeforeAssistant(t *testing.T) {
 		flushedMsgCount:   1,
 	}
 
-	_, _ = applyDone(m,doneMsg{output: "answer"})
+	_, _ = applyDone(m, doneMsg{output: "answer"})
 	live := getLiveMessages(m)
 	if len(live) != 0 {
 		t.Fatalf("done must flush completed turn out of live viewport, got %#v", live)
 	}
-	if len(m.pendingScrollback) != 2 {
+	if len(m.pendingScrollback) != 3 {
 		t.Fatalf("done must queue tool trace and answer for scrollback, got %d pending", len(m.pendingScrollback))
 	}
-	if !strings.Contains(m.pendingScrollback[0], "web_search") || !strings.Contains(m.pendingScrollback[1], "answer") {
+	if !strings.Contains(m.pendingScrollback[0], "Ran web_search") ||
+		!strings.Contains(m.pendingScrollback[1], "answer") ||
+		!strings.Contains(m.pendingScrollback[2], "──") {
 		t.Fatalf("scrollback order must be tool trace before answer, got %#v", m.pendingScrollback)
 	}
 }
@@ -341,7 +343,7 @@ func TestLateToolTraceInsertsBeforeTrailingAssistant(t *testing.T) {
 		flushedMsgCount: 1,
 	}
 
-	_, _ = applyTraceEvent(m,middlewares.TraceEvent{
+	_, _ = applyTraceEvent(m, middlewares.TraceEvent{
 		Phase: middlewares.TracePhaseBefore,
 		Messages: []*schema.Message{
 			{
@@ -373,7 +375,7 @@ func TestClearResetsToolBlocks(t *testing.T) {
 		footerHint:       "nothing to expand",
 	}
 
-	_, handled := applyBuiltin(m,"/clear")
+	_, handled := applyBuiltin(m, "/clear")
 	if !handled {
 		t.Fatal("/clear should be handled")
 	}

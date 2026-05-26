@@ -57,8 +57,9 @@ type Model struct {
 	verbPresent string
 	verbPast    string
 
-	streamCh <-chan tea.Msg
-	cancel   context.CancelFunc
+	streamCh    <-chan tea.Msg
+	cancel      context.CancelFunc
+	interrupted bool
 
 	mdRenderer *glamour.TermRenderer
 	mdStyle    string
@@ -280,9 +281,29 @@ func queueCompletedTurnScrollback(m *Model) {
 	for _, msg := range m.messages[m.flushedMsgCount:] {
 		queueScrollbackMessage(m, msg)
 	}
+	if len(m.pendingScrollback) > 0 {
+		m.pendingScrollback = append(m.pendingScrollback, renderTurnDivider(m.width))
+	}
 	m.flushedMsgCount = len(m.messages)
 	m.viewport.SetContent("")
 	recomputeLayout(m)
+}
+
+func renderTurnDivider(width int) string {
+	const (
+		defaultWidth = 80
+		minWidth     = 24
+		maxWidth     = 120
+	)
+	switch {
+	case width <= 0:
+		width = defaultWidth
+	case width < minWidth:
+		width = minWidth
+	case width > maxWidth:
+		width = maxWidth
+	}
+	return footerStyle.Render(strings.Repeat("─", width))
 }
 
 func queueScrollbackMessage(m *Model, msg chatMessage) {
@@ -381,6 +402,7 @@ func abortStream(m *Model) bool {
 	if !m.streaming {
 		return false
 	}
+	m.interrupted = true
 	if m.cancel != nil {
 		m.cancel()
 	}

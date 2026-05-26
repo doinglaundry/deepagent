@@ -15,7 +15,7 @@ func TestHandleDone_PushesSummaryAboveThreshold(t *testing.T) {
 		streamStart: time.Now().Add(-3 * time.Second),
 		verbPast:    "Cogitated",
 	}
-	_, _ = applyDone(m,doneMsg{output: "hi"})
+	_, _ = applyDone(m, doneMsg{output: "hi"})
 
 	if len(m.messages) < 2 {
 		t.Fatalf("expected >=2 messages; got %d: %+v", len(m.messages), m.messages)
@@ -43,7 +43,7 @@ func TestHandleDone_NoSummaryBelowThreshold(t *testing.T) {
 		streamStart: time.Now().Add(-500 * time.Millisecond),
 		verbPast:    "Pondered",
 	}
-	_, _ = applyDone(m,doneMsg{output: "hi"})
+	_, _ = applyDone(m, doneMsg{output: "hi"})
 
 	for _, msg := range m.messages {
 		if msg.Role == "thinking-summary" {
@@ -59,13 +59,16 @@ func TestHandleDone_QueuesFinalAnswerForScrollback(t *testing.T) {
 		streamStart: time.Now(),
 	}
 
-	_, _ = applyDone(m,doneMsg{output: answer})
+	_, _ = applyDone(m, doneMsg{output: answer})
 
-	if len(m.pendingScrollback) != 1 {
+	if len(m.pendingScrollback) != 2 {
 		t.Fatalf("final answer must be queued for scrollback, got %#v", m.pendingScrollback)
 	}
 	if !strings.Contains(m.pendingScrollback[0], "start") || !strings.Contains(m.pendingScrollback[0], "end") {
 		t.Fatalf("scrollback must contain the full answer, got %q", m.pendingScrollback[0])
+	}
+	if !strings.Contains(m.pendingScrollback[1], "──") {
+		t.Fatalf("completed turn should end with a divider, got %q", m.pendingScrollback[1])
 	}
 	if live := getLiveMessages(m); len(live) != 0 {
 		t.Fatalf("completed answer should not stay clipped in live viewport: %#v", live)
@@ -80,7 +83,7 @@ func TestHandleDone_ErrorPathSkipsSummary(t *testing.T) {
 		streamStart: time.Now().Add(-5 * time.Second),
 		verbPast:    "Plotted",
 	}
-	_, _ = applyDone(m,doneMsg{err: errFixed("boom")})
+	_, _ = applyDone(m, doneMsg{err: errFixed("boom")})
 
 	for _, msg := range m.messages {
 		if msg.Role == "thinking-summary" {
@@ -98,7 +101,7 @@ func TestHandleDone_SkipsSummaryWhenVerbPastMissing(t *testing.T) {
 		streamStart: time.Now().Add(-3 * time.Second),
 		verbPast:    "",
 	}
-	_, _ = applyDone(m,doneMsg{output: "hi"})
+	_, _ = applyDone(m, doneMsg{output: "hi"})
 	for _, msg := range m.messages {
 		if msg.Role == "thinking-summary" {
 			t.Errorf("must not push summary with empty verb: %+v", msg)
@@ -108,7 +111,7 @@ func TestHandleDone_SkipsSummaryWhenVerbPastMissing(t *testing.T) {
 
 func TestRenderMessage_ThinkingSummary(t *testing.T) {
 	m := &Model{}
-	out := renderMessage(m,chatMessage{
+	out := renderMessage(m, chatMessage{
 		Role:    "thinking-summary",
 		Content: "Cogitated for 6s",
 	})

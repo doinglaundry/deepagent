@@ -321,6 +321,7 @@ func submit(m *Model, text string) (tea.Model, tea.Cmd) {
 	m.streaming = true
 	m.streamBuf.Reset()
 	m.lastErr = nil
+	m.interrupted = false
 
 	m.verbPresent, m.verbPast = pickVerb()
 	m.streamStart = time.Now()
@@ -384,17 +385,24 @@ func applyDreamDone(m *Model, msg dreamDoneMsg) (tea.Model, tea.Cmd) {
 func applyDone(m *Model, msg doneMsg) (tea.Model, tea.Cmd) {
 	elapsed := time.Since(m.streamStart).Round(time.Second)
 	drainedCmd := drainQueuedStreamMessages(m)
+	interrupted := m.interrupted
 
 	m.cancel = nil
 	m.streamCh = nil
+	m.interrupted = false
 	drainApprovals(m)
 
 	if msg.err != nil {
-		m.lastErr = msg.err
 		if buf := strings.TrimSpace(m.streamBuf.String()); buf != "" {
 			pushMessage(m, "assistant", buf)
 		}
-		pushMessage(m, "system", fmt.Sprintf("error: %s", msg.err))
+		if interrupted {
+			m.lastErr = nil
+			pushMessage(m, "system", "Conversation interrupted")
+		} else {
+			m.lastErr = msg.err
+			pushMessage(m, "system", fmt.Sprintf("error: %s", msg.err))
+		}
 		m.streamBuf.Reset()
 		m.streaming = false
 		queueCompletedTurnScrollback(m)
@@ -408,9 +416,12 @@ func applyDone(m *Model, msg doneMsg) (tea.Model, tea.Cmd) {
 	if final != "" {
 		pushMessage(m, "assistant", final)
 	}
+	if interrupted {
+		pushMessage(m, "system", "Conversation interrupted")
+	}
 
 	const summaryThreshold = 2 * time.Second
-	if elapsed >= summaryThreshold && m.verbPast != "" {
+	if !interrupted && elapsed >= summaryThreshold && m.verbPast != "" {
 		pushMessage(m, "thinking-summary",
 			fmt.Sprintf("%s for %ds", m.verbPast, int(elapsed.Seconds())))
 	}
