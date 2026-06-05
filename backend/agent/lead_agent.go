@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/adk/prebuilt/deep"
 	"github.com/cloudwego/eino/compose"
 
 	"eino-cli/backend/agent/middlewares"
@@ -34,15 +33,15 @@ func MakeLeadAgent(
 	sandboxManager := sandbox.Default()
 	handlers := GetChatModelMiddlewares(ctx, agentName, isSubagentEnabled, getPlanMode, cfg, chatModel, sandboxManager)
 
-	agentImpl, err := deep.New(ctx, &deep.Config{
-		Name:                   agentName,
-		Description:            "Deep Agent",
-		ChatModel:              chatModel,
-		Instruction:            GetSystemPrompt(agentName, isSubagentEnabled, cfg),
-		MaxIteration:           consts.DefaultAgentIterations,
-		WithoutGeneralSubAgent: !isSubagentEnabled,
-		WithoutWriteTodos:      false,
-		Handlers:               handlers,
+	agentImpl, err := newDeepCompatibleAgent(ctx, deepCompatibleAgentConfig{
+		Name:              agentName,
+		Description:       "Deep Agent",
+		ChatModel:         chatModel,
+		Instruction:       GetSystemPrompt(agentName, isSubagentEnabled, cfg),
+		MaxIterations:     consts.DefaultAgentIterations,
+		EnableWriteTodos:  true,
+		EnableGeneralTask: isSubagentEnabled,
+		Handlers:          handlers,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
 				Tools: tools.BuildBuiltinTools(cfg, sandboxManager),
@@ -64,14 +63,12 @@ func MakeAutoDreamAgent(ctx context.Context, cfg *config.Config) (adk.ResumableA
 	}
 	chatModel = wrapErrorHandling(chatModel)
 
-	agentImpl, err := deep.New(ctx, &deep.Config{
-		Name:                   agentName,
-		Description:            "Auto Dream Agent",
-		ChatModel:              chatModel,
-		Instruction:            "Consolidate session transcripts into markdown memory. Only write inside the dream memory root.",
-		MaxIteration:           consts.DefaultAgentIterations,
-		WithoutGeneralSubAgent: true,
-		WithoutWriteTodos:      true,
+	agentImpl, err := newDeepCompatibleAgent(ctx, deepCompatibleAgentConfig{
+		Name:          agentName,
+		Description:   "Auto Dream Agent",
+		ChatModel:     chatModel,
+		Instruction:   "Consolidate session transcripts into markdown memory. Only write inside the dream memory root.",
+		MaxIterations: consts.DefaultAgentIterations,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
 				Tools: tools.BuildAutoDreamTools(sandbox.Default()),
