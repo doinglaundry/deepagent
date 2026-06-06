@@ -255,6 +255,50 @@ func TestChatModelAgentReturnDirectlyUsesToolResult(t *testing.T) {
 	}
 }
 
+func TestChatModelAgentAppliesToolCallMiddlewares(t *testing.T) {
+	ctx := context.Background()
+	echo := &countingTool{name: "echo", output: "raw result"}
+	agent, err := newChatModelAgent(ctx, chatModelAgentConfig{
+		Name:          "chat",
+		Description:   "test agent",
+		Model:         &scriptedModel{responses: []*schema.Message{toolCallMessage("echo")}},
+		MaxIterations: 3,
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools: []tool.BaseTool{echo},
+				ToolCallMiddlewares: []compose.ToolMiddleware{
+					{
+						Invokable: func(endpoint compose.InvokableToolEndpoint) compose.InvokableToolEndpoint {
+							return func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
+								if _, err := endpoint(ctx, input); err != nil {
+									return nil, err
+								}
+								return &compose.ToolOutput{Result: "wrapped result"}, nil
+							}
+						},
+					},
+				},
+			},
+			ReturnDirectly: map[string]bool{"echo": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("newChatModelAgent() error = %v", err)
+	}
+
+	events := collectAgentTestEvents(t, agent.Run(ctx, &adk.AgentInput{
+		Messages: []adk.Message{schema.UserMessage("run echo")},
+	}))
+
+	if echo.calls != 1 {
+		t.Fatalf("tool calls = %d, want 1", echo.calls)
+	}
+	final := lastAssistantContent(t, events)
+	if final != "wrapped result" {
+		t.Fatalf("final output = %q, want %q", final, "wrapped result")
+	}
+}
+
 func collectAgentTestEvents(t *testing.T, iter *adk.AsyncIterator[*adk.AgentEvent]) []*adk.AgentEvent {
 	t.Helper()
 	var events []*adk.AgentEvent

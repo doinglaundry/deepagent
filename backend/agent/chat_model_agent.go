@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -376,11 +377,32 @@ func (r *chatModelRun) callTool(ctx context.Context, toolCall schema.ToolCall) (
 		}
 	}
 
-	output, err := endpoint(ctx, toolCall.Function.Arguments)
+	composeEndpoint := func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
+		output, err := endpoint(ctx, input.Arguments, input.CallOptions...)
+		if err != nil {
+			return nil, err
+		}
+		return &compose.ToolOutput{Result: output}, nil
+	}
+	for i := len(r.agent.toolsConfig.ToolCallMiddlewares) - 1; i >= 0; i-- {
+		middleware := r.agent.toolsConfig.ToolCallMiddlewares[i].Invokable
+		if middleware != nil {
+			composeEndpoint = middleware(composeEndpoint)
+		}
+	}
+
+	output, err := composeEndpoint(ctx, &compose.ToolInput{
+		Name:      toolCall.Function.Name,
+		Arguments: toolCall.Function.Arguments,
+		CallID:    toolCall.ID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return schema.ToolMessage(output, toolCall.ID, schema.WithToolName(toolCall.Function.Name)), nil
+	if output == nil {
+		return nil, fmt.Errorf("tool %q returned nil output", toolCall.Function.Name)
+	}
+	return schema.ToolMessage(output.Result, toolCall.ID, schema.WithToolName(toolCall.Function.Name)), nil
 }
 
 func (r *chatModelRun) modelContext() *adk.ModelContext {
