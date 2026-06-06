@@ -356,9 +356,25 @@ func (r *chatModelRun) callTools(ctx context.Context, toolCalls []schema.ToolCal
 }
 
 func (r *chatModelRun) callTool(ctx context.Context, toolCall schema.ToolCall) (adk.Message, error) {
+	arguments := toolCall.Function.Arguments
+	if r.agent.toolsConfig.ToolArgumentsHandler != nil {
+		var err error
+		arguments, err = r.agent.toolsConfig.ToolArgumentsHandler(ctx, toolCall.Function.Name, arguments)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	selected := findTool(ctx, r.tools, toolCall.Function.Name)
 	if selected == nil {
-		return nil, fmt.Errorf("tool %q not found", toolCall.Function.Name)
+		if r.agent.toolsConfig.UnknownToolsHandler == nil {
+			return nil, fmt.Errorf("tool %q not found", toolCall.Function.Name)
+		}
+		output, err := r.agent.toolsConfig.UnknownToolsHandler(ctx, toolCall.Function.Name, arguments)
+		if err != nil {
+			return nil, err
+		}
+		return schema.ToolMessage(output, toolCall.ID, schema.WithToolName(toolCall.Function.Name)), nil
 	}
 	invokable, ok := selected.(tool.InvokableTool)
 	if !ok {
@@ -393,7 +409,7 @@ func (r *chatModelRun) callTool(ctx context.Context, toolCall schema.ToolCall) (
 
 	output, err := composeEndpoint(ctx, &compose.ToolInput{
 		Name:      toolCall.Function.Name,
-		Arguments: toolCall.Function.Arguments,
+		Arguments: arguments,
 		CallID:    toolCall.ID,
 	})
 	if err != nil {

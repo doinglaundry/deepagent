@@ -101,6 +101,7 @@ type countingTool struct {
 	name   string
 	output string
 	calls  int
+	args   []string
 }
 
 func (t *countingTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -110,6 +111,20 @@ func (t *countingTool) Info(context.Context) (*schema.ToolInfo, error) {
 func (t *countingTool) InvokableRun(_ context.Context, _ string, _ ...tool.Option) (string, error) {
 	t.calls++
 	return t.output, nil
+}
+
+func (t *countingTool) InvokableRunWithArgs(_ context.Context, args string, _ ...tool.Option) (string, error) {
+	t.calls++
+	t.args = append(t.args, args)
+	return t.output, nil
+}
+
+type argumentCapturingTool struct {
+	countingTool
+}
+
+func (t *argumentCapturingTool) InvokableRun(ctx context.Context, args string, opts ...tool.Option) (string, error) {
+	return t.InvokableRunWithArgs(ctx, args, opts...)
 }
 
 func TestChatModelAgentRunsModelToolLoop(t *testing.T) {
@@ -296,6 +311,84 @@ func TestChatModelAgentAppliesToolCallMiddlewares(t *testing.T) {
 	final := lastAssistantContent(t, events)
 	if final != "wrapped result" {
 		t.Fatalf("final output = %q, want %q", final, "wrapped result")
+	}
+}
+
+func TestChatModelAgentAppliesToolArgumentsHandler(t *testing.T) {
+	ctx := context.Background()
+	echo := &argumentCapturingTool{countingTool: countingTool{name: "echo", output: "handled"}}
+	agent, err := newChatModelAgent(ctx, chatModelAgentConfig{
+		Name:          "chat",
+		Description:   "test agent",
+		Model:         &scriptedModel{responses: []*schema.Message{toolCallMessage("echo")}},
+		MaxIterations: 3,
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools: []tool.BaseTool{echo},
+				ToolArgumentsHandler: func(_ context.Context, name, arguments string) (string, error) {
+					if name != "echo" {
+						t.Fatalf("tool argument handler name = %q, want echo", name)
+					}
+					if arguments != `{"value":"hello"}` {
+						t.Fatalf("tool argument handler args = %q", arguments)
+					}
+					return `{"value":"rewritten"}`, nil
+				},
+			},
+			ReturnDirectly: map[string]bool{"echo": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("newChatModelAgent() error = %v", err)
+	}
+
+	events := collectAgentTestEvents(t, agent.Run(ctx, &adk.AgentInput{
+		Messages: []adk.Message{schema.UserMessage("run echo")},
+	}))
+
+	if echo.calls != 1 {
+		t.Fatalf("tool calls = %d, want 1", echo.calls)
+	}
+	if len(echo.args) != 1 || echo.args[0] != `{"value":"rewritten"}` {
+		t.Fatalf("tool args = %v, want rewritten", echo.args)
+	}
+	if final := lastAssistantContent(t, events); final != "handled" {
+		t.Fatalf("final output = %q, want handled", final)
+	}
+}
+
+func TestChatModelAgentUsesUnknownToolsHandler(t *testing.T) {
+	ctx := context.Background()
+	agent, err := newChatModelAgent(ctx, chatModelAgentConfig{
+		Name:          "chat",
+		Description:   "test agent",
+		Model:         &scriptedModel{responses: []*schema.Message{toolCallMessage("missing")}},
+		MaxIterations: 3,
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				UnknownToolsHandler: func(_ context.Context, name, input string) (string, error) {
+					if name != "missing" {
+						t.Fatalf("unknown tool name = %q, want missing", name)
+					}
+					if input != `{"value":"hello"}` {
+						t.Fatalf("unknown tool input = %q", input)
+					}
+					return "handled missing tool", nil
+				},
+			},
+			ReturnDirectly: map[string]bool{"missing": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("newChatModelAgent() error = %v", err)
+	}
+
+	events := collectAgentTestEvents(t, agent.Run(ctx, &adk.AgentInput{
+		Messages: []adk.Message{schema.UserMessage("run missing")},
+	}))
+
+	if final := lastAssistantContent(t, events); final != "handled missing tool" {
+		t.Fatalf("final output = %q, want handled missing tool", final)
 	}
 }
 
