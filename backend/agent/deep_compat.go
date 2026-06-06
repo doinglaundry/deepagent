@@ -63,13 +63,12 @@ func newDeepCompatibleAgent(ctx context.Context, cfg deepCompatibleAgentConfig) 
 		return nil, err
 	}
 
-	agentImpl, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+	agentImpl, err := newChatModelAgent(ctx, chatModelAgentConfig{
 		Name:                cfg.Name,
 		Description:         cfg.Description,
 		Instruction:         cfg.Instruction,
 		Model:               cfg.ChatModel,
 		ToolsConfig:         cfg.ToolsConfig,
-		GenModelInput:       genModelInput,
 		MaxIterations:       cfg.MaxIterations,
 		Handlers:            handlers,
 		ModelRetryConfig:    cfg.ModelRetryConfig,
@@ -156,13 +155,12 @@ func newTaskToolHandler(
 	cfg deepCompatibleAgentConfig,
 	parentHandlers []adk.ChatModelAgentMiddleware,
 ) (adk.ChatModelAgentMiddleware, error) {
-	generalAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+	generalAgent, err := newChatModelAgent(ctx, chatModelAgentConfig{
 		Name:                "general-purpose",
 		Description:         "general-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. (Tools: *)",
 		Instruction:         cfg.Instruction,
 		Model:               cfg.ChatModel,
 		ToolsConfig:         cfg.ToolsConfig,
-		GenModelInput:       genModelInput,
 		MaxIterations:       cfg.MaxIterations,
 		Handlers:            parentHandlers,
 		ModelRetryConfig:    cfg.ModelRetryConfig,
