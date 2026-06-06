@@ -377,10 +377,22 @@ func (r *chatModelRun) callTool(ctx context.Context, toolCall schema.ToolCall) (
 		return schema.ToolMessage(output, toolCall.ID, schema.WithToolName(toolCall.Function.Name)), nil
 	}
 	invokable, ok := selected.(tool.InvokableTool)
-	if !ok {
-		return nil, fmt.Errorf("tool %q is not invokable", toolCall.Function.Name)
+	if ok {
+		return r.callInvokableTool(ctx, invokable, toolCall, arguments)
 	}
+	streamable, ok := selected.(tool.StreamableTool)
+	if ok {
+		return r.callStreamableTool(ctx, streamable, toolCall, arguments)
+	}
+	return nil, fmt.Errorf("tool %q is not invokable or streamable", toolCall.Function.Name)
+}
 
+func (r *chatModelRun) callInvokableTool(
+	ctx context.Context,
+	invokable tool.InvokableTool,
+	toolCall schema.ToolCall,
+	arguments string,
+) (adk.Message, error) {
 	endpoint := invokable.InvokableRun
 	toolCtx := &adk.ToolContext{Name: toolCall.Function.Name, CallID: toolCall.ID}
 	for i := len(r.agent.handlers) - 1; i >= 0; i-- {
@@ -421,11 +433,76 @@ func (r *chatModelRun) callTool(ctx context.Context, toolCall schema.ToolCall) (
 	return schema.ToolMessage(output.Result, toolCall.ID, schema.WithToolName(toolCall.Function.Name)), nil
 }
 
+func (r *chatModelRun) callStreamableTool(
+	ctx context.Context,
+	streamable tool.StreamableTool,
+	toolCall schema.ToolCall,
+	arguments string,
+) (adk.Message, error) {
+	endpoint := streamable.StreamableRun
+	toolCtx := &adk.ToolContext{Name: toolCall.Function.Name, CallID: toolCall.ID}
+	for i := len(r.agent.handlers) - 1; i >= 0; i-- {
+		wrapped, err := r.agent.handlers[i].WrapStreamableToolCall(ctx, endpoint, toolCtx)
+		if err != nil {
+			return nil, err
+		}
+		if wrapped != nil {
+			endpoint = wrapped
+		}
+	}
+
+	composeEndpoint := func(ctx context.Context, input *compose.ToolInput) (*compose.StreamToolOutput, error) {
+		output, err := endpoint(ctx, input.Arguments, input.CallOptions...)
+		if err != nil {
+			return nil, err
+		}
+		return &compose.StreamToolOutput{Result: output}, nil
+	}
+	for i := len(r.agent.toolsConfig.ToolCallMiddlewares) - 1; i >= 0; i-- {
+		middleware := r.agent.toolsConfig.ToolCallMiddlewares[i].Streamable
+		if middleware != nil {
+			composeEndpoint = middleware(composeEndpoint)
+		}
+	}
+
+	output, err := composeEndpoint(ctx, &compose.ToolInput{
+		Name:      toolCall.Function.Name,
+		Arguments: arguments,
+		CallID:    toolCall.ID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if output == nil || output.Result == nil {
+		return nil, fmt.Errorf("tool %q returned nil stream output", toolCall.Function.Name)
+	}
+	result, err := concatStringStream(output.Result)
+	if err != nil {
+		return nil, err
+	}
+	return schema.ToolMessage(result, toolCall.ID, schema.WithToolName(toolCall.Function.Name)), nil
+}
+
 func (r *chatModelRun) modelContext() *adk.ModelContext {
 	return &adk.ModelContext{
 		Tools:               append([]*schema.ToolInfo(nil), r.toolInfos...),
 		ModelRetryConfig:    r.agent.modelRetryConfig,
 		ModelFailoverConfig: r.agent.modelFailoverConfig,
+	}
+}
+
+func concatStringStream(reader *schema.StreamReader[string]) (string, error) {
+	defer reader.Close()
+	var result string
+	for {
+		chunk, err := reader.Recv()
+		if err == io.EOF {
+			return result, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		result += chunk
 	}
 }
 

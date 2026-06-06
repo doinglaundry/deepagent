@@ -127,6 +127,21 @@ func (t *argumentCapturingTool) InvokableRun(ctx context.Context, args string, o
 	return t.InvokableRunWithArgs(ctx, args, opts...)
 }
 
+type streamTool struct {
+	name   string
+	chunks []string
+	calls  int
+}
+
+func (t *streamTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: t.name}, nil
+}
+
+func (t *streamTool) StreamableRun(_ context.Context, _ string, _ ...tool.Option) (*schema.StreamReader[string], error) {
+	t.calls++
+	return schema.StreamReaderFromArray(t.chunks), nil
+}
+
 func TestChatModelAgentRunsModelToolLoop(t *testing.T) {
 	ctx := context.Background()
 	agent, err := newChatModelAgent(ctx, chatModelAgentConfig{
@@ -389,6 +404,82 @@ func TestChatModelAgentUsesUnknownToolsHandler(t *testing.T) {
 
 	if final := lastAssistantContent(t, events); final != "handled missing tool" {
 		t.Fatalf("final output = %q, want handled missing tool", final)
+	}
+}
+
+func TestChatModelAgentRunsStreamableTool(t *testing.T) {
+	ctx := context.Background()
+	echo := &streamTool{name: "echo", chunks: []string{"stream", " result"}}
+	agent, err := newChatModelAgent(ctx, chatModelAgentConfig{
+		Name:          "chat",
+		Description:   "test agent",
+		Model:         &scriptedModel{responses: []*schema.Message{toolCallMessage("echo")}},
+		MaxIterations: 3,
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools: []tool.BaseTool{echo},
+			},
+			ReturnDirectly: map[string]bool{"echo": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("newChatModelAgent() error = %v", err)
+	}
+
+	events := collectAgentTestEvents(t, agent.Run(ctx, &adk.AgentInput{
+		Messages: []adk.Message{schema.UserMessage("run echo")},
+	}))
+
+	if echo.calls != 1 {
+		t.Fatalf("stream tool calls = %d, want 1", echo.calls)
+	}
+	if final := lastAssistantContent(t, events); final != "stream result" {
+		t.Fatalf("final output = %q, want stream result", final)
+	}
+}
+
+func TestChatModelAgentAppliesStreamableToolCallMiddlewares(t *testing.T) {
+	ctx := context.Background()
+	echo := &streamTool{name: "echo", chunks: []string{"raw"}}
+	agent, err := newChatModelAgent(ctx, chatModelAgentConfig{
+		Name:          "chat",
+		Description:   "test agent",
+		Model:         &scriptedModel{responses: []*schema.Message{toolCallMessage("echo")}},
+		MaxIterations: 3,
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools: []tool.BaseTool{echo},
+				ToolCallMiddlewares: []compose.ToolMiddleware{
+					{
+						Streamable: func(endpoint compose.StreamableToolEndpoint) compose.StreamableToolEndpoint {
+							return func(ctx context.Context, input *compose.ToolInput) (*compose.StreamToolOutput, error) {
+								if _, err := endpoint(ctx, input); err != nil {
+									return nil, err
+								}
+								return &compose.StreamToolOutput{
+									Result: schema.StreamReaderFromArray([]string{"wrapped"}),
+								}, nil
+							}
+						},
+					},
+				},
+			},
+			ReturnDirectly: map[string]bool{"echo": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("newChatModelAgent() error = %v", err)
+	}
+
+	events := collectAgentTestEvents(t, agent.Run(ctx, &adk.AgentInput{
+		Messages: []adk.Message{schema.UserMessage("run echo")},
+	}))
+
+	if echo.calls != 1 {
+		t.Fatalf("stream tool calls = %d, want 1", echo.calls)
+	}
+	if final := lastAssistantContent(t, events); final != "wrapped" {
+		t.Fatalf("final output = %q, want wrapped", final)
 	}
 }
 
