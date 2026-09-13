@@ -49,6 +49,10 @@ func closeRunHistory(m *Model) {
 }
 
 func rollbackSelectedRun(m *Model) {
+	if _, remote := m.rt.(remoteRuntime); remote {
+		showRemoteHistoryRow(m)
+		return
+	}
 	if m.runHistorySel < 0 || m.runHistorySel >= len(m.runHistoryRows) {
 		closeRunHistory(m)
 		return
@@ -125,7 +129,11 @@ func renderRunHistoryPanel(m *Model) string {
 	if len(m.runHistoryRows) > runHistoryMaxRows {
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("  showing %d-%d of %d", start+1, end, len(m.runHistoryRows))))
 	}
-	lines = append(lines, dimStyle.Render("  enter rollback · esc/q close"))
+	hint := "  enter rollback · esc/q close"
+	if _, remote := m.rt.(remoteRuntime); remote {
+		hint = "  enter view · esc/q close"
+	}
+	lines = append(lines, dimStyle.Render(hint))
 	return strings.Join(lines, "\n")
 }
 

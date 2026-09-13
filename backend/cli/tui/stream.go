@@ -18,6 +18,9 @@ type doneMsg struct {
 }
 
 func startStream(runtime rt.Runtime, sessionID, prompt string, runs *runtimeRun.Manager) (<-chan tea.Msg, context.CancelFunc) {
+	if remote, ok := runtime.(remoteRuntime); ok {
+		return startRemoteStream(remote, prompt)
+	}
 	streamCh := make(chan tea.Msg, 64)
 	ctx := runtimecontext.WithSessionID(context.Background(), sessionID)
 	events, cancel, err := runtimeRun.Start(ctx, runtime, prompt, runs)
@@ -52,7 +55,7 @@ func waitForStreamMsg(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		v, ok := <-ch
 		if !ok {
-			return nil
+			return doneMsg{}
 		}
 		return v
 	}

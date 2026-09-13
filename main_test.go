@@ -1,95 +1,40 @@
 package main
 
 import (
+	"eino-cli/host/cli"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	"eino-cli/backend/config"
 )
 
-func TestParseFlagsRootPrefersFlag(t *testing.T) {
+func TestRootFlagPrecedesEnvironment(t *testing.T) {
 	t.Setenv("SGADK_ROOT", "from-env")
-	root, err := parseFlags([]string{"--root", "from-flag"})
+	opts, err := cli.Parse([]string{"--root", "from-flag"})
 	if err != nil {
-		t.Fatalf("parseFlags: %v", err)
+		t.Fatal(err)
 	}
 	want, _ := filepath.Abs("from-flag")
-	if root != want {
-		t.Fatalf("root: got %q, want %q", root, want)
+	if opts.Root != want {
+		t.Fatalf("got %q want %q", opts.Root, want)
 	}
 }
-
-func TestParseFlagsRootFallsBackToEnv(t *testing.T) {
+func TestRootEnvironmentAndWorkingDirectory(t *testing.T) {
 	t.Setenv("SGADK_ROOT", "from-env")
-	root, err := parseFlags(nil)
+	opts, err := cli.Parse(nil)
 	if err != nil {
-		t.Fatalf("parseFlags: %v", err)
+		t.Fatal(err)
 	}
 	want, _ := filepath.Abs("from-env")
-	if root != want {
-		t.Fatalf("got %q, want %q", root, want)
+	if opts.Root != want {
+		t.Fatal(opts.Root)
 	}
-}
-
-func TestParseFlagsRootFallsBackToWorkingDirectory(t *testing.T) {
 	t.Setenv("SGADK_ROOT", "")
-	root, err := parseFlags(nil)
-	if err != nil {
-		t.Fatalf("parseFlags: %v", err)
-	}
-	want, err := os.Getwd()
+	opts, err = cli.Parse(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ = filepath.Abs(want)
-	if root != want {
-		t.Fatalf("got %q, want %q", root, want)
-	}
-}
-
-func TestBuildSandboxManagerDefaultsToLocal(t *testing.T) {
-	manager, err := buildSandboxManager(&config.Config{}, "default_session_id")
-	if err != nil {
-		t.Fatalf("buildSandboxManager: %v", err)
-	}
-	if manager == nil {
-		t.Fatal("manager is nil")
-	}
-}
-
-func TestBuildSandboxManagerRejectsUnknownUse(t *testing.T) {
-	_, err := buildSandboxManager(&config.Config{Sandbox: config.SandboxConfig{Use: "bad"}}, "default_session_id")
-	if err == nil {
-		t.Fatal("expected unknown sandbox.use error")
-	}
-	if !strings.Contains(err.Error(), "sandbox.use") {
-		t.Fatalf("error should mention sandbox.use, got %v", err)
-	}
-}
-
-func TestResetAgentMessagesLogClearsExistingFile(t *testing.T) {
-	root := t.TempDir()
-	restore := config.SetRootDirForTest(root)
-	t.Cleanup(restore)
-
-	path := config.AgentMessagesLogPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("old messages"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := resetAgentMessagesLog(); err != nil {
-		t.Fatalf("resetAgentMessagesLog: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(data) != 0 {
-		t.Fatalf("log should be empty after reset, got %q", data)
+	want, _ = os.Getwd()
+	if opts.Root != want {
+		t.Fatal(opts.Root)
 	}
 }

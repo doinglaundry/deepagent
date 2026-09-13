@@ -1,0 +1,106 @@
+FAIL	eino-cli/deepagent/core [setup failed]
+FAIL	eino-cli/deepagent/core/agentthread [setup failed]
+FAIL	eino-cli/deepagent/core/backends [setup failed]
+FAIL	eino-cli/deepagent/core/graph [setup failed]
+ok  	eino-cli/deepagent/core/checkpointer	(cached)
+ok  	eino-cli/deepagent/core/compact	(cached)
+?   	eino-cli/deepagent/core/constant	[no test files]
+ok  	eino-cli/deepagent/core/engine	(cached)
+ok  	eino-cli/deepagent/core/engine/agentthread	(cached)
+ok  	eino-cli/deepagent/core/memory	(cached)
+ok  	eino-cli/deepagent/core/middleware/repairjson	(cached)
+ok  	eino-cli/deepagent/core/tools/filesystem	(cached)
+ok  	eino-cli/deepagent/core/types	(cached)
+FAIL
+# eino-cli/deepagent/core
+deepagent/core/graph_builder.go:15:2: cannot find module providing package code.byted.org/gopkg/lang/sets: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core
+deepagent/core/agent.go:9:2: cannot find module providing package code.byted.org/gopkg/logs/v2: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core
+deepagent/core/graph_builder.go:17:2: cannot find module providing package code.byted.org/lang/gg/choose: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core
+deepagent/core/graph_builder.go:18:2: cannot find module providing package code.byted.org/lang/gg/gmap: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core
+deepagent/core/backends/backend.go:8:2: package eino-cli/deepagent/serialiser is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/serialiser)
+# eino-cli/deepagent/core
+deepagent/core/graph/stream_tool_executor.go:11:2: package eino-cli/deepagent/core/internal/toolerrors is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/internal/toolerrors)
+# eino-cli/deepagent/core
+deepagent/core/graph/stream_tool_executor.go:12:2: package eino-cli/deepagent/core/tools is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/tools)
+# eino-cli/deepagent/core
+deepagent/core/graph/tool_call_collector.go:9:2: cannot find module providing package github.com/kaptinlin/jsonrepair: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core
+deepagent/core/graph/message.go:7:2: cannot find module providing package github.com/mohae/deepcopy: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core
+deepagent/core/agent.go:12:2: package eino-cli/deepagent/core/middleware is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware)
+# eino-cli/deepagent/core
+deepagent/core/subagent_factory.go:6:2: package eino-cli/deepagent/core/middleware/baseprompt is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/baseprompt)
+# eino-cli/deepagent/core
+deepagent/core/subagent_factory.go:7:2: package eino-cli/deepagent/core/middleware/contextmanager is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/contextmanager)
+# eino-cli/deepagent/core
+deepagent/core/constructor.go:11:2: package eino-cli/deepagent/core/middleware/filesystem is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/filesystem)
+# eino-cli/deepagent/core
+deepagent/core/constructor.go:12:2: package eino-cli/deepagent/core/middleware/patchtoolcalls is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/patchtoolcalls)
+# eino-cli/deepagent/core
+deepagent/core/config.go:9:2: package eino-cli/deepagent/core/middleware/plan is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/plan)
+# eino-cli/deepagent/core
+deepagent/core/config.go:10:2: package eino-cli/deepagent/core/middleware/skill is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/skill)
+# eino-cli/deepagent/core
+deepagent/core/config.go:11:2: package eino-cli/deepagent/core/middleware/subagent is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/subagent)
+# eino-cli/deepagent/core
+deepagent/core/config.go:12:2: package eino-cli/deepagent/core/middleware/web is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/web)
+# eino-cli/deepagent/core
+deepagent/core/agent.go:13:2: package eino-cli/deepagent/core/tracing is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/tracing)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/agent.go:9:2: cannot find module providing package code.byted.org/gopkg/logs/v2: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core/agentthread
+deepagent/core/graph_builder.go:17:2: cannot find module providing package code.byted.org/lang/gg/choose: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core/agentthread
+deepagent/core/graph_builder.go:15:2: cannot find module providing package code.byted.org/gopkg/lang/sets: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core/agentthread
+deepagent/core/graph_builder.go:18:2: cannot find module providing package code.byted.org/lang/gg/gmap: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core/agentthread
+deepagent/core/backends/backend.go:8:2: package eino-cli/deepagent/serialiser is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/serialiser)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/graph/stream_tool_executor.go:11:2: package eino-cli/deepagent/core/internal/toolerrors is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/internal/toolerrors)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/graph/stream_tool_executor.go:12:2: package eino-cli/deepagent/core/tools is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/tools)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/graph/tool_call_collector.go:9:2: cannot find module providing package github.com/kaptinlin/jsonrepair: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core/agentthread
+deepagent/core/graph/message.go:7:2: cannot find module providing package github.com/mohae/deepcopy: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core/agentthread
+deepagent/core/agent.go:12:2: package eino-cli/deepagent/core/middleware is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/subagent_factory.go:6:2: package eino-cli/deepagent/core/middleware/baseprompt is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/baseprompt)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/subagent_factory.go:7:2: package eino-cli/deepagent/core/middleware/contextmanager is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/contextmanager)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/constructor.go:11:2: package eino-cli/deepagent/core/middleware/filesystem is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/filesystem)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/constructor.go:12:2: package eino-cli/deepagent/core/middleware/patchtoolcalls is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/patchtoolcalls)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/config.go:9:2: package eino-cli/deepagent/core/middleware/plan is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/plan)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/config.go:10:2: package eino-cli/deepagent/core/middleware/skill is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/skill)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/config.go:11:2: package eino-cli/deepagent/core/middleware/subagent is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/subagent)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/config.go:12:2: package eino-cli/deepagent/core/middleware/web is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/middleware/web)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/agent.go:13:2: package eino-cli/deepagent/core/tracing is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/tracing)
+# eino-cli/deepagent/core/agentthread
+deepagent/core/agentthread/context_middleware.go:10:2: package eino-cli/deepagent/core/utils is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/utils)
+# eino-cli/deepagent/core/backends
+deepagent/core/agent.go:9:2: cannot find module providing package code.byted.org/gopkg/logs/v2: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core/backends
+deepagent/core/backends/backend.go:8:2: package eino-cli/deepagent/serialiser is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/serialiser)
+# eino-cli/deepagent/core/graph
+deepagent/core/agent.go:9:2: cannot find module providing package code.byted.org/gopkg/logs/v2: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core/graph
+deepagent/core/graph/stream_tool_executor.go:11:2: package eino-cli/deepagent/core/internal/toolerrors is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/internal/toolerrors)
+# eino-cli/deepagent/core/graph
+deepagent/core/graph/stream_tool_executor.go:12:2: package eino-cli/deepagent/core/tools is not in std (/opt/homebrew/Cellar/go/1.26.1/libexec/src/eino-cli/deepagent/core/tools)
+# eino-cli/deepagent/core/graph
+deepagent/core/graph/tool_call_collector.go:9:2: cannot find module providing package github.com/kaptinlin/jsonrepair: import lookup disabled by -mod=readonly
+# eino-cli/deepagent/core/graph
+deepagent/core/graph/message.go:7:2: cannot find module providing package github.com/mohae/deepcopy: import lookup disabled by -mod=readonly

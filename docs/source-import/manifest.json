@@ -1,0 +1,267 @@
+[
+  {
+    "file": "deepagent/core/agent.go",
+    "source": "/Users/yingbaosun/.codex/attachments/f0b5ea36-ed78-41a1-a201-73ed2321c8d3/pasted-text.txt",
+    "source_sha256": "dd2bb52e426789064504f021cbc99ebccbfaf056e3239f2f945e9fb93921c8dd",
+    "filename_inferred": true,
+    "formatted_sha256": "0b474b2f907cbd99569f5a3e9287213bba948c15691a1a31bc01d9b9631e96bb"
+  },
+  {
+    "file": "deepagent/core/config.go",
+    "source": "/Users/yingbaosun/.codex/attachments/bd588ff9-b926-451e-8f45-5de48a4621d2/pasted-text.txt",
+    "source_sha256": "4234cbca767dc4e94c984e8f4e144c154cda7403d72df8c3868778ec001f686e",
+    "filename_inferred": true,
+    "formatted_sha256": "4234cbca767dc4e94c984e8f4e144c154cda7403d72df8c3868778ec001f686e"
+  },
+  {
+    "file": "deepagent/core/constructor.go",
+    "source": "/Users/yingbaosun/.codex/attachments/3e8d714d-5f34-47a8-8148-6f190154c830/pasted-text.txt",
+    "source_sha256": "c2c442e651de7fab0b91062de30f5325c49735f4fa3ae6f1543a79ea0e03f9a0",
+    "filename_inferred": true,
+    "formatted_sha256": "9ad43e8e7c0aab2df3303f78616b19e9495d3d1cd2efb704fc9f9164405f0f07"
+  },
+  {
+    "file": "deepagent/core/constructor_test.go",
+    "source": "/Users/yingbaosun/.codex/attachments/6556d736-dd56-44bf-bbcf-3ac9744c0ea0/pasted-text.txt",
+    "source_sha256": "3202d6d6b4f523eb63434a8900bf4b9bffa99d9145b127921a3c08c98578838b",
+    "filename_inferred": true,
+    "formatted_sha256": "3202d6d6b4f523eb63434a8900bf4b9bffa99d9145b127921a3c08c98578838b"
+  },
+  {
+    "file": "deepagent/core/graph_builder.go",
+    "source": "/Users/yingbaosun/.codex/attachments/0ee75a9c-da87-49fe-859a-c9e5022d8aff/pasted-text.txt",
+    "source_sha256": "ff55887bafb3f2f92c30091e95c5ed4c8bfe49ffae0124070478ca5ece1ca2de",
+    "filename_inferred": true,
+    "formatted_sha256": "1acdbed086046b0c91075ef2562afbb701e20826051c2b2fd75e6a0fe574d0fb"
+  },
+  {
+    "duplicate_of": "deepagent/core/constructor_test.go",
+    "source_attachment": "ad92a329-8888-4195-ad10-3c08dd089070"
+  },
+  {
+    "duplicate_of": "deepagent/core/constructor_test.go",
+    "source_attachment": "70b6a7fa-86df-4b37-b712-6cb6260bb79c"
+  },
+  {
+    "file": "deepagent/core/context.go",
+    "source": "user inline source, normalized Markdown/HTML escaping and formatting",
+    "filename_inferred": true,
+    "formatted_sha256": "1e288991bbfdcf950f9f615a6fee43d6ff96d4d98417848002ba76b6c7a52cc2"
+  },
+  {
+    "file": "deepagent/core/max_model_calls.go",
+    "source": "user inline source, normalized Markdown/HTML escaping and formatting",
+    "filename_inferred": true,
+    "formatted_sha256": "91a38104a103c0597b9d15f38c7e88b8e61ca16cb56b444b556ee4a9bbc97809"
+  },
+  {
+    "file": "deepagent/core/run_options.go",
+    "source": "user inline source, normalized Markdown/HTML escaping and formatting",
+    "filename_inferred": true,
+    "formatted_sha256": "356b3bfa49f7e7a0b9bf46640b0c6de6fc35cd3f44de6c6cbad3337fe3d66743"
+  },
+  {
+    "file": "deepagent/core/agentthread/callback_helpers.go",
+    "source": "user inline source, formatting and Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "f38caf97aacc6e53f6596e2d9835e4f1651a7baf83aebf5a8abecb9e07931ae7"
+  },
+  {
+    "file": "deepagent/core/agentthread/context_middleware.go",
+    "source": "user inline source, formatting and Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "19b3611d010c83dd1a718aaddb3708141beedee01881f9e490b8ffe98ade6e55"
+  },
+  {
+    "file": "deepagent/core/agentthread/context_mng.go",
+    "source": "/Users/yingbaosun/.codex/attachments/48e1711e-263f-4945-be46-4343507cc16b/pasted-text.txt",
+    "filename_inferred": true,
+    "source_sha256": "b8d85a656997a85215c968395360584fd387151949b023d38eb151508f73033f",
+    "formatted_sha256": "b8d85a656997a85215c968395360584fd387151949b023d38eb151508f73033f"
+  },
+  {
+    "file": "deepagent/core/subagent_factory.go",
+    "source": "user inline source, formatting and Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "9ddca9088c83b8503e14192369b348f997bc90061db7a746cfdd41de853a7dc9"
+  },
+  {
+    "file": "deepagent/core/subagent_validation.go",
+    "source": "user inline source, formatting and Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "44536896ff14513322e33dfeb69442abc1652687373c4d9600fb3d02d3110c62"
+  },
+  {
+    "file": "deepagent/core/agentthread/context_contracts.go",
+    "source": "user inline source; formatting/Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "54eaa45bdd67f5300b9f73a7f675570303f09f51e3b221266310fe67b3d34e16"
+  },
+  {
+    "file": "deepagent/core/agentthread/model_callback_helpers.go",
+    "source": "user inline source; formatting/Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "6730afb3fed93e11d5e5af3a0b8cb39e5d0b9aee19a1324b4bedae3ea126f34a"
+  },
+  {
+    "file": "deepagent/core/agentthread/model_event_barrier.go",
+    "source": "user inline source; formatting/Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "437212eea0801e51974a9eac4e977ed3ebac525355eb263e4fa67f43056476c3"
+  },
+  {
+    "file": "deepagent/core/agentthread/redis_seq_generator.go",
+    "source": "user inline source; formatting/Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "aa9f7a7245cc3c090e9e86367a6b08007823ff582a45bea2d3a07e872e4bff62"
+  },
+  {
+    "file": "deepagent/core/agentthread/rollout_gorm_store.go",
+    "source": "/Users/yingbaosun/.codex/attachments/cdc91191-f454-4383-8c55-f10c79cb3aa2/pasted-text.txt",
+    "filename_inferred": true,
+    "source_sha256": "d59ba4cdde0baacb46792bd6dcca6b9df3afe278bad7693ad5ab8946878d7e62",
+    "formatted_sha256": "d59ba4cdde0baacb46792bd6dcca6b9df3afe278bad7693ad5ab8946878d7e62"
+  },
+  {
+    "file": "deepagent/core/agentthread/run.go",
+    "source": "/Users/yingbaosun/.codex/attachments/86fe9071-6ac6-4302-9dd3-008672f5baef/pasted-text.txt",
+    "filename_inferred": true,
+    "source_sha256": "09722bd6352264be185dbed80e872ce051b15ad753cc7434e3f513d1637e8bde",
+    "formatted_sha256": "361fc10c559d9bfc66de31ee496b86d7f4e8494b4fbc8d685c2e37ad42d805db"
+  },
+  {
+    "file": "deepagent/core/agentthread/run_config.go",
+    "source": "user inline source; formatting/Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "46dba43dda62ab4ca41464a0d32525eaf6375ae2b4a32d930ac7fe6b81b997d7"
+  },
+  {
+    "file": "deepagent/core/agentthread/run_event_recorder.go",
+    "source": "/Users/yingbaosun/.codex/attachments/906a51d2-80cc-48b9-a955-1753a756d56c/pasted-text.txt",
+    "filename_inferred": true,
+    "source_sha256": "a74bedca2fc4fdca8ef067e204d7d61bfb93daa40cf34895649b784727926a38",
+    "formatted_sha256": "a74bedca2fc4fdca8ef067e204d7d61bfb93daa40cf34895649b784727926a38"
+  },
+  {
+    "file": "deepagent/core/agentthread/run_handle.go",
+    "source": "user inline source; formatting/Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "14725ae0e20ff87b585fba6bbda17dfc170a84f3eb9b48a4df63b58628c46140"
+  },
+  {
+    "file": "deepagent/core/agentthread/run_start.go",
+    "source": "user inline source; formatting/Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "7e4579da6085aac5eb5db715d6e05fec49c5da31811de95d080eedeb3b5264b7"
+  },
+  {
+    "file": "deepagent/core/agentthread/copy_helpers.go",
+    "source": "user inline source; formatting/Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "e6692eaa5ad7b9d6f598ee5e52f60f80c44207800c0bd739744833b0360361c7"
+  },
+  {
+    "file": "deepagent/core/agentthread/options.go",
+    "source": "user inline source; formatting/Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "9a0be21f823b89d5ee4ae3a989af5108dbefc74e9698ab96423c661660b80e8f"
+  },
+  {
+    "file": "deepagent/core/agentthread/thread.go",
+    "source": "/Users/yingbaosun/.codex/attachments/3ee91466-a84e-4bbe-8a05-5fcb0b0b9f8b/pasted-text.txt",
+    "filename_inferred": true,
+    "source_sha256": "e404cda186c72c6f0e9a2d0c2c1c29bc6a7215d149e75a6ed264410154a48e18",
+    "formatted_sha256": "f8ec1b389aec87c625863e9da0ed72138c4b4afeee0c23d5ae6003176a9b754f"
+  },
+  {
+    "file": "deepagent/core/agentthread/token_usage_tracker.go",
+    "source": "/Users/yingbaosun/.codex/attachments/ef523308-ac5a-4216-81c3-f9a645a2e874/pasted-text.txt",
+    "filename_inferred": true,
+    "source_sha256": "cddf7ec147989a6ee535a3340bfe7f737b07902f3e9952e0ad1a6327738f6eee",
+    "formatted_sha256": "cddf7ec147989a6ee535a3340bfe7f737b07902f3e9952e0ad1a6327738f6eee"
+  },
+  {
+    "file": "deepagent/core/agentthread/tool_event_state.go",
+    "source": "user inline source; formatting/Markdown escapes normalized",
+    "filename_inferred": true,
+    "formatted_sha256": "0bef48b1e1ee47ec922b2cae1023d377e167cdcfdd4d47cd9c39288b2dd490a6"
+  },
+  {
+    "file": "deepagent/core/agentthread/types.go",
+    "source": "/Users/yingbaosun/.codex/attachments/062317d3-c00b-4777-8838-950e58930e67/pasted-text.txt",
+    "filename_inferred": true,
+    "source_sha256": "52dd3b368debb4104525c67f60a615b62db14b2a53fcc13f0ce8dd476a1aeb7c",
+    "formatted_sha256": "52dd3b368debb4104525c67f60a615b62db14b2a53fcc13f0ce8dd476a1aeb7c"
+  },
+  {
+    "file": "deepagent/core/backends/backend.go",
+    "filename_inferred": true,
+    "source": "/Users/yingbaosun/.codex/attachments/81ff5aa4-9d24-4490-9406-bf30bdcdb157/pasted-text.txt",
+    "source_sha256": "38934526e8027508241a702ca9d27a0d31a8d1f26cc5a283658e27caf8a02fec",
+    "formatted_sha256": "38934526e8027508241a702ca9d27a0d31a8d1f26cc5a283658e27caf8a02fec"
+  },
+  {
+    "file": "deepagent/core/backends/file_text.go",
+    "filename_inferred": true,
+    "source": "User inline source; Markdown escapes removed and formatted with gofmt",
+    "formatted_sha256": "0a22e6a2925513172d920906da08d3d16166e574a316f47ad66328fb88ffa323"
+  },
+  {
+    "file": "deepagent/core/backends/filesystem.go",
+    "filename_inferred": true,
+    "source": "/Users/yingbaosun/.codex/attachments/7c1d8701-a1b7-490a-8e52-509035715208/pasted-text.txt",
+    "source_sha256": "16dcd594b81837a4ed23ccf85892760f4b3bef23426e8a7afc89ebb329e4bd32",
+    "formatted_sha256": "16dcd594b81837a4ed23ccf85892760f4b3bef23426e8a7afc89ebb329e4bd32"
+  },
+  {
+    "file": "deepagent/core/backends/safe_execute.go",
+    "filename_inferred": true,
+    "source": "User inline source; Markdown escapes removed and formatted with gofmt",
+    "formatted_sha256": "0c0dc6752243e8cd5e1471d5a91b072b0cf287d2518d6ba87d5e08ba93da28b4"
+  },
+  {
+    "file": "deepagent/core/backends/shell_cancel_unix.go",
+    "filename_inferred": true,
+    "source": "User inline source; Markdown escapes removed and formatted with gofmt",
+    "formatted_sha256": "b787e179a5cec83e671a0d5bccb7e790962cefdb8fd65c70c30f3745b29b2a35"
+  },
+  {
+    "file": "deepagent/core/backends/store.go",
+    "filename_inferred": true,
+    "source": "/Users/yingbaosun/.codex/attachments/cf0f51f5-d321-4b8e-a41b-dac5f9bac87a/pasted-text.txt",
+    "source_sha256": "969ab50b39b3ce755fd91ab2311376a97c8e65e74e211bd66d0e500887604104",
+    "formatted_sha256": "969ab50b39b3ce755fd91ab2311376a97c8e65e74e211bd66d0e500887604104"
+  },
+  {
+    "file": "deepagent/core/backends/store_backend.go",
+    "filename_inferred": true,
+    "source": "/Users/yingbaosun/.codex/attachments/016fd357-a306-4baf-ac3b-f5def13aa09f/pasted-text.txt",
+    "source_sha256": "b942d00e1585c21d49d7047be76fbd6b39398e995bacc762ca103d678793d07a",
+    "formatted_sha256": "b942d00e1585c21d49d7047be76fbd6b39398e995bacc762ca103d678793d07a"
+  },
+  {
+    "file": "deepagent/core/graph/branch.go",
+    "filename_inferred": true,
+    "source": "User inline source; Markdown escapes removed and formatted with gofmt",
+    "formatted_sha256": "a6034a7c23628d557b5be7d22e84aca41d8fccbe5ef198cf019256891a044352"
+  },
+  {
+    "file": "deepagent/core/graph/message.go",
+    "filename_inferred": true,
+    "source": "User inline source; Markdown escapes removed and formatted with gofmt",
+    "formatted_sha256": "e2917b446ca1a6d1fe92c21eeea14a7f84657b6229979845d4f56458af8e9d6a"
+  },
+  {
+    "file": "deepagent/core/graph/stream_tool_executor.go",
+    "filename_inferred": true,
+    "source": "/Users/yingbaosun/.codex/attachments/c166191f-b68c-44d2-b056-ff0814ea0815/pasted-text.txt",
+    "source_sha256": "a0995a15229667d5b0faea358cbc3955f96f9034f6683bfd9797df5544febc9a",
+    "formatted_sha256": "a0995a15229667d5b0faea358cbc3955f96f9034f6683bfd9797df5544febc9a"
+  },
+  {
+    "file": "deepagent/core/graph/tool_call_collector.go",
+    "filename_inferred": true,
+    "source": "User inline source; Markdown escapes removed and formatted with gofmt",
+    "formatted_sha256": "53a528b3fa70bf4453371c64fa7abcac6f65336d6dc721984172c04f5337d12d"
+  }
+]

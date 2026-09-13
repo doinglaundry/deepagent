@@ -37,12 +37,17 @@ type chatMessage struct {
 }
 
 type Model struct {
-	rt        rt.Runtime
-	cfg       *config.Config
-	sessionID string
-	cwd       string
-	modelName string
-	runs      *runtimeRun.Manager
+	remoteResponseDone  map[string]bool
+	remoteResponses     map[string]string
+	remoteResponseOrder []string
+	remoteTools         map[string]*toolBlock
+	remoteToolDone      map[string]bool
+	rt                  rt.Runtime
+	cfg                 *config.Config
+	sessionID           string
+	cwd                 string
+	modelName           string
+	runs                *runtimeRun.Manager
 
 	input    textinput.Model
 	viewport viewport.Model
@@ -120,16 +125,17 @@ func New(runtime rt.Runtime, sessionID string, cfgs ...*config.Config) (*Model, 
 		style = "light"
 	}
 
+	var runManager *runtimeRun.Manager
+	if _, remote := runtime.(remoteRuntime); !remote {
+		runManager = runtimeRun.NewManagerWithStore(runs.NewStore(config.SessionRunsDir(sessionID)), rollback.NewStore(config.RootDir(), sessionID))
+	}
 	return &Model{
-		rt:        runtime,
-		cfg:       cfg,
-		sessionID: sessionID,
-		cwd:       cwd,
-		modelName: runtime.Name(),
-		runs: runtimeRun.NewManagerWithStore(
-			runs.NewStore(config.SessionRunsDir(sessionID)),
-			rollback.NewStore(config.RootDir(), sessionID),
-		),
+		rt:                runtime,
+		cfg:               cfg,
+		sessionID:         sessionID,
+		cwd:               cwd,
+		modelName:         runtime.Name(),
+		runs:              runManager,
 		input:             ti,
 		viewport:          vp,
 		spin:              sp,

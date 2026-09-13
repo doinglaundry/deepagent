@@ -1,0 +1,50 @@
+# CLI reads only manager. Worker owns every model/tool setting below.
+manager:
+  namespace: default
+  mysql_dsn: "${DEEPAGENT_MYSQL_DSN}"
+  redis_addr: "127.0.0.1:6379"
+  redis_password: "${DEEPAGENT_REDIS_PASSWORD}"
+  redis_db: 0
+
+worker:
+  concurrency: 4
+  permit_ttl: 30s
+  poll_interval: 200ms
+  shutdown_grace: 30s
+  publish_attempts: 3
+
+default_model: primary
+models:
+  - name: primary
+    provider: openai
+    model: "${DEEPAGENT_MODEL}"
+    base_url: "${DEEPAGENT_MODEL_BASE_URL}"
+    api_key: "${DEEPAGENT_MODEL_API_KEY}"
+    timeout_seconds: 120
+max_steps: 100
+max_model_calls: 30
+compact_threshold_tokens: 24000  # estimated tokens; negative disables automatic compaction
+keep_recent_messages: 6
+system_prompt: |
+  You are a coding assistant. Inspect the workspace before editing.
+  Use tools to carry out the user's request. Ask for clarification when required.
+skill_paths:
+  - backend/skills
+memory_enabled: false
+memory_dir: .eino-cli/shared-memory
+mcp: []
+# Example MCP server:
+# mcp:
+#   - name: reference
+#     url: https://example.com/mcp
+#     headers:
+#       Authorization: "Bearer ${REFERENCE_MCP_TOKEN}"
+checkpoint:
+  backend: mysql   # mysql | redis | file
+  # path: /shared/deepagent/checkpoints  # required for file
+memory_scan_interval: 1m
+memory_lease_ttl: 30s
+# memory_user_id: stable-user-id  # defaults to SessionID
+web:
+  enabled: false
+  # search_url: https://your-search-service/search?q={query}

@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"eino-cli/backend/config"
+	"eino-cli/backend/session/runs"
 )
 
 type slashCommandHandler func(*Model, string) tea.Cmd
@@ -29,10 +30,12 @@ var builtinCommands = []slashCommand{
 	{Name: "dream", Desc: "consolidate transcript history into dream memory", Type: "builtin"},
 	{Name: "exit", Desc: "exit the TUI session", Type: "builtin"},
 	{Name: "help", Args: "[name]", Desc: "show slash commands, or details for one command", Type: "builtin"},
-	{Name: "history", Desc: "browse past runs and rollback", Type: "builtin"},
+	{Name: "history", Desc: "browse past runs", Type: "builtin"},
 	{Name: "plan", Args: "[on|off|toggle]", Desc: "inject plan-mode preamble into every model turn", Type: "builtin"},
 	{Name: "quit", Desc: "exit the TUI session", Type: "builtin"},
 	{Name: "todos", Args: "[open|close|toggle]", Desc: "expand / collapse the todo panel", Type: "builtin"},
+	{Name: "compact", Desc: "compact shared model context", Type: "builtin"},
+	{Name: "close", Desc: "request server thread closure", Type: "builtin"},
 }
 
 var commands = builtinCommands
@@ -67,6 +70,10 @@ func attachBuiltinHandlers(commands []slashCommand) {
 			continue
 		}
 		switch commands[i].Name {
+		case "compact":
+			commands[i].Handler = handleCompactCommand
+		case "close":
+			commands[i].Handler = handleCloseCommand
 		case "clear":
 			commands[i].Handler = handleClearCommand
 		case "dream":
@@ -180,7 +187,13 @@ func handleHelpCommand(m *Model, text string) tea.Cmd {
 }
 
 func handleHistoryCommand(m *Model, _ string) tea.Cmd {
-	rows, err := m.runs.ListRuns(context.Background())
+	var rows []runs.Record
+	var err error
+	if remote, ok := m.rt.(remoteRuntime); ok {
+		rows, err = remoteHistory(context.Background(), remote)
+	} else {
+		rows, err = m.runs.ListRuns(context.Background())
+	}
 	if err != nil {
 		pushMessage(m, "system", fmt.Sprintf("history: %v", err))
 		return nil

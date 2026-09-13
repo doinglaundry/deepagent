@@ -1,0 +1,27 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: deepagent
+      MYSQL_USER: deepagent
+      MYSQL_PASSWORD: ${DEEPAGENT_DB_PASSWORD:?set DEEPAGENT_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DEEPAGENT_DB_ROOT_PASSWORD:?set DEEPAGENT_DB_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+volumes:
+  mysql-data:
+  redis-data:

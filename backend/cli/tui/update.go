@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"eino-cli/backend/agent/middlewares"
+	"eino-cli/protocol"
 )
 
 func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
@@ -21,10 +22,25 @@ func (m *Model) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
 		}
 	}()
 	switch msg := msg.(type) {
+	case closeThreadMsg:
+		if msg.err != nil {
+			pushMessage(m, "system", fmt.Sprintf("close: %v", msg.err))
+		} else {
+			m.rt.ClearHistory()
+			pushMessage(m, "system", "Thread close requested; next input starts a new thread")
+		}
+		return m, nil
+	case remoteCancelError:
+		m.interrupted = false
+		pushMessage(m, "system", fmt.Sprintf("Cancel request failed; server execution may still be running: %v", msg.err))
+		return m, waitForStreamMsg(m.streamCh)
 	case tea.WindowSizeMsg:
 		return applyResize(m, msg)
 	case tea.KeyMsg:
 		return applyKey(m, msg)
+	case protocol.Event:
+		applyRemoteEvent(m, msg)
+		return m, waitForStreamMsg(m.streamCh)
 	case chunkMsg:
 		m.streamBuf.WriteString(string(msg))
 		return m, waitForStreamMsg(m.streamCh)
@@ -320,6 +336,11 @@ func submit(m *Model, text string) (tea.Model, tea.Cmd) {
 	pushMessage(m, "user", text)
 	m.streaming = true
 	m.streamBuf.Reset()
+	m.remoteResponses = nil
+	m.remoteResponseDone = nil
+	m.remoteResponseOrder = nil
+	m.remoteTools = nil
+	m.remoteToolDone = nil
 	m.lastErr = nil
 	m.interrupted = false
 
@@ -441,6 +462,8 @@ func drainQueuedStreamMessages(m *Model) tea.Cmd {
 				return tea.Batch(cmds...)
 			}
 			switch v := queued.(type) {
+			case protocol.Event:
+				applyRemoteEvent(m, v)
 			case middlewares.TraceEvent:
 				_, cmd := applyTraceEvent(m, v)
 				cmds = append(cmds, cmd)

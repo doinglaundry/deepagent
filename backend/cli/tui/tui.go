@@ -34,7 +34,12 @@ func Run(runtime rt.Runtime, sessionID string, cfgs ...*config.Config) error {
 	// Route HITL approvals through this prog before any agent runs; restore
 	// the previous approver when the TUI exits so later in-process runs do
 	// not send approvals to a stopped tea.Program.
-	restoreApproval := installTUIApproval(prog)
+	var restoreApproval func()
+	if remote, ok := runtime.(remoteRuntime); ok {
+		restoreApproval = installRemoteApproval(prog, remote)
+	} else {
+		restoreApproval = installTUIApproval(prog)
+	}
 	defer restoreApproval()
 	_, err = prog.Run()
 	return err
