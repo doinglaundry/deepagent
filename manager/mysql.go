@@ -80,6 +80,43 @@ type sqlStore struct {
 	closeErr          error
 }
 
+func (s *sqlStore) pendingKey() string  { return s.prefix + "pending" }
+func (s *sqlStore) completeKey() string { return s.prefix + "complete" }
+func (s *sqlStore) enqueueInput(ctx context.Context, inputID string) error {
+	// The sequence is allocated by Redis; ZSET ordering is stable across workers.
+	score, err := s.redis.Incr(ctx, s.prefix+"message-seq").Result()
+	if err != nil {
+		return err
+	}
+	pipe := s.redis.TxPipeline()
+	pipe.HSet(ctx, s.prefix+"message-score", inputID, score)
+	pipe.ZAdd(ctx, s.pendingKey(), redis.Z{Score: float64(score), Member: inputID})
+	_, err = pipe.Exec(ctx)
+	return err
+}
+func (s *sqlStore) completeInput(ctx context.Context, inputID string) error {
+	score, err := s.redis.HGet(ctx, s.prefix+"message-score", inputID).Float64()
+	if err == redis.Nil {
+		score = float64(time.Now().UnixNano())
+	} else if err != nil {
+		return err
+	}
+	pipe := s.redis.TxPipeline()
+	pipe.ZRem(ctx, s.pendingKey(), inputID)
+	pipe.ZAdd(ctx, s.completeKey(), redis.Z{Score: score, Member: inputID})
+	_, err = pipe.Exec(ctx)
+	return err
+}
+func (s *sqlStore) requeueInput(ctx context.Context, inputID string) error {
+	score, err := s.redis.HGet(ctx, s.prefix+"message-score", inputID).Float64()
+	if err == redis.Nil {
+		score = float64(time.Now().UnixNano())
+	} else if err != nil {
+		return err
+	}
+	return s.redis.ZAdd(ctx, s.pendingKey(), redis.Z{Score: score, Member: inputID}).Err()
+}
+
 func New(ctx context.Context, c Config) (*Manager, error) {
 	if strings.TrimSpace(c.Namespace) == "" || len(c.Namespace) > 191 || c.MySQLDSN == "" || c.RedisAddr == "" {
 		return nil, fmt.Errorf("namespace (1-191 bytes), MySQLDSN and RedisAddr required")

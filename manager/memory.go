@@ -40,6 +40,10 @@ type memoryStore struct {
 	closed        bool
 }
 
+func (*memoryStore) enqueueInput(context.Context, string) error  { return nil }
+func (*memoryStore) completeInput(context.Context, string) error { return nil }
+func (*memoryStore) requeueInput(context.Context, string) error  { return nil }
+
 func cloneRecord(r *record) *record {
 	b, _ := json.Marshal(r)
 	var out record

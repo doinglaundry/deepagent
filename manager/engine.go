@@ -139,6 +139,13 @@ func (m *engine) SubmitInput(ctx context.Context, id string, in protocol.Input) 
 		}
 		return nil
 	})
+	if err == nil {
+		if q, ok := m.store.(interface {
+			enqueueInput(context.Context, string) error
+		}); ok {
+			err = q.enqueueInput(ctx, out.ID)
+		}
+	}
 	return out, err
 }
 func sameInput(a, b protocol.Input) bool {
@@ -346,6 +353,15 @@ func (m *engine) ClaimThread(ctx context.Context, id, worker string, ttl time.Du
 		})
 		return api.Claim{}, e
 	}
+	if q, ok := m.store.(interface {
+		requeueInput(context.Context, string) error
+	}); ok {
+		for _, input := range inputs {
+			if err := q.requeueInput(ctx, input.ID); err != nil {
+				return api.Claim{}, err
+			}
+		}
+	}
 	return api.Claim{Thread: r.Thread, Permit: r.Permit, Inputs: inputs}, nil
 }
 func (m *engine) RenewThreadPermit(ctx context.Context, p api.Permit, ttl time.Duration) (api.Permit, error) {
@@ -395,6 +411,13 @@ func (m *engine) ConfirmInputDelivery(ctx context.Context, p api.Permit, id stri
 		}
 		return api.ErrNotFound
 	})
+	if e == nil {
+		if q, ok := m.store.(interface {
+			completeInput(context.Context, string) error
+		}); ok {
+			e = q.completeInput(ctx, id)
+		}
+	}
 	return e
 }
 func pending(r *record) []protocol.Input {
