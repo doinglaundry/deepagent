@@ -12,9 +12,12 @@ Manager 是统一入口；UI 不直接连接 Worker，也不持有独立调度�
 
 ```text
 MySQL: threads/tasks/runs/events/checkpoints
-Redis: queue:tasks, lease:{taskID}, cancel:{runID}, events:{runID}
-Submit → MySQL commit → Redis enqueue
-Claim → atomic pop → lease → queued→leased
+Redis: pending/complete message ZSET, lease:{threadID}, cancel:{runID}, events:{runID}
+Submit → MySQL commit → Redis pending(messageID)
+Claim → MySQL row lock + lease → pending inputs delivered
+Confirm → Redis pending remove + complete add
+
+Redis 队列是跨进程的持久化账本；MySQL 行锁仍是 Thread 可执行状态的权威来源，Worker 扫描可运行 Thread 后按租约领取，Redis 故障恢复时不会丢失输入。
 Event → dedupe → MySQL append → Redis publish
 ```
 
@@ -27,7 +30,7 @@ event filter → MySQL event log → Redis realtime fanout
 CreateThread() → MySQL thread(status=idle)
 SubmitInput(threadID, message)
   → MySQL append message + create run
-  → Redis enqueue runID
+  → Redis pending ZSET(messageID)
   → wake worker
 ```
 
@@ -61,8 +64,8 @@ Resume(threadID, request)
   → GetThread(threadID)
   → status != blocked  => error
   → request.Input != nil OR Redis has queued input
-       => status = ready
-       => input 入 Redis queue
+     => status = ready
+       => input 入 Redis pending ZSET
      otherwise
        => status = idle
   → updated_at = now
