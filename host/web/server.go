@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
@@ -108,6 +109,19 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) != 2 || parts[1] != "messages" || r.Method != http.MethodPost {
+		if len(parts) == 2 && parts[1] == "events" && r.Method == http.MethodGet {
+			var after int64
+			if v := r.URL.Query().Get("after"); v != "" {
+				_, _ = fmt.Sscan(v, &after)
+			}
+			rows, err := s.Manager.ListEvents(r.Context(), api.EventFilter{ThreadID: id, After: after, Limit: 200})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, rows)
+			return
+		}
 		http.NotFound(w, r)
 		return
 	}
