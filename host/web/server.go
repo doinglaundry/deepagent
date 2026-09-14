@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"eino-cli/manager/api"
@@ -109,6 +111,10 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) != 2 || parts[1] != "messages" || r.Method != http.MethodPost {
+		if len(parts) == 2 && parts[1] == "file" && r.Method == http.MethodGet {
+			s.openFile(w, r, id)
+			return
+		}
 		if len(parts) == 2 && parts[1] == "events" && r.Method == http.MethodGet {
 			var after int64
 			if v := r.URL.Query().Get("after"); v != "" {
@@ -138,6 +144,40 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, input)
+}
+
+func (s *Server) openFile(w http.ResponseWriter, r *http.Request, id string) {
+	t, err := s.Manager.GetThread(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("path"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("path required"))
+		return
+	}
+	base, err := filepath.Abs(t.WorkDir)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	path, err := filepath.Abs(filepath.Join(base, name))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	rel, err := filepath.Rel(base, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		writeError(w, http.StatusForbidden, fmt.Errorf("path outside thread work directory"))
+		return
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": rel, "content": string(b)})
 }
 
 // Shutdown closes resources owned by the HTTP server's Manager when supported.
