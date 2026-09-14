@@ -86,6 +86,15 @@ func (m *engine) CreateThread(ctx context.Context, req api.CreateThreadRequest) 
 	if err := m.store.create(ctx, r); err != nil {
 		return api.Thread{}, err
 	}
+	if len(r.Inputs) > 0 {
+		if q, ok := m.store.(interface {
+			enqueueInput(context.Context, string) error
+		}); ok {
+			if err := q.enqueueInput(ctx, r.Inputs[0].Input.ID); err != nil {
+				return api.Thread{}, err
+			}
+		}
+	}
 	return r.Thread, nil
 }
 func prepareInput(r *record, in protocol.Input) (protocol.Input, error) {
@@ -192,6 +201,13 @@ func (m *engine) ResumeFromBlock(ctx context.Context, id string, in protocol.Inp
 		r.Thread.State = api.Ready
 		return nil
 	})
+	if err == nil {
+		if q, ok := m.store.(interface {
+			enqueueInput(context.Context, string) error
+		}); ok {
+			err = q.enqueueInput(ctx, out.ID)
+		}
+	}
 	return out, err
 }
 func (m *engine) Cancel(ctx context.Context, id, cutoff string) error {
