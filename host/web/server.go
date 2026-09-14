@@ -7,7 +7,6 @@ import (
 	"html/template"
 	"net/http"
 	"strings"
-	"time"
 
 	"eino-cli/manager/api"
 	"eino-cli/protocol"
@@ -134,5 +133,3 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	return nil
 }
-
-var _ = time.Second
