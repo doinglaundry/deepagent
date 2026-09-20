@@ -5,9 +5,76 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
+
+type MySQLClient struct {
+	read  *gorm.DB
+	write *gorm.DB
+}
+
+// NewSQL opens separate read/write connections, or reuses supplied handles.
+func NewSQL(ctx context.Context, dsn, readDSN string, sharedDB ...*gorm.DB) (*MySQLClient, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var write, read *gorm.DB
+	if len(sharedDB) > 0 {
+		write = sharedDB[0]
+	}
+	if len(sharedDB) > 1 {
+		read = sharedDB[1]
+	}
+	if write == nil {
+		if strings.TrimSpace(dsn) == "" {
+			return nil, fmt.Errorf("mysql: write DSN is required")
+		}
+		var err error
+		write, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if read == nil {
+		if strings.TrimSpace(readDSN) == "" {
+			read = write
+		} else {
+			var err error
+			read, err = gorm.Open(mysql.Open(readDSN), &gorm.Config{})
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return &MySQLClient{read: read, write: write}, nil
+}
+
+// DB uses the transaction in ctx first, then the selected connection.
+func (c *MySQLClient) DB(ctx context.Context, primary bool) *gorm.DB {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if tx, ok := ctx.Value(c).(*gorm.DB); ok && tx != nil {
+		return tx.WithContext(ctx)
+	}
+	if primary {
+		return c.write.WithContext(ctx)
+	}
+	return c.read.WithContext(ctx)
+}
+
+func (c *MySQLClient) Transaction(ctx context.Context, fn func(context.Context) error) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return c.write.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return fn(context.WithValue(ctx, c, tx))
+	})
+}
 
 // JsonSerialiser stores arbitrary Go values as JSON in a GORM field.
 // It follows GORM's serializer contract so it can be registered with
@@ -65,3 +132,7 @@ func fieldName(field *schema.Field) string {
 }
 
 var _ schema.SerializerInterface = JsonSerialiser{}
+
+func init() {
+	schema.RegisterSerializer("coordinator_json", JsonSerialiser{})
+}
