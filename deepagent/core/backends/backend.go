@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	serialiser "eino-cli/deepagent/serialiser"
+	serialiser "eino-cli/deepagent/helper/serialiser"
 )
 
 // FileOperationError 文件操作错误类型
@@ -179,6 +179,14 @@ type CommandExecutor interface {
 
 	// ExecuteCommand 执行结构化的一次性 shell 命令。
 	ExecuteCommand(ctx context.Context, req CommandRequest) (*CommandResult, error)
+}
+
+// WorkspaceBackend exposes operations that require a concrete workspace root.
+// It is optional so remote or virtual backends can keep implementing Backend.
+type WorkspaceBackend interface {
+	Backend
+	RootDir() string
+	DeleteFile(ctx context.Context, path string) (string, error)
 }
 
 // SandboxBackend 沙箱后端接口

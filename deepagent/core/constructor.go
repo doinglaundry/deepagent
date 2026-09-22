@@ -3,17 +3,15 @@ package deepagents
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"eino-cli/deepagent/core/backends"
 	"eino-cli/deepagent/core/constant"
-	"eino-cli/deepagent/core/hook"
-	"eino-cli/deepagent/core/middleware"
-	"eino-cli/deepagent/core/middleware/filesystem"
-	"eino-cli/deepagent/core/middleware/patchtoolcalls"
-	"eino-cli/deepagent/core/middleware/skill"
-	"eino-cli/deepagent/core/middleware/subagent"
-	"eino-cli/deepagent/core/middleware/web"
+	"eino-cli/deepagent/core/hooks"
+	"eino-cli/deepagent/core/middlewares"
+	"eino-cli/deepagent/core/middlewares/filesystem"
+	"eino-cli/deepagent/core/middlewares/patchtoolcalls"
+	"eino-cli/deepagent/core/middlewares/skill"
+	"eino-cli/deepagent/core/middlewares/web"
 	"eino-cli/deepagent/core/tools"
 
 	"github.com/cloudwego/eino/callbacks"
@@ -63,12 +61,6 @@ func New(ctx context.Context, opts ...Option) (agent *DeepAgent, err error) {
 	if err != nil {
 		return nil, err
 	}
-	loadSubAgentsFromDirs(ctx, config, backend)
-	err = validateSubAgentNames(config)
-	if err != nil {
-		return nil, err
-	}
-
 	middlewares := buildCreateMiddlewares(config, backend)
 	middlewares = applyMaxModelCalls(config, middlewares)
 
@@ -95,7 +87,6 @@ func New(ctx context.Context, opts ...Option) (agent *DeepAgent, err error) {
 		callbacks:       append([]callbacks.Handler(nil), config.Callbacks...),
 		hooks:           append(hook.HooksChain(nil), config.Hooks...),
 		graphState:      agentState,
-		depth:           config.Depth,
 	}
 	return agent, nil
 }
@@ -117,11 +108,6 @@ func validateCreateConfig(config *Config) (err error) {
 	if config.MaxModelCalls < 0 {
 		return errors.New("max model calls must be >= 0")
 	}
-	for _, name := range config.SubAgentSharedCustomStateNames {
-		if config.CustomGraphState == nil || config.CustomGraphState[name] == nil {
-			return fmt.Errorf("sub-agent shared custom state %q is not configured", name)
-		}
-	}
 	return nil
 }
 
@@ -132,14 +118,6 @@ func validateBackendConfig(config *Config, backend backends.Backend) (err error)
 	if config.FilesystemConfig != nil {
 		return errors.New("filesystem requires backend or workdir")
 	}
-	if len(config.SubAgentsDirs) > 0 {
-		return errors.New("subagent dirs require backend or workdir")
-	}
-	for _, sa := range config.SubAgents {
-		if sa != nil && sa.EnableFilesystem {
-			return errors.New("subagent filesystem requires backend or workdir")
-		}
-	}
 	return nil
 }
 
@@ -148,7 +126,7 @@ func selectBackend(config *Config) (backend backends.Backend) {
 		return config.Backend
 	}
 	if workDir := config.filesystemWorkDir(); workDir != "" {
-		return backends.NewFilesystemBackend(&backends.FilesystemBackendConfig{
+		return backends.NewSandboxFilesystemBackend(&backends.FilesystemBackendConfig{
 			RootDir:     workDir,
 			VirtualMode: true,
 		})
@@ -156,18 +134,7 @@ func selectBackend(config *Config) (backend backends.Backend) {
 	return nil
 }
 
-func loadSubAgentsFromDirs(ctx context.Context, config *Config, backend backends.Backend) {
-	for _, dir := range config.SubAgentsDirs {
-		loaded, err := subagent.LoadSubAgentsFromDir(ctx, dir, backend, nil)
-		if err == nil {
-			config.SubAgents = append(config.SubAgents, loaded...)
-		}
-	}
-}
-
 func buildCreateMiddlewares(config *Config, backend backends.Backend) (middlewares []middleware.Middleware) {
-	var subAgentSkillMiddlewareFactory func() middleware.Middleware
-
 	if config.ContextManager != nil {
 		middlewares = append(middlewares, config.ContextManager)
 	}
@@ -177,13 +144,7 @@ func buildCreateMiddlewares(config *Config, backend backends.Backend) (middlewar
 	}
 
 	if config.SkillLoader != nil {
-		middlewares = append(middlewares, skill.NewWithConfig(config.SkillLoader, &skill.MiddlewareConfig{
-			ToolMask: config.ToolMask,
-		}))
-		skillLoader := config.SkillLoader
-		subAgentSkillMiddlewareFactory = func() middleware.Middleware {
-			return skill.New(skillLoader)
-		}
+		middlewares = append(middlewares, skill.New(config.SkillLoader))
 	}
 
 	if config.FilesystemConfig != nil {
@@ -197,19 +158,6 @@ func buildCreateMiddlewares(config *Config, backend backends.Backend) (middlewar
 			DisableApplyPatch:     filesystemCfg.DisableApplyPatch,
 			CommandTimeout:        filesystemCfg.CommandTimeout,
 			ToolMask:              config.ToolMask,
-		}))
-	}
-
-	if !config.DisableSubAgent && len(config.SubAgents) > 0 {
-		middlewares = append(middlewares, subagent.New(&subagent.SubAgentConfig{
-			SubAgents:                      config.SubAgents,
-			DefaultModel:                   config.Model,
-			DefaultTools:                   config.Tools,
-			Factory:                        createSubAgentFactory(config),
-			SubAgentSkillMiddlewareFactory: subAgentSkillMiddlewareFactory,
-			ContextInjector:                config.SubAgentContextInjector,
-			ToolMask:                       config.ToolMask,
-			EnableTaskStreaming:            config.EnableSubAgentTaskStreaming,
 		}))
 	}
 

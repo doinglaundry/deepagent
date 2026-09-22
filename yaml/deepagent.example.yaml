@@ -8,10 +8,13 @@ manager:
 
 worker:
   concurrency: 4
-  permit_ttl: 30s
-  poll_interval: 200ms
-  shutdown_grace: 30s
-  publish_attempts: 3
+  scan_limit: 20
+  lease_ms: 60000
+  scan_interval: 1s
+  renew_interval: 20s
+  message_poll_interval: 500ms
+  idle_timeout: 5s
+  shutdown_drain_timeout: 30s
 
 default_model: primary
 models:
@@ -23,15 +26,19 @@ models:
     timeout_seconds: 120
 max_steps: 100
 max_model_calls: 30
-compact_threshold_tokens: 24000  # estimated tokens; negative disables automatic compaction
+context_window: 128000
+history_table: deepagent_history
+compact_threshold_tokens: 24000
 keep_recent_messages: 6
 system_prompt: |
   You are a coding assistant. Inspect the workspace before editing.
   Use tools to carry out the user's request. Ask for clarification when required.
 skill_paths:
-  - backend/skills
+  - deepagent/skills
 memory_enabled: false
 memory_dir: .eino-cli/shared-memory
+memory_lease_ttl: 30s
+# memory_user_id: stable-user-id  # defaults to the numeric UserID, then SessionID
 mcp: []
 # Example MCP server:
 # mcp:
@@ -39,12 +46,6 @@ mcp: []
 #     url: https://example.com/mcp
 #     headers:
 #       Authorization: "Bearer ${REFERENCE_MCP_TOKEN}"
-checkpoint:
-  backend: mysql   # mysql | redis | file
-  # path: /shared/deepagent/checkpoints  # required for file
-memory_scan_interval: 1m
-memory_lease_ttl: 30s
-# memory_user_id: stable-user-id  # defaults to SessionID
 web:
   enabled: false
   # search_url: https://your-search-service/search?q={query}

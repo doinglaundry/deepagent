@@ -2,7 +2,7 @@ package engine
 
 import (
 	"context"
-	"eino-cli/protocol"
+	"eino-cli/deepagent/protocol"
 	"encoding/json"
 	"errors"
 	"fmt"

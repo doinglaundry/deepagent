@@ -28,7 +28,7 @@ type Thread struct {
 	UserID     int64     `gorm:"column:user_id"`
 	SessionID  string    `gorm:"column:session_id"`
 	Status     string    `gorm:"column:status"`
-	LeaseToken string    `gorm:"column:lease_token" json:"-" yaml:"leasetoken"`
+	LeaseToken string    `gorm:"column:lease_token" json:"-" yaml:"lease_token"`
 
 	Metadata map[string]string `gorm:"column:metadata_json;type:text;serializer:coordinator_json"`
 	Profile  *Profile          `gorm:"column:profile;type:text;serializer:coordinator_json"`
@@ -37,18 +37,18 @@ type Thread struct {
 func (Thread) TableName() (name string) { return "thread" }
 
 type ThreadFilter struct {
-	Total            *int64
-	IDs              []int64
-	SessionIDs       []string
-	Statuses         []string
-	LeaseTokens      []string   `json:"LeaseTokens" yaml:"leasetokens"`
-	PermitAliveUntil *time.Time `json:"PermitAliveUntil" yaml:"permitaliveuntil"`
-	ReadyUntilAfter  *time.Time `json:"ReadyUntilAfter" yaml:"readyuntilafter"`
-	RunnableUntil    *time.Time `json:"RunnableUntil" yaml:"runnableuntil"`
-	Offset           int
-	Limit            int
-	Primary          bool
-	ForUpdate        bool
+	Total           *int64
+	IDs             []int64
+	SessionIDs      []string
+	Statuses        []string
+	LeaseTokens     []string   `json:"lease_tokens" yaml:"lease_tokens"`
+	LeaseValidAt    *time.Time `json:"lease_valid_at" yaml:"lease_valid_at"`
+	ReadyUntilAfter *time.Time `json:"ready_until_after" yaml:"ready_until_after"`
+	RunnableUntil   *time.Time `json:"runnable_until" yaml:"runnable_until"`
+	Offset          int
+	Limit           int
+	Primary         bool
+	ForUpdate       bool
 }
 
 func (f *ThreadFilter) DBFilter(query *gorm.DB) (filtered *gorm.DB) {
@@ -64,8 +64,8 @@ func (f *ThreadFilter) DBFilter(query *gorm.DB) (filtered *gorm.DB) {
 	if f.LeaseTokens != nil {
 		query = query.Where("lease_token IN ?", f.LeaseTokens)
 	}
-	if f.PermitAliveUntil != nil {
-		query = query.Where("ready_until >= ?", *f.PermitAliveUntil)
+	if f.LeaseValidAt != nil {
+		query = query.Where("ready_until >= ?", *f.LeaseValidAt)
 	}
 	if f.ReadyUntilAfter != nil {
 		query = query.Where("ready_until > ?", *f.ReadyUntilAfter)

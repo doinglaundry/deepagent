@@ -1,0 +1,2298 @@
+//go:build !windows
+
+package thread
+
+import (
+	context "context"
+	agentthread "eino-cli/deepagent/core/agentthread"
+	constant "eino-cli/deepagent/core/constant"
+	planmode "eino-cli/deepagent/core/middlewares/planmode"
+	tools "eino-cli/deepagent/core/tools"
+	eventpkg "eino-cli/deepagent/protocol/event"
+	inputpkg "eino-cli/deepagent/protocol/input"
+	json "encoding/json"
+	errors "errors"
+	fmt "fmt"
+	schemapkg "github.com/cloudwego/eino/schema"
+	uuid "github.com/google/uuid"
+	maps "maps"
+	strconv "strconv"
+	strings "strings"
+	sync "sync"
+	time "time"
+)
+
+// Thread 输入与模型交互
+// thread
+
+// ApprovalRememberer records a session-scoped approval reuse decision.
+type ApprovalRememberer interface {
+	RememberApproval(ctx context.Context, payload inputpkg.ResumeRunPayload)
+}
+
+type ApprovalRemembererFunc func(ctx context.Context, payload inputpkg.ResumeRunPayload)
+
+func (f ApprovalRemembererFunc) RememberApproval(ctx context.Context, payload inputpkg.ResumeRunPayload) {
+	f(ctx, payload)
+}
+
+// RunFinishedObserver is called after a DeepAgent run-end event is converted
+// to worker output. Implementations should return quickly.
+type RunFinishedObserver func(ctx context.Context, ev agentthread.Event)
+
+// ThreadOutputObservation is a read-only snapshot of one worker output item
+// emitted by the DeepAgent thread runtime.
+type ThreadOutputObservation struct {
+	SessionID string
+	ThreadID  string
+	Item      TransportThreadOutputItem
+}
+
+// ThreadOutputObserver is called after the DeepAgent thread runtime has
+// successfully offered one output item to the worker host. Implementations
+// should return quickly and must not rely on mutating the observed item.
+type ThreadOutputObserver func(ctx context.Context, obs ThreadOutputObservation)
+
+// InterruptResumeDecoder converts a generic DeepAgent interrupt resume payload
+// into the typed data expected by a custom Eino interrupt handler.
+type InterruptResumeDecoder func(ctx context.Context, payload inputpkg.ResumeRunPayload) (any, error)
+
+// Thread adapts DeepAgentThread to agentworker.Thread.
+// It owns the common worker-facing protocol: structured user input, resume
+// input, manual compaction, interrupt, active run snapshot, and ordered output
+// forwarding.
+type Thread struct {
+	sessionID  string
+	threadID   string
+	threadInfo ContextThreadIdentity
+	thread     *agentthread.DeepAgentThread
+
+	runConfig            func(context.Context, RunStartRequest) (*agentthread.RunConfig, error)
+	approvalRemember     ApprovalRememberer
+	runFinishedObserver  RunFinishedObserver
+	threadOutputObserver ThreadOutputObserver
+	interruptResume      InterruptResumeDecoder
+	observerQueue        chan ThreadOutputObservation
+	observerOnce         sync.Once
+	observerCancel       context.CancelFunc
+
+	outputBridge *threadOutputBridge
+
+	mu       sync.Mutex
+	claimCtx context.Context
+	closed   bool
+	compact  *compactOperation
+}
+
+type RunStartRequest struct {
+	RunID   string `json:"TurnID" yaml:"turnid"`
+	Mode    inputpkg.UserMessageMode
+	Message *TransportMessage
+	Resume  bool
+}
+
+type AdapterConfig struct {
+	SessionID string
+	ThreadID  string
+	Thread    *agentthread.DeepAgentThread
+	EventBus  <-chan agentthread.Event
+
+	// ThreadInfo is the stable DeepAgent thread identity injected into the
+	// DeepAgent run context. ThreadID and SessionID are defaulted from the
+	// adapter config when left empty.
+	ThreadInfo ContextThreadIdentity
+
+	RunConfig            func(context.Context, RunStartRequest) (*agentthread.RunConfig, error) `json:"TurnConfig" yaml:"turnconfig"`
+	ApprovalRemember     ApprovalRememberer
+	RunFinishedObserver  RunFinishedObserver `json:"TurnFinishedObserver" yaml:"turnfinishedobserver"`
+	ThreadOutputObserver ThreadOutputObserver
+	InterruptResume      InterruptResumeDecoder
+}
+
+func NewThread(cfg AdapterConfig) (*Thread, error) {
+	if cfg.Thread == nil {
+		return nil, fmt.Errorf("deepagent: deep agent thread is required")
+	}
+	if cfg.EventBus == nil {
+		return nil, fmt.Errorf("deepagent: event bus is required")
+	}
+	threadID := cfg.ThreadID
+	if threadID == "" {
+		threadID = cfg.Thread.ThreadID
+	}
+	if threadID == "" {
+		return nil, fmt.Errorf("deepagent: thread id is required")
+	}
+	threadInfo := cfg.ThreadInfo
+	if threadInfo.ThreadID == "" {
+		threadInfo.ThreadID = threadID
+	}
+	if threadInfo.SessionID == "" {
+		threadInfo.SessionID = cfg.SessionID
+	}
+	return &Thread{
+		sessionID:            cfg.SessionID,
+		threadID:             threadID,
+		threadInfo:           threadInfo,
+		thread:               cfg.Thread,
+		runConfig:            cfg.RunConfig,
+		approvalRemember:     cfg.ApprovalRemember,
+		runFinishedObserver:  cfg.RunFinishedObserver,
+		threadOutputObserver: cfg.ThreadOutputObserver,
+		interruptResume:      cfg.InterruptResume,
+		outputBridge:         &threadOutputBridge{agentEvents: cfg.EventBus},
+	}, nil
+}
+
+func (t *Thread) Init(ctx context.Context) (*TransportThreadOutput, error) {
+	ctx = t.withThreadInfo(ctx)
+	if err := t.ensureOpen(); err != nil {
+		return nil, err
+	}
+	if err := t.thread.Init(ctx); err != nil {
+		return nil, err
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.outputBridge.output != nil {
+		return t.outputBridge.output, nil
+	}
+	t.claimCtx = ctx
+
+	t.startThreadOutputObserver(ctx)
+	return t.outputBridge.start(ctx, t), nil
+}
+
+// PostMessage 将 Worker 消息按类型分派到输入、恢复或压缩入口。
+func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (posted *TransportPostMessageResult, err error) {
+	ctx = t.withThreadInfo(ctx)
+	if message == nil {
+		return nil, fmt.Errorf("worker message is required")
+	}
+	if err := t.ensureOpen(); err != nil {
+
+		return nil, err
+	}
+
+	switch message.Type {
+	case MessageTypeInput:
+		cmd, err := decodeUserInputCommand(message)
+		if err != nil {
+			return nil, err
+		}
+		opts := []agentthread.SubmitInputOption{}
+		if cmd.message != nil && len(cmd.message.Metadata) > 0 {
+			opts = append(opts, agentthread.WithInputMeta(maps.Clone(cmd.message.Metadata)))
+		}
+		opts = append(opts, agentthread.WithRunStartHook(func(runCtx context.Context, req agentthread.RunStartRequest) context.Context {
+			return ContextContextWithRunIdentity(runCtx, ContextRunIdentity{
+				ThreadID:  t.threadInfo.ThreadID,
+				RunID:     req.RunID,
+				MessageID: workerMessageID(cmd.message),
+			})
+		}))
+		if t.runConfig != nil {
+			opts = append(opts, agentthread.WithRunConfigProvider(func(ctx context.Context, req agentthread.RunStartRequest) (*agentthread.RunConfig, error) {
+				return t.buildRunConfig(ctx, req.RunID, cmd.message, cmd.mode, false)
+			}))
+		}
+		result, err := t.thread.SubmitInput(ctx, cmd.schema, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("submit input: %w", err)
+		}
+		if result == nil {
+			return nil, fmt.Errorf("submit input returned nil result")
+		}
+		if result.Started {
+
+			t.waitSubmittedRun(ctx, result.RunHandle)
+		}
+		return &TransportPostMessageResult{RunID: result.RunID}, nil
+	case MessageTypeResumeRun:
+		cmd, err := decodeResumeRunCommand(message)
+		if err != nil {
+			return nil, err
+		}
+		return t.postResumeRun(ctx, cmd)
+	case MessageTypeCompact:
+		cmd := decodeCompactCommand(message)
+		if err := t.postCompact(ctx, cmd); err != nil {
+			return nil, err
+		}
+		return &TransportPostMessageResult{RunID: cmd.runID}, nil
+	default:
+		return nil, unsupportedRuntimeCommand(message)
+	}
+}
+
+func (t *Thread) Interrupt(ctx context.Context, req TransportThreadInterruptRequest) error {
+	ctx = t.withThreadInfo(ctx)
+
+	if t.interruptCompact(ctx, req) {
+		return nil
+	}
+	if t.thread.Interrupt(agentthread.InterruptOptions{Timeout: req.Timeout, Metadata: threadInterruptMetadata(req)}) {
+		return nil
+	}
+	if t.ActiveRun() == nil {
+		return nil
+	}
+	return fmt.Errorf("interrupt active turn failed: kind=%s control_message_id=%s", req.Kind, req.ControlMessageID)
+}
+
+func (t *Thread) ActiveRun() *TransportActiveRun {
+	if t == nil || t.thread == nil {
+		return nil
+	}
+	if compact := t.activeCompact(); compact != nil {
+		return &TransportActiveRun{
+			RunID:              compact.runID,
+			ConsumedMessageIDs: append([]string(nil), compact.consumedMessageIDs...),
+		}
+	}
+	curRun := t.thread.ActiveRun()
+	if curRun == nil {
+		return nil
+	}
+	return &TransportActiveRun{
+		RunID:              curRun.RunID(),
+		ConsumedMessageIDs: ConsumedMessageIDs(curRun.ConsumedInputs()),
+	}
+}
+
+func (t *Thread) Close(ctx context.Context) error {
+	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		return nil
+	}
+	t.closed = true
+	bridge := t.outputBridge
+	cancelObserver := t.observerCancel
+	t.mu.Unlock()
+
+	if cancelObserver != nil {
+		cancelObserver()
+	}
+	if bridge != nil {
+		bridge.stopAndWait()
+	}
+	return nil
+}
+
+func (t *Thread) postResumeRun(ctx context.Context, cmd resumeRunCommand) (posted *TransportPostMessageResult, err error) {
+	payload := cmd.payload
+	if payload.Approval != nil && payload.Approval.CancelRun {
+		t.emitCancelRunEvents(ctx, payload)
+		return &TransportPostMessageResult{RunID: payload.RunID}, nil
+	}
+
+	resumeData, err := t.resumeData(ctx, payload)
+	if err != nil {
+
+		return nil, err
+	}
+
+	if payload.Approval != nil && payload.Approval.AllowInSession && payload.Approval.Approved && t.approvalRemember != nil {
+		t.approvalRemember.RememberApproval(ctx, payload)
+	}
+
+	opts := agentthread.ResumeRunOptions{
+		CheckpointID:       payload.CheckpointID,
+		ResumeInterruptIDs: []string{payload.InterruptID},
+		ResumeData:         resumeData,
+		OnRunStart: func(runCtx context.Context, req agentthread.RunStartRequest) context.Context {
+			return ContextContextWithRunIdentity(runCtx, ContextRunIdentity{
+				ThreadID:  t.threadInfo.ThreadID,
+				RunID:     req.RunID,
+				MessageID: workerMessageID(cmd.message),
+			})
+		},
+	}
+	if t.runConfig != nil {
+		opts.ConfigProvider = func(ctx context.Context, req agentthread.RunStartRequest) (*agentthread.RunConfig, error) {
+			return t.buildRunConfig(ctx, req.RunID, cmd.message, cmd.mode, true)
+		}
+	}
+	curRun, err := t.thread.ResumeRun(ctx, payload.RunID, opts)
+	if err != nil {
+		return nil, fmt.Errorf("resume turn: %w", err)
+	}
+	t.waitSubmittedRun(ctx, curRun)
+	return &TransportPostMessageResult{RunID: payload.RunID}, nil
+}
+
+func (t *Thread) waitSubmittedRun(ctx context.Context, curRun *agentthread.RunHandle) {
+	if curRun == nil {
+
+		return
+	}
+	t.mu.Lock()
+	claimCtx := t.claimCtx
+	t.mu.Unlock()
+	if claimCtx == nil {
+		claimCtx = ctx
+	}
+	go func() {
+		if err := curRun.Wait(claimCtx); err != nil && claimCtx.Err() == nil {
+
+		}
+	}()
+}
+
+func (t *Thread) resumeData(ctx context.Context, payload inputpkg.ResumeRunPayload) (map[string]any, error) {
+	return resumeData(ctx, payload, t.interruptResume)
+}
+
+func (t *Thread) emitCancelRunEvents(ctx context.Context, payload inputpkg.ResumeRunPayload) {
+	reason := strings.TrimSpace(payload.Approval.Reason)
+	if reason == "" {
+		reason = string(TransportThreadInterruptKindCancelInput)
+	}
+	consumed := compactConsumedInputsFromIDs(payload.ConsumedMessageIDs)
+	t.emitAgentEvent(ctx, agentthread.Event{
+		ID:       t.eventID(payload.RunID),
+		TS:       time.Now(),
+		ThreadID: t.threadID,
+		RunID:    payload.RunID,
+		Type:     agentthread.EventInterrupted,
+		Payload: agentthread.InterruptedPayload{
+			Source:       "external",
+			InterruptID:  payload.InterruptID,
+			CheckpointID: payload.CheckpointID,
+			Metadata: map[string]string{
+				"kind":   string(TransportThreadInterruptKindCancelInput),
+				"reason": reason,
+			},
+		},
+		ConsumedInputs: consumed,
+	})
+	t.emitAgentEvent(ctx, agentthread.Event{
+		ID:             t.eventID(payload.RunID),
+		TS:             time.Now(),
+		ThreadID:       t.threadID,
+		RunID:          payload.RunID,
+		Type:           agentthread.EventRunEnd,
+		Payload:        agentthread.RunEndPayload{},
+		ConsumedInputs: consumed,
+	})
+}
+
+func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error) {
+	runID := cmd.runID
+	if t.thread.ActiveRun() != nil || t.activeCompact() != nil {
+
+		t.emitAgentEvent(ctx, agentthread.Event{
+			ID:                 t.eventID(runID),
+			TS:                 time.Now(),
+			ThreadID:           t.threadID,
+			RunID:              runID,
+			Type:               agentthread.EventError,
+			Payload:            agentthread.ErrorPayload{Message: "compact rejected: thread is running"},
+			ConsumedInputs:     cmd.consumedInputs,
+			ConsumedInputsMeta: cmd.consumedInputsMeta,
+		})
+		return nil
+	}
+
+	compactCtx, cancel := context.WithCancel(ctx)
+	op := &compactOperation{
+		runID:              runID,
+		consumedMessageIDs: cmd.consumedMessageIDs,
+		consumedInputsMeta: cmd.consumedInputsMeta,
+		cancel:             cancel,
+	}
+	if !t.beginCompact(op) {
+		cancel()
+
+		t.emitAgentEvent(ctx, agentthread.Event{
+			ID:                 t.eventID(runID),
+			TS:                 time.Now(),
+			ThreadID:           t.threadID,
+			RunID:              runID,
+			Type:               agentthread.EventError,
+			Payload:            agentthread.ErrorPayload{Message: "compact rejected: thread is running"},
+			ConsumedInputs:     cmd.consumedInputs,
+			ConsumedInputsMeta: cmd.consumedInputsMeta,
+		})
+		return nil
+	}
+	defer t.finishCompact(op)
+	defer cancel()
+
+	t.emitAgentEvent(ctx, agentthread.Event{
+		ID:       t.eventID(runID),
+		TS:       time.Now(),
+		ThreadID: t.threadID,
+		RunID:    runID,
+		Type:     agentthread.EventContextCompactStarted,
+		Payload: agentthread.ContextCompactStartedPayload{
+			ContextUsage: t.thread.ContextManager().ContextUsage(),
+		},
+		ConsumedInputs:     cmd.consumedInputs,
+		ConsumedInputsMeta: cmd.consumedInputsMeta,
+	})
+	payload, err := t.thread.CompactWithRunID(compactCtx, runID)
+	if err != nil {
+		if errors.Is(err, agentthread.ErrThreadRunning) {
+			t.emitAgentEvent(ctx, agentthread.Event{
+				ID:                 t.eventID(runID),
+				TS:                 time.Now(),
+				ThreadID:           t.threadID,
+				RunID:              runID,
+				Type:               agentthread.EventError,
+				Payload:            agentthread.ErrorPayload{Message: "compact rejected: thread is running"},
+				ConsumedInputs:     cmd.consumedInputs,
+				ConsumedInputsMeta: cmd.consumedInputsMeta,
+			})
+			return nil
+		}
+		if req, ok := t.compactInterruptRequest(op); ok {
+
+			t.emitCompactInterruptedEvent(context.WithoutCancel(ctx), op, req)
+			return nil
+		}
+
+		t.emitAgentEvent(ctx, agentthread.Event{
+			ID:                 t.eventID(runID),
+			TS:                 time.Now(),
+			ThreadID:           t.threadID,
+			RunID:              runID,
+			Type:               agentthread.EventError,
+			Payload:            agentthread.ErrorPayload{Message: fmt.Sprintf("compact failed: %v", err)},
+			ConsumedInputs:     cmd.consumedInputs,
+			ConsumedInputsMeta: cmd.consumedInputsMeta,
+		})
+		return nil
+	}
+	if payload == nil {
+
+		t.emitAgentEvent(ctx, agentthread.Event{
+			ID:                 t.eventID(runID),
+			TS:                 time.Now(),
+			ThreadID:           t.threadID,
+			RunID:              runID,
+			Type:               agentthread.EventError,
+			Payload:            agentthread.ErrorPayload{Message: "compact skipped: no compaction produced a new context"},
+			ConsumedInputs:     cmd.consumedInputs,
+			ConsumedInputsMeta: cmd.consumedInputsMeta,
+		})
+		return nil
+	}
+
+	t.emitAgentEvent(ctx, agentthread.Event{
+		ID:                 t.eventID(runID),
+		TS:                 time.Now(),
+		ThreadID:           t.threadID,
+		RunID:              runID,
+		Type:               agentthread.EventContextCompacted,
+		Payload:            *payload,
+		ConsumedInputs:     cmd.consumedInputs,
+		ConsumedInputsMeta: cmd.consumedInputsMeta,
+	})
+	return nil
+}
+
+func (t *Thread) beginCompact(op *compactOperation) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.compact != nil || t.thread.ActiveRun() != nil {
+		return false
+	}
+	t.compact = op
+	return true
+}
+
+func (t *Thread) finishCompact(op *compactOperation) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.compact == op {
+		t.compact = nil
+	}
+}
+
+func (t *Thread) activeCompact() *compactOperation {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.compact == nil {
+		return nil
+	}
+	copy := *t.compact
+	copy.consumedMessageIDs = append([]string(nil), t.compact.consumedMessageIDs...)
+	copy.consumedInputsMeta = append([]any(nil), t.compact.consumedInputsMeta...)
+	return &copy
+}
+
+func (t *Thread) interruptCompact(_ context.Context, req TransportThreadInterruptRequest) bool {
+	t.mu.Lock()
+	op := t.compact
+	if op == nil {
+		t.mu.Unlock()
+		return false
+	}
+	if op.interrupted {
+		t.mu.Unlock()
+		return true
+	}
+	op.interrupted = true
+	op.interrupt = req
+	cancel := op.cancel
+	t.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	return true
+}
+
+func (t *Thread) compactInterruptRequest(op *compactOperation) (TransportThreadInterruptRequest, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.compact != op || !op.interrupted {
+		return TransportThreadInterruptRequest{}, false
+	}
+	return op.interrupt, true
+}
+
+func (t *Thread) emitCompactInterruptedEvent(ctx context.Context, op *compactOperation, req TransportThreadInterruptRequest) {
+	if op == nil {
+		return
+	}
+	t.emitAgentEvent(ctx, agentthread.Event{
+		ID:                 t.eventID(op.runID),
+		TS:                 time.Now(),
+		ThreadID:           t.threadID,
+		RunID:              op.runID,
+		Type:               agentEventContextCompactInterrupted,
+		Payload:            newContextCompactInterruptedPayload(req),
+		ConsumedInputs:     compactConsumedInputsFromIDs(op.consumedMessageIDs),
+		ConsumedInputsMeta: op.consumedInputsMeta,
+	})
+}
+
+func (t *Thread) runOutputBridge(ctx context.Context, bridge *threadOutputBridge) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-bridge.agentEvents:
+			if !ok {
+				return
+			}
+			if !t.forwardAgentEvent(ctx, ev) {
+				return
+			}
+		case item := <-bridge.inbox:
+			if !bridge.deliver(ctx, t, item) {
+				return
+			}
+		}
+	}
+}
+
+func (t *Thread) startThreadOutputObserver(ctx context.Context) {
+	if t.threadOutputObserver == nil {
+		return
+	}
+	t.observerOnce.Do(func() {
+		t.observerQueue = make(chan ThreadOutputObservation, threadOutputObserverQueueSize)
+		observerCtx, cancel := context.WithCancel(ctx)
+		t.observerCancel = cancel
+		go t.runThreadOutputObserver(observerCtx)
+	})
+}
+
+func (t *Thread) runThreadOutputObserver(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case obs := <-t.observerQueue:
+			t.callThreadOutputObserver(ctx, obs)
+		}
+	}
+}
+
+func (t *Thread) enqueueThreadOutputObservation(ctx context.Context, observation ThreadOutputObservation) {
+	select {
+	case t.observerQueue <- observation:
+	default:
+
+	}
+}
+
+func (t *Thread) threadOutputObservation(item TransportThreadOutputItem) (ThreadOutputObservation, bool) {
+	if t.threadOutputObserver == nil || t.observerQueue == nil {
+		return ThreadOutputObservation{}, false
+	}
+	return ThreadOutputObservation{
+		SessionID: t.sessionID,
+		ThreadID:  t.threadID,
+		Item:      cloneThreadOutputItem(item),
+	}, true
+}
+
+func (t *Thread) callThreadOutputObserver(ctx context.Context, obs ThreadOutputObservation) {
+
+	defer func() {
+		{
+			_ = recover()
+		}
+		{
+		}
+
+	}()
+	t.threadOutputObserver(ctx, obs)
+}
+
+func (t *Thread) forwardAgentEvent(ctx context.Context, ev agentthread.Event) bool {
+	usage := t.thread.ContextManager().ContextUsage()
+	item, err := threadOutputItem(t.sessionID, t.threadID, ev, &usage)
+	if err != nil {
+
+		return true
+	}
+	if item == nil {
+		return true
+	}
+
+	if ev.Type == agentthread.EventRunEnd && t.runFinishedObserver != nil {
+		t.runFinishedObserver(ctx, ev)
+	}
+	return t.outputBridge.deliver(ctx, t, *item)
+}
+
+func (t *Thread) emitAgentEvent(ctx context.Context, ev agentthread.Event) {
+	t.mu.Lock()
+	bridge := t.outputBridge
+	t.mu.Unlock()
+	if bridge == nil {
+		return
+	}
+	usage := t.thread.ContextManager().ContextUsage()
+	item, err := threadOutputItem(t.sessionID, t.threadID, ev, &usage)
+	if err != nil {
+
+		return
+	}
+	if item == nil {
+		return
+	}
+
+	bridge.send(ctx, *item)
+}
+
+func (t *Thread) eventID(runID string) string {
+	return fmt.Sprintf("evt_%s_%s_%d", t.threadID, runID, time.Now().UnixNano())
+}
+
+func (t *Thread) buildRunConfig(ctx context.Context, runID string, message *TransportMessage, mode inputpkg.UserMessageMode, resume bool) (*agentthread.RunConfig, error) {
+	if t == nil || t.runConfig == nil {
+		return nil, nil
+	}
+	return t.runConfig(ctx, RunStartRequest{RunID: runID, Mode: mode, Message: message, Resume: resume})
+}
+
+func (t *Thread) withThreadInfo(ctx context.Context) context.Context {
+	return ContextContextWithThreadIdentity(ctx, t.threadInfo)
+}
+
+func (t *Thread) ensureOpen() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return TransportErrThreadClosed
+	}
+	return nil
+}
+
+// commands
+
+type userInputCommand struct {
+	message *TransportMessage
+	input   inputpkg.UserMessage
+	schema  *schemapkg.Message
+	mode    inputpkg.UserMessageMode
+}
+
+type resumeRunCommand struct {
+	message *TransportMessage
+	payload inputpkg.ResumeRunPayload
+	mode    inputpkg.UserMessageMode
+}
+
+type compactCommand struct {
+	message            *TransportMessage
+	runID              string
+	consumedMessageIDs []string
+	consumedInputs     []*schemapkg.Message
+	consumedInputsMeta []any
+}
+
+func decodeUserInputCommand(message *TransportMessage) (cmd userInputCommand, err error) {
+	input, err := parseUserMessage(message)
+	if err != nil {
+		return userInputCommand{}, err
+	}
+	userInput, err := protocolUserMessageToSchemaMessage(input)
+	if err != nil {
+		return userInputCommand{}, err
+	}
+	attachAttribute(userInput, attributeFromWorkerMessage(message))
+	return userInputCommand{
+		message: message,
+		input:   input,
+		schema:  userInput,
+		mode:    userInputMode(message, input.Mode),
+	}, nil
+}
+
+func decodeResumeRunCommand(message *TransportMessage) (cmd resumeRunCommand, err error) {
+	payload, err := parseResumePayload(message)
+	if err != nil {
+		return resumeRunCommand{}, err
+	}
+	return resumeRunCommand{
+		message: message,
+		payload: payload,
+		mode:    messageMetadataMode(message),
+	}, nil
+}
+
+func decodeCompactCommand(message *TransportMessage) compactCommand {
+	consumed := compactConsumedMessageIDs(message)
+	return compactCommand{
+		message:            message,
+		runID:              compactRunID(message),
+		consumedMessageIDs: consumed,
+		consumedInputs:     compactConsumedInputsFromIDs(consumed),
+		consumedInputsMeta: compactConsumedInputsMeta(message, consumed),
+	}
+}
+
+func workerMessageID(message *TransportMessage) (id string) {
+	if message == nil {
+		return ""
+	}
+	return message.ID
+}
+
+func compactRunID(message *TransportMessage) string {
+	if message != nil {
+		id := strings.TrimSpace(message.ID)
+		if id != "" {
+			return "compact_" + id
+		}
+	}
+	return "compact_" + uuid.NewString()
+}
+
+func compactConsumedMessageIDs(message *TransportMessage) []string {
+	if message == nil || strings.TrimSpace(message.ID) == "" {
+		return nil
+	}
+	return []string{strings.TrimSpace(message.ID)}
+}
+
+func compactConsumedInputsFromIDs(ids []string) []*schemapkg.Message {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]*schemapkg.Message, 0, len(ids))
+	for _, id := range ids {
+		msg := schemapkg.SystemMessage("compact")
+		attachAttribute(msg, MessageAttribute{MessageID: id})
+		out = append(out, msg)
+	}
+	return out
+}
+
+func compactConsumedInputsMeta(message *TransportMessage, consumedMessageIDs []string) []any {
+	if message == nil || len(consumedMessageIDs) == 0 || len(message.Metadata) == 0 {
+		return nil
+	}
+	return []any{maps.Clone(message.Metadata)}
+}
+
+func unsupportedRuntimeCommand(message *TransportMessage) error {
+	if message == nil {
+		return fmt.Errorf("worker message is required")
+	}
+	return fmt.Errorf("unsupported message type: %s", message.Type)
+}
+
+// compact event
+
+const agentEventContextCompactInterrupted agentthread.EventType = "context_compact_interrupted"
+
+type contextCompactInterruptedPayload struct {
+	Kind             string
+	Reason           string
+	ControlMessageID string
+	CutoffMessageID  string
+}
+
+func newContextCompactInterruptedPayload(req TransportThreadInterruptRequest) contextCompactInterruptedPayload {
+	return contextCompactInterruptedPayload{
+		Kind:             string(req.Kind),
+		Reason:           req.Reason,
+		ControlMessageID: req.ControlMessageID,
+		CutoffMessageID:  req.CutoffMessageID,
+	}
+}
+
+// compact runtime
+
+type compactOperation struct {
+	runID              string
+	consumedMessageIDs []string
+	consumedInputsMeta []any
+	cancel             context.CancelFunc
+	interrupted        bool
+	interrupt          TransportThreadInterruptRequest
+}
+
+// event mapper
+
+func agentEventPayloadForOutput(ev agentthread.Event, usage *agentthread.ContextUsageSnapshot) (eventType eventpkg.EventType, payload any, err error) {
+	defer func() {
+		if err == nil && payload != nil {
+			err = attachConsumedInputs(payload, ev.ConsumedInputs, ev.ConsumedInputsMeta)
+		}
+	}()
+	contextUsage := convertContextUsagePayload(usage)
+	switch ev.Type {
+	case agentthread.EventRunStart:
+		payload, err := agentEventPayload[agentthread.RunStartPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		out := messageEventPayloadFromRunStart(payload, ev.ConsumedInputs)
+		if out != nil {
+			out.Status = eventpkg.RunStatusStarted
+			out.ContextUsage = contextUsage
+		}
+		return eventpkg.EventTypeRunStatus, out, nil
+	case agentthread.EventLLMRequesting:
+		return "", nil, nil
+	case agentthread.EventLLMToken:
+		payload, err := agentEventPayload[agentthread.LLMTokenChunk](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		return eventpkg.EventTypeAssistantDelta, &eventpkg.AssistantDeltaEventPayload{
+			Delta:                payload.Text,
+			ThinkingContentDelta: payload.ReasoningText,
+			LLMResponseID:        payload.LLMResponseID,
+		}, nil
+	case agentthread.EventLLMEnd:
+		payload, err := agentEventPayload[agentthread.LLMEnd](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		out := &eventpkg.MessageEventPayload{
+			LLMResponseID: payload.LLMResponseID,
+			ContextUsage:  contextUsage,
+		}
+		if payload.Message != nil {
+			out.Parts = schemaAssistantMessageToProtocolParts(payload.Message)
+			out.ThinkingContent = payload.Message.ReasoningContent
+		}
+		return eventpkg.EventTypeAssistantMessage, out, nil
+	case agentthread.EventToolStart:
+		payload, err := agentEventPayload[agentthread.ToolStartPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		return eventpkg.EventTypeToolCall, &eventpkg.ToolCallEventPayload{
+			ToolCallID:    payload.CallID,
+			ToolName:      payload.Name,
+			ArgumentsJSON: stringPtrIfNotEmpty(payload.Args),
+			Status:        eventpkg.ToolCallStatusStarted,
+			ContextUsage:  contextUsage,
+		}, nil
+	case agentthread.EventToolCallOutputChunk:
+		payload, err := agentEventPayload[agentthread.ToolCallOutputChunkPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		return eventpkg.EventTypeToolCall, &eventpkg.ToolCallEventPayload{
+			ToolCallID:  payload.CallID,
+			ToolName:    payload.Name,
+			Status:      eventpkg.ToolCallStatusStarted,
+			OutputDelta: stringPtrIfNotEmpty(payload.Chunk),
+		}, nil
+	case agentthread.EventToolEnd:
+		payload, err := agentEventPayload[agentthread.ToolEndPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		out := &eventpkg.ToolCallEventPayload{
+			ToolCallID:    payload.CallID,
+			ToolName:      payload.Name,
+			ArgumentsJSON: stringPtrIfNotEmpty(payload.ArgumentsInJSON),
+			ResultJSON:    stringPtrIfNotEmpty(payload.Result),
+			Status:        eventpkg.ToolCallStatusFinished,
+			ContextUsage:  contextUsage,
+		}
+		if !payload.ToolStartTime.IsZero() && !ev.TS.IsZero() && ev.TS.After(payload.ToolStartTime) {
+			elapsed := ev.TS.Sub(payload.ToolStartTime).Milliseconds()
+			out.ElapsedMs = &elapsed
+		}
+		return eventpkg.EventTypeToolCall, out, nil
+	case agentthread.EventPlanUpdated:
+		payload, err := agentEventPayload[agentthread.PlanUpdatedPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		out := planUpdatedPayload(payload)
+		out.ContextUsage = contextUsage
+		return eventpkg.EventTypePlanUpdated, out, nil
+	case agentthread.EventContextCompactStarted:
+		payload, err := agentEventPayload[agentthread.ContextCompactStartedPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		compactUsage := convertContextUsagePayload(&payload.ContextUsage)
+		if payload.ContextUsage == (agentthread.ContextUsageSnapshot{}) {
+			compactUsage = contextUsage
+		}
+		return eventpkg.EventTypeRunStatus, &eventpkg.CompactStartedEventPayload{Status: eventpkg.RunStatusCompactStarted, ContextUsage: compactUsage}, nil
+	case agentthread.EventContextCompacted:
+		payload, err := agentEventPayload[agentthread.ContextCompactedPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		return eventpkg.EventTypeRunStatus, &eventpkg.ContextCompactedEventPayload{Status: eventpkg.RunStatusContextCompacted, ContextUsage: convertContextUsagePayload(&payload.After)}, nil
+	case agentEventContextCompactInterrupted:
+		payload, err := agentEventPayload[contextCompactInterruptedPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		return eventpkg.EventTypeRunStatus, &eventpkg.CompactInterruptedEventPayload{
+			Status:           eventpkg.RunStatusCompactInterrupted,
+			Kind:             payload.Kind,
+			Reason:           payload.Reason,
+			ControlMessageID: payload.ControlMessageID,
+			CutoffMessageID:  payload.CutoffMessageID,
+		}, nil
+	case agentthread.EventApproveRequested:
+		payload, err := agentEventPayload[agentthread.ApprovalRequiredPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		return eventpkg.EventTypeInputRequired, convertApprovalRequiredPayload(payload), nil
+	case agentthread.EventFollowUpRequested:
+		payload, err := agentEventPayload[agentthread.FollowUpRequestedPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		return eventpkg.EventTypeInputRequired, followUpRequiredPayload(payload), nil
+	case agentthread.EventInterrupted:
+		payload, err := agentEventPayload[agentthread.InterruptedPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		if isExternalInterrupt(payload) {
+			return eventpkg.EventTypeRunStatus, &eventpkg.ErrorEventPayload{Status: eventpkg.RunStatusInterrupted, Message: interruptedMessage(payload), ContextUsage: contextUsage}, nil
+		}
+		if info, ok := payload.Info.(*planmode.RequestUserInputInfo); ok {
+			return eventpkg.EventTypeInputRequired, planInputRequiredPayload(payload, info), nil
+		}
+		if isRecoverableRuntimeInterrupt(payload) {
+			out, err := interruptRequiredPayload(payload)
+			if err != nil {
+				return "", nil, err
+			}
+			return eventpkg.EventTypeInputRequired, out, nil
+		}
+		return eventpkg.EventTypeRunStatus, &eventpkg.ErrorEventPayload{Status: eventpkg.RunStatusInterrupted, Message: interruptedMessage(payload), ContextUsage: contextUsage}, nil
+	case agentthread.EventRunEnd:
+		if _, err := agentEventPayload[agentthread.RunEndPayload](ev); err != nil {
+			return "", nil, err
+		}
+		return eventpkg.EventTypeRunStatus, &eventpkg.RunFinishedEventPayload{Status: eventpkg.RunStatusFinished, ContextUsage: contextUsage}, nil
+	case agentthread.EventError:
+		out := convertErrorPayload(ev.Payload)
+		out.ContextUsage = contextUsage
+		return eventpkg.EventTypeError, out, nil
+	default:
+		return "", nil, nil
+	}
+}
+
+func attachConsumedInputs(payload any, inputs []*schemapkg.Message, meta []any) (err error) {
+	consumed := ConsumedMessageIDs(inputs)
+	copied, err := copyConsumedInputMetadata(meta)
+	if len(consumed) == 0 && len(copied) == 0 {
+		return err
+	}
+	switch p := payload.(type) {
+	case *eventpkg.MessageEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.AssistantDeltaEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.ToolCallEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.ApprovalRequiredEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.InterruptRequiredEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.PlanUpdatedEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.PlanInputRequiredEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.CompactStartedEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.ContextCompactedEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.ErrorEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.CompactInterruptedEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.RunFinishedEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	}
+	return err
+}
+
+func copyConsumedInputMetadata(meta []any) ([]map[string]string, error) {
+	if len(meta) == 0 {
+		return nil, nil
+	}
+	out := make([]map[string]string, len(meta))
+	hasValue := false
+	for i, item := range meta {
+		if item == nil {
+			continue
+		}
+		typed, ok := item.(map[string]string)
+		if !ok {
+			return nil, fmt.Errorf("consumed input metadata at index %d has type %T, want map[string]string", i, item)
+		}
+		hasValue = true
+		out[i] = maps.Clone(typed)
+	}
+	if !hasValue {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func agentEventPayload[T any](ev agentthread.Event) (T, error) {
+	payload, ok := ev.Payload.(T)
+	if ok {
+		return payload, nil
+	}
+	var zero T
+	return zero, fmt.Errorf("%s payload type mismatch: %T", ev.Type, ev.Payload)
+}
+
+func planUpdatedPayload(payload agentthread.PlanUpdatedPayload) *eventpkg.PlanUpdatedEventPayload {
+	items := make([]*eventpkg.PlanItem, len(payload.Plan))
+	for i, step := range payload.Plan {
+		id := strconv.Itoa(i + 1)
+		items[i] = &eventpkg.PlanItem{
+			ID:      id,
+			Content: step.Step,
+			Status:  string(step.Status),
+		}
+	}
+	return &eventpkg.PlanUpdatedEventPayload{
+		Explanation: stringPtrIfNotEmpty(payload.Explanation),
+		Items:       items,
+	}
+}
+
+func planInputRequiredPayload(payload agentthread.InterruptedPayload, info *planmode.RequestUserInputInfo) *eventpkg.PlanInputRequiredEventPayload {
+	if info == nil {
+		return nil
+	}
+	questions := make([]*eventpkg.PlanInputQuestion, len(info.Questions))
+	for i, question := range info.Questions {
+		options := make([]*eventpkg.PlanInputQuestionOption, len(question.Options))
+		for j, option := range question.Options {
+			options[j] = &eventpkg.PlanInputQuestionOption{
+				Label:       option.Label,
+				Description: option.Description,
+			}
+		}
+		questions[i] = &eventpkg.PlanInputQuestion{
+			ID:       question.ID,
+			Header:   question.Header,
+			Question: question.Question,
+			Options:  options,
+		}
+	}
+	return &eventpkg.PlanInputRequiredEventPayload{
+		Kind:         eventpkg.InputRequiredKindPlanInput,
+		InterruptID:  payload.InterruptID,
+		CheckpointID: payload.CheckpointID,
+		Questions:    questions,
+	}
+}
+
+func convertContextUsagePayload(snapshot *agentthread.ContextUsageSnapshot) *eventpkg.ContextUsage {
+	if snapshot == nil {
+		return nil
+	}
+	var ratio *float64
+	if snapshot.ContextWindow > 0 && snapshot.CurrentTotal > 0 {
+		value := float64(snapshot.CurrentTotal) / float64(snapshot.ContextWindow)
+		ratio = &value
+	}
+	return &eventpkg.ContextUsage{
+		UsedTokens:       snapshot.CurrentTotal,
+		MaxTokens:        int64PtrIfPositive(snapshot.ContextWindow),
+		Ratio:            ratio,
+		PromptTokens:     int64PtrIfPositive(snapshot.LastModelPromptTokens),
+		CompletionTokens: int64PtrIfPositive(snapshot.LastModelCompletionTokens),
+	}
+}
+
+func convertApprovalRequiredPayload(payload agentthread.ApprovalRequiredPayload) *eventpkg.ApprovalRequiredEventPayload {
+	out := &eventpkg.ApprovalRequiredEventPayload{
+		Kind:         eventpkg.InputRequiredKindApproval,
+		InterruptID:  payload.InterruptID,
+		CheckpointID: payload.CheckpointID,
+	}
+	if payload.ApprovalInfo != nil {
+		out.ToolName = payload.ApprovalInfo.ToolName
+		out.ArgumentsJSON = stringPtrIfNotEmpty(payload.ApprovalInfo.ArgumentsInJSON)
+		return out
+	}
+	if payload.ReviewEditInfo != nil {
+		out.ToolName = payload.ReviewEditInfo.ToolName
+		out.ArgumentsJSON = stringPtrIfNotEmpty(payload.ReviewEditInfo.ArgumentsInJSON)
+		return out
+	}
+	return out
+}
+
+func followUpRequiredPayload(payload agentthread.FollowUpRequestedPayload) *eventpkg.InterruptRequiredEventPayload {
+	info := struct {
+		Questions []string `json:"questions,omitempty"`
+	}{}
+	if payload.Info != nil {
+		info.Questions = append([]string(nil), payload.Info.Questions...)
+	}
+	raw, _ := json.Marshal(info)
+	return &eventpkg.InterruptRequiredEventPayload{
+		InterruptID:  payload.InterruptID,
+		CheckpointID: payload.CheckpointID,
+		Kind:         eventpkg.InputRequiredKindFollowUp,
+		InfoType:     fmt.Sprintf("%T", payload.Info),
+		Info:         raw,
+	}
+}
+
+func interruptRequiredPayload(payload agentthread.InterruptedPayload) (*eventpkg.InterruptRequiredEventPayload, error) {
+	raw, err := json.Marshal(payload.Info)
+	if err != nil {
+		return nil, fmt.Errorf("marshal interrupt info: info_type=%s: %w", payload.InfoType, err)
+	}
+	return &eventpkg.InterruptRequiredEventPayload{
+		InterruptID:  payload.InterruptID,
+		CheckpointID: payload.CheckpointID,
+		Kind:         interruptKind(payload),
+		InfoType:     payload.InfoType,
+		Info:         raw,
+	}, nil
+}
+
+func convertErrorPayload(payload any) *eventpkg.ErrorEventPayload {
+	switch p := payload.(type) {
+	case agentthread.ErrorPayload:
+		return &eventpkg.ErrorEventPayload{Message: p.Message}
+	case *agentthread.ErrorPayload:
+		if p == nil {
+			return &eventpkg.ErrorEventPayload{}
+		}
+		return &eventpkg.ErrorEventPayload{Message: p.Message}
+	default:
+		return &eventpkg.ErrorEventPayload{Message: fmt.Sprint(payload)}
+	}
+}
+
+func interruptedMessage(payload agentthread.InterruptedPayload) string {
+	if payload.Source == "external" && payload.Metadata["kind"] == string(TransportThreadInterruptKindWorkerShutdownTimeout) {
+		if reason := strings.TrimSpace(payload.Metadata["reason"]); reason != "" {
+			return reason
+		}
+		return "worker shutdown timeout"
+	}
+	if payload.Source != "" {
+		return "interrupted by " + payload.Source
+	}
+	return "interrupted"
+}
+
+func isExternalInterrupt(payload agentthread.InterruptedPayload) bool {
+	return payload.Source == "external"
+}
+
+func isRecoverableRuntimeInterrupt(payload agentthread.InterruptedPayload) bool {
+	return payload.Source != "external" && payload.InterruptID != "" && payload.CheckpointID != ""
+}
+
+func interruptKind(payload agentthread.InterruptedPayload) string {
+	if payload.InfoType != "" {
+		return "custom"
+	}
+	if payload.Source != "" {
+		return payload.Source
+	}
+	return "interrupt"
+}
+
+func stringPtrIfNotEmpty(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return &value
+}
+
+func int64PtrIfPositive(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+// event output
+
+const metadataAgentEventID = "agent_event_id"
+
+func threadOutputItem(sessionID string, threadID string, ev agentthread.Event, usage *agentthread.ContextUsageSnapshot) (item *TransportThreadOutputItem, err error) {
+	event, err := workerEvent(sessionID, threadID, ev, usage)
+	if err != nil {
+		return nil, err
+	}
+	yield := yieldFromAgentEvent(ev)
+	if event == nil && yield == nil {
+		return nil, nil
+	}
+	return &TransportThreadOutputItem{Event: event, Yield: yield}, nil
+}
+
+func yieldFromAgentEvent(ev agentthread.Event) *TransportThreadYield {
+	switch ev.Type {
+	case agentthread.EventRunEnd:
+		return &TransportThreadYield{Reason: "finished"}
+	case agentthread.EventInterrupted:
+		payload, err := agentEventPayload[agentthread.InterruptedPayload](ev)
+		if err != nil {
+			return &TransportThreadYield{Reason: "interrupted", Err: err}
+		}
+		if payload.Source != "external" && payload.CheckpointID != "" && payload.InterruptID != "" {
+			return &TransportThreadYield{Reason: "blocked", Block: &TransportPendingBlock{
+				RunID: ev.RunID, CheckpointID: payload.CheckpointID, InterruptID: payload.InterruptID,
+			}}
+		}
+		return &TransportThreadYield{Reason: "interrupted"}
+	default:
+		return nil
+	}
+}
+
+func workerEvent(_ string, threadID string, ev agentthread.Event, usage *agentthread.ContextUsageSnapshot) (output *TransportEvent, err error) {
+	if isHiddenInternalToolEvent(ev) {
+		return nil, nil
+	}
+
+	if ev.Type == agentthread.EventLLMRequesting {
+		return nil, nil
+	}
+
+	eventType, eventPayload, err := agentEventPayloadForOutput(ev, usage)
+	if err != nil {
+		return nil, err
+	}
+	if eventPayload == nil {
+		return nil, nil
+	}
+	payload, err := json.Marshal(eventPayload)
+	if err != nil {
+		return nil, err
+	}
+	event := &TransportEvent{
+		ID:       ev.ID,
+		ThreadID: threadID,
+		RunID:    ev.RunID,
+		Type:     TransportEventType(eventType.String()),
+		Payload:  payload,
+		Metadata: map[string]string{metadataAgentEventID: ev.ID},
+		TS:       ev.TS,
+	}
+	return event, nil
+}
+
+// input message
+
+func parseUserMessage(message *TransportMessage) (inputpkg.UserMessage, error) {
+	if message == nil {
+		return inputpkg.UserMessage{}, fmt.Errorf("message is required")
+	}
+	var input inputpkg.UserMessage
+	if err := json.Unmarshal(message.Payload, &input); err != nil {
+		return inputpkg.UserMessage{}, fmt.Errorf("unmarshal user message: %w", err)
+	}
+	if err := input.Validate(); err != nil {
+		return inputpkg.UserMessage{}, err
+	}
+	return input, nil
+}
+
+// message
+
+const (
+	MessageTypeInput     TransportMessageType = TransportMessageType(inputpkg.MessageTypeInput)
+	MessageTypeResumeRun TransportMessageType = TransportMessageType(inputpkg.MessageTypeResume)
+	MessageTypeCompact   TransportMessageType = TransportMessageType(inputpkg.MessageTypeCompact)
+
+	MetadataRunMode = inputpkg.MetadataRunMode
+	RunModePlan     = inputpkg.RunModePlan
+
+	einoMessageAttributeExtraKey = "__cloudagent_message_attribute__"
+	legacyMessageIDExtraKey      = "message_id"
+)
+
+type MessageAttribute struct {
+	MessageID  string `json:"message_id,omitempty"`
+	SenderID   string `json:"sender_id,omitempty"`
+	SenderType string `json:"sender_type,omitempty"`
+}
+
+func init() {
+	// MessageAttribute is stored in schema.Message.Extra. Eino checkpoint
+	// serialization needs a stable name to restore custom Extra values.
+	// Keep the historical names so existing local checkpoints remain readable.
+	schemapkg.RegisterName[MessageAttribute]("_cloudagent_message_attribute")
+	schemapkg.RegisterName[protocolInputParts]("_cloudagent_input_parts")
+	schemapkg.RegisterName[inputpkg.MessagePart]("_cloudagent_input_message_part")
+}
+
+func attributeFromWorkerMessage(message *TransportMessage) MessageAttribute {
+	if message == nil {
+		return MessageAttribute{}
+	}
+	attr := MessageAttribute{MessageID: strings.TrimSpace(message.ID)}
+	if message.Sender != nil {
+		attr.SenderID = strings.TrimSpace(message.Sender.ID)
+		attr.SenderType = strings.TrimSpace(string(message.Sender.Type))
+	}
+	return attr
+}
+
+func attachAttribute(msg *schemapkg.Message, attr MessageAttribute) {
+	if msg == nil || attr.empty() {
+		return
+	}
+	if msg.Extra == nil {
+		msg.Extra = make(map[string]any, 1)
+	}
+	msg.Extra[einoMessageAttributeExtraKey] = attr
+}
+
+func attributeFromMessage(msg *schemapkg.Message) MessageAttribute {
+	if msg == nil || msg.Extra == nil {
+		return MessageAttribute{}
+	}
+	if attr, ok := attributeFromExtraValue(msg.Extra[einoMessageAttributeExtraKey]); ok {
+		return attr
+	}
+	if messageID, ok := stringIDFromAny(msg.Extra[legacyMessageIDExtraKey]); ok {
+		return MessageAttribute{MessageID: messageID}
+	}
+	return MessageAttribute{}
+}
+
+func ConsumedMessageIDs(inputs []*schemapkg.Message) []string {
+	if len(inputs) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		attr := attributeFromMessage(input)
+		if attr.MessageID != "" {
+			ids = append(ids, attr.MessageID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return ids
+}
+
+// MessageID returns the Manager mailbox identity attached to a user message.
+// It is used by durable history storage to make Worker redelivery idempotent.
+func MessageID(message *schemapkg.Message) string {
+	return attributeFromMessage(message).MessageID
+}
+
+func attributeFromExtraValue(raw any) (MessageAttribute, bool) {
+	switch v := raw.(type) {
+	case MessageAttribute:
+		attr := v.normalized()
+		return attr, !attr.empty()
+	case *MessageAttribute:
+		if v == nil {
+			return MessageAttribute{}, false
+		}
+		attr := v.normalized()
+		return attr, !attr.empty()
+	case map[string]any:
+		attr := MessageAttribute{}
+		if messageID, ok := stringIDFromAny(v["message_id"]); ok {
+			attr.MessageID = messageID
+		}
+		if senderID, ok := stringIDFromAny(v["sender_id"]); ok {
+			attr.SenderID = senderID
+		}
+		if senderType, ok := stringIDFromAny(v["sender_type"]); ok {
+			attr.SenderType = senderType
+		}
+		attr = attr.normalized()
+		return attr, !attr.empty()
+	default:
+		return MessageAttribute{}, false
+	}
+}
+
+func (a MessageAttribute) normalized() MessageAttribute {
+	return MessageAttribute{
+		MessageID:  strings.TrimSpace(a.MessageID),
+		SenderID:   strings.TrimSpace(a.SenderID),
+		SenderType: strings.TrimSpace(a.SenderType),
+	}
+}
+
+func (a MessageAttribute) empty() bool {
+	a = a.normalized()
+	return a.MessageID == "" && a.SenderID == "" && a.SenderType == ""
+}
+
+func stringIDFromAny(raw any) (string, bool) {
+	switch v := raw.(type) {
+	case string:
+		id := strings.TrimSpace(v)
+		return id, id != ""
+	case int64:
+		if v == 0 {
+			return "", false
+		}
+		return strconv.FormatInt(v, 10), true
+	case int:
+		if v == 0 {
+			return "", false
+		}
+		return strconv.FormatInt(int64(v), 10), true
+	case int32:
+		if v == 0 {
+			return "", false
+		}
+		return strconv.FormatInt(int64(v), 10), true
+	case float64:
+		if v == 0 {
+			return "", false
+		}
+		return strconv.FormatInt(int64(v), 10), true
+	case json.Number:
+		if n, err := v.Int64(); err == nil && n != 0 {
+			return strconv.FormatInt(n, 10), true
+		}
+		return "", false
+	default:
+		return "", false
+	}
+}
+
+// message codec
+
+const protocolInputPartsExtraKey = "__cloudagent_input_parts__"
+
+type protocolInputParts []inputpkg.MessagePart
+
+func protocolUserMessageToSchemaMessage(input inputpkg.UserMessage) (*schemapkg.Message, error) {
+	originalParts := normalizeProtocolInputParts(input.Parts)
+	parts := make([]schemapkg.MessageInputPart, 0, len(originalParts))
+	text := make([]string, 0, len(originalParts))
+	hasNonTextPart := false
+	for i, part := range originalParts {
+		einoPart, err := protocolPartToSchemaInputPart(part)
+		if err != nil {
+			return nil, fmt.Errorf("parts[%d]: %w", i, err)
+		}
+		parts = append(parts, einoPart)
+		if part.Type == inputpkg.MessagePartTypeText {
+			text = append(text, part.Text)
+		} else {
+			hasNonTextPart = true
+		}
+	}
+
+	msg := &schemapkg.Message{Role: schemapkg.User, Extra: protocolExtraToSchemaExtra(input.Extra)}
+	if hasNonTextPart {
+		msg.UserInputMultiContent = parts
+	} else {
+		msg.Content = strings.Join(text, "\n")
+	}
+	attachOriginalProtocolInputParts(msg, originalParts)
+	return msg, nil
+}
+
+func protocolPartToSchemaInputPart(part inputpkg.MessagePart) (schemapkg.MessageInputPart, error) {
+	switch part.Type {
+	case inputpkg.MessagePartTypeText:
+		return schemapkg.MessageInputPart{
+			Type:  schemapkg.ChatMessagePartTypeText,
+			Text:  strings.TrimSpace(part.Text),
+			Extra: protocolExtraToSchemaExtra(part.Extra),
+		}, nil
+	case inputpkg.MessagePartTypeImage:
+		return schemapkg.MessageInputPart{
+			Type:  schemapkg.ChatMessagePartTypeImageURL,
+			Image: &schemapkg.MessageInputImage{MessagePartCommon: schemaMessagePartCommon(part), Detail: schemapkg.ImageURLDetail(strings.TrimSpace(part.Detail))},
+			Extra: protocolExtraToSchemaExtra(part.Extra),
+		}, nil
+	case inputpkg.MessagePartTypeAudio:
+		return schemapkg.MessageInputPart{
+			Type:  schemapkg.ChatMessagePartTypeAudioURL,
+			Audio: &schemapkg.MessageInputAudio{MessagePartCommon: schemaMessagePartCommon(part)},
+			Extra: protocolExtraToSchemaExtra(part.Extra),
+		}, nil
+	case inputpkg.MessagePartTypeVideo:
+		return schemapkg.MessageInputPart{
+			Type:  schemapkg.ChatMessagePartTypeVideoURL,
+			Video: &schemapkg.MessageInputVideo{MessagePartCommon: schemaMessagePartCommon(part)},
+			Extra: protocolExtraToSchemaExtra(part.Extra),
+		}, nil
+	case inputpkg.MessagePartTypeFile:
+		return schemapkg.MessageInputPart{
+			Type:  schemapkg.ChatMessagePartTypeFileURL,
+			File:  &schemapkg.MessageInputFile{MessagePartCommon: schemaMessagePartCommon(part), Name: strings.TrimSpace(part.Name)},
+			Extra: protocolExtraToSchemaExtra(part.Extra),
+		}, nil
+	default:
+		return schemapkg.MessageInputPart{}, fmt.Errorf("unsupported part type: %s", part.Type)
+	}
+}
+
+func schemaUserMessageToProtocolParts(message *schemapkg.Message) []eventpkg.MessagePart {
+	if parts := originalProtocolInputParts(message); len(parts) > 0 {
+		return inputPartsForEvent(parts)
+	}
+	if message == nil {
+		return nil
+	}
+	if message.Content != "" {
+		return textParts(message.Content)
+	}
+	if len(message.UserInputMultiContent) == 0 {
+		return nil
+	}
+	parts := make([]eventpkg.MessagePart, 0, len(message.UserInputMultiContent))
+	for _, part := range message.UserInputMultiContent {
+		converted, ok := schemaInputPartToProtocolPart(part)
+		if ok {
+			parts = append(parts, converted)
+		}
+	}
+	return parts
+}
+
+func schemaInputPartToProtocolPart(part schemapkg.MessageInputPart) (eventpkg.MessagePart, bool) {
+	switch part.Type {
+	case schemapkg.ChatMessagePartTypeText:
+		text := strings.TrimSpace(part.Text)
+		if text == "" {
+			return eventpkg.MessagePart{}, false
+		}
+		return eventpkg.MessagePart{Type: eventpkg.MessagePartTypeText, Text: text, Extra: schemaExtraToProtocolExtra(part.Extra)}, true
+	case schemapkg.ChatMessagePartTypeImageURL:
+		out := protocolPartFromCommon(eventpkg.MessagePartTypeImage, messageInputImageCommon(part.Image))
+		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
+		if part.Image != nil {
+			out.Detail = string(part.Image.Detail)
+		}
+		return out, true
+	case schemapkg.ChatMessagePartTypeAudioURL:
+		out := protocolPartFromCommon(eventpkg.MessagePartTypeAudio, messageInputAudioCommon(part.Audio))
+		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
+		return out, true
+	case schemapkg.ChatMessagePartTypeVideoURL:
+		out := protocolPartFromCommon(eventpkg.MessagePartTypeVideo, messageInputVideoCommon(part.Video))
+		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
+		return out, true
+	case schemapkg.ChatMessagePartTypeFileURL:
+		out := protocolPartFromCommon(eventpkg.MessagePartTypeFile, messageInputFileCommon(part.File))
+		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
+		if part.File != nil {
+			out.Name = part.File.Name
+		}
+		return out, true
+	default:
+		return eventpkg.MessagePart{}, false
+	}
+}
+
+func schemaAssistantMessageToProtocolParts(message *schemapkg.Message) []eventpkg.MessagePart {
+	if message == nil {
+		return nil
+	}
+	if len(message.AssistantGenMultiContent) > 0 {
+		parts := make([]eventpkg.MessagePart, 0, len(message.AssistantGenMultiContent))
+		for _, part := range message.AssistantGenMultiContent {
+			converted, ok := schemaOutputPartToProtocolPart(part)
+			if ok {
+				parts = append(parts, converted)
+			}
+		}
+		if len(parts) > 0 {
+			return parts
+		}
+	}
+	return textParts(message.Content)
+}
+
+func schemaOutputPartToProtocolPart(part schemapkg.MessageOutputPart) (eventpkg.MessagePart, bool) {
+	switch part.Type {
+	case schemapkg.ChatMessagePartTypeText:
+		return eventpkg.MessagePart{Type: eventpkg.MessagePartTypeText, Text: part.Text, Extra: schemaExtraToProtocolExtra(part.Extra)}, true
+	case schemapkg.ChatMessagePartTypeImageURL:
+		out := protocolPartFromCommon(eventpkg.MessagePartTypeImage, messageOutputImageCommon(part.Image))
+		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
+		return out, true
+	case schemapkg.ChatMessagePartTypeAudioURL:
+		out := protocolPartFromCommon(eventpkg.MessagePartTypeAudio, messageOutputAudioCommon(part.Audio))
+		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
+		return out, true
+	case schemapkg.ChatMessagePartTypeVideoURL:
+		out := protocolPartFromCommon(eventpkg.MessagePartTypeVideo, messageOutputVideoCommon(part.Video))
+		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
+		return out, true
+	default:
+		return eventpkg.MessagePart{Type: eventpkg.MessagePartType(strings.TrimSuffix(string(part.Type), "_url")), Extra: schemaExtraToProtocolExtra(part.Extra)}, true
+	}
+}
+
+func attachOriginalProtocolInputParts(msg *schemapkg.Message, parts []inputpkg.MessagePart) {
+	if msg == nil || len(parts) == 0 {
+		return
+	}
+	if msg.Extra == nil {
+		msg.Extra = make(map[string]any, 1)
+	}
+	msg.Extra[protocolInputPartsExtraKey] = protocolInputParts(cloneProtocolInputParts(parts))
+}
+
+func originalProtocolInputParts(msg *schemapkg.Message) []inputpkg.MessagePart {
+	if msg == nil || msg.Extra == nil {
+		return nil
+	}
+	switch parts := msg.Extra[protocolInputPartsExtraKey].(type) {
+	case protocolInputParts:
+		return cloneProtocolInputParts([]inputpkg.MessagePart(parts))
+	case *protocolInputParts:
+		if parts == nil {
+			return nil
+		}
+		return cloneProtocolInputParts([]inputpkg.MessagePart(*parts))
+	case []inputpkg.MessagePart:
+		return cloneProtocolInputParts(parts)
+	default:
+		return nil
+	}
+}
+
+func inputPartsForEvent(parts []inputpkg.MessagePart) []eventpkg.MessagePart {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]eventpkg.MessagePart, 0, len(parts))
+	for _, part := range parts {
+		cloned := cloneProtocolInputPart(part)
+		out = append(out, eventpkg.MessagePart{
+			Type: eventpkg.MessagePartType(cloned.Type), Text: cloned.Text,
+			URL: cloned.URL, MIMEType: cloned.MIMEType, Base64Data: cloned.Base64Data,
+			Detail: cloned.Detail, Name: cloned.Name, Extra: cloned.Extra,
+		})
+	}
+	return out
+}
+
+func normalizeProtocolInputParts(parts []inputpkg.MessagePart) []inputpkg.MessagePart {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]inputpkg.MessagePart, len(parts))
+	for i, part := range parts {
+		out[i] = inputpkg.MessagePart{
+			Type:       part.Type,
+			Text:       strings.TrimSpace(part.Text),
+			URL:        strings.TrimSpace(part.URL),
+			Base64Data: strings.TrimSpace(part.Base64Data),
+			MIMEType:   strings.TrimSpace(part.MIMEType),
+			Name:       strings.TrimSpace(part.Name),
+			Detail:     strings.TrimSpace(part.Detail),
+			Extra:      cloneProtocolExtra(part.Extra),
+		}
+	}
+	return out
+}
+
+func cloneProtocolInputParts(parts []inputpkg.MessagePart) []inputpkg.MessagePart {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]inputpkg.MessagePart, len(parts))
+	for i, part := range parts {
+		out[i] = cloneProtocolInputPart(part)
+	}
+	return out
+}
+
+func schemaMessagePartCommon(part inputpkg.MessagePart) schemapkg.MessagePartCommon {
+	common := schemapkg.MessagePartCommon{
+		MIMEType: strings.TrimSpace(part.MIMEType),
+		Extra:    protocolExtraToSchemaExtra(part.Extra),
+	}
+	if url := strings.TrimSpace(part.URL); url != "" {
+		common.URL = &url
+	}
+	if data := strings.TrimSpace(part.Base64Data); data != "" {
+		common.Base64Data = &data
+	}
+	return common
+}
+
+func protocolPartFromCommon(partType eventpkg.MessagePartType, common schemapkg.MessagePartCommon) eventpkg.MessagePart {
+	out := eventpkg.MessagePart{Type: partType, MIMEType: common.MIMEType, Extra: schemaExtraToProtocolExtra(common.Extra)}
+	if common.URL != nil {
+		out.URL = *common.URL
+	}
+	if common.Base64Data != nil {
+		out.Base64Data = *common.Base64Data
+	}
+	return out
+}
+
+func cloneProtocolInputPart(part inputpkg.MessagePart) inputpkg.MessagePart {
+	return inputpkg.MessagePart{
+		Type:       part.Type,
+		Text:       part.Text,
+		URL:        part.URL,
+		Base64Data: part.Base64Data,
+		MIMEType:   part.MIMEType,
+		Name:       part.Name,
+		Detail:     part.Detail,
+		Extra:      cloneProtocolExtra(part.Extra),
+	}
+}
+
+func cloneProtocolExtra(in map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(in))
+	for k, v := range in {
+		out[k] = cloneRawMessage(v)
+	}
+	return out
+}
+
+func protocolExtraToSchemaExtra(in map[string]json.RawMessage) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = cloneRawMessage(v)
+	}
+	return out
+}
+
+func schemaExtraToProtocolExtra(in map[string]any) map[string]json.RawMessage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(in))
+	for k, v := range in {
+		raw, ok := rawMessageFromAny(v)
+		if ok {
+			out[k] = raw
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func rawMessageFromAny(v any) (json.RawMessage, bool) {
+	switch raw := v.(type) {
+	case json.RawMessage:
+		return cloneRawMessage(raw), true
+	case *json.RawMessage:
+		if raw == nil {
+			return nil, false
+		}
+		return cloneRawMessage(*raw), true
+	case []byte:
+		if !json.Valid(raw) {
+			break
+		}
+		return cloneRawMessage(json.RawMessage(raw)), true
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	return json.RawMessage(b), true
+}
+
+func mergeProtocolExtra(base map[string]json.RawMessage, overrides map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(base) == 0 {
+		return cloneProtocolExtra(overrides)
+	}
+	out := cloneProtocolExtra(base)
+	for k, v := range overrides {
+		out[k] = cloneRawMessage(v)
+	}
+	return out
+}
+
+func cloneRawMessage(in json.RawMessage) json.RawMessage {
+	if in == nil {
+		return nil
+	}
+	return append(json.RawMessage(nil), in...)
+}
+
+func messageInputImageCommon(part *schemapkg.MessageInputImage) schemapkg.MessagePartCommon {
+	if part == nil {
+		return schemapkg.MessagePartCommon{}
+	}
+	return part.MessagePartCommon
+}
+
+func messageInputAudioCommon(part *schemapkg.MessageInputAudio) schemapkg.MessagePartCommon {
+	if part == nil {
+		return schemapkg.MessagePartCommon{}
+	}
+	return part.MessagePartCommon
+}
+
+func messageInputVideoCommon(part *schemapkg.MessageInputVideo) schemapkg.MessagePartCommon {
+	if part == nil {
+		return schemapkg.MessagePartCommon{}
+	}
+	return part.MessagePartCommon
+}
+
+func messageInputFileCommon(part *schemapkg.MessageInputFile) schemapkg.MessagePartCommon {
+	if part == nil {
+		return schemapkg.MessagePartCommon{}
+	}
+	return part.MessagePartCommon
+}
+
+func messageOutputImageCommon(part *schemapkg.MessageOutputImage) schemapkg.MessagePartCommon {
+	if part == nil {
+		return schemapkg.MessagePartCommon{}
+	}
+	return part.MessagePartCommon
+}
+
+func messageOutputAudioCommon(part *schemapkg.MessageOutputAudio) schemapkg.MessagePartCommon {
+	if part == nil {
+		return schemapkg.MessagePartCommon{}
+	}
+	return part.MessagePartCommon
+}
+
+func messageOutputVideoCommon(part *schemapkg.MessageOutputVideo) schemapkg.MessagePartCommon {
+	if part == nil {
+		return schemapkg.MessagePartCommon{}
+	}
+	return part.MessagePartCommon
+}
+
+// message mode
+
+func userInputMode(message *TransportMessage, mode inputpkg.UserMessageMode) inputpkg.UserMessageMode {
+	if mode != "" {
+		return mode
+	}
+	return messageMetadataMode(message)
+}
+
+func messageMetadataMode(message *TransportMessage) inputpkg.UserMessageMode {
+	if message == nil || message.Metadata == nil {
+		return ""
+	}
+	switch message.Metadata[MetadataRunMode] {
+	case RunModePlan:
+		return inputpkg.UserMessageModeImplPlan
+	default:
+		return ""
+	}
+}
+
+// threadInterruptMetadata is the metadata forwarded into Run's
+// own interrupted event. Compact has its own worker event and does not use this.
+func threadInterruptMetadata(req TransportThreadInterruptRequest) map[string]string {
+	metadata := map[string]string{}
+	if req.Kind != "" {
+		metadata["kind"] = string(req.Kind)
+	}
+	if req.Reason != "" {
+		metadata["reason"] = req.Reason
+	}
+	if req.ControlMessageID != "" {
+		metadata["control_message_id"] = req.ControlMessageID
+	}
+	if req.CutoffMessageID != "" {
+		metadata["cutoff_message_id"] = req.CutoffMessageID
+	}
+	return metadata
+}
+
+// message parts
+
+func messageEventPayloadFromRunStart(payload agentthread.RunStartPayload, consumedInputs []*schemapkg.Message) *eventpkg.MessageEventPayload {
+	input := payload.Input
+	if input == nil && len(consumedInputs) > 0 {
+		input = consumedInputs[0]
+	}
+	parts := schemaUserMessageToProtocolParts(input)
+	attr := attributeFromConsumedInputs(consumedInputs)
+	if len(parts) == 0 && attr.empty() {
+		return nil
+	}
+	event := &eventpkg.MessageEventPayload{
+		Parts:     parts,
+		MessageID: stringPtrIfNotEmpty(attr.MessageID),
+	}
+	if attr.SenderID != "" || attr.SenderType != "" {
+		event.Sender = &eventpkg.Sender{
+			SenderType: senderTypeFromString(attr.SenderType),
+			SenderID:   attr.SenderID,
+		}
+	}
+	return event
+}
+
+func textParts(content string) []eventpkg.MessagePart {
+	if content == "" {
+		return nil
+	}
+	return []eventpkg.MessagePart{{Type: "text", Text: content}}
+}
+
+func attributeFromConsumedInputs(inputs []*schemapkg.Message) MessageAttribute {
+	for _, input := range inputs {
+		attr := attributeFromMessage(input)
+		if !attr.empty() {
+			return attr
+		}
+	}
+	return MessageAttribute{}
+}
+
+func senderTypeFromString(senderType string) eventpkg.SenderType {
+	switch strings.ToUpper(strings.TrimSpace(senderType)) {
+	case "SYSTEM":
+		return eventpkg.SenderTypeSystem
+	case "AGENT":
+		return eventpkg.SenderTypeAgent
+	default:
+		return eventpkg.SenderTypeUser
+	}
+}
+
+// output bridge
+
+const (
+	threadOutputBridgeBufferSize   = 4096
+	threadOutputDeliverWarnElapsed = 50 * time.Millisecond
+)
+
+type threadOutputBridge struct {
+	agentEvents <-chan agentthread.Event
+	inbox       chan TransportThreadOutputItem
+	items       chan TransportThreadOutputItem
+	output      *TransportThreadOutput
+	stop        context.CancelFunc
+	done        chan struct{}
+}
+
+func (b *threadOutputBridge) start(ctx context.Context, runtime *Thread) *TransportThreadOutput {
+	if b.output != nil {
+		return b.output
+	}
+	b.inbox = make(chan TransportThreadOutputItem, threadOutputBridgeBufferSize)
+	b.items = make(chan TransportThreadOutputItem, threadOutputBridgeBufferSize)
+	b.done = make(chan struct{})
+	bridgeCtx, cancel := context.WithCancel(ctx)
+	b.stop = cancel
+	go func(done chan struct{}) {
+		defer close(done)
+		runtime.runOutputBridge(bridgeCtx, b)
+	}(b.done)
+	b.output = &TransportThreadOutput{Items: b.items}
+	return b.output
+}
+
+func (b *threadOutputBridge) stopAndWait() {
+	if b == nil {
+		return
+	}
+	cancel := b.stop
+	done := b.done
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+func (b *threadOutputBridge) send(ctx context.Context, item TransportThreadOutputItem) bool {
+	if b == nil || b.inbox == nil {
+		return false
+	}
+	done := b.done
+	if done != nil {
+		select {
+		case <-done:
+			return false
+		default:
+		}
+	}
+	select {
+	case b.inbox <- item:
+		return true
+	case <-done:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (b *threadOutputBridge) deliver(ctx context.Context, runtime *Thread, item TransportThreadOutputItem) bool {
+	if b == nil || b.items == nil {
+		return false
+	}
+	observation, observe := runtime.threadOutputObservation(item)
+
+	if item.Event != nil {
+		_ = string(item.Event.Type)
+	}
+
+	select {
+	case b.items <- item:
+		{
+		}
+
+		if observe {
+			runtime.enqueueThreadOutputObservation(ctx, observation)
+		}
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// output config
+
+// output observer
+
+const threadOutputObserverQueueSize = 256
+
+func cloneThreadOutputItem(item TransportThreadOutputItem) TransportThreadOutputItem {
+	return TransportThreadOutputItem{
+		Event: cloneWorkerEvent(item.Event),
+		Yield: cloneThreadYield(item.Yield),
+	}
+}
+
+func cloneWorkerEvent(event *TransportEvent) *TransportEvent {
+	if event == nil {
+		return nil
+	}
+	clone := *event
+	clone.Payload = append([]byte(nil), event.Payload...)
+	clone.Metadata = maps.Clone(event.Metadata)
+	return &clone
+}
+
+func cloneThreadYield(yield *TransportThreadYield) *TransportThreadYield {
+	if yield == nil {
+		return nil
+	}
+	clone := *yield
+	if yield.Block != nil {
+		block := *yield.Block
+		clone.Block = &block
+	}
+	return &clone
+}
+
+func cloneBoolPtr(in *bool) *bool {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+
+// output policy
+
+func isHiddenInternalToolEvent(ev agentthread.Event) bool {
+	switch ev.Type {
+	case agentthread.EventToolStart:
+		payload, ok := ev.Payload.(agentthread.ToolStartPayload)
+		return ok && payload.Name == constant.ToolUpdatePlan
+	case agentthread.EventToolCallOutputChunk:
+		payload, ok := ev.Payload.(agentthread.ToolCallOutputChunkPayload)
+		return ok && payload.Name == constant.ToolUpdatePlan
+	case agentthread.EventToolEnd:
+		payload, ok := ev.Payload.(agentthread.ToolEndPayload)
+		return ok && payload.Name == constant.ToolUpdatePlan
+	default:
+		return false
+	}
+}
+
+// resume message
+
+func parseResumePayload(message *TransportMessage) (inputpkg.ResumeRunPayload, error) {
+	var payload inputpkg.ResumeRunPayload
+	if err := json.Unmarshal(message.Payload, &payload); err != nil {
+		return inputpkg.ResumeRunPayload{}, fmt.Errorf("unmarshal resume payload: %w", err)
+	}
+	if err := payload.Validate(); err != nil {
+		return inputpkg.ResumeRunPayload{}, err
+	}
+	return payload, nil
+}
+
+func resumeData(ctx context.Context, payload inputpkg.ResumeRunPayload, interruptResume InterruptResumeDecoder) (map[string]any, error) {
+	out := map[string]any{}
+	switch {
+	case payload.Approval != nil:
+		out[payload.InterruptID] = approvalResult(payload.Approval)
+	case payload.RequestUserInput != nil:
+		out[payload.InterruptID] = planInputResponse(payload.RequestUserInput)
+	case payload.Interrupt != nil:
+		data, err := interruptResumeData(ctx, payload, interruptResume)
+		if err != nil {
+			return nil, err
+		}
+		out[payload.InterruptID] = data
+	default:
+		return nil, fmt.Errorf("resume payload requires approval, request_user_input or interrupt")
+	}
+	return out, nil
+}
+
+func approvalResult(decision *inputpkg.ApprovalDecision) *tools.ApprovalResult {
+	if decision == nil {
+		return &tools.ApprovalResult{}
+	}
+	out := &tools.ApprovalResult{Approved: decision.Approved}
+	if decision.Reason != "" {
+		out.DisapproveReason = &decision.Reason
+	}
+	return out
+}
+
+func planInputResponse(response *inputpkg.RequestUserInputResponse) *planmode.RequestUserInputResponse {
+	if response == nil {
+		return nil
+	}
+	answers := make(map[string]planmode.RequestUserInputAnswer, len(response.Answers))
+	for key, answer := range response.Answers {
+		answers[key] = planmode.RequestUserInputAnswer{Answers: append([]string(nil), answer.Answers...)}
+	}
+	return &planmode.RequestUserInputResponse{Answers: answers}
+}
+
+func interruptResumeData(ctx context.Context, payload inputpkg.ResumeRunPayload, decoder InterruptResumeDecoder) (any, error) {
+	if payload.Interrupt == nil {
+		return nil, fmt.Errorf("interrupt resume payload is required")
+	}
+	switch strings.TrimSpace(payload.Interrupt.Kind) {
+	case "follow_up":
+		var body struct {
+			UserAnswer string `json:"user_answer"`
+		}
+		if err := json.Unmarshal(payload.Interrupt.Data, &body); err != nil {
+			return nil, fmt.Errorf("decode follow_up resume data: %w", err)
+		}
+		answer := strings.TrimSpace(body.UserAnswer)
+		if answer == "" {
+			return nil, fmt.Errorf("follow_up.user_answer is required")
+		}
+		return &tools.FollowUpInfo{UserAnswer: answer}, nil
+	default:
+		if decoder == nil {
+			return nil, fmt.Errorf("unsupported interrupt resume kind=%q info_type=%q", payload.Interrupt.Kind, payload.Interrupt.InfoType)
+		}
+		data, err := decoder(ctx, payload)
+		if err != nil {
+			return nil, fmt.Errorf("decode interrupt resume kind=%q info_type=%q: %w", payload.Interrupt.Kind, payload.Interrupt.InfoType, err)
+		}
+		return data, nil
+	}
+}
+
+// context
+// ThreadIdentity is the stable identity of one DeepAgent thread. It only holds
+// plain values resolved from the DeepAgent thread spec; it never carries the
+// raw AC thread struct, worker runtime objects, profile, cwd, metadata, UI
+// fields or business extension fields.
+type ContextThreadIdentity struct {
+	ThreadID  string
+	SessionID string
+	UserID    int64
+}
+
+// RunIdentity is the stable identity of one DeepAgent run runner execution.
+// MessageID identifies the worker message that started or resumed this run so
+// observability integrations can correlate a runtime execution with its input.
+type ContextRunIdentity struct {
+	ThreadID  string
+	RunID     string `json:"TurnID" yaml:"turnid"`
+	MessageID string
+}
+
+type contextThreadInfoKey struct{}
+
+type contextRunInfoKey struct{}
+
+// ContextWithThreadIdentity returns a child context carrying the thread info value.
+func ContextContextWithThreadIdentity(ctx context.Context, info ContextThreadIdentity) context.Context {
+	return context.WithValue(ctx, contextThreadInfoKey{}, info)
+}
+
+// ThreadIdentityFromContext reports the thread info attached to ctx. The bool is false when
+// no thread info was attached, so an empty value is not mistaken for a real one.
+func ContextThreadIdentityFromContext(ctx context.Context) (ContextThreadIdentity, bool) {
+	info, ok := ctx.Value(contextThreadInfoKey{}).(ContextThreadIdentity)
+	return info, ok
+}
+
+// ContextWithRunIdentity returns a child context carrying the run info value.
+func ContextContextWithRunIdentity(ctx context.Context, info ContextRunIdentity) context.Context {
+	return context.WithValue(ctx, contextRunInfoKey{}, info)
+}
+
+// RunIdentityFromContext reports the run info attached to ctx. The bool is false when no
+// run info was attached, so an empty value is not mistaken for a real one.
+func ContextRunIdentityFromContext(ctx context.Context) (ContextRunIdentity, bool) {
+	info, ok := ctx.Value(contextRunInfoKey{}).(ContextRunIdentity)
+	return info, ok
+}

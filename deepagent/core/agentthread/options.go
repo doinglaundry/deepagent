@@ -11,6 +11,7 @@ type ThreadOptions struct {
 	CompactionStrategy CompactionStrategy
 	TokenCounter       TokenCounter
 	ContextWindow      int64
+	HistoryRecordID    HistoryRecordIDProvider
 }
 
 // ResumeRunOptions configures one checkpoint/interruption resume run.

@@ -9,7 +9,6 @@ import (
 	"reflect"
 
 	"eino-cli/deepagent/core/internal/toolerrors"
-	agenttools "eino-cli/deepagent/core/tools"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components"
 	einotool "github.com/cloudwego/eino/components/tool"
@@ -690,7 +689,7 @@ func getToolCallCtx(ctx context.Context, name, typeName string, input *compose.T
 		ArgumentsInJSON: input.Arguments,
 		Extra:           map[string]any{"tool_call_id": input.CallID},
 	})
-	return agenttools.WithWrapperCallbacksDisabled(callCtx)
+	return callCtx
 }
 
 func wrapObservedToolStream(ctx context.Context, stream *schema.StreamReader[string], callID string) (*schema.StreamReader[string], error) {

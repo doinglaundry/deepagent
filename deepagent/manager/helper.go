@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"strconv"
+	"strings"
 	"time"
 
 	"eino-cli/deepagent/dal/cache"
@@ -32,6 +33,9 @@ func createThread(req SubmitRequest, id int64, _ time.Time) *model.Thread {
 	if metadata == nil {
 		metadata = map[string]string{}
 	}
+	if title := strings.TrimSpace(req.Title); title != "" {
+		metadata["title"] = title
+	}
 	var profile *model.Profile
 	if req.Profile != nil && *req.Profile != (model.Profile{}) {
 		copy := *req.Profile
@@ -40,12 +44,12 @@ func createThread(req SubmitRequest, id int64, _ time.Time) *model.Thread {
 	return &model.Thread{ThreadID: id, UserID: req.UserID, SessionID: req.SessionID, Status: model.ThreadStatusIdle, Metadata: metadata, Profile: profile}
 }
 
-func normalizePermitDuration(ms int64) time.Duration {
+func normalizeLeaseDuration(ms int64) time.Duration {
 	if ms <= 0 {
-		return defaultPermitDuration
+		return defaultLeaseDuration
 	}
-	if ms > int64(maxPermitDuration/time.Millisecond) {
-		return maxPermitDuration
+	if ms > int64(maxLeaseDuration/time.Millisecond) {
+		return maxLeaseDuration
 	}
 	return time.Duration(ms) * time.Millisecond
 }

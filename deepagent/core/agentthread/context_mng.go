@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"eino-cli/deepagent/core/constant"
-	"eino-cli/deepagent/core/middleware"
-	"eino-cli/deepagent/core/utils"
+	"eino-cli/deepagent/core/middlewares"
+	"eino-cli/deepagent/utils"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -39,10 +39,11 @@ type MemoryContextManager struct {
 	historyVersion uint64
 	// compactPending records that history has crossed the strategy threshold.
 	// The actual compaction runs only at a pre-sampling boundary.
-	compactPending bool
+	compactPending   bool
+	historyRecordIDs map[int64]struct{}
 
 	// 可选的外部消息ID生成器
-	msgIDProvider func(ctx context.Context, threadID, runID string) int64
+	msgIDProvider HistoryRecordIDProvider
 
 	uniqueKeyProvider func(ctx context.Context, threadID, runID string, msg *schema.Message) string
 }
@@ -56,8 +57,15 @@ type memoryContextManagerConfig struct {
 	contextWindow     int64
 	modelName         string
 	uniqueKeyProvider func(ctx context.Context, threadID, runID string, msg *schema.Message) string
+	recordIDProvider  HistoryRecordIDProvider
 	trackerOpts       []TokenUsageTrackerOption
 }
+
+// HistoryRecordIDProvider assigns the durable identity of one history record.
+// A caller may reuse the Manager message ID for user input and allocate a new
+// distributed ID for model/tool output. Stores can then enforce redelivery
+// idempotency with their existing primary key.
+type HistoryRecordIDProvider func(ctx context.Context, threadID, runID string, msg *schema.Message) int64
 
 func WithContextWindow(contextWindow int64) MemoryContextManagerOption {
 	return func(cfg *memoryContextManagerConfig) {
@@ -75,6 +83,10 @@ func WithHistoryRecordUniqueKeyProvider(provider func(ctx context.Context, threa
 	return func(cfg *memoryContextManagerConfig) {
 		cfg.uniqueKeyProvider = provider
 	}
+}
+
+func WithHistoryRecordIDProvider(provider HistoryRecordIDProvider) MemoryContextManagerOption {
+	return func(cfg *memoryContextManagerConfig) { cfg.recordIDProvider = provider }
 }
 
 // WithTokenUsageTrackerOpts appends additional options to the internal
@@ -116,7 +128,9 @@ func NewMemoryContextManager(threadID string,
 		tokenCounter:      tokenCounter,
 		tracker:           NewTokenUsageTracker(contextWindow, tokenCounter, trackerOpts...),
 		messages:          make([]*schema.Message, 0),
+		historyRecordIDs:  make(map[int64]struct{}),
 		uniqueKeyProvider: cfg.uniqueKeyProvider,
+		msgIDProvider:     cfg.recordIDProvider,
 	}
 }
 
@@ -137,19 +151,31 @@ func (m *MemoryContextManager) AddHistory(ctx context.Context, RunID string, msg
 		}
 	}
 
-	for i, cur := range msg {
-		if err := m.persistMessage(ctx, RunID, cur); err != nil {
+	accepted := make([]*schema.Message, 0, len(msg))
+	for _, cur := range msg {
+		recordID := m.newMessageID(ctx, RunID, cur)
+		if recordID > 0 {
+			if _, exists := m.historyRecordIDs[recordID]; exists {
+				continue
+			}
+		}
+		persistedID, persistErr := m.persistMessage(ctx, RunID, cur, recordID)
+		if persistErr != nil {
 			// Add already-persisted messages to in-memory context to stay consistent
-			if i > 0 {
-				m.addMessageToContext(msg[:i]...)
+			if len(accepted) > 0 {
+				m.addMessageToContext(accepted...)
 				m.historyVersion++
 			}
-			return err
+			return persistErr
 		}
+		if persistedID > 0 {
+			m.historyRecordIDs[persistedID] = struct{}{}
+		}
+		accepted = append(accepted, cur)
 	}
 
-	m.addMessageToContext(msg...)
-	if len(msg) > 0 {
+	m.addMessageToContext(accepted...)
+	if len(accepted) > 0 {
 		m.historyVersion++
 	}
 
@@ -281,10 +307,8 @@ func (m *MemoryContextManager) CompactNeeded(ctx context.Context) bool {
 	return true
 }
 
-// Deprecated: history record ID generation belongs to HistoryRolloutStore.
-// This hook remains only for compatibility with existing store implementations
-// that still expect the context manager to prefill HistoryRecord.MessageID.
-func (m *MemoryContextManager) SetMessageIDProvider(f func(ctx context.Context, threadID, runID string) int64) {
+// SetMessageIDProvider overrides history record identity generation.
+func (m *MemoryContextManager) SetMessageIDProvider(f HistoryRecordIDProvider) {
 	m.msgIDProvider = f
 }
 
@@ -297,6 +321,7 @@ func (m *MemoryContextManager) ReloadHistory(ctx context.Context) error {
 	}
 
 	var rebuilt []*schema.Message
+	recordIDs := make(map[int64]struct{})
 	var compactFound bool
 
 	// A temporary list to hold messages that are *after* the compaction point.
@@ -322,6 +347,9 @@ func (m *MemoryContextManager) ReloadHistory(ctx context.Context) error {
 		for _, rec := range records {
 			if rec == nil {
 				continue
+			}
+			if rec.MessageID > 0 {
+				recordIDs[rec.MessageID] = struct{}{}
 			}
 			if rec.Type == HistoryRecordCompact {
 				ext := rec.Ext
@@ -381,6 +409,7 @@ func (m *MemoryContextManager) ReloadHistory(ctx context.Context) error {
 	// 4. Safely update the in-memory state.
 	m.mu.Lock()
 	m.messages = rebuilt
+	m.historyRecordIDs = recordIDs
 	m.tracker.Recompute(ctx, m.messages)
 	m.compactPending = m.shouldCompactDueLocked()
 	m.historyVersion++
@@ -390,9 +419,9 @@ func (m *MemoryContextManager) ReloadHistory(ctx context.Context) error {
 }
 
 // persistMessage is a helper to write a MessageRecord to the RolloutStore.
-func (m *MemoryContextManager) persistMessage(ctx context.Context, runID string, msg *schema.Message) error {
+func (m *MemoryContextManager) persistMessage(ctx context.Context, runID string, msg *schema.Message, recordID int64) (int64, error) {
 	if msg == nil || m.rs == nil {
-		return nil
+		return recordID, nil
 	}
 	now := time.Now()
 	record := &HistoryRecord{
@@ -400,14 +429,17 @@ func (m *MemoryContextManager) persistMessage(ctx context.Context, runID string,
 		ThreadID:   m.threadID,
 		RunID:      runID,
 		UniqueKey:  m.newHistoryRecordUniqueKey(ctx, runID, msg),
-		MessageID:  m.newMessageID(ctx, runID),
+		MessageID:  recordID,
 		Message:    msg,
 		CreateAt:   now.Unix(),
 		CreateAtMS: now.UnixMilli(),
 		Ext:        nil,
 	}
 
-	return m.rs.Append(ctx, record)
+	if err := m.rs.Append(ctx, record); err != nil {
+		return 0, err
+	}
+	return record.MessageID, nil
 }
 
 // persistCompact is a helper to write a CompactRecord to the RolloutStore.
@@ -421,7 +453,7 @@ func (m *MemoryContextManager) persistCompact(ctx context.Context, runID string,
 		ThreadID:   m.threadID,
 		RunID:      runID,
 		UniqueKey:  m.newHistoryRecordUniqueKey(ctx, runID, compact.Summary),
-		MessageID:  m.newMessageID(ctx, runID),
+		MessageID:  m.newMessageID(ctx, runID, compact.Summary),
 		Message:    compact.Summary,
 		CreateAt:   now.Unix(),
 		CreateAtMS: now.UnixMilli(),
@@ -450,9 +482,9 @@ func (m *MemoryContextManager) shouldCompactDueLocked() bool {
 	return m.tracker.ShouldCompact(limiter.AutoCompactTokenLimit())
 }
 
-func (m *MemoryContextManager) newMessageID(ctx context.Context, runID string) int64 {
+func (m *MemoryContextManager) newMessageID(ctx context.Context, runID string, msg *schema.Message) int64 {
 	if m.msgIDProvider != nil {
-		return m.msgIDProvider(ctx, m.threadID, runID)
+		return m.msgIDProvider(ctx, m.threadID, runID, msg)
 	}
 	return 0
 }

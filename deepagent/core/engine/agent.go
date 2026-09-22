@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	middleware "eino-cli/deepagent/core/middleware/repairjson"
-	"eino-cli/protocol"
+	middleware "eino-cli/deepagent/core/middlewares/repairjson"
+	"eino-cli/deepagent/protocol"
 	"encoding/json"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"

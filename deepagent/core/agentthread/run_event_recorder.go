@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"eino-cli/deepagent/core/constant"
-	"eino-cli/deepagent/core/middleware"
-	"eino-cli/deepagent/core/middleware/plan"
+	"eino-cli/deepagent/core/middlewares"
+	"eino-cli/deepagent/core/middlewares/plan"
 	deeptools "eino-cli/deepagent/core/tools"
 
 	"github.com/cloudwego/eino/callbacks"
@@ -40,6 +40,8 @@ type runEventRecorder struct {
 	llmResponseID         string
 	modelBarrierMu        sync.Mutex
 	modelBarrier          *modelEventBarrier
+	usageMu               sync.Mutex
+	usage                 model.TokenUsage
 }
 
 func newRunEventRecorder(
@@ -66,10 +68,9 @@ func newRunEventRecorder(
 	}
 }
 
-func (r *runEventRecorder) middlewares(enablePlan bool, toolMask deeptools.Mask) (middlewares []middleware.Middleware) {
+func (r *runEventRecorder) middlewares(enablePlan bool, _ deeptools.Mask) (middlewares []middleware.Middleware) {
 	if enablePlan {
 		middlewares = append(middlewares, plan.New(&plan.PlanMiddlewareConfig{
-			ToolMask: toolMask,
 			OnPlanUpdate: func(ctx context.Context, update plan.PlanUpdate) error {
 				var steps []PlanStep
 				if update.Plan != nil {
@@ -171,7 +172,9 @@ func (r *runEventRecorder) callbackHandler() (handler callbacks.Handler) {
 				if output != nil {
 					r.recordModelUsage(ctx, output.TokenUsage)
 				}
-				r.emit(ctx, EventLLMEnd, llmEndFromCallbackOutput(output, responseID))
+				end := llmEndFromCallbackOutput(output, responseID)
+				end.TokenUsage = r.accumulateModelUsage(end.TokenUsage)
+				r.emit(ctx, EventLLMEnd, end)
 				return ctx
 			},
 			OnEndWithStreamOutput: func(ctx context.Context, runInfo *callbacks.RunInfo, output *schema.StreamReader[*model.CallbackOutput]) context.Context {
@@ -214,6 +217,7 @@ func (r *runEventRecorder) consumeModelStream(
 	contentLength, toolCalls := modelOutputSize(&llmEnd.CallbackOutput)
 	slog.InfoContext(ctx, fmt.Sprintf("[agentthread::modelStream] stream merge done: thread_id=%s turn_id=%s run_name=%s chunks=%d content_len=%d tool_calls=%d usage_present=%t", r.threadID, r.runID, runName, chunks, contentLength, toolCalls, llmEnd.TokenUsage != nil))
 	r.recordModelUsage(ctx, llmEnd.TokenUsage)
+	llmEnd.TokenUsage = r.accumulateModelUsage(llmEnd.TokenUsage)
 	r.emit(ctx, EventLLMEnd, llmEnd)
 }
 
@@ -243,6 +247,22 @@ func (r *runEventRecorder) recordModelUsage(ctx context.Context, usage *model.To
 		return
 	}
 	r.contextManager.RecordModelUsage(ctx, usage)
+}
+
+// accumulateModelUsage keeps billing usage for one logical run separate from
+// ContextManager's latest context-window snapshot.
+func (r *runEventRecorder) accumulateModelUsage(usage *model.TokenUsage) *model.TokenUsage {
+	if usage == nil {
+		return nil
+	}
+	r.usageMu.Lock()
+	defer r.usageMu.Unlock()
+	r.usage.PromptTokens += usage.PromptTokens
+	r.usage.CompletionTokens += usage.CompletionTokens
+	r.usage.TotalTokens += usage.TotalTokens
+	r.usage.PromptTokenDetails.CachedTokens += usage.PromptTokenDetails.CachedTokens
+	r.usage.CompletionTokensDetails.ReasoningTokens += usage.CompletionTokensDetails.ReasoningTokens
+	return cloneModelTokenUsage(&r.usage)
 }
 
 func (r *runEventRecorder) waitForCallbacks() {

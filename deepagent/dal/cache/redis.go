@@ -42,6 +42,7 @@ type RedisClient interface {
 	Del(ctx context.Context, keys ...string) (int64, error)
 	Publish(ctx context.Context, channel string, payload []byte) error
 	Subscribe(ctx context.Context, channel string) (<-chan []byte, func() error, error)
+	Eval(ctx context.Context, script string, keys []string, args ...any) (any, error)
 }
 
 type redisClient struct{ client *redispkg.Client }
@@ -202,4 +203,8 @@ func (c *redisClient) Subscribe(ctx context.Context, channel string) (<-chan []b
 		}
 	}()
 	return out, pubsub.Close, nil
+}
+
+func (c *redisClient) Eval(ctx context.Context, script string, keys []string, args ...any) (any, error) {
+	return c.client.Eval(ctx, script, keys, args...).Result()
 }

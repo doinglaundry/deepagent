@@ -9,7 +9,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/cloudwego/eino/schema"
 
-	"eino-cli/deepagent/core/middleware"
+	"eino-cli/deepagent/core/middlewares"
 	"eino-cli/deepagent/core/types"
 )
 

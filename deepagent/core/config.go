@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"eino-cli/deepagent/core/backends"
-	"eino-cli/deepagent/core/hook"
-	"eino-cli/deepagent/core/middleware"
-	"eino-cli/deepagent/core/middleware/plan"
-	"eino-cli/deepagent/core/middleware/skill"
-	"eino-cli/deepagent/core/middleware/subagent"
-	"eino-cli/deepagent/core/middleware/web"
+	"eino-cli/deepagent/core/hooks"
+	"eino-cli/deepagent/core/middlewares"
+	"eino-cli/deepagent/core/middlewares/plan"
+	"eino-cli/deepagent/core/middlewares/skill"
+	"eino-cli/deepagent/core/middlewares/subagent"
+	"eino-cli/deepagent/core/middlewares/web"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
 
@@ -73,6 +73,10 @@ type Config struct {
 
 	// EnableSubAgentTaskStreaming 使 SubAgentMiddleware 的 task 工具流式输出子 agent 最终回复。
 	EnableSubAgentTaskStreaming bool
+
+	// ReadOnlyToolsOnly keeps only tools that explicitly declare ReadOnly.
+	// Plan runs enable it as their capability boundary.
+	ReadOnlyToolsOnly bool
 
 	// SkillLoader 技能加载器
 	SkillLoader skill.Loader

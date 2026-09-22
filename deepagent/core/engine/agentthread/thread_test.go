@@ -3,7 +3,7 @@ package agentthread
 import (
 	"context"
 	backends "eino-cli/deepagent/core/tools/filesystem"
-	"eino-cli/protocol"
+	"eino-cli/deepagent/protocol"
 	"encoding/json"
 	"fmt"
 	"github.com/cloudwego/eino/components/model"
@@ -169,14 +169,14 @@ type memoryStore struct {
 	history []*schema.Message
 }
 
-func (m *memoryStore) Get(_ context.Context, k string) ([]byte, error) {
+func (m *memoryStore) Get(_ context.Context, k string) ([]byte, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	v, ok := m.data[k]
 	if !ok {
-		return nil, fmt.Errorf("not found")
+		return nil, false, nil
 	}
-	return append([]byte(nil), v...), nil
+	return append([]byte(nil), v...), true, nil
 }
 func (m *memoryStore) Set(_ context.Context, k string, v []byte) error {
 	m.mu.Lock()

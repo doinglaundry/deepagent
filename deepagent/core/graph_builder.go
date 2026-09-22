@@ -10,10 +10,10 @@ import (
 
 	"eino-cli/deepagent/core/constant"
 	graph_lib "eino-cli/deepagent/core/graph"
-	"eino-cli/deepagent/core/middleware"
+	"eino-cli/deepagent/core/middlewares"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
-	serialiser "eino-cli/deepagent/serialiser"
+	serialiser "eino-cli/deepagent/helper/serialiser"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -405,6 +405,12 @@ func collectAllTools(ctx context.Context, chain *middleware.MiddlewareChain, cfg
 			allTools = append(allTools, tools.GetFollowUpTool())
 		}
 	}
+	if cfg.ReadOnlyToolsOnly {
+		allTools = slices.DeleteFunc(allTools, func(t tool.BaseTool) bool {
+			readOnly, ok := t.(interface{ ReadOnly() bool })
+			return !ok || !readOnly.ReadOnly()
+		})
+	}
 
 	allTools = filterToolsByMask(ctx, allTools, cfg.ToolMask)
 
@@ -427,17 +433,10 @@ func collectAllTools(ctx context.Context, chain *middleware.MiddlewareChain, cfg
 				continue
 			}
 
-			if reviewEdit, exists := hitl.NeedReviewAndEditTools[tInfo.Name]; exists {
-				if invokeTool, ok := t.(tool.InvokableTool); ok {
-					allTools[i] = tools.NewInvokableReviewEditTool(invokeTool, reviewEdit)
-				}
-				continue
-			}
 		}
 	}
 
-	// 包装所有工具。JSON 修复能力通过 RepairJSONMiddleware 显式接入，
-	// 不在 SDK 默认链路里改变工具入参语义。
+	// 包装所有工具。流式工具参数在收集器中只修复明确无歧义的 JSON。
 	allTools = tools.WrapToolsWithConfig(allTools, &tools.WrapToolsConfig{
 		InfoRewriter: cfg.ToolInfoRewriter,
 	})

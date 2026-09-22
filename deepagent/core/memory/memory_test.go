@@ -2,11 +2,101 @@ package memory
 
 import (
 	"context"
-	"eino-cli/manager"
+	memorypkg "eino-cli/deepagent/protocol/memory"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
+
+type memoryStore struct {
+	mu        sync.Mutex
+	leases    map[string]memorypkg.Lease
+	artifacts map[string]memorypkg.Artifact
+}
+
+func newMemoryStore() *memoryStore {
+	return &memoryStore{leases: map[string]memorypkg.Lease{}, artifacts: map[string]memorypkg.Artifact{}}
+}
+
+func (s *memoryStore) ClaimMemory(_ context.Context, key, _ string, ttl time.Duration) (memorypkg.Lease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if lease, ok := s.leases[key]; ok && time.Now().Before(lease.ExpiresAt) {
+		return memorypkg.Lease{}, memorypkg.ErrConflict
+	}
+	lease := memorypkg.Lease{Key: key, Token: uuid.NewString(), ExpiresAt: time.Now().Add(ttl)}
+	s.leases[key] = lease
+	return lease, nil
+}
+
+func (s *memoryStore) RenewMemory(_ context.Context, lease memorypkg.Lease, ttl time.Duration) (memorypkg.Lease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.leases[lease.Key]
+	if !ok || current.Token != lease.Token || time.Now().After(current.ExpiresAt) {
+		return memorypkg.Lease{}, memorypkg.ErrLeaseLost
+	}
+	lease.ExpiresAt = time.Now().Add(ttl)
+	s.leases[lease.Key] = lease
+	return lease, nil
+}
+
+func (s *memoryStore) CompleteMemory(_ context.Context, lease memorypkg.Lease, version string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.leases[lease.Key]
+	if !ok || current.Token != lease.Token || time.Now().After(current.ExpiresAt) {
+		return memorypkg.ErrLeaseLost
+	}
+	s.artifacts[lease.Key] = memorypkg.Artifact{Version: version, Data: append([]byte(nil), data...)}
+	return nil
+}
+
+func (s *memoryStore) ReleaseMemory(_ context.Context, lease memorypkg.Lease) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if current, ok := s.leases[lease.Key]; !ok || current.Token != lease.Token {
+		return memorypkg.ErrLeaseLost
+	}
+	delete(s.leases, lease.Key)
+	return nil
+}
+
+func (s *memoryStore) GetMemory(_ context.Context, key string) (memorypkg.Artifact, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	artifact, ok := s.artifacts[key]
+	if !ok {
+		return memorypkg.Artifact{}, memorypkg.ErrNotFound
+	}
+	return artifact, nil
+}
+
+func (s *memoryStore) ListMemory(_ context.Context, prefix string, limit, offset int) (map[string]memorypkg.Artifact, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := map[string]memorypkg.Artifact{}
+	for key, artifact := range s.artifacts {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if offset > 0 {
+			offset--
+			continue
+		}
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+		result[key] = artifact
+	}
+	return result, nil
+}
+
+var _ memorypkg.Store = (*memoryStore)(nil)
 
 type memoryModel struct{ calls int }
 
@@ -65,7 +155,7 @@ func TestExtractionConsolidationAndRestartBaseline(t *testing.T) {
 
 func TestDurableArtifactsResumeOnDifferentWorkerDirectory(t *testing.T) {
 	ctx := context.Background()
-	store := manager.NewMemory("ns")
+	store := newMemoryStore()
 	m := &memoryModel{}
 	consolidate := func(context.Context, string, string) (string, error) { return "Shared durable memory", nil }
 	p, e := New(Config{Root: t.TempDir(), Model: m, Consolidator: consolidate, Store: store, Scope: "user/u1"})

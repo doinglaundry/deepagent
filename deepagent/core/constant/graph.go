@@ -5,6 +5,8 @@ const GraphName = "deep_agent"
 
 const DefaultMaxSteps = 100
 
+const ToolUpdatePlan = "update_plan"
+
 const (
 	NodeKeyModel    = "model"
 	NodeKeyTools    = "tools"

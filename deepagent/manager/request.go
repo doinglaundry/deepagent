@@ -32,8 +32,8 @@ type ThreadMessageResult struct {
 }
 
 const (
-	defaultPermitDuration        = time.Minute
-	maxPermitDuration            = 30 * time.Minute
+	defaultLeaseDuration         = time.Minute
+	maxLeaseDuration             = 30 * time.Minute
 	defaultFailureReleaseBackoff = 3 * time.Second
 	defaultScanLimit             = int32(50)
 	maxScanLimit                 = int32(100)
@@ -50,7 +50,7 @@ var (
 	ErrThreadNotRunnable       = errors.New("thread not runnable")
 	ErrThreadNotBlocked        = errors.New("thread is not blocked")
 	ErrThreadBlocked           = errors.New("thread is blocked")
-	ErrPermitMismatch          = errors.New("permit mismatch")
+	ErrLeaseMismatch           = errors.New("lease mismatch")
 	ErrRedisUnavailable        = errors.New("redis unavailable")
 	ErrInvalidStatusTransition = errors.New("invalid status transition")
 	ErrInvalidCancel           = errors.New("invalid cancel")
@@ -77,21 +77,21 @@ type CloseThreadControlPayload struct {
 }
 
 type AcquireRequest struct {
-	ThreadID    int64
-	PermitToken string
-	PermitMS    int64
-	ScanLimit   int32
+	ThreadID   int64
+	LeaseToken string
+	LeaseMS    int64
+	ScanLimit  int32
 }
 
-type Permit struct {
-	ThreadID    int64     `json:"thread_id"`
-	PermitToken string    `json:"lease_token"`
-	LeaseUntil  time.Time `json:"lease_until"`
+type Lease struct {
+	ThreadID   int64     `json:"thread_id"`
+	LeaseToken string    `json:"lease_token"`
+	LeaseUntil time.Time `json:"lease_until"`
 }
 
 type AcquireResult struct {
 	Thread          *model.Thread
-	Permit          *Permit
+	Lease           *Lease
 	PendingMessages []*db.Message
 	ServerTimeMS    int64
 }
@@ -113,6 +113,7 @@ type ListMessagesRequest struct {
 	ThreadID  int64
 	SessionID string
 	RunID     string
+	AfterID   int64
 	Limit     int32
 	Offset    int
 	Backward  bool

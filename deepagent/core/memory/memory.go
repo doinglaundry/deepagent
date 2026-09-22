@@ -5,7 +5,7 @@ package memory
 import (
 	"context"
 	"crypto/sha256"
-	"eino-cli/manager/api"
+	memorypkg "eino-cli/deepagent/protocol/memory"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,7 +20,7 @@ import (
 )
 
 type Config struct {
-	Store        api.MemoryStore
+	Store        memorypkg.Store
 	Scope        string
 	LeaseTTL     time.Duration
 	Root         string

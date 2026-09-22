@@ -3,21 +3,14 @@ package deepagents
 import (
 	"context"
 	"eino-cli/deepagent/core/backends"
-	"eino-cli/deepagent/core/middleware"
-	"eino-cli/deepagent/core/middleware/contextmanager"
-	skillmw "eino-cli/deepagent/core/middleware/skill"
+	"eino-cli/deepagent/core/middlewares"
+	skillmw "eino-cli/deepagent/core/middlewares/skill"
 	deeptools "eino-cli/deepagent/core/tools"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"strings"
 	"testing"
 )
-
-type testSubAgentContextInjector struct{}
-
-func (i *testSubAgentContextInjector) LoadContext(ctx context.Context, agentName string) ([]*schema.Message, error) {
-	return []*schema.Message{schema.UserMessage("forked-context")}, nil
-}
 
 type testBuilderMiddleware struct {
 	middleware.BaseMiddleware
@@ -35,6 +28,19 @@ func (l *testSkillLoader) ListSkills(ctx context.Context) ([]*skillmw.SkillMetad
 		Description: "search codebase",
 		Path:        "/skills/code_search/SKILL.md",
 	}}, nil
+}
+
+type fakeToolCounter struct{ total int }
+
+func (t *fakeToolCounter) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: "counter", ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+		"delta": {Type: schema.Integer, Required: true},
+	})}, nil
+}
+
+func (t *fakeToolCounter) InvokableRun(_ context.Context, _ string, _ ...tool.Option) (string, error) {
+	t.total++
+	return "ok", nil
 }
 
 func findSkillMiddleware(t *testing.T, middlewares []middleware.Middleware) *skillmw.Middleware {
@@ -91,7 +97,6 @@ func collectToolNames(t *testing.T, ctx context.Context, toolList []tool.BaseToo
 func TestWithConfigCopiesInput(t *testing.T) {
 	source := &Config{
 		FilesystemConfig:    &FilesystemConfig{WorkDir: "/specific"},
-		SubAgentsDirs:       []string{"/agents"},
 		InterruptAfterNodes: []string{"model"},
 		HITLConfig: &HITLConfig{
 			ToolPolicyGates: map[string]deeptools.ToolPolicyGate{"execute": {}},
@@ -99,13 +104,9 @@ func TestWithConfigCopiesInput(t *testing.T) {
 	}
 
 	configured := buildCreateConfig(WithConfig(source))
-	configured.SubAgentsDirs[0] = "/changed"
 	configured.InterruptAfterNodes[0] = "tools"
 	delete(configured.HITLConfig.ToolPolicyGates, "execute")
 
-	if source.SubAgentsDirs[0] != "/agents" {
-		t.Fatalf("source SubAgentsDirs was mutated: %+v", source.SubAgentsDirs)
-	}
 	if source.InterruptAfterNodes[0] != "model" {
 		t.Fatalf("source InterruptAfterNodes was mutated: %+v", source.InterruptAfterNodes)
 	}
@@ -128,6 +129,13 @@ func TestWithWorkDirWritesFilesystemConfig(t *testing.T) {
 	}
 }
 
+func TestSelectBackendProvidesCommandExecution(t *testing.T) {
+	backend := selectBackend(buildCreateConfig(WithWorkDir(t.TempDir())))
+	if _, ok := backend.(backends.CommandExecutor); !ok {
+		t.Fatalf("default workdir backend %T does not implement CommandExecutor", backend)
+	}
+}
+
 func TestFeatureConfigPresenceControlsEnablement(t *testing.T) {
 	configured := buildCreateConfig()
 	if configured.FilesystemConfig != nil || configured.WebConfig != nil {
@@ -144,7 +152,7 @@ func TestFeatureConfigPresenceControlsEnablement(t *testing.T) {
 }
 
 func TestNew_RequiresModel(t *testing.T) {
-	_, err := New(context.Background(), WithContextManager(contextmanager.New()))
+	_, err := New(context.Background(), WithContextManager(middleware.NewSimpleContextManager()))
 	if err == nil || !strings.Contains(err.Error(), "model is required") {
 		t.Fatalf("expected model required error, got %v", err)
 	}
@@ -159,7 +167,9 @@ func TestCollectAllTools_ToolMaskRunsBeforeHITLWrapping(t *testing.T) {
 		},
 		HITLConfig: &HITLConfig{
 			ToolPolicyGates: map[string]deeptools.ToolPolicyGate{
-				"counter": deeptools.ApprovalGate(func(context.Context, *deeptools.ApprovalInfo) bool { return true }),
+				"counter": {Policy: func(context.Context, *deeptools.ApprovalInfo) (deeptools.ToolCallDecision, error) {
+					return deeptools.ToolCallDecision{}, nil
+				}},
 			},
 		},
 	}
@@ -170,6 +180,25 @@ func TestCollectAllTools_ToolMaskRunsBeforeHITLWrapping(t *testing.T) {
 	}
 	if len(allTools) != 0 {
 		t.Fatalf("expected masked tool to be removed before HITL wrapping, got %v", collectToolNames(t, ctx, allTools))
+	}
+}
+
+type explicitReadOnlyTool struct{ fakeToolCounter }
+
+func (*explicitReadOnlyTool) ReadOnly() bool { return true }
+
+func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T) {
+	ctx := context.Background()
+	config := &Config{
+		Tools:             []tool.BaseTool{&fakeToolCounter{}, &explicitReadOnlyTool{}},
+		ReadOnlyToolsOnly: true,
+	}
+	allTools, err := collectAllTools(ctx, middleware.NewMiddlewareChain(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allTools) != 1 {
+		t.Fatalf("read-only tools = %v", collectToolNames(t, ctx, allTools))
 	}
 }
 

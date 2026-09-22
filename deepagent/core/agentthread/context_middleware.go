@@ -5,10 +5,10 @@ import (
 	"log/slog"
 
 	"eino-cli/deepagent/core/graph"
-	"eino-cli/deepagent/core/middleware"
-	"eino-cli/deepagent/core/middleware/patchtoolcalls"
+	"eino-cli/deepagent/core/middlewares"
+	"eino-cli/deepagent/core/middlewares/patchtoolcalls"
 	"eino-cli/deepagent/core/types"
-	"eino-cli/deepagent/core/utils"
+	"eino-cli/deepagent/utils"
 
 	"github.com/cloudwego/eino/schema"
 )

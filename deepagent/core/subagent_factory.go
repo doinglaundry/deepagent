@@ -2,12 +2,12 @@ package deepagents
 
 import (
 	"context"
-	"eino-cli/deepagent/core/middleware"
-	"eino-cli/deepagent/core/middleware/baseprompt"
-	"eino-cli/deepagent/core/middleware/contextmanager"
-	"eino-cli/deepagent/core/middleware/filesystem"
-	"eino-cli/deepagent/core/middleware/subagent"
-	"eino-cli/deepagent/core/middleware/web"
+	"eino-cli/deepagent/core/middlewares"
+	"eino-cli/deepagent/core/middlewares/baseprompt"
+	"eino-cli/deepagent/core/middlewares/contextmanager"
+	"eino-cli/deepagent/core/middlewares/filesystem"
+	"eino-cli/deepagent/core/middlewares/subagent"
+	"eino-cli/deepagent/core/middlewares/web"
 	deeptools "eino-cli/deepagent/core/tools"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"

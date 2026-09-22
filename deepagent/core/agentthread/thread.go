@@ -10,7 +10,7 @@ import (
 
 	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/graph"
-	"eino-cli/deepagent/core/middleware"
+	"eino-cli/deepagent/core/middlewares"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -50,6 +50,7 @@ func New(
 			threadConfig.CompactionStrategy,
 			threadConfig.TokenCounter,
 			WithContextWindow(threadConfig.ContextWindow),
+			WithHistoryRecordIDProvider(threadConfig.HistoryRecordID),
 		)
 	}
 	if eventBus == nil {
@@ -352,6 +353,9 @@ func (t *DeepAgentThread) buildRunAgentConfig(
 	events *runEventRecorder,
 ) (agentConfig *deepagents.Config) {
 	agentConfig = runConfig.Agent.Clone()
+	if runConfig.EnablePlan {
+		agentConfig.ReadOnlyToolsOnly = true
+	}
 	agentConfig.ContextManager = &ctxMngMiddleware{
 		core:    t.cm,
 		runID:   runID,

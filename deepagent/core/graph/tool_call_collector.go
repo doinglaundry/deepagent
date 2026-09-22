@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"eino-cli/deepagent/core/middlewares/repairjson"
 	"encoding/json"
 	"fmt"
 	"github.com/bytedance/sonic"
@@ -101,8 +102,8 @@ func (t *ToolCallCollector) GetRepairedToolCalls(ctx context.Context) []schema.T
 	repairedCalls := make([]schema.ToolCall, 0, len(t.partialCalls))
 	for _, tc := range t.partialCalls {
 		if tc.Function.Name != "" && tc.Function.Arguments != "" {
-			repaired := strings.TrimSpace(tc.Function.Arguments)
-			if !json.Valid([]byte(repaired)) {
+			repaired, repairErr := repairjson.RepairJSON(tc.Function.Arguments)
+			if repairErr != nil || !json.Valid([]byte(repaired)) {
 				slog.WarnContext(ctx, fmt.Sprintf("[ToolCallCollector::GetRepairedToolCalls] invalid JSON. function:%+v,arg:%s", tc.Function, tc.Function.Arguments))
 				continue
 			}

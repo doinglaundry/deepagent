@@ -9,8 +9,8 @@ import (
 
 	"eino-cli/deepagent/core/backends"
 	"eino-cli/deepagent/core/constant"
-	"eino-cli/deepagent/core/hook"
-	"eino-cli/deepagent/core/middleware"
+	"eino-cli/deepagent/core/hooks"
+	"eino-cli/deepagent/core/middlewares"
 	"eino-cli/deepagent/core/types"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/compose"

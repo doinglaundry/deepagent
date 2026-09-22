@@ -134,8 +134,8 @@ func (c *Manager) Acquire(ctx context.Context, req AcquireRequest) (result Acqui
 	now := time.Now()
 
 	if req.ThreadID != 0 {
-		if req.PermitToken == "" {
-			return AcquireResult{}, ErrPermitMismatch
+		if req.LeaseToken == "" {
+			return AcquireResult{}, ErrLeaseMismatch
 		}
 		rows, err := c.threads.Get(ctx, &dalmodel.ThreadFilter{IDs: []int64{req.ThreadID}, Primary: true})
 		if err != nil {
@@ -145,9 +145,9 @@ func (c *Manager) Acquire(ctx context.Context, req AcquireRequest) (result Acqui
 			return AcquireResult{}, daldb.MySQLErrRecordNotFound
 		}
 		thread := rows[0]
-		if thread.LeaseToken != req.PermitToken || !thread.ReadyUntil.After(now) ||
+		if thread.LeaseToken != req.LeaseToken || !thread.ReadyUntil.After(now) ||
 			(thread.Status != dalmodel.ThreadStatusRunning && thread.Status != dalmodel.ThreadStatusClosing) {
-			return AcquireResult{}, ErrPermitMismatch
+			return AcquireResult{}, ErrLeaseMismatch
 		}
 		messages, err := c.readQueuedMessages(ctx, req.ThreadID, false)
 		return AcquireResult{PendingMessages: messages, ServerTimeMS: now.UnixMilli()}, err
@@ -163,8 +163,8 @@ func (c *Manager) Acquire(ctx context.Context, req AcquireRequest) (result Acqui
 		}
 
 		thread := rows[0]
-		permit := &Permit{ThreadID: thread.ThreadID, PermitToken: uuid.NewString(), LeaseUntil: now.Add(normalizePermitDuration(req.PermitMS))}
-		values := map[string]any{"lease_token": permit.PermitToken, "ready_until": permit.LeaseUntil}
+		lease := &Lease{ThreadID: thread.ThreadID, LeaseToken: uuid.NewString(), LeaseUntil: now.Add(normalizeLeaseDuration(req.LeaseMS))}
+		values := map[string]any{"lease_token": lease.LeaseToken, "ready_until": lease.LeaseUntil}
 		if thread.Status == dalmodel.ThreadStatusReady {
 			values["status"] = dalmodel.ThreadStatusRunning
 		}
@@ -181,12 +181,12 @@ func (c *Manager) Acquire(ctx context.Context, req AcquireRequest) (result Acqui
 			return err
 		}
 
-		thread.LeaseToken = permit.PermitToken
-		thread.ReadyUntil = permit.LeaseUntil
+		thread.LeaseToken = lease.LeaseToken
+		thread.ReadyUntil = lease.LeaseUntil
 		if thread.Status == dalmodel.ThreadStatusReady {
 			thread.Status = dalmodel.ThreadStatusRunning
 		}
-		result = AcquireResult{Thread: thread, Permit: permit, PendingMessages: messages, ServerTimeMS: now.UnixMilli()}
+		result = AcquireResult{Thread: thread, Lease: lease, PendingMessages: messages, ServerTimeMS: now.UnixMilli()}
 		return nil
 	})
 	if errors.Is(err, ErrThreadNotRunnable) {
@@ -195,30 +195,30 @@ func (c *Manager) Acquire(ctx context.Context, req AcquireRequest) (result Acqui
 	return result, err
 }
 
-func (c *Manager) Renew(ctx context.Context, threadID int64, permitToken string, permitMS int64) (permit *Permit, err error) {
+func (c *Manager) Renew(ctx context.Context, threadID int64, leaseToken string, leaseMS int64) (lease *Lease, err error) {
 	now := time.Now()
-	permit = &Permit{
-		ThreadID:    threadID,
-		PermitToken: permitToken,
-		LeaseUntil:  now.Add(normalizePermitDuration(permitMS)),
+	lease = &Lease{
+		ThreadID:   threadID,
+		LeaseToken: leaseToken,
+		LeaseUntil: now.Add(normalizeLeaseDuration(leaseMS)),
 	}
 	changed, err := c.threads.Update(ctx, &dalmodel.ThreadFilter{
 
-		IDs:              []int64{threadID},
-		Statuses:         []string{dalmodel.ThreadStatusRunning, dalmodel.ThreadStatusClosing},
-		LeaseTokens:      []string{permitToken},
-		PermitAliveUntil: &now,
+		IDs:          []int64{threadID},
+		Statuses:     []string{dalmodel.ThreadStatusRunning, dalmodel.ThreadStatusClosing},
+		LeaseTokens:  []string{leaseToken},
+		LeaseValidAt: &now,
 	},
 		map[string]any{
-			"ready_until": permit.LeaseUntil,
+			"ready_until": lease.LeaseUntil,
 		})
 	if err != nil {
 		return nil, err
 	}
 	if !changed {
-		return nil, ErrPermitMismatch
+		return nil, ErrLeaseMismatch
 	}
-	return permit, nil
+	return lease, nil
 }
 
 // ListThreads 查询 Thread；传 ThreadID 查单个，传 SessionID 查列表。
@@ -271,6 +271,9 @@ func (c *Manager) ListMessages(ctx context.Context, req ListMessagesRequest) (re
 		Primary: true, SkipNormalize: true, ExcludeControls: true,
 		SessionID: req.SessionID, RunID: req.RunID,
 		Offset: max(req.Offset, 0), Limit: int(min(limit, 1000)), Desc: req.Backward,
+	}
+	if req.AfterID > 0 {
+		filter.AfterID = &req.AfterID
 	}
 	if req.ThreadID != 0 {
 		filter.ThreadIDs = []int64{req.ThreadID}
@@ -424,7 +427,7 @@ func (c *Manager) Resume(ctx context.Context, threadID int64, resumeMessageInput
 	return ThreadMessageResult{Thread: rows[0], Message: resumeMessage}, nil
 }
 
-func (c *Manager) ReleaseThread(ctx context.Context, threadID int64, permitToken, reason string, status dalmodel.ThreadStatus) (thread *dalmodel.Thread, err error) {
+func (c *Manager) ReleaseThread(ctx context.Context, threadID int64, leaseToken, reason string, status dalmodel.ThreadStatus) (thread *dalmodel.Thread, err error) {
 	if status != "" && status != dalmodel.ThreadStatusBlocked {
 		return nil, ErrInvalidStatusTransition
 	}
@@ -447,7 +450,7 @@ func (c *Manager) ReleaseThread(ctx context.Context, threadID int64, permitToken
 		readyUntil = now.Add(defaultFailureReleaseBackoff)
 	}
 
-	filter := &dalmodel.ThreadFilter{IDs: []int64{threadID}, Statuses: []string{dalmodel.ThreadStatusRunning}, LeaseTokens: []string{permitToken}, PermitAliveUntil: &now}
+	filter := &dalmodel.ThreadFilter{IDs: []int64{threadID}, Statuses: []string{dalmodel.ThreadStatusRunning}, LeaseTokens: []string{leaseToken}, LeaseValidAt: &now}
 	values := map[string]any{"status": nextStatus, "ready_until": nil, "lease_token": ""}
 	if nextStatus == dalmodel.ThreadStatusReady {
 		values["ready_until"] = readyUntil
@@ -463,7 +466,7 @@ func (c *Manager) ReleaseThread(ctx context.Context, threadID int64, permitToken
 			return nil, err
 		}
 		if !changed {
-			return nil, ErrPermitMismatch
+			return nil, ErrLeaseMismatch
 		}
 	}
 
@@ -493,7 +496,7 @@ func (c *Manager) ReleaseThread(ctx context.Context, threadID int64, permitToken
 	return thread, nil
 }
 
-func (c *Manager) AckInput(ctx context.Context, threadID int64, permitToken, runID string, acceptedMessageIDs []int64) (delivered []*dalmodel.Message, err error) {
+func (c *Manager) AckInput(ctx context.Context, threadID int64, leaseToken, runID string, acceptedMessageIDs []int64) (delivered []*dalmodel.Message, err error) {
 	if c.redis == nil {
 		return nil, ErrRedisUnavailable
 	}
@@ -510,8 +513,8 @@ func (c *Manager) AckInput(ctx context.Context, threadID int64, permitToken, run
 			return ErrThreadNotFound
 		}
 		thread := rows[0]
-		if thread.LeaseToken != permitToken || !thread.ReadyUntil.After(time.Now()) || (thread.Status != dalmodel.ThreadStatusRunning && thread.Status != dalmodel.ThreadStatusClosing) {
-			return ErrPermitMismatch
+		if thread.LeaseToken != leaseToken || !thread.ReadyUntil.After(time.Now()) || (thread.Status != dalmodel.ThreadStatusRunning && thread.Status != dalmodel.ThreadStatusClosing) {
+			return ErrLeaseMismatch
 		}
 
 		messages, txErr := c.messages.Get(txCtx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: acceptedMessageIDs, Primary: true})
@@ -799,7 +802,7 @@ func (c *Manager) Close(ctx context.Context, threadID int64, reason string) (res
 	return &ThreadMessageResult{Thread: thread, Message: controlMessage}, nil
 }
 
-func (c *Manager) ConfirmThreadClosed(ctx context.Context, threadID int64, permitToken string, controlMessageID int64) (result *ThreadMessageResult, err error) {
+func (c *Manager) ConfirmThreadClosed(ctx context.Context, threadID int64, leaseToken string, controlMessageID int64) (result *ThreadMessageResult, err error) {
 	if controlMessageID <= 0 {
 		return nil, fmt.Errorf("%w: control_message_id must be positive", ErrInvalidClose)
 	}
@@ -826,20 +829,20 @@ func (c *Manager) ConfirmThreadClosed(ctx context.Context, threadID int64, permi
 			return nil, ErrInvalidClose
 		}
 		now := time.Now()
-		if thread.LeaseToken != permitToken || thread.ReadyUntil.IsZero() || thread.ReadyUntil.Before(now) {
-			return nil, ErrPermitMismatch
+		if thread.LeaseToken != leaseToken || thread.ReadyUntil.IsZero() || thread.ReadyUntil.Before(now) {
+			return nil, ErrLeaseMismatch
 		}
 		changed, err := c.threads.Update(ctx, &dalmodel.ThreadFilter{
-			IDs:              []int64{threadID},
-			Statuses:         []string{dalmodel.ThreadStatusClosing},
-			LeaseTokens:      []string{permitToken},
-			PermitAliveUntil: &now,
+			IDs:          []int64{threadID},
+			Statuses:     []string{dalmodel.ThreadStatusClosing},
+			LeaseTokens:  []string{leaseToken},
+			LeaseValidAt: &now,
 		}, map[string]any{"status": dalmodel.ThreadStatusClosed, "ready_until": nil, "lease_token": ""})
 		if err != nil {
 			return nil, err
 		}
 		if !changed {
-			return nil, ErrPermitMismatch
+			return nil, ErrLeaseMismatch
 		}
 		thread.Status = dalmodel.ThreadStatusClosed
 		thread.ReadyUntil = time.Time{}
@@ -905,7 +908,7 @@ var outputEventRules = map[string]outputEventRule{
 // 入参：ctx 为调用上下文；request 包含线程 ID、许可、RunID 和输出事件。
 // 出参：err 表示许可、事件格式、数据库、Redis 或实时通道错误。
 // 主要逻辑：事务内校验许可；按规则表更新输入状态或保存历史消息；事务外推送实时事件。
-func (c *Manager) SaveOutput(ctx context.Context, threadID int64, permitToken, runID string, frames []OutputFrame) (err error) {
+func (c *Manager) SaveOutput(ctx context.Context, threadID int64, leaseToken, runID string, frames []OutputFrame) (err error) {
 	if len(frames) == 0 {
 		return nil
 	}
@@ -919,8 +922,8 @@ func (c *Manager) SaveOutput(ctx context.Context, threadID int64, permitToken, r
 			return ErrThreadNotFound
 		}
 		owner := threads[0]
-		if permitToken == "" || owner.LeaseToken != permitToken || !owner.ReadyUntil.After(time.Now()) || (owner.Status != dalmodel.ThreadStatusRunning && owner.Status != dalmodel.ThreadStatusClosing) {
-			return ErrPermitMismatch
+		if leaseToken == "" || owner.LeaseToken != leaseToken || !owner.ReadyUntil.After(time.Now()) || (owner.Status != dalmodel.ThreadStatusRunning && owner.Status != dalmodel.ThreadStatusClosing) {
+			return ErrLeaseMismatch
 		}
 
 		for i := range outputs {
@@ -945,7 +948,7 @@ func (c *Manager) SaveOutput(ctx context.Context, threadID int64, permitToken, r
 			}
 		}
 		if !owner.ReadyUntil.After(time.Now()) {
-			return ErrPermitMismatch
+			return ErrLeaseMismatch
 		}
 		return nil
 	})

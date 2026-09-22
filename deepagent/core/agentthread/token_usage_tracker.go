@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"eino-cli/deepagent/core/utils"
+	"eino-cli/deepagent/utils"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )

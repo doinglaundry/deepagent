@@ -5,7 +5,7 @@ import (
 	"context"
 	"eino-cli/deepagent/core/compact"
 	core "eino-cli/deepagent/core/engine"
-	"eino-cli/protocol"
+	"eino-cli/deepagent/protocol"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +25,7 @@ type History interface {
 	Save(context.Context, []*schema.Message) error
 }
 type Checkpoints interface {
-	Get(context.Context, string) ([]byte, error)
+	Get(context.Context, string) ([]byte, bool, error)
 	Set(context.Context, string, []byte) error
 }
 type Config struct {
@@ -310,9 +310,12 @@ func (t *Thread) ResumeRun(ctx context.Context, in protocol.Input) (string, erro
 	if t.c.Checkpoints == nil {
 		return "", errors.New("checkpoint storage required")
 	}
-	b, e := t.c.Checkpoints.Get(ctx, in.Resume.CheckpointID)
+	b, exists, e := t.c.Checkpoints.Get(ctx, in.Resume.CheckpointID)
 	if e != nil {
 		return "", e
+	}
+	if !exists {
+		return "", errors.New("checkpoint not found")
 	}
 	var s core.State
 	if e = json.Unmarshal(b, &s); e != nil {

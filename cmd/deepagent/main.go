@@ -1,7 +1,7 @@
 package main
 
 import (
-	"eino-cli/host/cli"
+	"eino-cli/deepagent/host/cli"
 	"fmt"
 	"os"
 )

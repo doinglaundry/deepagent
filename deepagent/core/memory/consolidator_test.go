@@ -23,7 +23,7 @@ func (m *graphMemoryModel) Generate(context.Context, []*schema.Message, ...model
 func (m *graphMemoryModel) Stream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	m.n++
 	if m.n == 1 {
-		arg, _ := json.Marshal(map[string]string{"path": "MEMORY.md", "content": "# Verified memory\nUser uses Go."})
+		arg, _ := json.Marshal(map[string]string{"file_path": "MEMORY.md", "content": "# Verified memory\nUser uses Go."})
 		return schema.StreamReaderFromArray([]*schema.Message{{Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: "write", Function: schema.FunctionCall{Name: "write_file", Arguments: string(arg)}}}}}), nil
 	}
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("done", nil)}), nil
@@ -35,7 +35,7 @@ func TestConsolidatorRunsScopedGraphAndValidatesWrittenArtifact(t *testing.T) {
 		t.Fatal(out, e)
 	}
 	for _, info := range m.bound {
-		if info.Name != "read_file" && info.Name != "list_files" && info.Name != "write_file" {
+		if info.Name != "read_file" && info.Name != "ls" && info.Name != "write_file" {
 			t.Fatal("unsafe memory capability", info.Name)
 		}
 	}

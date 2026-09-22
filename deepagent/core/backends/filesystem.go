@@ -106,6 +106,29 @@ func pathWithinRoot(path, root string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
+func (b *FilesystemBackend) RootDir() string { return b.rootDir }
+
+func (b *FilesystemBackend) DeleteFile(_ context.Context, path string) (string, error) {
+	absPath, err := b.resolvePath(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(absPath)
+	if os.IsNotExist(err) {
+		return "File does not exist: " + path, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("refusing to delete directory: %s", path)
+	}
+	if err := os.Remove(absPath); err != nil {
+		return "", err
+	}
+	return "Deleted file " + path, nil
+}
+
 // LsInfo 列出目录内容
 func (b *FilesystemBackend) LsInfo(ctx context.Context, path string) ([]FileInfo, error) {
 	absPath, err := b.resolvePath(path)
@@ -770,4 +793,5 @@ func (b *SandboxFilesystemBackend) ID() string {
 // 确保实现接口
 var _ Backend = (*FilesystemBackend)(nil)
 var _ ApplyPatchBackend = (*FilesystemBackend)(nil)
+var _ WorkspaceBackend = (*FilesystemBackend)(nil)
 var _ SandboxBackend = (*SandboxFilesystemBackend)(nil)

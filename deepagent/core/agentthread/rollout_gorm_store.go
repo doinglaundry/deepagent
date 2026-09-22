@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -78,7 +79,7 @@ func (s *GormHistoryRolloutStore) Append(ctx context.Context, rec *HistoryRecord
 	if err != nil {
 		return err
 	}
-	return s.db.WithContext(ctx).Table(s.table).Create(row).Error
+	return s.db.WithContext(ctx).Table(s.table).Clauses(clause.OnConflict{DoNothing: true}).Create(row).Error
 }
 
 func (s *GormHistoryRolloutStore) List(ctx context.Context, q ListQuery) ([]*HistoryRecord, error) {

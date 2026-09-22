@@ -2,11 +2,11 @@ package memory
 
 import (
 	"context"
-	"eino-cli/manager/api"
-	"eino-cli/protocol"
+	memorypkg "eino-cli/deepagent/protocol/memory"
 	"encoding/json"
 	"errors"
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 	"strings"
 	"time"
 )
@@ -17,8 +17,8 @@ func (p *Pipeline) key(suffix string) string {
 
 // Independent renewable leases protect long-term jobs; a lost lease cancels model work
 // and CompleteMemory fences every artifact/baseline mutation against the live token.
-func (p *Pipeline) job(ctx context.Context, key string, work func(context.Context, api.MemoryLease) error) error {
-	lease, e := p.c.Store.ClaimMemory(ctx, key, protocol.NewID("memory-worker"), p.c.LeaseTTL)
+func (p *Pipeline) job(ctx context.Context, key string, work func(context.Context, memorypkg.Lease) error) error {
+	lease, e := p.c.Store.ClaimMemory(ctx, key, uuid.NewString(), p.c.LeaseTTL)
 	if e != nil {
 		return e
 	}
@@ -63,9 +63,9 @@ func (p *Pipeline) observeShared(ctx context.Context, source string, messages []
 	}
 	version := hash(raw)
 	key := p.key("source/" + hash([]byte(source)))
-	return p.job(ctx, key, func(ctx context.Context, lease api.MemoryLease) error {
+	return p.job(ctx, key, func(ctx context.Context, lease memorypkg.Lease) error {
 		previous, e := p.c.Store.GetMemory(ctx, key)
-		if e != nil && !errors.Is(e, api.ErrNotFound) {
+		if e != nil && !errors.Is(e, memorypkg.ErrNotFound) {
 			return e
 		}
 		if previous.Version == version {
@@ -91,7 +91,7 @@ func (p *Pipeline) observeShared(ctx context.Context, source string, messages []
 func (p *Pipeline) sharedState(ctx context.Context) (consolidated, error) {
 	s := consolidated{Baselines: map[string]string{}}
 	a, e := p.c.Store.GetMemory(ctx, p.key("consolidation"))
-	if errors.Is(e, api.ErrNotFound) {
+	if errors.Is(e, memorypkg.ErrNotFound) {
 		return s, nil
 	}
 	if e != nil {
@@ -103,7 +103,7 @@ func (p *Pipeline) sharedState(ctx context.Context) (consolidated, error) {
 	return s, e
 }
 func (p *Pipeline) consolidateShared(ctx context.Context) error {
-	return p.job(ctx, p.key("consolidation"), func(ctx context.Context, lease api.MemoryLease) error {
+	return p.job(ctx, p.key("consolidation"), func(ctx context.Context, lease memorypkg.Lease) error {
 		state, e := p.sharedState(ctx)
 		if e != nil {
 			return e

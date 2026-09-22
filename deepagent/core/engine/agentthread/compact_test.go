@@ -3,7 +3,7 @@ package agentthread
 import (
 	"context"
 	"eino-cli/deepagent/core/compact"
-	"eino-cli/protocol"
+	"eino-cli/deepagent/protocol"
 	"errors"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
