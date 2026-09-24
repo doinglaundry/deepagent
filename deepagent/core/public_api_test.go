@@ -7,7 +7,8 @@ import (
 
 	"eino-cli/deepagent/core/graph"
 	hook "eino-cli/deepagent/core/hooks"
-	legacy "eino-cli/deepagent/core/middlewares"
+	"eino-cli/deepagent/core/internal/conversation"
+	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/types"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -83,7 +84,7 @@ func TestPublicResumeOptionsMergeWithoutMutatingCaller(t *testing.T) {
 }
 
 type promptContractMiddleware struct {
-	legacy.BaseMiddleware
+	middleware.BaseMiddleware
 	seen bool
 }
 
@@ -98,12 +99,12 @@ func (m *promptContractMiddleware) ModifyModelRequest(_ context.Context, initial
 	m.seen = true
 	return messages, nil
 }
-func TestPublicLegacyContextDoesNotDuplicateCanonicalHistory(t *testing.T) {
+func TestPublicConversationDoesNotDuplicateHistory(t *testing.T) {
 	ctx := context.Background()
 	m := &publicModel{call: true}
 	mw := &promptContractMiddleware{}
-	history := legacy.NewSimpleContextManager()
-	a, err := New(ctx, WithModel(m), WithContextManager(history), WithMiddleware(mw), WithTools(&fakeToolCounter{}))
+	history := conversation.New("", nil, nil, nil)
+	a, err := New(ctx, WithConfig(&Config{Model: m, Conversation: history}), WithMiddleware(mw), WithTools(&fakeToolCounter{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +113,7 @@ func TestPublicLegacyContextDoesNotDuplicateCanonicalHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(history.History(ctx)) != 4 {
-		t.Fatalf("compatibility context does not own canonical history: %v", history.History(ctx))
+		t.Fatalf("conversation history = %v", history.History(ctx))
 	}
 	if !mw.seen || len(m.inputs) != 2 || len(m.inputs[0]) != 2 || len(m.inputs[1]) != 4 {
 		t.Fatalf("history duplicated: %v", m.inputs)

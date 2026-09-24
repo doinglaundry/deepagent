@@ -4,7 +4,6 @@ import (
 	"context"
 	"eino-cli/deepagent/core/backend"
 	canonical "eino-cli/deepagent/core/middleware"
-	"eino-cli/deepagent/core/middlewares"
 	deeptools "eino-cli/deepagent/core/tools"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -43,7 +42,7 @@ func (t *fakeToolCounter) InvokableRun(_ context.Context, _ string, _ ...tool.Op
 	return "ok", nil
 }
 
-func findSkillMiddleware(t *testing.T, middlewares []middleware.Middleware) *canonical.Skill {
+func findSkillMiddleware(t *testing.T, middlewares []canonical.Middleware) *canonical.Skill {
 	t.Helper()
 
 	for _, mw := range middlewares {
@@ -164,7 +163,7 @@ func TestFeatureConfigPresenceControlsEnablement(t *testing.T) {
 }
 
 func TestNew_RequiresModel(t *testing.T) {
-	_, err := New(context.Background(), WithContextManager(middleware.NewSimpleContextManager()))
+	_, err := New(context.Background(), WithContextManager(&testBuilderMiddleware{}))
 	if err == nil || !strings.Contains(err.Error(), "model is required") {
 		t.Fatalf("expected model required error, got %v", err)
 	}
