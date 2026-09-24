@@ -7,11 +7,13 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-type EditFileTool struct{ backend backend.Backend }
+type EditFileTool struct{ backend backend.Filesystem }
 
 func (*EditFileTool) RequiresApproval() bool { return true }
 
-func NewEditFileTool(backend backend.Backend) tool.BaseTool { return &EditFileTool{backend: backend} }
+func NewEditFileTool(backend backend.Filesystem) tool.BaseTool {
+	return &EditFileTool{backend: backend}
+}
 func (*EditFileTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return toolInfo("edit_file", "Replace one text span in a file.", map[string]*schema.ParameterInfo{"path": {Type: schema.String, Required: true}, "old": {Type: schema.String, Required: true}, "new": {Type: schema.String, Required: true}})
 }

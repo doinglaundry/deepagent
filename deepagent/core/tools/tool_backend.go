@@ -9,7 +9,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func requireBackend(b backend.Backend) error {
+func requireBackend(b backend.Filesystem) error {
 	if b == nil {
 		return fmt.Errorf("backend is required")
 	}

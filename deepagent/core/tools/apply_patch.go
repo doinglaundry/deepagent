@@ -10,11 +10,11 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func NewApplyPatchTool(patcher backend.ApplyPatchBackend) tool.BaseTool {
+func NewApplyPatchTool(patcher backend.Filesystem) tool.BaseTool {
 	return &applyPatchTool{backend: patcher}
 }
 
-type applyPatchTool struct{ backend backend.ApplyPatchBackend }
+type applyPatchTool struct{ backend backend.Filesystem }
 
 func (*applyPatchTool) RequiresApproval() bool { return true }
 

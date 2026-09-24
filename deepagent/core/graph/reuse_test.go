@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"eino-cli/deepagent/core/backend"
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
@@ -47,7 +48,12 @@ func TestRun_ReusingAgentRebindsCommandTools(t *testing.T) {
 			[]*schema.Message{schema.AssistantMessage("done", nil)})
 	}
 	root := t.TempDir()
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, FilesystemConfig: &FilesystemConfig{WorkDir: root, DisableApplyPatch: true}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+	workspace, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workspace.Close(context.Background())
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, Workspace: workspace, FilesystemConfig: &FilesystemConfig{WorkDir: root, DisableApplyPatch: true}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
 		return tools.Decision{Action: tools.Allow}, nil
 	})}))
 	if err != nil {

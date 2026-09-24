@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-type Workspace interface {
+type Filesystem interface {
 	Root() string
 	Resolve(context.Context, string, bool) (string, error)
 	List(context.Context, string) ([]FileInfo, error)
@@ -23,25 +23,33 @@ type Workspace interface {
 	Delete(context.Context, string) (string, error)
 	Glob(context.Context, string, string) ([]FileInfo, error)
 	Grep(context.Context, string, string, string) ([]GrepMatch, error)
+	ApplyPatch(context.Context, string) (string, error)
 }
 
-func (b *FilesystemBackend) Root() string { return b.rootDir }
-func (b *FilesystemBackend) List(ctx context.Context, path string) ([]FileInfo, error) {
+// ToolWorkspace is the complete capability set exposed to one Agent thread.
+// Both concrete filesystems implement it; tools never inspect optional backend types.
+type ToolWorkspace interface {
+	Filesystem
+	CommandService
+}
+
+func (b *LocalFilesystem) Root() string { return b.rootDir }
+func (b *LocalFilesystem) List(ctx context.Context, path string) ([]FileInfo, error) {
 	return b.LsInfo(ctx, path)
 }
-func (b *FilesystemBackend) Delete(ctx context.Context, path string) (string, error) {
+func (b *LocalFilesystem) Delete(ctx context.Context, path string) (string, error) {
 	return b.DeleteFile(ctx, path)
 }
-func (b *FilesystemBackend) Glob(ctx context.Context, pattern, path string) ([]FileInfo, error) {
+func (b *LocalFilesystem) Glob(ctx context.Context, pattern, path string) ([]FileInfo, error) {
 	return b.GlobInfo(ctx, pattern, path)
 }
-func (b *FilesystemBackend) Grep(ctx context.Context, pattern, path, glob string) ([]GrepMatch, error) {
+func (b *LocalFilesystem) Grep(ctx context.Context, pattern, path, glob string) ([]GrepMatch, error) {
 	return b.GrepRaw(ctx, pattern, path, glob)
 }
 
 // Every file operation uses os.Root, so an intermediate symlink replacement
 // cannot turn a previously validated path into a host filesystem access.
-func (b *FilesystemBackend) openRoot(ctx context.Context, path string) (*os.Root, string, error) {
+func (b *LocalFilesystem) openRoot(ctx context.Context, path string) (*os.Root, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
@@ -59,7 +67,7 @@ func (b *FilesystemBackend) openRoot(ctx context.Context, path string) (*os.Root
 	}
 	return root, relative, nil
 }
-func (b *FilesystemBackend) Resolve(ctx context.Context, path string, write bool) (string, error) {
+func (b *LocalFilesystem) Resolve(ctx context.Context, path string, write bool) (string, error) {
 	root, relative, err := b.openRoot(ctx, path)
 	if err != nil {
 		return "", err
@@ -78,7 +86,7 @@ func (b *FilesystemBackend) Resolve(ctx context.Context, path string, write bool
 	}
 	return filepath.Join(b.rootDir, relative), nil
 }
-func (b *FilesystemBackend) readBytes(ctx context.Context, path string) ([]byte, error) {
+func (b *LocalFilesystem) readBytes(ctx context.Context, path string) ([]byte, error) {
 	root, relative, err := b.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
@@ -109,14 +117,14 @@ func (b *FilesystemBackend) readBytes(ctx context.Context, path string) ([]byte,
 	}
 	return data, nil
 }
-func (b *FilesystemBackend) Read(ctx context.Context, path string, offset, limit *int) (string, error) {
+func (b *LocalFilesystem) Read(ctx context.Context, path string, offset, limit *int) (string, error) {
 	data, err := b.readBytes(ctx, path)
 	if err != nil {
 		return "", err
 	}
 	return ReadFileLines(string(data), offset, limit), nil
 }
-func (b *FilesystemBackend) Write(ctx context.Context, path, content string) (*WriteResult, error) {
+func (b *LocalFilesystem) Write(ctx context.Context, path, content string) (*WriteResult, error) {
 	root, relative, err := b.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
@@ -130,7 +138,7 @@ func (b *FilesystemBackend) Write(ctx context.Context, path, content string) (*W
 	}
 	return &WriteResult{Path: path}, nil
 }
-func (b *FilesystemBackend) Edit(ctx context.Context, path, old, new string, all bool) (*EditResult, error) {
+func (b *LocalFilesystem) Edit(ctx context.Context, path, old, new string, all bool) (*EditResult, error) {
 	if old == "" {
 		return nil, fmt.Errorf("old text is required")
 	}
@@ -147,7 +155,7 @@ func (b *FilesystemBackend) Edit(ctx context.Context, path, old, new string, all
 	}
 	return &EditResult{Path: path, Occurrences: count}, nil
 }
-func (b *FilesystemBackend) DeleteFile(ctx context.Context, path string) (string, error) {
+func (b *LocalFilesystem) DeleteFile(ctx context.Context, path string) (string, error) {
 	root, relative, err := b.openRoot(ctx, path)
 	if err != nil {
 		return "", err
@@ -168,7 +176,7 @@ func (b *FilesystemBackend) DeleteFile(ctx context.Context, path string) (string
 	}
 	return "Deleted file " + path, nil
 }
-func (b *FilesystemBackend) LsInfo(ctx context.Context, path string) ([]FileInfo, error) {
+func (b *LocalFilesystem) LsInfo(ctx context.Context, path string) ([]FileInfo, error) {
 	root, relative, err := b.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
@@ -202,7 +210,7 @@ func (b *FilesystemBackend) LsInfo(ctx context.Context, path string) ([]FileInfo
 	})
 	return out, nil
 }
-func (b *FilesystemBackend) GlobInfo(ctx context.Context, pattern, path string) ([]FileInfo, error) {
+func (b *LocalFilesystem) GlobInfo(ctx context.Context, pattern, path string) ([]FileInfo, error) {
 	root, relative, err := b.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
@@ -242,7 +250,7 @@ func (b *FilesystemBackend) GlobInfo(ctx context.Context, pattern, path string) 
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
 }
-func (b *FilesystemBackend) GrepRaw(ctx context.Context, pattern, path, glob string) ([]GrepMatch, error) {
+func (b *LocalFilesystem) GrepRaw(ctx context.Context, pattern, path, glob string) ([]GrepMatch, error) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, err
@@ -307,7 +315,7 @@ func (b *FilesystemBackend) GrepRaw(ctx context.Context, pattern, path, glob str
 	})
 	return out, err
 }
-func (b *FilesystemBackend) UploadFiles(ctx context.Context, files []struct {
+func (b *LocalFilesystem) UploadFiles(ctx context.Context, files []struct {
 	Path    string
 	Content []byte
 }) ([]FileUploadResponse, error) {
@@ -327,7 +335,7 @@ func (b *FilesystemBackend) UploadFiles(ctx context.Context, files []struct {
 	}
 	return out, nil
 }
-func (b *FilesystemBackend) DownloadFiles(ctx context.Context, paths []string) ([]FileDownloadResponse, error) {
+func (b *LocalFilesystem) DownloadFiles(ctx context.Context, paths []string) ([]FileDownloadResponse, error) {
 	out := make([]FileDownloadResponse, 0, len(paths))
 	for _, path := range paths {
 		if err := ctx.Err(); err != nil {
@@ -343,4 +351,4 @@ func (b *FilesystemBackend) DownloadFiles(ctx context.Context, paths []string) (
 	return out, nil
 }
 
-var _ Workspace = (*FilesystemBackend)(nil)
+var _ Filesystem = (*LocalFilesystem)(nil)

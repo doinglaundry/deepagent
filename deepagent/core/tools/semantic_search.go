@@ -24,14 +24,14 @@ type semanticMatch struct {
 
 // NewSemanticSearchTool provides a local, deterministic semantic-like search.
 // It ranks files and lines by query-term matches without requiring an index.
-func NewSemanticSearchTool(workspace backend.Workspace) (tool.BaseTool, error) {
+func NewSemanticSearchTool(workspace backend.Filesystem) (tool.BaseTool, error) {
 	if workspace == nil {
 		return nil, fmt.Errorf("workspace is required")
 	}
 	return &semanticSearchTool{workspace: workspace}, nil
 }
 
-type semanticSearchTool struct{ workspace backend.Workspace }
+type semanticSearchTool struct{ workspace backend.Filesystem }
 
 func (*semanticSearchTool) ReadOnly() bool     { return true }
 func (*semanticSearchTool) ParallelSafe() bool { return true }

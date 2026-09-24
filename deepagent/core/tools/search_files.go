@@ -10,9 +10,9 @@ import (
 	"strings"
 )
 
-type SearchFilesTool struct{ backend backend.Backend }
+type SearchFilesTool struct{ backend backend.Filesystem }
 
-func NewSearchFilesTool(backend backend.Backend) tool.BaseTool {
+func NewSearchFilesTool(backend backend.Filesystem) tool.BaseTool {
 	return &SearchFilesTool{backend: backend}
 }
 func (*SearchFilesTool) ReadOnly() bool     { return true }
@@ -31,7 +31,7 @@ func (t *SearchFilesTool) InvokableRun(ctx context.Context, args string, _ ...to
 	if in.Query == "" {
 		return "", fmt.Errorf("query required")
 	}
-	matches, err := t.backend.GrepRaw(ctx, regexp.QuoteMeta(in.Query), in.Path, "")
+	matches, err := t.backend.Grep(ctx, regexp.QuoteMeta(in.Query), in.Path, "")
 	if err != nil {
 		return "", err
 	}

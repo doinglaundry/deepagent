@@ -3,6 +3,7 @@ package backend_test
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -14,16 +15,31 @@ import (
 
 type fileSandbox struct {
 	sandbox.Sandbox
-	files    map[string]string
-	writes   int
-	err      error
-	lastPath string
-	grepOpts sandbox.GrepOpts
+	containerID string
+	files       map[string]string
+	writes      int
+	err         error
+	lastPath    string
+	grepOpts    sandbox.GrepOpts
+}
+
+func (s *fileSandbox) DockerExecTarget() (string, bool) {
+	if s.containerID != "" {
+		return s.containerID, true
+	}
+	return "test-container", true
 }
 
 func (s *fileSandbox) ReadFile(_ context.Context, p string) (string, error) {
 	s.lastPath = p
-	return s.files[p], s.err
+	if s.err != nil {
+		return "", s.err
+	}
+	content, ok := s.files[p]
+	if !ok {
+		return "", os.ErrNotExist
+	}
+	return content, nil
 }
 func (s *fileSandbox) WriteFile(_ context.Context, p, c string, appendMode bool) error {
 	s.lastPath = p
@@ -55,21 +71,20 @@ func (s *fileSandbox) Grep(_ context.Context, p, pattern string, opts sandbox.Gr
 	return []sandbox.GrepMatch{{Path: p + "/a.txt", LineNumber: 2, Line: "second"}}, false, s.err
 }
 
-func TestSandboxFilesCanonicalToolsUseProvider(t *testing.T) {
+func TestDockerFilesystemToolsUseProvider(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{"/remote/a.txt": "first\nsecond\n"}}
-	b, err := backend.NewSandboxFiles(provider, "/remote")
+	b, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := any(b).(backend.Workspace); ok {
-		t.Fatal("remote backend exposed host workspace")
-	}
-	if _, ok := any(b).(backend.WorkspaceBackend); ok {
-		t.Fatal("remote backend exposed host commands")
-	}
+	defer b.Close(ctx)
 	registered := map[string]einotool.InvokableTool{}
-	for _, item := range tools.NewFilesystemTools(b, false) {
+	items, err := tools.NewWorkspaceTools(b, tools.WorkspaceToolOptions{EnableCommands: true, EnablePatch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
 		info, err := item.Info(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -114,10 +129,10 @@ func TestSandboxFilesCanonicalToolsUseProvider(t *testing.T) {
 		t.Fatalf("upload=%v %v", uploads, err)
 	}
 }
-func TestSandboxFilesFailureDoesNotWriteOrUseHost(t *testing.T) {
+func TestDockerFilesystemFailureDoesNotWriteOrUseHost(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{"/remote/a": "repeat repeat"}}
-	b, err := backend.NewSandboxFiles(provider, "/remote")
+	b, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,10 +167,10 @@ func TestSandboxFilesFailureDoesNotWriteOrUseHost(t *testing.T) {
 	if provider.writes != 1 {
 		t.Fatal("canceled call reached provider")
 	}
-	if _, err := backend.NewSandboxFiles(nil, "/remote"); err == nil {
+	if _, err := backend.NewDockerFilesystem(nil, "/remote", "thread"); err == nil {
 		t.Fatal("nil provider accepted")
 	}
-	if _, err := backend.NewSandboxFiles(provider, "relative"); err == nil {
+	if _, err := backend.NewDockerFilesystem(provider, "relative", "thread"); err == nil {
 		t.Fatal("relative root accepted")
 	}
 }
@@ -170,11 +185,11 @@ func (s *cancelAfterReadSandbox) ReadFile(ctx context.Context, p string) (string
 	s.cancel()
 	return content, err
 }
-func TestSandboxEditDoesNotWriteAfterReadCancellation(t *testing.T) {
+func TestDockerEditDoesNotWriteAfterReadCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	provider := &cancelAfterReadSandbox{fileSandbox: &fileSandbox{files: map[string]string{"/remote/a": "original"}}, cancel: cancel}
-	files, err := backend.NewSandboxFiles(provider, "/remote")
+	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
 	if err != nil {
 		t.Fatal(err)
 	}

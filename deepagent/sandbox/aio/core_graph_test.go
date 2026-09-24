@@ -14,6 +14,8 @@ import (
 
 	"eino-cli/deepagent/core/backend"
 	"eino-cli/deepagent/core/graph"
+	"eino-cli/deepagent/core/tools"
+	"eino-cli/deepagent/core/types"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
@@ -50,7 +52,7 @@ func (m *sandboxGraphModel) Stream(_ context.Context, input []*schema.Message, _
 	return schema.StreamReaderFromArray([]*schema.Message{msg}), nil
 }
 
-func TestCoreGraphUsesAIOFilesWithoutHostCommands(t *testing.T) {
+func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 	for _, readOnly := range []bool{false, true} {
 		t.Run(fmt.Sprint(readOnly), func(t *testing.T) {
 			var mu sync.Mutex
@@ -92,12 +94,15 @@ func TestCoreGraphUsesAIOFilesWithoutHostCommands(t *testing.T) {
 			}))
 			defer server.Close()
 			provider := newSandbox("sandbox", "thread", server.URL, nil)
-			files, err := backend.NewSandboxFiles(provider, "/virtual")
+			provider.containerName, provider.runtime = "test-container", runtimeDocker
+			files, err := backend.NewDockerFilesystem(provider, "/virtual", "thread")
 			if err != nil {
 				t.Fatal(err)
 			}
 			m := &sandboxGraphModel{readOnly: readOnly}
-			agent, err := graph.New(context.Background(), graph.WithConfig(&graph.Config{ThreadID: "thread", Model: m, Backend: files, DisableSubAgent: true, FilesystemConfig: &graph.FilesystemConfig{ReadOnly: readOnly}}))
+			agent, err := graph.New(context.Background(), graph.WithConfig(&graph.Config{ThreadID: "thread", Model: m, Workspace: files, DisableSubAgent: true, FilesystemConfig: &graph.FilesystemConfig{ReadOnly: readOnly}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+				return tools.Decision{Action: tools.Allow}, nil
+			})}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -107,8 +112,8 @@ func TestCoreGraphUsesAIOFilesWithoutHostCommands(t *testing.T) {
 				t.Fatalf("result=%v err=%v", result, err)
 			}
 			for _, name := range []string{"execute", "shell", "await_shell", "read_lints"} {
-				if m.tools[name] {
-					t.Fatalf("remote files exposed host tool %s", name)
+				if m.tools[name] == readOnly {
+					t.Fatalf("Docker tool %s available=%v readOnly=%v", name, m.tools[name], readOnly)
 				}
 			}
 			if !m.tools["read_file"] || m.tools["edit_file"] == readOnly {
@@ -131,7 +136,7 @@ func TestCoreGraphUsesAIOFilesWithoutHostCommands(t *testing.T) {
 	}
 }
 
-func TestCoreSandboxFilesPreserveInFlightCancellation(t *testing.T) {
+func TestCoreDockerFilesystemPreservesInFlightCancellation(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -143,7 +148,9 @@ func TestCoreSandboxFilesPreserveInFlightCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 	defer close(release)
-	files, err := backend.NewSandboxFiles(newSandbox("sandbox", "thread", server.URL, nil), "/virtual")
+	provider := newSandbox("sandbox", "thread", server.URL, nil)
+	provider.containerName, provider.runtime = "test-container", runtimeDocker
+	files, err := backend.NewDockerFilesystem(provider, "/virtual", "thread")
 	if err != nil {
 		t.Fatal(err)
 	}

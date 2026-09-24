@@ -44,7 +44,7 @@ type Config struct {
 	WebConfig                      *tools.WebConfig
 	HITLConfig                     *HITLConfig
 	ContextManager                 middleware.Middleware
-	Backend                        backend.Backend
+	Workspace                      backend.ToolWorkspace
 	Callbacks                      []callbacks.Handler
 	InterruptBeforeNodes           []string
 	InterruptAfterNodes            []string
@@ -138,6 +138,7 @@ type ContinueAfterModelFunc func(context.Context) (bool, error)
 
 type FilesystemConfig struct {
 	WorkDir               string
+	localFromOption       bool
 	ReadOnly              bool
 	DisableUploadDownload bool
 	DisableExecute        bool
@@ -225,6 +226,7 @@ func WithWorkDir(dir string) Option {
 			c.FilesystemConfig = &FilesystemConfig{}
 		}
 		c.FilesystemConfig.WorkDir = dir
+		c.FilesystemConfig.localFromOption = true
 	}
 }
 
@@ -332,14 +334,14 @@ func WithDisableExecute() Option {
 	}
 }
 
-func WithBackend(b backend.Backend) Option {
-	return func(c *Config) {
-		c.Backend = b
-	}
+func WithBackend(b backend.ToolWorkspace) Option { return WithWorkspace(b) }
+
+func WithWorkspace(ws backend.ToolWorkspace) Option {
+	return func(c *Config) { c.Workspace = ws }
 }
 
-func WithSandboxBackend(b backend.SandboxBackend) Option {
-	return WithBackend(b)
+func WithSandboxBackend(b backend.ToolWorkspace) Option {
+	return WithWorkspace(b)
 }
 
 func WithPatchToolCalls() Option {

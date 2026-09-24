@@ -3,6 +3,18 @@ package sandbox
 
 import "context"
 
+type FileInfo struct {
+	Path      string
+	IsDir     bool
+	IsSymlink bool
+	Size      int64
+}
+
+// FileInfoProvider is optional metadata support for concrete container filesystems.
+type FileInfoProvider interface {
+	ListDirInfo(context.Context, string, int) ([]FileInfo, error)
+}
+
 // Sandbox is the 7-method surface every concrete provider must implement.
 type Sandbox interface {
 	ID() string

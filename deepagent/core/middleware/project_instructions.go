@@ -12,10 +12,10 @@ import (
 
 type projectInstructions struct {
 	BaseMiddleware
-	files backend.Backend
+	files backend.Filesystem
 }
 
-func NewProjectInstructions(files backend.Backend) Middleware {
+func NewProjectInstructions(files backend.Filesystem) Middleware {
 	return &projectInstructions{files: files}
 }
 func (*projectInstructions) Name() string { return "project_instructions" }

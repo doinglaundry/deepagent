@@ -20,11 +20,13 @@ import (
 
 // Sandbox is the per-container HTTP client implementing sandbox.Sandbox.
 type Sandbox struct {
-	id        string
-	sessionID string
-	baseURL   string
-	http      *http.Client
-	mounts    []sandboxpaths.MountMapping
+	id            string
+	sessionID     string
+	containerName string
+	runtime       containerRuntime
+	baseURL       string
+	http          *http.Client
+	mounts        []sandboxpaths.MountMapping
 
 	// shellMu serialises exec: the agent-sandbox image keeps one persistent
 	// shell session whose state can corrupt under concurrent invocation.
@@ -53,6 +55,11 @@ func (s *Sandbox) maskOutput(output string) string {
 func (s *Sandbox) ID() string { return s.id }
 
 func (s *Sandbox) SessionID() string { return s.sessionID }
+
+// DockerExecTarget identifies the same container used by the file HTTP API.
+func (s *Sandbox) DockerExecTarget() (string, bool) {
+	return s.containerName, s.runtime == runtimeDocker && s.containerName != ""
+}
 
 // envelope is the FastAPI response shape every endpoint returns.
 type envelope struct {
@@ -132,6 +139,22 @@ func (s *Sandbox) UpdateFile(ctx context.Context, path string, content []byte) e
 
 // ListDir lists path entries via POST /v1/file/list with native max_depth.
 func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]string, error) {
+	infos, err := s.ListDirInfo(ctx, path, maxDepth)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(infos))
+	for _, f := range infos {
+		entry := f.Path
+		if f.IsDir && !strings.HasSuffix(entry, "/") {
+			entry += "/"
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+func (s *Sandbox) ListDirInfo(ctx context.Context, path string, maxDepth int) ([]sandbox.FileInfo, error) {
 	if maxDepth <= 0 {
 		maxDepth = 2
 	}
@@ -148,13 +171,13 @@ func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]str
 	if err := s.post(ctx, "/v1/file/list", body, &data); err != nil {
 		return nil, sandbox.NewFileError(err.Error(), path, "list")
 	}
-	out := make([]string, 0, len(data.Files))
+	out := make([]sandbox.FileInfo, 0, len(data.Files))
 	for _, f := range data.Files {
-		entry := f.Path
-		if f.IsDirectory && !strings.HasSuffix(entry, "/") {
-			entry += "/"
+		entry := sandbox.FileInfo{Path: sandbox.ReverseResolvePath(s.mounts, f.Path), IsDir: f.IsDirectory, IsSymlink: f.IsSymlink}
+		if f.Size != nil {
+			entry.Size = *f.Size
 		}
-		out = append(out, sandbox.ReverseResolvePath(s.mounts, entry))
+		out = append(out, entry)
 	}
 	return out, nil
 }
@@ -163,6 +186,7 @@ type fileInfo struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
 	IsDirectory bool   `json:"is_directory"`
+	IsSymlink   bool   `json:"is_symlink"`
 	Size        *int64 `json:"size"`
 	Extension   string `json:"extension"`
 }

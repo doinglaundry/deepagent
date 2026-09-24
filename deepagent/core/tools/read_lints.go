@@ -16,11 +16,11 @@ type readLintsArgs struct {
 	Paths []string `json:"paths,omitempty"`
 }
 type readLintsTool struct {
-	workspace backend.Workspace
+	workspace backend.Filesystem
 	commands  backend.CommandService
 }
 
-func NewReadLintsTool(workspace backend.Workspace, commands backend.CommandService) (tool.BaseTool, error) {
+func NewReadLintsTool(workspace backend.Filesystem, commands backend.CommandService) (tool.BaseTool, error) {
 	if workspace == nil || commands == nil {
 		return nil, fmt.Errorf("workspace and command service are required")
 	}

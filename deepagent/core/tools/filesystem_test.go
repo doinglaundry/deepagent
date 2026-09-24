@@ -13,9 +13,17 @@ import (
 
 func TestFilesystemToolsNamesAndArgumentAliases(t *testing.T) {
 	ctx := context.Background()
-	b := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true})
+	b, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close(ctx)
 	registered := map[string]einotool.InvokableTool{}
-	for _, tool := range NewFilesystemTools(b, false) {
+	items, err := NewWorkspaceTools(b, WorkspaceToolOptions{EnableCommands: true, EnablePatch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range items {
 		info, err := tool.Info(ctx)
 		if err != nil {
 			t.Fatal(err)

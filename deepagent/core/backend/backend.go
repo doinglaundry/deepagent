@@ -2,10 +2,7 @@
 package backend
 
 import (
-	"context"
 	"time"
-
-	serialiser "eino-cli/deepagent/helper/serialiser"
 )
 
 // FileOperationError 文件操作错误类型
@@ -22,15 +19,6 @@ const (
 
 func (e FileOperationError) Error() string {
 	return string(e)
-}
-
-type CommonToolResult struct {
-	Data   any    `json:"data"`
-	Errmsg string `json:"errmsg"`
-}
-
-func (c CommonToolResult) String() string {
-	return serialiser.ToString(c)
 }
 
 // FileInfo 文件信息
@@ -87,14 +75,6 @@ type EditResult struct {
 	FilesUpdate map[string]*FileData `json:"files_update,omitempty"`
 }
 
-// ExecuteResponse 命令执行响应
-type ExecuteResponse struct {
-	Output         string `json:"output"`
-	ExitCode       int    `json:"exit_code"`
-	Truncated      bool   `json:"truncated,omitempty"` // 输出是否被截断
-	ShellSessionID string
-}
-
 // CommandRequest describes a one-shot shell command execution.
 type CommandRequest struct {
 	Command        string
@@ -127,87 +107,6 @@ type FileDownloadResponse struct {
 	Content []byte             `json:"content,omitempty"`
 	Error   FileOperationError `json:"error,omitempty"`
 }
-
-// Backend 后端接口
-// 定义文件操作的统一接口
-type Backend interface {
-	// LsInfo 列出目录内容
-	LsInfo(ctx context.Context, path string) ([]FileInfo, error)
-
-	// Read 读取文件内容
-	// offset: 起始行号（从0开始），nil 表示从头开始
-	// limit: 读取的行数，nil 表示读取全部
-	Read(ctx context.Context, path string, offset, limit *int) (string, error)
-
-	// Write 写入文件
-	Write(ctx context.Context, path string, content string) (*WriteResult, error)
-
-	// Edit 编辑文件（字符串替换）
-	Edit(ctx context.Context, path string, oldString, newString string, replaceAll bool) (*EditResult, error)
-
-	// GrepRaw 搜索文件内容
-	// pattern: 正则表达式
-	// path: 搜索路径（文件或目录）
-	// glob: 文件名过滤模式
-	GrepRaw(ctx context.Context, pattern string, path string, glob string) ([]GrepMatch, error)
-
-	// GlobInfo 使用 glob 模式匹配文件
-	GlobInfo(ctx context.Context, pattern string, path string) ([]FileInfo, error)
-
-	// UploadFiles 批量上传文件
-	UploadFiles(ctx context.Context, files []struct {
-		Path    string
-		Content []byte
-	}) ([]FileUploadResponse, error)
-
-	// ChangeDir 切换当前工作目录
-	ChangeDir(ctx context.Context, path string) error
-}
-
-// ApplyPatchBackend 支持 apply_patch 工具的后端接口
-type ApplyPatchBackend interface {
-	Backend
-
-	// SupportsApplyPatch 返回当前后端是否支持 apply_patch 工具
-	SupportsApplyPatch() bool
-
-	// ApplyPatch 应用 patch 内容
-	ApplyPatch(ctx context.Context, patch string) (string, error)
-}
-
-type CommandExecutor interface {
-	// Execute 执行 shell 命令
-	Execute(ctx context.Context, command string) (*ExecuteResponse, error)
-
-	// ExecuteCommand 执行结构化的一次性 shell 命令。
-	ExecuteCommand(ctx context.Context, req CommandRequest) (*CommandResult, error)
-}
-
-// WorkspaceBackend exposes operations that require a concrete workspace root.
-// It is optional so remote or virtual backends can keep implementing Backend.
-type WorkspaceBackend interface {
-	Backend
-	RootDir() string
-	DeleteFile(ctx context.Context, path string) (string, error)
-}
-
-// SandboxBackend 沙箱后端接口
-// 扩展 Backend 接口，支持命令执行
-type SandboxBackend interface {
-	Backend
-
-	CommandExecutor
-
-	// ID 返回后端唯一标识符
-	ID() string
-}
-
-// BackendFactory 后端工厂函数类型
-// 用于延迟初始化后端
-type BackendFactory func(ctx context.Context) Backend
-
-// SandboxBackendFactory 沙箱后端工厂函数类型
-type SandboxBackendFactory func(ctx context.Context) SandboxBackend
 
 // 常量定义
 const (

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"eino-cli/deepagent/config"
 	"eino-cli/deepagent/core/mcp"
 	"eino-cli/deepagent/core/modelhub"
 	"eino-cli/deepagent/core/tools"
@@ -17,25 +18,27 @@ import (
 type ManagerConfig = manager.Config
 
 type Config struct {
-	Manager                ManagerConfig     `yaml:"manager"`
-	Host                   threadhost.Config `yaml:"worker"`
-	Models                 []modelhub.Config `yaml:"models"`
-	DefaultModel           string            `yaml:"default_model"`
-	RoleModels             map[string]string `yaml:"role_models"`
-	SystemPrompt           string            `yaml:"system_prompt"`
-	MaxSteps               int               `yaml:"max_steps"`
-	MaxModelCalls          int               `yaml:"max_model_calls"`
-	ContextWindow          int64             `yaml:"context_window"`
-	CompactThresholdTokens int64             `yaml:"compact_threshold_tokens"`
-	KeepRecentMessages     int               `yaml:"keep_recent_messages"`
-	HistoryTable           string            `yaml:"history_table"`
-	MCP                    []mcp.MCPConfig   `yaml:"mcp"`
-	Web                    *tools.WebConfig  `yaml:"web"`
-	SkillPaths             []string          `yaml:"skill_paths"`
-	MemoryEnabled          bool              `yaml:"memory_enabled"`
-	MemoryDir              string            `yaml:"memory_dir"`
-	MemoryUserID           string            `yaml:"memory_user_id"`
-	MemoryLeaseTTL         time.Duration     `yaml:"memory_lease_ttl"`
+	WorkspaceKind          string               `yaml:"workspace_kind"`
+	Docker                 config.SandboxConfig `yaml:"docker"`
+	Manager                ManagerConfig        `yaml:"manager"`
+	Host                   threadhost.Config    `yaml:"worker"`
+	Models                 []modelhub.Config    `yaml:"models"`
+	DefaultModel           string               `yaml:"default_model"`
+	RoleModels             map[string]string    `yaml:"role_models"`
+	SystemPrompt           string               `yaml:"system_prompt"`
+	MaxSteps               int                  `yaml:"max_steps"`
+	MaxModelCalls          int                  `yaml:"max_model_calls"`
+	ContextWindow          int64                `yaml:"context_window"`
+	CompactThresholdTokens int64                `yaml:"compact_threshold_tokens"`
+	KeepRecentMessages     int                  `yaml:"keep_recent_messages"`
+	HistoryTable           string               `yaml:"history_table"`
+	MCP                    []mcp.MCPConfig      `yaml:"mcp"`
+	Web                    *tools.WebConfig     `yaml:"web"`
+	SkillPaths             []string             `yaml:"skill_paths"`
+	MemoryEnabled          bool                 `yaml:"memory_enabled"`
+	MemoryDir              string               `yaml:"memory_dir"`
+	MemoryUserID           string               `yaml:"memory_user_id"`
+	MemoryLeaseTTL         time.Duration        `yaml:"memory_lease_ttl"`
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -65,6 +68,15 @@ func LoadConfig(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	switch c.WorkspaceKind {
+	case "", "local":
+	case "docker":
+		if strings.TrimSpace(c.Docker.Image) == "" {
+			return fmt.Errorf("docker.image required for Docker workspace")
+		}
+	default:
+		return fmt.Errorf("workspace_kind must be local or docker")
+	}
 	if strings.TrimSpace(c.Manager.MySQLDSN) == "" || strings.TrimSpace(c.Manager.RedisAddr) == "" {
 		return fmt.Errorf("manager mysql_dsn and redis_addr are required")
 	}

@@ -18,8 +18,12 @@ func TestToolsUseCanonicalBackend(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	backend := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true})
-	middleware := NewFilesystem(&FilesystemConfig{Backend: backend})
+	backend, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Close(context.Background())
+	middleware := NewFilesystem(&FilesystemConfig{Workspace: backend})
 	items, err := middleware.Tools(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -60,8 +64,12 @@ func TestShellExecutesOnlyClassifiedSafeCommands(t *testing.T) {
 }
 
 func TestReadOnlyFilesystemOmitsMutations(t *testing.T) {
-	backend := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true})
-	items, err := NewFilesystem(&FilesystemConfig{Backend: backend, ReadOnly: true}).Tools(context.Background())
+	backend, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Close(context.Background())
+	items, err := NewFilesystem(&FilesystemConfig{Workspace: backend, ReadOnly: true}).Tools(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +82,7 @@ func TestReadOnlyFilesystemOmitsMutations(t *testing.T) {
 }
 
 type applyPatchProbe struct {
-	*backend.FilesystemBackend
+	*backend.LocalFilesystem
 	patch string
 }
 
@@ -85,8 +93,13 @@ func (p *applyPatchProbe) ApplyPatch(_ context.Context, patch string) (string, e
 }
 
 func TestApplyPatchIsExposedByCapableBackend(t *testing.T) {
-	backend := &applyPatchProbe{FilesystemBackend: backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true})}
-	items, err := NewFilesystem(&FilesystemConfig{Backend: backend}).Tools(context.Background())
+	fs, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close(context.Background())
+	backend := &applyPatchProbe{LocalFilesystem: fs}
+	items, err := NewFilesystem(&FilesystemConfig{Workspace: backend}).Tools(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,8 +122,12 @@ func TestApplyPatchIsExposedByCapableBackend(t *testing.T) {
 }
 
 func TestWorkspaceToolsAreExposed(t *testing.T) {
-	backend := backend.NewSandboxFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true})
-	items, err := NewFilesystem(&FilesystemConfig{Backend: backend}).Tools(context.Background())
+	backend, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Close(context.Background())
+	items, err := NewFilesystem(&FilesystemConfig{Workspace: backend}).Tools(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

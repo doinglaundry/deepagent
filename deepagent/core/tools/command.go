@@ -70,7 +70,7 @@ func (t *commandTool) InvokableRun(ctx context.Context, raw string, _ ...einotoo
 	id := input.TaskID
 	if t.name == "shell" {
 		var err error
-		id, err = t.service.Start(ctx, backend.CommandRequest{Command: input.Command, WorkDir: input.WorkDir, MaxOutputBytes: 64 << 10})
+		id, err = t.service.Start(context.WithoutCancel(ctx), backend.CommandRequest{Command: input.Command, WorkDir: input.WorkDir, MaxOutputBytes: 64 << 10})
 		if err != nil {
 			return "", err
 		}
@@ -81,6 +81,10 @@ func (t *commandTool) InvokableRun(ctx context.Context, raw string, _ ...einotoo
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	snapshot, err := t.service.Wait(waitCtx, id, input.Pattern, input.SinceOffset)
+	if t.name == "shell" && ctx.Err() != nil {
+		_ = t.service.Cancel(context.Background(), id)
+		return "", ctx.Err()
+	}
 	if err != nil && (!errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil) {
 		return "", err
 	}

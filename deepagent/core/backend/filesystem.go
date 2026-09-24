@@ -2,22 +2,17 @@ package backend
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
-const applyPatchBinEnv = "APPLY_PATCH_BIN"
-
 // FilesystemBackend 真实文件系统后端
-type FilesystemBackend struct {
+type LocalFilesystem struct {
 	rootDir       string // 根目录
 	virtualMode   bool   // 虚拟模式（限制在根目录下）
 	maxFileSizeMB int    // 最大文件大小（MB）
+	commands      *Commands
 }
 
 // FilesystemBackendConfig 文件系统后端配置
@@ -34,7 +29,9 @@ type FilesystemBackendConfig struct {
 	MaxFileSizeMB int
 }
 
-// NewFilesystemBackend 创建文件系统后端
+type FilesystemBackend = LocalFilesystem
+
+// NewFilesystemBackend is the compatibility constructor for LocalFilesystem.
 func NewFilesystemBackend(cfg *FilesystemBackendConfig) *FilesystemBackend {
 	rootDir := cfg.RootDir
 	if rootDir == "" {
@@ -47,15 +44,17 @@ func NewFilesystemBackend(cfg *FilesystemBackendConfig) *FilesystemBackend {
 		maxFileSize = MaxFileSizeMB
 	}
 
-	return &FilesystemBackend{
+	b := &LocalFilesystem{
 		rootDir:       rootDir,
 		virtualMode:   cfg.VirtualMode,
 		maxFileSizeMB: maxFileSize,
 	}
+	b.commands = NewCommands("standalone", b)
+	return b
 }
 
 // resolvePath 解析和验证路径
-func (b *FilesystemBackend) resolvePath(path string) (string, error) {
+func (b *LocalFilesystem) resolvePath(path string) (string, error) {
 	// 安全检查：禁止路径遍历
 	if clean := filepath.Clean(path); clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", ErrInvalidPath
@@ -102,7 +101,7 @@ func pathWithinRoot(path, root string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
-func (b *FilesystemBackend) RootDir() string { return b.rootDir }
+func (b *LocalFilesystem) RootDir() string { return b.rootDir }
 
 // LsInfo 列出目录内容
 
@@ -114,7 +113,7 @@ func (b *FilesystemBackend) RootDir() string { return b.rootDir }
 
 // GrepRaw 搜索文件内容
 
-func (b *FilesystemBackend) ChangeDir(ctx context.Context, path string) error {
+func (b *LocalFilesystem) ChangeDir(ctx context.Context, path string) error {
 	absPath, err := b.resolvePath(path)
 	if err != nil {
 		return err
@@ -123,88 +122,12 @@ func (b *FilesystemBackend) ChangeDir(ctx context.Context, path string) error {
 	return os.Chdir(absPath)
 }
 
-func (b *FilesystemBackend) SupportsApplyPatch() bool {
-	_, ok := b.resolveApplyPatchBin()
-	return ok
+func (b *LocalFilesystem) SupportsApplyPatch() bool {
+	return true
 }
 
-func (b *FilesystemBackend) ApplyPatch(ctx context.Context, patch string) (string, error) {
-	binPath, ok := b.resolveApplyPatchBin()
-	if !ok {
-		return "", fmt.Errorf("%s is not set to a valid apply_patch executable", applyPatchBinEnv)
-	}
-
-	cmd := exec.CommandContext(ctx, binPath)
-	cmd.Dir = b.rootDir
-	cmd.Stdin = strings.NewReader(patch)
-
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		output := formatApplyPatchOutput(stdout.String(), stderr.String())
-		if output != "" {
-			err = fmt.Errorf("%w\n%s", err, output)
-		}
-		slog.ErrorContext(ctx, fmt.Sprintf("[FilesystemBackend::ApplyPatch] fail with error:%v", err))
-		return "", err
-	}
-
-	return formatApplyPatchOutput(stdout.String(), stderr.String()), nil
-}
-
-func formatApplyPatchOutput(stdout, stderr string) string {
-	var sb strings.Builder
-
-	if stdout != "" {
-		sb.WriteString("stdout>\n")
-		sb.WriteString(stdout)
-		sb.WriteString("stdout end\n")
-	}
-
-	if stderr != "" {
-		sb.WriteString("stderr>\n")
-		sb.WriteString(stderr)
-		sb.WriteString("stderr end\n")
-	}
-	return sb.String()
-}
-
-func (b *FilesystemBackend) resolveApplyPatchBin() (string, bool) {
-	raw := strings.TrimSpace(os.Getenv(applyPatchBinEnv))
-	if raw == "" {
-		return "", false
-	}
-
-	resolved, err := expandUserPath(raw)
-	if err != nil {
-		return "", false
-	}
-	info, err := os.Stat(resolved)
-	if err != nil || info.IsDir() || !isExecutable(info.Mode()) {
-		return "", false
-	}
-	return resolved, true
-}
-
-func expandUserPath(path string) (string, error) {
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		if path == "~" {
-			return home, nil
-		}
-		return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
-	}
-	return path, nil
-}
-
-func isExecutable(mode os.FileMode) bool {
-	return mode.IsRegular() && mode&0o111 != 0
+func (b *LocalFilesystem) ApplyPatch(ctx context.Context, patch string) (string, error) {
+	return ApplyWorkspacePatch(ctx, b, patch)
 }
 
 // globMaxResults glob 工具最大返回结果数
@@ -276,57 +199,6 @@ func doGlobMatch(patternParts, nameParts []string) bool {
 
 // DownloadFiles 批量下载文件
 
-// SandboxFilesystemBackend 带命令执行的文件系统后端
-type SandboxFilesystemBackend struct {
-	*FilesystemBackend
-	id string
-}
-
-// NewSandboxFilesystemBackend 创建沙箱文件系统后端
-func NewSandboxFilesystemBackend(cfg *FilesystemBackendConfig) *SandboxFilesystemBackend {
-	return &SandboxFilesystemBackend{
-		FilesystemBackend: NewFilesystemBackend(cfg),
-		id:                fmt.Sprintf("sandbox-%d", time.Now().UnixNano()),
-	}
-}
-
-// Execute 执行 shell 命令
-func (b *SandboxFilesystemBackend) Execute(ctx context.Context, command string) (*ExecuteResponse, error) {
-	result, err := b.ExecuteCommand(ctx, CommandRequest{
-		Command:        command,
-		MaxOutputBytes: ToolResultTokenLimit * 4,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &ExecuteResponse{
-		Output:         result.Output,
-		ExitCode:       result.ExitCode,
-		Truncated:      result.Truncated,
-		ShellSessionID: result.ShellSessionID,
-	}, nil
-}
-
-// ExecuteCommand 执行结构化的一次性 shell 命令。
-func (b *SandboxFilesystemBackend) ExecuteCommand(ctx context.Context, req CommandRequest) (*CommandResult, error) {
-	service := NewCommands(b.id, b.FilesystemBackend)
-	defer service.Close(context.Background())
-	return service.Execute(ctx, req)
-}
-
-func (b *SandboxFilesystemBackend) commandWorkDir(workDir string) (string, error) {
-	if workDir == "" {
-		return b.rootDir, nil
-	}
-	if filepath.IsAbs(workDir) {
-		cleaned := filepath.Clean(workDir)
-		if cleaned == b.rootDir || strings.HasPrefix(cleaned, b.rootDir+string(os.PathSeparator)) {
-			return cleaned, nil
-		}
-	}
-	return b.resolvePath(workDir)
-}
-
 func envPairs(env map[string]string) []string {
 	pairs := make([]string, 0, len(env))
 	for k, v := range env {
@@ -335,13 +207,4 @@ func envPairs(env map[string]string) []string {
 	return pairs
 }
 
-// ID 返回后端唯一标识符
-func (b *SandboxFilesystemBackend) ID() string {
-	return b.id
-}
-
-// 确保实现接口
-var _ Backend = (*FilesystemBackend)(nil)
-var _ ApplyPatchBackend = (*FilesystemBackend)(nil)
-var _ WorkspaceBackend = (*FilesystemBackend)(nil)
-var _ SandboxBackend = (*SandboxFilesystemBackend)(nil)
+var _ Filesystem = (*LocalFilesystem)(nil)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"eino-cli/deepagent/config"
 	"eino-cli/deepagent/core/backend"
 	deepagents "eino-cli/deepagent/core/graph"
 	longmemory "eino-cli/deepagent/core/memory"
@@ -22,6 +23,8 @@ import (
 	dalmodel "eino-cli/deepagent/dal/model"
 	inputpkg "eino-cli/deepagent/protocol/input"
 	memorypkg "eino-cli/deepagent/protocol/memory"
+	"eino-cli/deepagent/sandbox"
+	"eino-cli/deepagent/sandbox/aio"
 	threadpkg "eino-cli/deepagent/thread"
 	modelpkg "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -34,6 +37,8 @@ const defaultEventBusSize = 256
 // RuntimeConfig contains process-owned values used to build each Thread and
 // each Run. A RunConfig is intentionally rebuilt for every submitted run.
 type RuntimeConfig struct {
+	WorkspaceKind          string
+	Docker                 config.SandboxConfig
 	Models                 map[string]modelpkg.ToolCallingChatModel
 	DefaultModel           string
 	RoleModels             map[string]string
@@ -85,14 +90,28 @@ func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.T
 	if err != nil {
 		return nil, fmt.Errorf("resolve workdir: %w", err)
 	}
-	backend := backend.NewSandboxFilesystemBackend(&backend.FilesystemBackendConfig{
-		RootDir: workDir, VirtualMode: true,
-	})
-
 	modelName := w.modelName(roleID)
 	chatModel := w.Runtime.Models[modelName]
 	if chatModel == nil {
 		return nil, fmt.Errorf("model %q is unavailable", modelName)
+	}
+	var workspace backend.ToolWorkspace
+	cleanup := func() {}
+	switch w.Runtime.WorkspaceKind {
+	case "", "local":
+		workspace, err = backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: workDir, VirtualMode: true}, threadID)
+	case "docker":
+		var provider sandbox.Sandbox
+		provider, cleanup, err = aio.AcquireDockerWorkspace(ctx, w.Runtime.Docker, info.SessionID+"-"+threadID, workDir)
+		if err == nil {
+			workspace, err = backend.NewDockerFilesystem(provider, workDir, threadID)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported workspace kind %q", w.Runtime.WorkspaceKind)
+	}
+	if err != nil {
+		cleanup()
+		return nil, err
 	}
 	options := agentthread.ThreadOptions{
 		HistoryStore: w.Deps.History, ContextWindow: w.Runtime.ContextWindow,
@@ -110,7 +129,7 @@ func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.T
 	}
 	events := make(chan agentthread.Event, eventBuffer)
 	deepThread := agentthread.New(threadID, nil, events, options)
-	return threadpkg.NewThread(threadpkg.AdapterConfig{
+	thread, err := threadpkg.NewThread(threadpkg.AdapterConfig{
 		SessionID: info.SessionID,
 		ThreadID:  threadID,
 		ThreadInfo: threadpkg.ContextThreadIdentity{
@@ -118,18 +137,36 @@ func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.T
 		},
 		Thread: deepThread, EventBus: events,
 		RunConfig: func(runCtx context.Context, request threadpkg.RunStartRequest) (*agentthread.RunConfig, error) {
-			return w.buildRunConfig(runCtx, info, roleID, workDir, backend, request.Mode)
+			return w.buildRunConfig(runCtx, info, roleID, workDir, workspace, request.Mode)
 		},
 		ApprovalRemember: w.Deps.ApprovalRemember,
 		InterruptResume:  w.Deps.InterruptResume,
 	})
+	if err != nil {
+		_ = workspace.Close(context.WithoutCancel(ctx))
+		cleanup()
+		return nil, err
+	}
+	return &workspaceThread{ThreadRuntime: thread, workspace: workspace, cleanup: cleanup}, nil
+}
+
+type workspaceThread struct {
+	threadpkg.ThreadRuntime
+	workspace backend.ToolWorkspace
+	cleanup   func()
+}
+
+func (t *workspaceThread) Close(ctx context.Context) error {
+	err := errors.Join(t.ThreadRuntime.Close(ctx), t.workspace.Close(context.WithoutCancel(ctx)))
+	t.cleanup()
+	return err
 }
 
 func (w *ThreadHost) buildRunConfig(
 	ctx context.Context,
 	info *dalmodel.Thread,
 	roleID, workDir string,
-	backend backend.Backend,
+	workspace backend.ToolWorkspace,
 	mode inputpkg.UserMessageMode,
 ) (*agentthread.RunConfig, error) {
 	modelName := w.modelName(roleID)
@@ -142,10 +179,10 @@ func (w *ThreadHost) buildRunConfig(
 		CheckpointStore: w.Deps.Checkpoint, EnablePatchToolCalls: true,
 		Tools: append([]tool.BaseTool(nil), w.Deps.Tools...), SkillLoader: w.Deps.SkillLoader,
 		WebConfig:        w.Runtime.Web,
-		Backend:          backend,
+		Workspace:        workspace,
 		FilesystemConfig: &deepagents.FilesystemConfig{WorkDir: workDir},
 	}
-	agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewProjectInstructions(backend))
+	agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewProjectInstructions(workspace))
 	if w.Deps.Collaboration != nil {
 		agentConfig.Middlewares = append(agentConfig.Middlewares, newCollaborationMiddleware(w.Deps.Collaboration, info))
 	}

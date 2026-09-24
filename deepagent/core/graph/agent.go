@@ -111,13 +111,21 @@ func (a *DeepAgent) configureRun(ctx context.Context) (err error) {
 	}
 	if cfg.FilesystemConfig != nil {
 		filesystemCfg := cfg.FilesystemConfig
-		if cfg.Backend == nil && filesystemCfg.WorkDir != "" {
-			cfg.Backend = backend.NewSandboxFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: filesystemCfg.WorkDir, VirtualMode: true})
+		ws := cfg.Workspace
+		owned := false
+		if ws == nil && filesystemCfg.localFromOption {
+			var err error
+			ws, err = backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: filesystemCfg.WorkDir, VirtualMode: true}, cfg.ThreadID+"/"+cfg.RunID)
+			if err != nil {
+				return err
+			}
+			owned = true
 		}
-		if cfg.Backend == nil {
-			return errors.New("filesystem requires backend or workdir")
+		if ws == nil {
+			return errors.New("filesystem requires LocalFilesystem or DockerFilesystem")
 		}
-		configured = append(configured, middleware.NewFilesystem(&middleware.FilesystemConfig{ThreadID: cfg.ThreadID, Backend: cfg.Backend, WorkDir: filesystemCfg.WorkDir, ReadOnly: filesystemCfg.ReadOnly, DisableUploadDownload: filesystemCfg.DisableUploadDownload, DisableExecute: filesystemCfg.DisableExecute, DisableApplyPatch: filesystemCfg.DisableApplyPatch, CommandTimeout: filesystemCfg.CommandTimeout, ToolMask: cfg.ToolMask}))
+		cfg.Workspace = ws
+		configured = append(configured, middleware.NewFilesystem(&middleware.FilesystemConfig{Workspace: ws, OwnWorkspace: owned, ReadOnly: filesystemCfg.ReadOnly, DisableExecute: filesystemCfg.DisableExecute, DisableApplyPatch: filesystemCfg.DisableApplyPatch, CommandTimeout: filesystemCfg.CommandTimeout}))
 	}
 	if cfg.WebConfig != nil {
 		webConfig := *cfg.WebConfig

@@ -1,6 +1,9 @@
 package distributed
 
 import (
+	"eino-cli/deepagent/config"
+	"eino-cli/deepagent/core/modelhub"
+	"eino-cli/deepagent/manager/compat"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,5 +43,16 @@ func TestEnvironmentExpansionCannotChangeYAMLStructure(t *testing.T) {
 	}
 	if c.Models[0].APIKey != os.Getenv("WORKER_TEST_KEY") {
 		t.Fatal("API key was changed by YAML parsing")
+	}
+}
+
+func TestDockerWorkspaceRequiresImage(t *testing.T) {
+	base := Config{Manager: manager.Config{Namespace: "default", MySQLDSN: "dsn", RedisAddr: "redis"}, Models: []modelhub.Config{{Name: "primary"}}, DefaultModel: "primary", WorkspaceKind: "docker"}
+	if err := base.Validate(); err == nil {
+		t.Fatal("Docker workspace without image accepted")
+	}
+	base.Docker = config.SandboxConfig{Image: "aio-image"}
+	if err := base.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }

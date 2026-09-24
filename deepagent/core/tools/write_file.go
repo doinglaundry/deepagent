@@ -7,11 +7,11 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-type WriteFileTool struct{ backend backend.Backend }
+type WriteFileTool struct{ backend backend.Filesystem }
 
 func (*WriteFileTool) RequiresApproval() bool { return true }
 
-func NewWriteFileTool(backend backend.Backend) tool.BaseTool {
+func NewWriteFileTool(backend backend.Filesystem) tool.BaseTool {
 	return &WriteFileTool{backend: backend}
 }
 func (*WriteFileTool) Info(context.Context) (*schema.ToolInfo, error) {

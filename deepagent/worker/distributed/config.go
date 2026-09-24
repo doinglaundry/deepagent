@@ -3,6 +3,7 @@
 package distributed
 
 import (
+	"eino-cli/deepagent/config"
 	"eino-cli/deepagent/core/mcp"
 	"eino-cli/deepagent/core/modelhub"
 	"eino-cli/deepagent/manager/compat"
@@ -30,25 +31,27 @@ type WebConfig struct {
 }
 
 type Config struct {
-	CompactThresholdTokens int               `yaml:"compact_threshold_tokens"`
-	KeepRecentMessages     int               `yaml:"keep_recent_messages"`
-	Checkpoint             CheckpointConfig  `yaml:"checkpoint"`
-	MemoryScanInterval     time.Duration     `yaml:"memory_scan_interval"`
-	MemoryLeaseTTL         time.Duration     `yaml:"memory_lease_ttl"`
-	Web                    WebConfig         `yaml:"web"`
-	MemoryUserID           string            `yaml:"memory_user_id"`
-	Manager                manager.Config    `yaml:"-"`
-	Worker                 managed.Config    `yaml:"worker"`
-	Models                 []modelhub.Config `yaml:"models"`
-	DefaultModel           string            `yaml:"default_model"`
-	RoleModels             map[string]string `yaml:"role_models"`
-	SystemPrompt           string            `yaml:"system_prompt"`
-	MaxSteps               int               `yaml:"max_steps"`
-	MaxModelCalls          int               `yaml:"max_model_calls"`
-	MCP                    []MCPConfig       `yaml:"mcp"`
-	SkillPaths             []string          `yaml:"skill_paths"`
-	MemoryEnabled          bool              `yaml:"memory_enabled"`
-	MemoryDir              string            `yaml:"memory_dir"`
+	WorkspaceKind          string               `yaml:"workspace_kind"`
+	Docker                 config.SandboxConfig `yaml:"docker"`
+	CompactThresholdTokens int                  `yaml:"compact_threshold_tokens"`
+	KeepRecentMessages     int                  `yaml:"keep_recent_messages"`
+	Checkpoint             CheckpointConfig     `yaml:"checkpoint"`
+	MemoryScanInterval     time.Duration        `yaml:"memory_scan_interval"`
+	MemoryLeaseTTL         time.Duration        `yaml:"memory_lease_ttl"`
+	Web                    WebConfig            `yaml:"web"`
+	MemoryUserID           string               `yaml:"memory_user_id"`
+	Manager                manager.Config       `yaml:"-"`
+	Worker                 managed.Config       `yaml:"worker"`
+	Models                 []modelhub.Config    `yaml:"models"`
+	DefaultModel           string               `yaml:"default_model"`
+	RoleModels             map[string]string    `yaml:"role_models"`
+	SystemPrompt           string               `yaml:"system_prompt"`
+	MaxSteps               int                  `yaml:"max_steps"`
+	MaxModelCalls          int                  `yaml:"max_model_calls"`
+	MCP                    []MCPConfig          `yaml:"mcp"`
+	SkillPaths             []string             `yaml:"skill_paths"`
+	MemoryEnabled          bool                 `yaml:"memory_enabled"`
+	MemoryDir              string               `yaml:"memory_dir"`
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -101,6 +104,15 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	switch c.WorkspaceKind {
+	case "", "local":
+	case "docker":
+		if strings.TrimSpace(c.Docker.Image) == "" {
+			return fmt.Errorf("docker.image required for Docker workspace")
+		}
+	default:
+		return fmt.Errorf("workspace_kind must be local or docker")
+	}
 	switch c.Checkpoint.Backend {
 	case "", "mysql", "redis":
 	case "file":

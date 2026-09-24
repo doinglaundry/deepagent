@@ -34,31 +34,77 @@ type CommandSnapshot struct {
 
 // Commands owns jobs for exactly one thread. There is no process-global job map.
 type Commands struct {
-	mu        sync.Mutex
-	threadID  string
-	workspace Workspace
-	jobs      map[string]*commandJob
-	closed    bool
+	mu         sync.Mutex
+	threadID   string
+	workspace  Filesystem
+	command    func(context.Context, CommandRequest, string, string) (*exec.Cmd, error)
+	killRemote func(context.Context, string) error
+	jobs       map[string]*commandJob
+	closed     bool
 }
 type commandJob struct {
-	mu         sync.Mutex
-	id         string
-	threadID   string
-	output     []byte
-	total      int
-	limit      int
-	keepPrefix bool
-	exitCode   int
-	timedOut   bool
-	done       chan struct{}
-	changed    chan struct{}
-	cancel     context.CancelFunc
-	finished   bool
-	started    time.Time
+	mu             sync.Mutex
+	id             string
+	threadID       string
+	output         []byte
+	total          int
+	limit          int
+	keepPrefix     bool
+	exitCode       int
+	timedOut       bool
+	done           chan struct{}
+	changed        chan struct{}
+	cancel         context.CancelFunc
+	stopRemoteOnce sync.Once
+	stopRemoteErr  error
+	finished       bool
+	started        time.Time
 }
 
-func NewCommands(threadID string, workspace Workspace) *Commands {
+func NewCommands(threadID string, workspace Filesystem) *Commands {
 	return &Commands{threadID: threadID, workspace: workspace, jobs: map[string]*commandJob{}}
+}
+
+// NewDockerCommands runs every job in the named container. The job ledger is
+// still thread scoped and shared by execute, shell and await_shell.
+func NewDockerCommands(threadID string, workspace Filesystem, containerID string) *Commands {
+	s := NewCommands(threadID, workspace)
+	s.command = func(ctx context.Context, request CommandRequest, dir, jobID string) (*exec.Cmd, error) {
+		if containerID == "" {
+			return nil, fmt.Errorf("docker container ID is required")
+		}
+		args := []string{"exec", "-i", "-w", dir}
+		for _, pair := range envPairs(request.Env) {
+			args = append(args, "-e", pair)
+		}
+		marker := "/tmp/deepagent-command-" + jobID + ".pid"
+		const script = `marker=$1; shift; printf '%s' "$$" > "$marker"; /bin/sh -c "$1"; code=$?; rm -f "$marker"; exit "$code"`
+		args = append(args, containerID, "/bin/sh", "-c", script, "sh", marker, request.Command)
+		return exec.CommandContext(ctx, "docker", args...), nil
+	}
+	s.killRemote = func(ctx context.Context, jobID string) error {
+		marker := "/tmp/deepagent-command-" + jobID + ".pid"
+		const script = `marker=$1; n=0; while [ ! -s "$marker" ] && [ "$n" -lt 40 ]; do sleep .05; n=$((n+1)); done; [ -s "$marker" ] || exit 0; pid=$(cat "$marker"); case "$pid" in ''|*[!0-9]*) exit 2;; esac; kill_tree() { for status in /proc/[0-9]*/status; do [ -r "$status" ] || continue; while read -r key value rest; do [ "$key" = PPid: ] && break; done < "$status"; if [ "$value" = "$1" ]; then child=${status#/proc/}; child=${child%/status}; kill_tree "$child"; fi; done; kill -KILL "$1" 2>/dev/null || true; }; kill_tree "$pid"; rm -f "$marker"`
+		cmd := exec.CommandContext(ctx, "docker", "exec", containerID, "/bin/sh", "-c", script, "sh", marker)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("stop Docker job %s: %s: %w", jobID, strings.TrimSpace(string(out)), err)
+		}
+		return nil
+	}
+	return s
+}
+
+func (s *Commands) stopRemote(job *commandJob) error {
+	if s.killRemote == nil {
+		return nil
+	}
+	job.stopRemoteOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		job.stopRemoteErr = s.killRemote(ctx, job.id)
+	})
+	return job.stopRemoteErr
 }
 func (s *Commands) Start(ctx context.Context, request CommandRequest) (string, error) {
 	if s.workspace == nil || s.threadID == "" {
@@ -78,12 +124,16 @@ func (s *Commands) Start(ctx context.Context, request CommandRequest) (string, e
 	if err != nil {
 		return "", err
 	}
-	info, err := os.Stat(dir)
-	if err != nil {
-		return "", err
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("command working directory is not a directory")
+	if s.command == nil {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return "", err
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("command working directory is not a directory")
+		}
+	} else if _, err := s.workspace.List(ctx, dir); err != nil {
+		return "", fmt.Errorf("command working directory: %w", err)
 	}
 	jobCtx, cancel := context.WithCancel(ctx)
 	if request.Timeout > 0 {
@@ -97,9 +147,18 @@ func (s *Commands) Start(ctx context.Context, request CommandRequest) (string, e
 		limit = 64 << 10
 	}
 	job := &commandJob{id: uuid.NewString(), threadID: s.threadID, limit: limit, keepPrefix: request.KeepOutputPrefix, done: make(chan struct{}), changed: make(chan struct{}), cancel: cancel, started: time.Now()}
-	cmd := exec.CommandContext(jobCtx, "/bin/bash", "-c", request.Command)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), envPairs(request.Env)...)
+	var cmd *exec.Cmd
+	if s.command != nil {
+		cmd, err = s.command(jobCtx, request, dir, job.id)
+		if err != nil {
+			cancel()
+			return "", err
+		}
+	} else {
+		cmd = exec.CommandContext(jobCtx, "/bin/bash", "-c", request.Command)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), envPairs(request.Env)...)
+	}
 	cmd.Stdout = job
 	cmd.Stderr = job
 	configureShellCommandCancel(cmd)
@@ -136,6 +195,9 @@ func (s *Commands) Start(ctx context.Context, request CommandRequest) (string, e
 	s.mu.Unlock()
 	go func() {
 		err := cmd.Wait()
+		if jobCtx.Err() != nil {
+			_ = s.stopRemote(job)
+		}
 		code := 0
 		if err != nil {
 			var exit *exec.ExitError
@@ -234,10 +296,17 @@ func (s *Commands) Cancel(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	job.mu.Lock()
+	finished := job.finished
+	job.mu.Unlock()
+	var stopErr error
+	if !finished {
+		stopErr = s.stopRemote(job)
+	}
 	job.cancel()
 	select {
 	case <-job.done:
-		return nil
+		return stopErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -247,10 +316,19 @@ func (s *Commands) Close(ctx context.Context) error {
 	s.closed = true
 	jobs := make([]*commandJob, 0, len(s.jobs))
 	for _, job := range s.jobs {
-		job.cancel()
 		jobs = append(jobs, job)
 	}
 	s.mu.Unlock()
+	var stopErr error
+	for _, job := range jobs {
+		job.mu.Lock()
+		finished := job.finished
+		job.mu.Unlock()
+		if !finished {
+			stopErr = errors.Join(stopErr, s.stopRemote(job))
+		}
+		job.cancel()
+	}
 	for _, job := range jobs {
 		select {
 		case <-job.done:
@@ -258,7 +336,7 @@ func (s *Commands) Close(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
-	return nil
+	return stopErr
 }
 func (s *Commands) Execute(ctx context.Context, request CommandRequest) (*CommandResult, error) {
 	id, err := s.Start(ctx, request)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -56,6 +57,12 @@ func New(cfg *config.Config, sessionID string) (sandbox.SandboxManager, error) {
 		lastActivity: map[string]time.Time{},
 		warmPool:     map[string]warmEntry{},
 		stopIdle:     make(chan struct{}),
+	}
+	if cfg.Sandbox.Use == "docker" {
+		if _, err := exec.LookPath("docker"); err != nil {
+			return nil, fmt.Errorf("docker CLI is required: %w", err)
+		}
+		m.rt = runtimeDocker
 	}
 	if m.rt == "" {
 		return nil, fmt.Errorf("aio: no container runtime (docker / container CLI)")
@@ -109,8 +116,17 @@ func (m *Manager) reuse() (string, bool) {
 }
 
 func (m *Manager) attachLocked(sid string, info SandboxInfo) {
-	mounts, _ := sandboxpaths.BuildMountMappings(m.sessionID)
-	m.sandboxes[sid] = newSandbox(sid, m.sessionID, info.SandboxURL, mounts)
+	var mounts []sandboxpaths.MountMapping
+	if m.cfg.Sandbox.Use != "docker" {
+		mounts, _ = sandboxpaths.BuildMountMappings(m.sessionID)
+	}
+	for _, mount := range m.cfg.Sandbox.Mounts {
+		mounts = append(mounts, sandboxpaths.MountMapping{HostPath: mount.HostPath, VirtualPath: mount.ContainerPath, ReadOnly: mount.ReadOnly})
+	}
+	client := newSandbox(sid, m.sessionID, info.SandboxURL, mounts)
+	client.containerName = info.ContainerName
+	client.runtime = m.rt
+	m.sandboxes[sid] = client
 	m.infos[sid] = info
 	m.lastActivity[sid] = time.Now()
 }
@@ -339,14 +355,21 @@ func (m *Manager) reconcileOrphans() {
 
 // buildMounts assembles per-session mounts from sandboxpaths.BuildMountMappings.
 func (m *Manager) buildMounts(ctx context.Context) []mountSpec {
-	mounts, err := sandboxpaths.BuildMountMappings(m.sessionID)
-	if err != nil {
-		m.log.Warn("aio: build mount mappings", "session_id", m.sessionID, "error", err)
-		return nil
+	var mounts []sandboxpaths.MountMapping
+	if m.cfg.Sandbox.Use != "docker" {
+		var err error
+		mounts, err = sandboxpaths.BuildMountMappings(m.sessionID)
+		if err != nil {
+			m.log.Warn("aio: build mount mappings", "session_id", m.sessionID, "error", err)
+			return nil
+		}
 	}
 	out := make([]mountSpec, 0, len(mounts))
 	for _, mm := range mounts {
 		out = append(out, mountSpec{Host: mm.HostPath, Container: mm.VirtualPath, ReadOnly: mm.ReadOnly})
+	}
+	for _, mount := range m.cfg.Sandbox.Mounts {
+		out = append(out, mountSpec{Host: mount.HostPath, Container: mount.ContainerPath, ReadOnly: mount.ReadOnly})
 	}
 	return out
 }

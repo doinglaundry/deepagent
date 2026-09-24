@@ -66,6 +66,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Config: cfg.Host,
 		Client: coordinator,
 		Runtime: threadhost.RuntimeConfig{
+			WorkspaceKind: cfg.WorkspaceKind, Docker: cfg.Docker,
 			Models: models, DefaultModel: cfg.DefaultModel, RoleModels: cfg.RoleModels,
 			SystemPrompt: cfg.SystemPrompt, MaxSteps: cfg.MaxSteps, MaxModelCalls: cfg.MaxModelCalls,
 			ContextWindow: cfg.ContextWindow, CompactThresholdTokens: cfg.CompactThresholdTokens,

@@ -9,11 +9,11 @@ import (
 )
 
 type ListFilesTool struct {
-	backend backend.Backend
+	backend backend.Filesystem
 	name    string
 }
 
-func NewListFilesTool(backend backend.Backend) tool.BaseTool {
+func NewListFilesTool(backend backend.Filesystem) tool.BaseTool {
 	return &ListFilesTool{backend: backend}
 }
 func (t *ListFilesTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -32,7 +32,7 @@ func (t *ListFilesTool) InvokableRun(ctx context.Context, args string, _ ...tool
 	if err := decodeToolArgs(args, &in); err != nil {
 		return "", err
 	}
-	items, err := t.backend.LsInfo(ctx, in.Path)
+	items, err := t.backend.List(ctx, in.Path)
 	if err != nil {
 		return "", err
 	}

@@ -11,19 +11,8 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func NewFilesystemTools(b backend.Backend, readOnly bool) []einotool.BaseTool {
-	result := []einotool.BaseTool{NewListFilesTool(b), &ListFilesTool{backend: b, name: "ls"}, NewReadFileTool(b), &fileSearchTool{backend: b, name: "glob"}, &fileSearchTool{backend: b, name: "grep"}, &fileSearchTool{backend: b, name: "rg"}}
-	if !readOnly {
-		result = append(result, NewWriteFileTool(b), NewEditFileTool(b))
-		if workspace, ok := b.(backend.WorkspaceBackend); ok {
-			result = append(result, NewDeleteFileTool(workspace))
-		}
-	}
-	return result
-}
-
 type fileSearchTool struct {
-	backend backend.Backend
+	backend backend.Filesystem
 	name    string
 }
 
@@ -51,7 +40,7 @@ func (t *fileSearchTool) InvokableRun(ctx context.Context, raw string, _ ...eino
 		return "", fmt.Errorf("pattern is required")
 	}
 	if t.name == "glob" {
-		files, err := t.backend.GlobInfo(ctx, input.Pattern, input.Path)
+		files, err := t.backend.Glob(ctx, input.Pattern, input.Path)
 		if err != nil {
 			return "", err
 		}
@@ -61,7 +50,7 @@ func (t *fileSearchTool) InvokableRun(ctx context.Context, raw string, _ ...eino
 	if input.IgnoreCase {
 		input.Pattern = "(?i)" + input.Pattern
 	}
-	matches, err := t.backend.GrepRaw(ctx, input.Pattern, input.Path, input.Glob)
+	matches, err := t.backend.Grep(ctx, input.Pattern, input.Path, input.Glob)
 	if err != nil {
 		return "", err
 	}

@@ -7,11 +7,11 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-type DeleteFileTool struct{ workspace backend.WorkspaceBackend }
+type DeleteFileTool struct{ workspace backend.Filesystem }
 
 func (*DeleteFileTool) RequiresApproval() bool { return true }
 
-func NewDeleteFileTool(workspace backend.WorkspaceBackend) tool.BaseTool {
+func NewDeleteFileTool(workspace backend.Filesystem) tool.BaseTool {
 	return &DeleteFileTool{workspace: workspace}
 }
 func (*DeleteFileTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -24,5 +24,5 @@ func (t *DeleteFileTool) InvokableRun(ctx context.Context, args string, _ ...too
 	if err := decodeToolArgs(args, &in); err != nil {
 		return "", err
 	}
-	return t.workspace.DeleteFile(ctx, in.Path)
+	return t.workspace.Delete(ctx, in.Path)
 }

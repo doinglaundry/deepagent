@@ -16,6 +16,12 @@ worker:
   idle_timeout: 5s
   shutdown_drain_timeout: 30s
 
+workspace_kind: local # local or docker
+# For Docker, set workspace_kind: docker and provide an image with the aio file API.
+# docker:
+#   image: "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest"
+#   container_prefix: "deepagent-workspace"
+
 default_model: primary
 models:
   - name: primary

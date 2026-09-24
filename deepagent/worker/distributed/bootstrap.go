@@ -3,6 +3,7 @@ package distributed
 import (
 	"context"
 	"eino-cli/deepagent/core/middleware"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -18,6 +19,8 @@ import (
 	"eino-cli/deepagent/core/types"
 	"eino-cli/deepagent/manager/api"
 	"eino-cli/deepagent/manager/compat"
+	"eino-cli/deepagent/sandbox"
+	"eino-cli/deepagent/sandbox/aio"
 	corethread "eino-cli/deepagent/thread"
 	"eino-cli/deepagent/worker/managed"
 	"eino-cli/deepagent/worker/tasktool"
@@ -98,14 +101,40 @@ func NewFactory(ctx context.Context, m api.Manager, c Config) (managed.Factory, 
 		if claim.Thread.WorkDir == "" {
 			return nil, fmt.Errorf("thread working directory required")
 		}
-		fs := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: claim.Thread.WorkDir, VirtualMode: true, MaxFileSizeMB: 1})
+		var fs backend.ToolWorkspace
+		workspaceCleanup := func() {}
+		var err error
+		if c.WorkspaceKind == "docker" {
+			var provider sandbox.Sandbox
+			provider, workspaceCleanup, err = aio.AcquireDockerWorkspace(claimCtx, c.Docker, claim.Thread.SessionID+"-"+claim.Thread.ID, claim.Thread.WorkDir)
+			if err == nil {
+				fs, err = backend.NewDockerFilesystem(provider, claim.Thread.WorkDir, claim.Thread.ID)
+			}
+		} else {
+			fs, err = backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: claim.Thread.WorkDir, VirtualMode: true}, claim.Thread.ID)
+		}
+		if err != nil {
+			workspaceCleanup()
+			return nil, err
+		}
+		keepWorkspace := false
+		defer func() {
+			if !keepWorkspace {
+				_ = fs.Close(context.WithoutCancel(claimCtx))
+				workspaceCleanup()
+			}
+		}()
 		if _, err := fs.Resolve(claimCtx, ".", false); err != nil {
 			return nil, fmt.Errorf("thread work directory: %w", err)
 		}
-		tools := []tool.BaseTool{coretools.GetFollowUpTool(), coretools.NewSearchFilesTool(fs)}
+		tools := []tool.BaseTool{coretools.GetFollowUpTool()}
 		tools = append(tools, mcpTools...)
 		tools = append(tools, web...)
-		research, err := newResearchTool(claimCtx, selected, append(coretools.NewFilesystemTools(fs, true), tools...))
+		readTools, err := coretools.NewWorkspaceTools(fs, coretools.WorkspaceToolOptions{ReadOnly: true})
+		if err != nil {
+			return nil, err
+		}
+		research, err := newResearchTool(claimCtx, selected, append(readTools, tools...))
 		if err != nil {
 			return nil, err
 		}
@@ -128,7 +157,7 @@ func NewFactory(ctx context.Context, m api.Manager, c Config) (managed.Factory, 
 		if c.Checkpoint.Backend == "" || c.Checkpoint.Backend == "mysql" {
 			threadCheckpoints = Checkpoints{Manager: m, Permit: claim.Permit}
 		}
-		cfg := agentthread.RunConfig{EnablePlan: true, Agent: graph.Config{Backend: fs, FilesystemConfig: &graph.FilesystemConfig{WorkDir: fs.Root(), ReadOnly: claim.Thread.PlanMode, CommandTimeout: time.Minute}, Policy: coretools.PolicyFunc(func(_ context.Context, call types.ToolCall, descriptor coretools.Descriptor) (coretools.Decision, error) {
+		cfg := agentthread.RunConfig{EnablePlan: true, Agent: graph.Config{Workspace: fs, FilesystemConfig: &graph.FilesystemConfig{WorkDir: fs.Root(), ReadOnly: claim.Thread.PlanMode, CommandTimeout: time.Minute}, Policy: coretools.PolicyFunc(func(_ context.Context, call types.ToolCall, descriptor coretools.Descriptor) (coretools.Decision, error) {
 			action := coretools.Allow
 			if descriptor.RequiresApproval || call.Name == "write_file" || call.Name == "edit_file" || call.Name == "delete_file" {
 				action = coretools.AskApproval
@@ -173,7 +202,12 @@ func NewFactory(ctx context.Context, m api.Manager, c Config) (managed.Factory, 
 		if err != nil {
 			return nil, err
 		}
-		return workerthread.NewTransport(claimCtx, adapter, claim.Thread)
+		runtime, err := workerthread.NewTransport(claimCtx, &workspaceThread{ThreadRuntime: adapter, workspace: fs, cleanup: workspaceCleanup}, claim.Thread)
+		if err != nil {
+			return nil, err
+		}
+		keepWorkspace = true
+		return runtime, nil
 	}
 	return factory, cleanup, nil
 }
@@ -201,4 +235,16 @@ func safeComponent(s string) string {
 	// Session IDs normally are generated IDs; encode arbitrary identifiers without
 	// path traversal or collisions caused by replacing distinct punctuation.
 	return fmt.Sprintf("%x", []byte(s))
+}
+
+type workspaceThread struct {
+	corethread.ThreadRuntime
+	workspace backend.ToolWorkspace
+	cleanup   func()
+}
+
+func (t *workspaceThread) Close(ctx context.Context) error {
+	err := errors.Join(t.ThreadRuntime.Close(ctx), t.workspace.Close(context.WithoutCancel(ctx)))
+	t.cleanup()
+	return err
 }

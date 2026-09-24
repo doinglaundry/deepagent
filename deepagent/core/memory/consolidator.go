@@ -2,7 +2,10 @@ package memory
 
 import (
 	"context"
+	"eino-cli/deepagent/core/backend"
 	deepagents "eino-cli/deepagent/core/graph"
+	"eino-cli/deepagent/core/tools"
+	"eino-cli/deepagent/core/types"
 	"errors"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -27,8 +30,16 @@ func AgentConsolidator(m model.ToolCallingChatModel, root string) func(context.C
 		if e = os.WriteFile(filepath.Join(dir, "SOURCES.json"), []byte(extractions), 0600); e != nil {
 			return "", e
 		}
+		workspace, e := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: dir, VirtualMode: true}, "memory-consolidation")
+		if e != nil {
+			return "", e
+		}
+		defer workspace.Close(context.WithoutCancel(ctx))
 		a, e := deepagents.New(ctx, deepagents.WithConfig(&deepagents.Config{
-			Model: m, MaxSteps: 20, MaxModelCalls: 8,
+			Model: m, Workspace: workspace, MaxSteps: 20, MaxModelCalls: 8,
+			Policy: tools.PolicyFunc(func(_ context.Context, _ types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
+				return tools.Decision{Action: tools.Allow}, nil
+			}),
 			FilesystemConfig: &deepagents.FilesystemConfig{WorkDir: dir, DisableExecute: true, DisableApplyPatch: true, DisableUploadDownload: true},
 			ToolMask: func(_ context.Context, info *schema.ToolInfo) bool {
 				return info != nil && (info.Name == "read_file" || info.Name == "ls" || info.Name == "write_file")
