@@ -4,10 +4,10 @@ package thread
 
 import (
 	context "context"
-	agentthread "eino-cli/deepagent/core/agentthread"
 	constant "eino-cli/deepagent/core/constant"
-	planmode "eino-cli/deepagent/core/middlewares/planmode"
+	agentthread "eino-cli/deepagent/core/runtime/agentthread"
 	tools "eino-cli/deepagent/core/tools"
+	coretypes "eino-cli/deepagent/core/types"
 	eventpkg "eino-cli/deepagent/protocol/event"
 	inputpkg "eino-cli/deepagent/protocol/input"
 	json "encoding/json"
@@ -263,22 +263,34 @@ func (t *Thread) ActiveRun() *TransportActiveRun {
 
 func (t *Thread) Close(ctx context.Context) error {
 	t.mu.Lock()
-	if t.closed {
-		t.mu.Unlock()
-		return nil
-	}
 	t.closed = true
 	bridge := t.outputBridge
 	cancelObserver := t.observerCancel
+	compact := t.compact
 	t.mu.Unlock()
+	if compact != nil {
+		t.interruptCompact(ctx, TransportThreadInterruptRequest{Kind: TransportThreadInterruptKindCloseThread})
+		select {
+		case <-compact.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 
+	// Keep the output bridge alive while the owned run completes cleanup.
+	err := t.thread.Close(ctx)
+	if err != nil {
+		// A timed-out caller may retry Close. The output bridge must continue
+		// consuming terminal events until the core run has actually finished.
+		return err
+	}
 	if cancelObserver != nil {
 		cancelObserver()
 	}
 	if bridge != nil {
-		bridge.stopAndWait()
+		return bridge.stopAndWait(ctx)
 	}
-	return nil
+	return err
 }
 
 func (t *Thread) postResumeRun(ctx context.Context, cmd resumeRunCommand) (posted *TransportPostMessageResult, err error) {
@@ -382,18 +394,7 @@ func (t *Thread) emitCancelRunEvents(ctx context.Context, payload inputpkg.Resum
 func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error) {
 	runID := cmd.runID
 	if t.thread.ActiveRun() != nil || t.activeCompact() != nil {
-
-		t.emitAgentEvent(ctx, agentthread.Event{
-			ID:                 t.eventID(runID),
-			TS:                 time.Now(),
-			ThreadID:           t.threadID,
-			RunID:              runID,
-			Type:               agentthread.EventError,
-			Payload:            agentthread.ErrorPayload{Message: "compact rejected: thread is running"},
-			ConsumedInputs:     cmd.consumedInputs,
-			ConsumedInputsMeta: cmd.consumedInputsMeta,
-		})
-		return nil
+		return agentthread.ErrThreadRunning
 	}
 
 	compactCtx, cancel := context.WithCancel(ctx)
@@ -402,26 +403,20 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 		consumedMessageIDs: cmd.consumedMessageIDs,
 		consumedInputsMeta: cmd.consumedInputsMeta,
 		cancel:             cancel,
+		done:               make(chan struct{}),
 	}
 	if !t.beginCompact(op) {
 		cancel()
-
-		t.emitAgentEvent(ctx, agentthread.Event{
-			ID:                 t.eventID(runID),
-			TS:                 time.Now(),
-			ThreadID:           t.threadID,
-			RunID:              runID,
-			Type:               agentthread.EventError,
-			Payload:            agentthread.ErrorPayload{Message: "compact rejected: thread is running"},
-			ConsumedInputs:     cmd.consumedInputs,
-			ConsumedInputsMeta: cmd.consumedInputsMeta,
-		})
-		return nil
+		return agentthread.ErrThreadRunning
 	}
+
 	defer t.finishCompact(op)
 	defer cancel()
+	defer func() {
+		t.emitAgentEvent(context.WithoutCancel(ctx), agentthread.Event{ID: t.eventID(runID), TS: time.Now(), ThreadID: t.threadID, RunID: runID, Type: agentthread.EventRunEnd, Payload: agentthread.RunEndPayload{}, ConsumedInputs: cmd.consumedInputs, ConsumedInputsMeta: cmd.consumedInputsMeta})
+	}()
 
-	t.emitAgentEvent(ctx, agentthread.Event{
+	t.emitAgentEvent(context.WithoutCancel(ctx), agentthread.Event{
 		ID:       t.eventID(runID),
 		TS:       time.Now(),
 		ThreadID: t.threadID,
@@ -436,7 +431,7 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 	payload, err := t.thread.CompactWithRunID(compactCtx, runID)
 	if err != nil {
 		if errors.Is(err, agentthread.ErrThreadRunning) {
-			t.emitAgentEvent(ctx, agentthread.Event{
+			t.emitAgentEvent(context.WithoutCancel(ctx), agentthread.Event{
 				ID:                 t.eventID(runID),
 				TS:                 time.Now(),
 				ThreadID:           t.threadID,
@@ -454,34 +449,24 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 			return nil
 		}
 
-		t.emitAgentEvent(ctx, agentthread.Event{
+		t.emitAgentEvent(context.WithoutCancel(ctx), agentthread.Event{
 			ID:                 t.eventID(runID),
 			TS:                 time.Now(),
 			ThreadID:           t.threadID,
 			RunID:              runID,
 			Type:               agentthread.EventError,
-			Payload:            agentthread.ErrorPayload{Message: fmt.Sprintf("compact failed: %v", err)},
+			Payload:            agentthread.ErrorPayload{Message: fmt.Sprintf("compact failed: %v", err), Cancelled: errors.Is(err, context.Canceled)},
 			ConsumedInputs:     cmd.consumedInputs,
 			ConsumedInputsMeta: cmd.consumedInputsMeta,
 		})
 		return nil
 	}
 	if payload == nil {
-
-		t.emitAgentEvent(ctx, agentthread.Event{
-			ID:                 t.eventID(runID),
-			TS:                 time.Now(),
-			ThreadID:           t.threadID,
-			RunID:              runID,
-			Type:               agentthread.EventError,
-			Payload:            agentthread.ErrorPayload{Message: "compact skipped: no compaction produced a new context"},
-			ConsumedInputs:     cmd.consumedInputs,
-			ConsumedInputsMeta: cmd.consumedInputsMeta,
-		})
-		return nil
+		usage := t.thread.ContextManager().ContextUsage()
+		payload = &agentthread.ContextCompactedPayload{Before: usage, After: usage}
 	}
 
-	t.emitAgentEvent(ctx, agentthread.Event{
+	t.emitAgentEvent(context.WithoutCancel(ctx), agentthread.Event{
 		ID:                 t.eventID(runID),
 		TS:                 time.Now(),
 		ThreadID:           t.threadID,
@@ -497,7 +482,7 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 func (t *Thread) beginCompact(op *compactOperation) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.compact != nil || t.thread.ActiveRun() != nil {
+	if t.closed || t.compact != nil || t.thread.ActiveRun() != nil {
 		return false
 	}
 	t.compact = op
@@ -509,6 +494,7 @@ func (t *Thread) finishCompact(op *compactOperation) {
 	defer t.mu.Unlock()
 	if t.compact == op {
 		t.compact = nil
+		close(op.done)
 	}
 }
 
@@ -576,6 +562,28 @@ func (t *Thread) runOutputBridge(ctx context.Context, bridge *threadOutputBridge
 		select {
 		case <-ctx.Done():
 			return
+		case <-bridge.finish:
+			// The owning Core has stopped producing. Drain queued events
+			// without canceling their delivery before closing the output.
+			drainCtx := context.WithoutCancel(ctx)
+			for {
+				select {
+				case ev, ok := <-bridge.agentEvents:
+					if !ok {
+						bridge.agentEvents = nil
+						continue
+					}
+					if !t.forwardAgentEvent(drainCtx, ev) {
+						return
+					}
+				case item := <-bridge.inbox:
+					if !bridge.deliver(drainCtx, t, item) {
+						return
+					}
+				default:
+					return
+				}
+			}
 		case ev, ok := <-bridge.agentEvents:
 			if !ok {
 				return
@@ -845,6 +853,7 @@ func newContextCompactInterruptedPayload(req TransportThreadInterruptRequest) co
 // compact runtime
 
 type compactOperation struct {
+	done               chan struct{}
 	runID              string
 	consumedMessageIDs []string
 	consumedInputsMeta []any
@@ -869,13 +878,24 @@ func agentEventPayloadForOutput(ev agentthread.Event, usage *agentthread.Context
 			return "", nil, err
 		}
 		out := messageEventPayloadFromRunStart(payload, ev.ConsumedInputs)
-		if out != nil {
-			out.Status = eventpkg.RunStatusStarted
-			out.ContextUsage = contextUsage
+		if out == nil {
+			out = &eventpkg.MessageEventPayload{}
 		}
+		out.Status = eventpkg.RunStatusStarted
+		out.ContextUsage = contextUsage
 		return eventpkg.EventTypeRunStatus, out, nil
 	case agentthread.EventLLMRequesting:
 		return "", nil, nil
+	case agentthread.EventInputConsumed:
+		input, err := agentEventPayload[agentthread.InputConsumedPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		out := messageEventPayloadFromRunStart(agentthread.RunStartPayload{Input: input.Message}, []*schemapkg.Message{input.Message})
+		if out == nil {
+			out = &eventpkg.MessageEventPayload{}
+		}
+		return eventpkg.EventTypeInputConsumed, out, nil
 	case agentthread.EventLLMToken:
 		payload, err := agentEventPayload[agentthread.LLMTokenChunk](ev)
 		if err != nil {
@@ -900,6 +920,12 @@ func agentEventPayloadForOutput(ev agentthread.Event, usage *agentthread.Context
 			out.ThinkingContent = payload.Message.ReasoningContent
 		}
 		return eventpkg.EventTypeAssistantMessage, out, nil
+	case agentthread.EventTokens:
+		payload, err := agentEventPayload[agentthread.TokenUsagePayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		return eventpkg.EventTypeTokens, &eventpkg.TokenUsageEventPayload{PromptTokens: payload.PromptTokens, CompletionTokens: payload.CompletionTokens, TotalTokens: payload.TotalTokens}, nil
 	case agentthread.EventToolStart:
 		payload, err := agentEventPayload[agentthread.ToolStartPayload](ev)
 		if err != nil {
@@ -997,7 +1023,7 @@ func agentEventPayloadForOutput(ev agentthread.Event, usage *agentthread.Context
 		if isExternalInterrupt(payload) {
 			return eventpkg.EventTypeRunStatus, &eventpkg.ErrorEventPayload{Status: eventpkg.RunStatusInterrupted, Message: interruptedMessage(payload), ContextUsage: contextUsage}, nil
 		}
-		if info, ok := payload.Info.(*planmode.RequestUserInputInfo); ok {
+		if info, ok := payload.Info.(*coretypes.RequestUserInputInfo); ok {
 			return eventpkg.EventTypeInputRequired, planInputRequiredPayload(payload, info), nil
 		}
 		if isRecoverableRuntimeInterrupt(payload) {
@@ -1030,6 +1056,8 @@ func attachConsumedInputs(payload any, inputs []*schemapkg.Message, meta []any) 
 	}
 	switch p := payload.(type) {
 	case *eventpkg.MessageEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.TokenUsageEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
 	case *eventpkg.AssistantDeltaEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
@@ -1105,7 +1133,7 @@ func planUpdatedPayload(payload agentthread.PlanUpdatedPayload) *eventpkg.PlanUp
 	}
 }
 
-func planInputRequiredPayload(payload agentthread.InterruptedPayload, info *planmode.RequestUserInputInfo) *eventpkg.PlanInputRequiredEventPayload {
+func planInputRequiredPayload(payload agentthread.InterruptedPayload, info *coretypes.RequestUserInputInfo) *eventpkg.PlanInputRequiredEventPayload {
 	if info == nil {
 		return nil
 	}
@@ -1158,6 +1186,7 @@ func convertApprovalRequiredPayload(payload agentthread.ApprovalRequiredPayload)
 		CheckpointID: payload.CheckpointID,
 	}
 	if payload.ApprovalInfo != nil {
+		out.ToolCallID = payload.ApprovalInfo.CallID
 		out.ToolName = payload.ApprovalInfo.ToolName
 		out.ArgumentsJSON = stringPtrIfNotEmpty(payload.ApprovalInfo.ArgumentsInJSON)
 		return out
@@ -1172,9 +1201,11 @@ func convertApprovalRequiredPayload(payload agentthread.ApprovalRequiredPayload)
 
 func followUpRequiredPayload(payload agentthread.FollowUpRequestedPayload) *eventpkg.InterruptRequiredEventPayload {
 	info := struct {
+		Question  string   `json:"question,omitempty"`
 		Questions []string `json:"questions,omitempty"`
 	}{}
 	if payload.Info != nil {
+		info.Question = payload.Info.Question
 		info.Questions = append([]string(nil), payload.Info.Questions...)
 	}
 	raw, _ := json.Marshal(info)
@@ -1204,12 +1235,12 @@ func interruptRequiredPayload(payload agentthread.InterruptedPayload) (*eventpkg
 func convertErrorPayload(payload any) *eventpkg.ErrorEventPayload {
 	switch p := payload.(type) {
 	case agentthread.ErrorPayload:
-		return &eventpkg.ErrorEventPayload{Message: p.Message}
+		return &eventpkg.ErrorEventPayload{Message: p.Message, Cancelled: p.Cancelled}
 	case *agentthread.ErrorPayload:
 		if p == nil {
 			return &eventpkg.ErrorEventPayload{}
 		}
-		return &eventpkg.ErrorEventPayload{Message: p.Message}
+		return &eventpkg.ErrorEventPayload{Message: p.Message, Cancelled: p.Cancelled}
 	default:
 		return &eventpkg.ErrorEventPayload{Message: fmt.Sprint(payload)}
 	}
@@ -1586,18 +1617,20 @@ func schemaUserMessageToProtocolParts(message *schemapkg.Message) []eventpkg.Mes
 	if message == nil {
 		return nil
 	}
-	if message.Content != "" {
+	if len(message.UserInputMultiContent) == 0 {
 		return textParts(message.Content)
 	}
-	if len(message.UserInputMultiContent) == 0 {
-		return nil
-	}
 	parts := make([]eventpkg.MessagePart, 0, len(message.UserInputMultiContent))
+	hasText := false
 	for _, part := range message.UserInputMultiContent {
 		converted, ok := schemaInputPartToProtocolPart(part)
 		if ok {
 			parts = append(parts, converted)
+			hasText = hasText || converted.Type == eventpkg.MessagePartTypeText
 		}
+	}
+	if !hasText && message.Content != "" {
+		parts = append(textParts(message.Content), parts...)
 	}
 	return parts
 }
@@ -2024,8 +2057,9 @@ type threadOutputBridge struct {
 	inbox       chan TransportThreadOutputItem
 	items       chan TransportThreadOutputItem
 	output      *TransportThreadOutput
-	stop        context.CancelFunc
 	done        chan struct{}
+	finish      chan struct{}
+	finishOnce  sync.Once
 }
 
 func (b *threadOutputBridge) start(ctx context.Context, runtime *Thread) *TransportThreadOutput {
@@ -2035,27 +2069,28 @@ func (b *threadOutputBridge) start(ctx context.Context, runtime *Thread) *Transp
 	b.inbox = make(chan TransportThreadOutputItem, threadOutputBridgeBufferSize)
 	b.items = make(chan TransportThreadOutputItem, threadOutputBridgeBufferSize)
 	b.done = make(chan struct{})
+	b.finish = make(chan struct{})
 	bridgeCtx, cancel := context.WithCancel(ctx)
-	b.stop = cancel
 	go func(done chan struct{}) {
 		defer close(done)
+		defer close(b.items)
+		defer cancel()
 		runtime.runOutputBridge(bridgeCtx, b)
 	}(b.done)
 	b.output = &TransportThreadOutput{Items: b.items}
 	return b.output
 }
 
-func (b *threadOutputBridge) stopAndWait() {
-	if b == nil {
-		return
+func (b *threadOutputBridge) stopAndWait(ctx context.Context) error {
+	if b == nil || b.done == nil {
+		return nil
 	}
-	cancel := b.stop
-	done := b.done
-	if cancel != nil {
-		cancel()
-	}
-	if done != nil {
-		<-done
+	b.finishOnce.Do(func() { close(b.finish) })
+	select {
+	case <-b.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -2209,15 +2244,15 @@ func approvalResult(decision *inputpkg.ApprovalDecision) *tools.ApprovalResult {
 	return out
 }
 
-func planInputResponse(response *inputpkg.RequestUserInputResponse) *planmode.RequestUserInputResponse {
+func planInputResponse(response *inputpkg.RequestUserInputResponse) *coretypes.RequestUserInputResponse {
 	if response == nil {
 		return nil
 	}
-	answers := make(map[string]planmode.RequestUserInputAnswer, len(response.Answers))
+	answers := make(map[string]coretypes.RequestUserInputAnswer, len(response.Answers))
 	for key, answer := range response.Answers {
-		answers[key] = planmode.RequestUserInputAnswer{Answers: append([]string(nil), answer.Answers...)}
+		answers[key] = coretypes.RequestUserInputAnswer{Answers: append([]string(nil), answer.Answers...)}
 	}
-	return &planmode.RequestUserInputResponse{Answers: answers}
+	return &coretypes.RequestUserInputResponse{Answers: answers}
 }
 
 func interruptResumeData(ctx context.Context, payload inputpkg.ResumeRunPayload, decoder InterruptResumeDecoder) (any, error) {

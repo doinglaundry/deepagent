@@ -7,6 +7,7 @@ import (
 	"eino-cli/deepagent/manager/compat"
 	"eino-cli/deepagent/protocol"
 	"encoding/json"
+	"errors"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"testing"
@@ -15,12 +16,15 @@ import (
 
 type extractModel struct{ calls int }
 
+func (m *extractModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return m, nil
+}
 func (m *extractModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
-	m.calls++
-	return schema.AssistantMessage("Useful stable memory", nil), nil
+	return nil, errors.New("memory extraction bypassed Graph")
 }
 func (m *extractModel) Stream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	return nil, nil
+	m.calls++
+	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("Useful stable memory", nil)}), nil
 }
 func TestMemorySweepProcessesPersistedHistoryAfterRestart(t *testing.T) {
 	ctx := context.Background()
@@ -49,10 +53,14 @@ func TestMemorySweepProcessesPersistedHistoryAfterRestart(t *testing.T) {
 	}
 	model := &extractModel{}
 	root := t.TempDir()
-	factory := func(scope string) (*memory.Pipeline, error) {
-		return memory.New(memory.Config{Root: root, Model: model, Store: m, Scope: scope, Consolidator: func(context.Context, string, string) (string, error) { return "Consolidated Go preference", nil }})
+	factory := func() (memory.Service, error) {
+		return memory.New(memory.Config{Root: root, Model: model, Store: m, Consolidator: func(context.Context, string, string) (string, error) { return "Consolidated Go preference", nil }})
 	}
-	scanner := memoryScanner{sources: m, pipeline: factory}
+	service, err := factory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := memoryScanner{sources: m, memory: service}
 	if err = scanner.scan(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -65,12 +73,12 @@ func TestMemorySweepProcessesPersistedHistoryAfterRestart(t *testing.T) {
 	if model.calls != 1 {
 		t.Fatal("unchanged source extracted again")
 	}
-	pipeline, err := factory(thread.SessionID)
+	pipeline, err := factory()
 	if err != nil {
 		t.Fatal(err)
 	}
-	summary, err := pipeline.Read(ctx)
-	if err != nil || summary != "Consolidated Go preference" {
-		t.Fatalf("summary %s err %v", summary, err)
+	summary, err := pipeline.Read(ctx, thread.SessionID)
+	if err != nil || summary.Summary != "Consolidated Go preference" {
+		t.Fatalf("summary %+v err %v", summary, err)
 	}
 }

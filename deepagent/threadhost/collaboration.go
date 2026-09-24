@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/deepagent/core/middlewares"
+	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/manager"
 	eventpkg "eino-cli/deepagent/protocol/event"

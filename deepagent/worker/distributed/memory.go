@@ -15,13 +15,13 @@ import (
 type memoryScanner struct {
 	sources  api.MemorySourceStore
 	userID   string
-	pipeline func(string) (*memory.Pipeline, error)
+	memory   memory.Service
 	interval time.Duration
 }
 
 func (s memoryScanner) scan(ctx context.Context) error {
 	var failures error
-	scopes := map[string]*memory.Pipeline{}
+	scopes := map[string]struct{}{}
 	for offset := 0; ; offset += 100 {
 		sources, err := s.sources.ListMemorySources(ctx, 100, offset)
 		if err != nil {
@@ -35,21 +35,13 @@ func (s memoryScanner) scan(ctx context.Context) error {
 			if scope == "" {
 				scope = source.SessionID
 			}
-			pipeline := scopes[scope]
-			if pipeline == nil {
-				pipeline, err = s.pipeline(scope)
-				if err != nil {
-					failures = errors.Join(failures, err)
-					continue
-				}
-				scopes[scope] = pipeline
-			}
+			scopes[scope] = struct{}{}
 			var messages []*schema.Message
 			if err = json.Unmarshal(source.History.Messages, &messages); err != nil {
 				failures = errors.Join(failures, fmt.Errorf("memory source %s: %w", source.ThreadID, err))
 				continue
 			}
-			if err = pipeline.Observe(ctx, source.ThreadID, messages); err != nil && !errors.Is(err, api.ErrConflict) {
+			if err = s.memory.Observe(ctx, scope, source.ThreadID, messages); err != nil && !errors.Is(err, api.ErrConflict) {
 				failures = errors.Join(failures, fmt.Errorf("extract memory source %s: %w", source.ThreadID, err))
 			}
 		}
@@ -57,8 +49,8 @@ func (s memoryScanner) scan(ctx context.Context) error {
 			break
 		}
 	}
-	for scope, pipeline := range scopes {
-		if err := pipeline.Consolidate(ctx); err != nil && !errors.Is(err, api.ErrConflict) {
+	for scope := range scopes {
+		if err := s.memory.Consolidate(ctx, scope); err != nil && !errors.Is(err, api.ErrConflict) {
 			failures = errors.Join(failures, fmt.Errorf("consolidate memory scope %s: %w", scope, err))
 		}
 	}

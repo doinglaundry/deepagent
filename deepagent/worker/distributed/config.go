@@ -3,15 +3,31 @@
 package distributed
 
 import (
+	"eino-cli/deepagent/core/mcp"
 	"eino-cli/deepagent/core/modelhub"
 	"eino-cli/deepagent/manager/compat"
 	"eino-cli/deepagent/worker/managed"
 	"fmt"
 	"gopkg.in/yaml.v3"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 )
+
+// Preserve the Worker config spelling while Core owns the MCP protocol.
+type MCPConfig = mcp.MCPConfig
+
+// SearchURL accepts a GET search endpoint with a q parameter or {query} placeholder.
+// Headers apply only to the configured search endpoint, never arbitrary read URLs.
+type WebConfig struct {
+	Enabled        bool              `yaml:"enabled"`
+	SearchURL      string            `yaml:"search_url"`
+	Headers        map[string]string `yaml:"headers"`
+	TimeoutSeconds int               `yaml:"timeout_seconds"`
+	MaxBytes       int64             `yaml:"max_bytes"`
+	HTTPClient     *http.Client      `yaml:"-"`
+}
 
 type Config struct {
 	CompactThresholdTokens int               `yaml:"compact_threshold_tokens"`

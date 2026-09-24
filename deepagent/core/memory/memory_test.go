@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	memorypkg "eino-cli/deepagent/protocol/memory"
+	"errors"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
@@ -100,15 +101,18 @@ var _ memorypkg.Store = (*memoryStore)(nil)
 
 type memoryModel struct{ calls int }
 
-func (m *memoryModel) Generate(_ context.Context, in []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+func (m *memoryModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return m, nil
+}
+func (m *memoryModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+	return nil, errors.New("memory extraction bypassed Graph")
+}
+func (m *memoryModel) Stream(_ context.Context, in []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	m.calls++
 	if m.calls == 1 {
-		return schema.AssistantMessage("User prefers Go. Project uses MySQL.", nil), nil
+		return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("User prefers Go. Project uses MySQL.", nil)}), nil
 	}
-	return schema.AssistantMessage("# Memory\n- User prefers Go.\n- Project uses MySQL.", nil), nil
-}
-func (m *memoryModel) Stream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	panic("unused")
+	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("# Memory\n- User prefers Go.\n- Project uses MySQL.", nil)}), nil
 }
 func TestExtractionConsolidationAndRestartBaseline(t *testing.T) {
 	ctx := context.Background()
@@ -122,16 +126,16 @@ func TestExtractionConsolidationAndRestartBaseline(t *testing.T) {
 		t.Fatal(e)
 	}
 	messages := []*schema.Message{schema.UserMessage("Use Go and MySQL.")}
-	if e = p.Observe(ctx, "session/thread", messages); e != nil {
+	if e = p.Observe(ctx, "local", "session/thread", messages); e != nil {
 		t.Fatal(e)
 	}
-	if e = p.Observe(ctx, "session/thread", messages); e != nil {
+	if e = p.Observe(ctx, "local", "session/thread", messages); e != nil {
 		t.Fatal(e)
 	}
 	if m.calls != 1 {
 		t.Fatal("unchanged source extracted twice")
 	}
-	if e = p.Consolidate(ctx); e != nil {
+	if e = p.Consolidate(ctx, "local"); e != nil {
 		t.Fatal(e)
 	}
 	p2, e := New(Config{Root: root, Model: m, Consolidator: func(context.Context, string, string) (string, error) {
@@ -141,14 +145,14 @@ func TestExtractionConsolidationAndRestartBaseline(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = p2.Consolidate(ctx); e != nil {
+	if e = p2.Consolidate(ctx, "local"); e != nil {
 		t.Fatal(e)
 	}
 	if m.calls != 2 {
 		t.Fatal("unchanged extractions consolidated twice")
 	}
-	summary, e := p2.Read(ctx)
-	if e != nil || summary != "# Memory\n- User prefers Go.\n- Project uses MySQL." {
+	summary, e := p2.Read(ctx, "local")
+	if e != nil || summary.Summary != "# Memory\n- User prefers Go.\n- Project uses MySQL." {
 		t.Fatal(summary, e)
 	}
 }
@@ -158,27 +162,27 @@ func TestDurableArtifactsResumeOnDifferentWorkerDirectory(t *testing.T) {
 	store := newMemoryStore()
 	m := &memoryModel{}
 	consolidate := func(context.Context, string, string) (string, error) { return "Shared durable memory", nil }
-	p, e := New(Config{Root: t.TempDir(), Model: m, Consolidator: consolidate, Store: store, Scope: "user/u1"})
+	p, e := New(Config{Root: t.TempDir(), Model: m, Consolidator: consolidate, Store: store})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = p.Observe(ctx, "thread1", []*schema.Message{schema.UserMessage("Go preference")}); e != nil {
+	if e = p.Observe(ctx, "user/u1", "thread1", []*schema.Message{schema.UserMessage("Go preference")}); e != nil {
 		t.Fatal(e)
 	}
-	p2, e := New(Config{Root: t.TempDir(), Model: m, Consolidator: consolidate, Store: store, Scope: "user/u1"})
+	p2, e := New(Config{Root: t.TempDir(), Model: m, Consolidator: consolidate, Store: store})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = p2.Consolidate(ctx); e != nil {
+	if e = p2.Consolidate(ctx, "user/u1"); e != nil {
 		t.Fatal(e)
 	}
-	out, e := p.Read(ctx)
-	if e != nil || out != "Shared durable memory" {
+	out, e := p.Read(ctx, "user/u1")
+	if e != nil || out.Summary != "Shared durable memory" {
 		t.Fatal(out, e)
 	}
-	p3, _ := New(Config{Root: t.TempDir(), Model: m, Consolidator: consolidate, Store: store, Scope: "user/other"})
-	out, e = p3.Read(ctx)
-	if e != nil || out != "" {
+	p3, _ := New(Config{Root: t.TempDir(), Model: m, Consolidator: consolidate, Store: store})
+	out, e = p3.Read(ctx, "user/other")
+	if e != nil || out.Summary != "" {
 		t.Fatal("memory user scope leaked", out, e)
 	}
 }

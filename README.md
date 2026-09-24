@@ -1,106 +1,49 @@
-# DeepAgent / SGADK CLI
+# DeepAgent
 
-基于 Go、Eino Graph 和 Bubble Tea 的终端智能体。CLI 提交输入、订阅事件；独立 Worker 调用模型和工具。多个进程通过同一套 MySQL 和 Redis 协作，Manager 是进程内 Go 模块，没有独立的中央 RPC 服务。
+Go / Eino Graph 智能体。用户通过 Web 页面提交输入；独立 Worker 执行模型和工具。
+Web 与 Worker 共用 MySQL / Redis，Manager 是进程内模块。
 
 ```text
-cmd/deepagent → host/runtime → Manager ← worker/managed ← cmd/deepagent_worker
-                                  │             │
-                              MySQL/Redis   worker/thread
-                                                │
-                                         core/agentthread
-                                                │
-                                    Eino model → tools → model
-                                           ↘ continue ↗
+Web → Manager → ThreadHost → DeepAgentThread → Run → DeepAgent → Eino Graph
+                                                       ├─ Conversation
+                                                       ├─ Registry / ToolExecutor
+                                                       └─ Middleware / Checkpoint / Event
 ```
 
 ## 启动
 
-需要 Go 1.25+、MySQL 8 和 Redis。CLI 和 Worker 必须使用相同的 Manager 配置。Worker 还需要模型配置。
+需要仓库 go.mod 指定的 Go 版本、MySQL 8 和 Redis。
 
 ```bash
 cp yaml/deepagent.example.yaml yaml/deepagent.yaml
-```
-
-编辑本地 YAML，并通过环境变量提供连接信息和模型凭据：
-
-```bash
 export DEEPAGENT_MYSQL_DSN='deepagent:YOUR_PASSWORD@tcp(127.0.0.1:3306)/deepagent?parseTime=true'
 export DEEPAGENT_MODEL='YOUR_MODEL_ID'
 export DEEPAGENT_MODEL_BASE_URL='https://YOUR_PROVIDER/v1'
 export DEEPAGENT_MODEL_API_KEY='YOUR_API_KEY'
-```
 
-`yaml/deepagent.yaml` 已被 Git 忽略。模型支持 OpenAI 兼容接口、Claude/Anthropic 和 Kimi/Moonshot；`model` 保留配置中的原始模型 ID。CLI 只解析 `manager` 配置，不需要读取模型密钥。
-
-可选：使用仓库的 Compose 文件启动本地数据库。先设置 `DEEPAGENT_DB_PASSWORD` 和 `DEEPAGENT_DB_ROOT_PASSWORD`，并让 DSN 中的密码与前者一致：
-
-```bash
-docker compose up -d
-```
-
-分别在两个终端启动：
-
-```bash
-# 终端 1：可在其他终端再启动相同命令，增加 Worker 数量。
+# 终端 1：执行服务；可启动多个 Worker。
 go run ./cmd/deepagent_worker --config yaml/deepagent.yaml
 
-# 终端 2：交互 CLI。
-go run ./cmd/deepagent --config yaml/deepagent.yaml
+# 终端 2：唯一用户入口。
+go run ./cmd/deepagent_web --config yaml/deepagent.yaml --root . --addr :8080
 ```
 
-`go run .` 保留为相同分布式 CLI 的兼容入口。没有 Worker 时，输入会等待领取，不会退回本地模型执行。
+浏览器打开 http://localhost:8080。Web 和 Worker 必须使用相同的 Manager 配置。
+模型凭据由 Worker 读取；本地配置文件已被 Git 忽略。没有 Worker 时，输入等待领取。
+`scripts/install-sgadk.sh` 现在安装 Web 服务启动器，Worker 仍需单独启动。
 
-单次执行和重新连接：
+## 代码主线
 
-```bash
-go run ./cmd/deepagent --prompt '理解这个项目'
-go run ./cmd/deepagent --json --prompt '检查文件'    # 协议事件 JSONL
-cat task.txt | go run ./cmd/deepagent --prompt -
-go run ./cmd/deepagent --thread THREAD_ID --prompt '继续处理'
-```
-
-`--root` 优先于 `SGADK_ROOT`，其次使用当前目录。`--session` 将相关 Thread 关联起来；`--thread` 附着已存在的 Thread，并验证 Session 是否匹配。单次 CLI 会在标准错误输出中显示 SessionID 和 ThreadID。遇到审批/追问时保留服务端阻塞状态，重新使用 `--thread` 提交回答；工具审批可回答 `yes` 或 `no`。
-
-全局命令安装仍可运行 `bash scripts/install-sgadk.sh`，它构建 CLI wrapper；Worker 需要单独启动。
-
-## 交互
-
-| 操作 | 行为 |
+| 路径 | 职责 |
 | --- | --- |
-| 普通输入 | 提交到共享 Thread，显示模型增量和工具调用结果 |
-| 工具审批 | `y` 同意、`n` 拒绝；回答恢复原 Run/checkpoint |
-| 追问 | 显示问题，下次输入作为对应中断的回答 |
-| `/history` | 从持久化事件读取运行历史；Enter 查看，不恢复旧本地文件 |
-| `/clear` | 清空当前界面并分离当前 Thread；保留服务端历史 |
-| `/plan on/off` | 修改后续执行的能力限制，计划阶段过滤写入/执行等工具 |
-| `/compact` | 压缩当前共享模型上下文，保留近期消息和工具配对 |
-| `/todos` | 切换计划面板 |
-| `/close` | 请求关闭服务端 Thread；请求接受不代表 Worker 已完成关闭 |
-| `/exit`、`/quit` | 退出界面，不关闭服务端 Thread |
-| Esc / 执行中 Ctrl-C | 请求取消当前执行，区别于退出与关闭 |
-| Ctrl-O | 展开/折叠最近一个长工具输出 |
-
-Core 支持在运行中的模型边界吸收追加输入；当前 TUI 执行期间限制普通输入。
-
-## 模块边界
-
-| 目录 | 职责 |
-| --- | --- |
-| `cmd/deepagent`, `host/cli` | CLI 参数、配置和启动 |
-| `backend/cli/tui` | 终端交互、渲染与协议事件映射 |
-| `host/runtime` | 订阅前建立事件边界、提交、增量/历史合并、恢复和取消 |
-| `manager`, `manager/api` | Thread 状态机、Permit、消息接收、事件、共享历史和存储门面 |
-| `worker/managed` | 扫描/领取、续期、投递确认、输出排空、释放及关闭 |
-| `worker/distributed`, `backend/modelhub` | Worker 配置、模型、MCP、Skills、Web、记忆和存储装配 |
-| `worker/thread` | Worker 输入/输出协议与 Core Thread 的适配 |
-| `worker/tasktool` | 同 Session 下真实分布式子任务：创建、发送、等待、关闭 |
-| `core`, `core/agentthread` | Eino 图、模型/工具预算、当前 Run、pending、checkpoint 恢复 |
-| `core/backends` | 根目录文件访问、检索、编辑、命令、追问和计划工具 |
-| `core/checkpointer`, `core/compact`, `core/memory` | checkpoint 后端、上下文压缩和两阶段记忆 |
-| `protocol` | 输入、多媒体、恢复、事件和关联 ID |
-| `backend/sandbox` | 保留的 Local/AIO 实现，普通 Worker 不会自动创建 AIO 容器 |
-
-原 `backend/agent`、本地 Run/checkpoint/rollback 实现及其测试保留用于兼容和扩展参考。当前 CLI 启动链使用共享 Runtime，不调用旧 DeepAgent Runtime，也不把 `.eino-cli/sessions` 的 Run JSON 当成共享历史。
+| `cmd/deepagent_web`, `deepagent/host/web` | 页面、HTTP 提交、审批恢复、历史查询 |
+| `cmd/deepagent_worker`, `deepagent/worker` | Worker 启动和装配 |
+| `deepagent/manager`, `deepagent/threadhost` | 调度、消息、lease、输出持久化 |
+| `deepagent/core/runtime/agentthread` | Thread 生命周期、一次 Run、输入归属、事件 |
+| `deepagent/core/graph` | 唯一 Agent Graph、模型、工具执行 |
+| `deepagent/core/internal/conversation` | History / Compact / Usage |
+| `deepagent/core/tools`, `deepagent/core/backend` | 工具定义及底层文件/命令能力 |
+| `deepagent/core/middleware`, `deepagent/core/runtime/checkpointer` | 执行策略及 Eino checkpoint |
 
 ## 存储与恢复
 
@@ -128,11 +71,12 @@ checkpoint 保存准确工具边界、消息、预算和恢复标识；恢复不
 
 ```bash
 go test ./...
-go test -race ./manager/... ./core/... ./worker/... ./host/... ./backend/cli/tui
-go build ./cmd/deepagent ./cmd/deepagent_worker
+node --test deepagent/host/web/app.test.cjs
+go test -race ./deepagent/core/... ./deepagent/manager/... ./deepagent/worker/... ./deepagent/host/...
+go build ./cmd/deepagent_web ./cmd/deepagent_worker
 ```
 
-真实 MySQL/Redis 与独立进程集成测试使用专用测试数据库：
+真实 MySQL / Redis 与独立进程测试使用专用数据库：
 
 ```bash
 export DEEPAGENT_TEST_MYSQL_DSN='root:TEST_PASSWORD@tcp(127.0.0.1:13316)/deepagent_test?parseTime=true'
@@ -140,6 +84,8 @@ export DEEPAGENT_TEST_REDIS_ADDR='127.0.0.1:16386'
 bash scripts/test-distributed.sh
 ```
 
-脚本构建临时 CLI/Worker 二进制。测试使用本机模拟模型服务，不消耗真实模型额度；覆盖竞争执行、共享历史、审批阻塞及换 Worker 后恢复，以及模型请求期间强杀 Worker 后的租约接管。未设置数据库环境变量时，外部服务测试会显式跳过。
+脚本构建临时 Web / Worker 二进制，以本机模拟模型验证 HTTP 提交、审批、
+换 Worker 恢复和进程崩溃后的接管。未配置专用数据库时，进程测试明确跳过；
+测试编译通过不代表已经完成真实服务验收。
 
-用户提供的设计原文见 [技术架构](docs/superpowers/specs/2026-09-12-deepagent-architecture.md)，实施记录见 [重构计划](docs/superpowers/plans/2026-09-12-distributed-deepagent.md)。
+Core 重构尚在进行，技术方案和迁移证据位于 `docs/superpowers/specs/`。

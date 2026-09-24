@@ -2,14 +2,14 @@ package worker
 
 import (
 	"context"
+	"eino-cli/deepagent/core/backend"
 	"fmt"
 	"strconv"
 
-	"eino-cli/deepagent/core/agentthread"
 	"eino-cli/deepagent/core/checkpoint"
 	"eino-cli/deepagent/core/mcp"
-	skillmw "eino-cli/deepagent/core/middlewares/skill"
 	"eino-cli/deepagent/core/modelhub"
+	"eino-cli/deepagent/core/runtime/agentthread"
 	"eino-cli/deepagent/manager"
 	threadpkg "eino-cli/deepagent/thread"
 	"eino-cli/deepagent/threadhost"
@@ -42,7 +42,7 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("initialize MCP: %w", err)
 	}
 	defer mcp.CloseMCP(mcpTools)
-	skillLoader, err := skillmw.Load(cfg.SkillPaths)
+	skillLoader, err := backend.LoadSkills(cfg.SkillPaths)
 	if err != nil {
 		return fmt.Errorf("load skills: %w", err)
 	}

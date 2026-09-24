@@ -35,6 +35,8 @@ type Part struct {
 	MIMEType string `json:"mime_type,omitempty"`
 }
 type Resume struct {
+	// Kind is stamped by Manager from the correlated durable block.
+	Kind         string `json:"kind,omitempty"`
 	RunID        string `json:"run_id"`
 	CheckpointID string `json:"checkpoint_id"`
 	InterruptID  string `json:"interrupt_id"`

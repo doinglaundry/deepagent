@@ -103,7 +103,7 @@ func TestBlockedResumeCorrelation(t *testing.T) {
 	m, th, in := setup(t)
 	c, _ := m.ClaimThread(ctx, th.ID, "w", time.Minute)
 	m.ConfirmInputDelivery(ctx, c.Permit, in.ID)
-	b := &protocol.Block{RunID: "run", CheckpointID: "cp", InterruptID: "int"}
+	b := &protocol.Block{RunID: "run", CheckpointID: "cp", InterruptID: "int", Kind: "approval"}
 	if e := m.ReleaseThread(ctx, c.Permit, api.Release{Block: b}); e != nil {
 		t.Fatal(e)
 	}
@@ -120,7 +120,7 @@ func TestBlockedResumeCorrelation(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if next.Inputs[0].ID != got.ID {
+	if next.Inputs[0].ID != got.ID || next.Inputs[0].Resume.Kind != "approval" || next.Thread.Block != nil {
 		t.Fatal(next.Inputs)
 	}
 }

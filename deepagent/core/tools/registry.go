@@ -1,0 +1,154 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	einotool "github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/schema"
+)
+
+// Descriptor describes capabilities; execution remains the Eino tool's responsibility.
+type Descriptor struct {
+	Tool             einotool.BaseTool
+	ReadOnly         bool
+	RequiresApproval bool
+	ParallelSafe     bool
+	ReturnDirect     bool
+	NormalizeArgs    func(string) (string, error)
+}
+
+// Registry is configured before a run, then read concurrently by model and tools.
+// Schemas are separate from executable objects, so rewriting never loses tool interfaces.
+type Registry struct {
+	entries map[string]Descriptor
+	infos   map[string]*schema.ToolInfo
+	order   []string
+}
+
+func NewRegistry(ctx context.Context, entries []Descriptor) (*Registry, error) {
+	r := &Registry{entries: make(map[string]Descriptor), infos: make(map[string]*schema.ToolInfo)}
+	for _, d := range entries {
+		if d.Tool == nil {
+			return nil, fmt.Errorf("nil tool")
+		}
+		info, err := d.Tool.Info(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if info == nil || strings.TrimSpace(info.Name) == "" {
+			return nil, fmt.Errorf("tool name is required")
+		}
+		if _, exists := r.entries[info.Name]; exists {
+			return nil, fmt.Errorf("duplicate tool %q", info.Name)
+		}
+		info, err = cloneToolInfo(info)
+		if err != nil {
+			return nil, err
+		}
+		r.entries[info.Name] = d
+		r.infos[info.Name] = info
+		r.order = append(r.order, info.Name)
+	}
+	return r, nil
+}
+
+func (r *Registry) Lookup(name string) (Descriptor, bool) { d, ok := r.entries[name]; return d, ok }
+
+func (r *Registry) ModelTools(ctx context.Context) ([]*schema.ToolInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]*schema.ToolInfo, 0, len(r.order))
+	for _, name := range r.order {
+		i, err := cloneToolInfo(r.infos[name])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, nil
+}
+
+func (r *Registry) Filter(ctx context.Context, readOnly bool, mask Mask) (*Registry, error) {
+	out := &Registry{entries: make(map[string]Descriptor), infos: make(map[string]*schema.ToolInfo)}
+	for _, name := range r.order {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		d := r.entries[name]
+		if readOnly && !d.ReadOnly {
+			continue
+		}
+		info, err := cloneToolInfo(r.infos[name])
+		if err != nil {
+			return nil, err
+		}
+		if mask != nil && !mask(ctx, info) {
+			continue
+		}
+		// A mask can inspect its copy but cannot mutate the retained schema.
+		info, err = cloneToolInfo(r.infos[name])
+		if err != nil {
+			return nil, err
+		}
+		out.entries[name] = d
+		out.infos[name] = info
+		out.order = append(out.order, name)
+	}
+	return out, nil
+}
+
+// RewriteInfo commits schemas and execution names together only if every rewrite succeeds.
+func (r *Registry) RewriteInfo(ctx context.Context, rewrite ToolInfoRewriter) error {
+	if rewrite == nil {
+		return nil
+	}
+	next := make(map[string]*schema.ToolInfo, len(r.infos))
+	entries := make(map[string]Descriptor, len(r.entries))
+	order := make([]string, 0, len(r.order))
+	for _, name := range r.order {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		info, err := cloneToolInfo(r.infos[name])
+		if err != nil {
+			return err
+		}
+		info, err = rewrite(ctx, info)
+		if err != nil {
+			return err
+		}
+		if info == nil || strings.TrimSpace(info.Name) == "" {
+			return fmt.Errorf("rewriter returned empty tool name for %q", name)
+		}
+		if _, exists := next[info.Name]; exists {
+			return fmt.Errorf("duplicate rewritten tool name %q", info.Name)
+		}
+		info, err = cloneToolInfo(info)
+		if err != nil {
+			return err
+		}
+		next[info.Name] = info
+		entries[info.Name] = r.entries[name]
+		order = append(order, info.Name)
+	}
+	r.infos = next
+	r.entries = entries
+	r.order = order
+	return nil
+}
+
+func cloneToolInfo(info *schema.ToolInfo) (*schema.ToolInfo, error) {
+	raw, err := json.Marshal(info)
+	if err != nil {
+		return nil, fmt.Errorf("encode tool schema: %w", err)
+	}
+	var copy schema.ToolInfo
+	if err := json.Unmarshal(raw, &copy); err != nil {
+		return nil, fmt.Errorf("decode tool schema: %w", err)
+	}
+	return &copy, nil
+}

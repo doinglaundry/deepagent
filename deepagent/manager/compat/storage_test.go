@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -229,7 +230,7 @@ func TestMySQLRedisIntegration(t *testing.T) {
 	if e = a.ConfirmInputDelivery(ctx, claim.Permit, claim.Inputs[0].ID); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = a.SaveHistory(ctx, claim.Permit, api.History{Messages: []byte(`[{"role":"user","content":"saved"}]`)}); e != nil {
+	if _, e = a.SaveHistory(ctx, claim.Permit, api.History{Messages: []byte(`[{"role":"user","content":"saved"}]`), Rollout: []byte(`[{"Type":"message","ThreadID":"thread","Seq":1,"Message":{"role":"user","content":"saved"}}]`)}); e != nil {
 		t.Fatal(e)
 	}
 	if e = a.PutThreadCheckpoint(ctx, claim.Permit, "checkpoint", []byte("checkpoint payload")); e != nil {
@@ -255,7 +256,7 @@ func TestMySQLRedisIntegration(t *testing.T) {
 		t.Fatal(e)
 	}
 	h, e := b.LoadHistory(ctx, thread.ID)
-	if e != nil || h.Version != 1 {
+	if e != nil || h.Version != 1 || !bytes.Contains(h.Rollout, []byte(`"Seq":1`)) {
 		t.Fatal(h, e)
 	}
 	if _, e = b.SaveHistory(ctx, recovered.Permit, api.History{}); !errors.Is(e, api.ErrConflict) {

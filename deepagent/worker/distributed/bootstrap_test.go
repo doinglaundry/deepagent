@@ -2,11 +2,13 @@ package distributed
 
 import (
 	"context"
-	"eino-cli/deepagent/core/engine/agentthread"
+	"eino-cli/deepagent/core/graph"
 	"eino-cli/deepagent/core/modelhub"
+	"eino-cli/deepagent/core/runtime/agentthread"
 	"eino-cli/deepagent/manager/api"
 	"eino-cli/deepagent/manager/compat"
 	"eino-cli/deepagent/protocol"
+	corethread "eino-cli/deepagent/thread"
 	"eino-cli/deepagent/worker/managed"
 	workerthread "eino-cli/deepagent/worker/thread"
 	"encoding/json"
@@ -80,7 +82,7 @@ func (m rejectingModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatMode
 	return m, nil
 }
 
-func TestSynchronousCoreDeliveryErrorsReachRequester(t *testing.T) {
+func TestCoreDeliveryErrorsReachRequester(t *testing.T) {
 	for _, kind := range []protocol.InputKind{protocol.InputResume, protocol.InputCompact} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -109,7 +111,7 @@ func TestSynchronousCoreDeliveryErrorsReachRequester(t *testing.T) {
 			initialEvent := protocol.Event{Kind: protocol.EventRunCompleted, RunID: "old", MessageIDs: []string{claim.Inputs[0].ID}}
 			var block *protocol.Block
 			if kind == protocol.InputResume {
-				block = &protocol.Block{RunID: "old", CheckpointID: "missing", InterruptID: "gate"}
+				block = &protocol.Block{Kind: "approval", RunID: "old", CheckpointID: "missing", InterruptID: "gate"}
 				initialEvent.Kind = protocol.EventBlocked
 				initialEvent.Block = block
 			}
@@ -130,11 +132,13 @@ func TestSynchronousCoreDeliveryErrorsReachRequester(t *testing.T) {
 				t.Fatal(err)
 			}
 			factory := func(ctx context.Context, claim api.Claim) (managed.Runtime, error) {
-				engine, err := agentthread.New(agentthread.Config{Context: ctx, Namespace: "delivery-error", SessionID: thread.SessionID, ThreadID: thread.ID, Model: rejectingModel{}, SummaryModel: rejectingModel{}, History: NewHistory(ctx, m, claim.Permit), Checkpoints: Checkpoints{Manager: m, Permit: claim.Permit}})
+				bus := make(chan agentthread.Event, 64)
+				core := agentthread.New(thread.ID, &agentthread.RunConfig{Agent: graph.Config{Model: rejectingModel{}, DisableSubAgent: true, CheckpointStore: Checkpoints{Manager: m, Permit: claim.Permit}}}, bus, agentthread.ThreadOptions{HistoryStore: NewHistory(ctx, m, claim.Permit), CompactionStrategy: &agentthread.SummaryCompaction{Model: rejectingModel{}, TokenLimit: 1, KeepRecent: 2}})
+				adapter, err := corethread.NewThread(corethread.AdapterConfig{ThreadID: thread.ID, SessionID: thread.SessionID, Thread: core, EventBus: bus})
 				if err != nil {
 					return nil, err
 				}
-				return workerthread.New(engine, claim.Thread), nil
+				return workerthread.NewTransport(ctx, adapter, claim.Thread)
 			}
 			worker, err := managed.New(m, factory, managed.Config{PollInterval: time.Millisecond, PermitTTL: time.Second, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 			if err != nil {
@@ -153,17 +157,23 @@ func TestSynchronousCoreDeliveryErrorsReachRequester(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(events) == 1 && events[0].Error != "" && len(events[0].MessageIDs) == 1 && events[0].MessageIDs[0] == input.ID {
-					if kind == protocol.InputCompact && state.State == api.Idle && events[0].Kind == protocol.EventCompacted {
+				var failures []protocol.Event
+				for _, event := range events {
+					if event.Error != "" {
+						failures = append(failures, event)
+					}
+				}
+				if len(failures) == 1 && len(failures[0].MessageIDs) == 1 && failures[0].MessageIDs[0] == input.ID {
+					if kind == protocol.InputCompact && state.State == api.Idle && failures[0].Kind == protocol.EventRunFailed {
 						return
 					}
-					if kind == protocol.InputResume && state.State == api.Blocked && state.Block.CheckpointID == "missing" && events[0].RunID == "old" {
+					if kind == protocol.InputResume && state.State == api.Blocked && state.Block.CheckpointID == "missing" && failures[0].RunID == "old" {
 						return
 					}
 				}
 				time.Sleep(time.Millisecond)
 			}
-			t.Fatal("synchronous rejection was not delivered or kept retrying")
+			t.Fatal("failure was not delivered once or thread ownership changed")
 		})
 	}
 }

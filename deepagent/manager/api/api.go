@@ -68,6 +68,9 @@ type Subscription struct {
 	Close  func()
 }
 type History struct {
+	// Rollout is the canonical Conversation record log when present. Messages
+	// remains its effective-context projection for existing readers.
+	Rollout     json.RawMessage
 	Version     int64
 	Messages    json.RawMessage
 	Compactions json.RawMessage

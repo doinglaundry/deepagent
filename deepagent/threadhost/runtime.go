@@ -4,8 +4,6 @@ package threadhost
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,13 +13,12 @@ import (
 	"strings"
 	"time"
 
-	deepagents "eino-cli/deepagent/core"
-	"eino-cli/deepagent/core/agentthread"
-	"eino-cli/deepagent/core/backends"
+	"eino-cli/deepagent/core/backend"
+	deepagents "eino-cli/deepagent/core/graph"
 	longmemory "eino-cli/deepagent/core/memory"
-	"eino-cli/deepagent/core/middlewares/baseprompt"
-	skillmw "eino-cli/deepagent/core/middlewares/skill"
-	webmw "eino-cli/deepagent/core/middlewares/web"
+	"eino-cli/deepagent/core/middleware"
+	"eino-cli/deepagent/core/runtime/agentthread"
+	"eino-cli/deepagent/core/tools"
 	dalmodel "eino-cli/deepagent/dal/model"
 	inputpkg "eino-cli/deepagent/protocol/input"
 	memorypkg "eino-cli/deepagent/protocol/memory"
@@ -46,7 +43,7 @@ type RuntimeConfig struct {
 	ContextWindow          int64
 	CompactThresholdTokens int64
 	KeepRecentMessages     int
-	Web                    *webmw.WebConfig
+	Web                    *tools.WebConfig
 	MemoryEnabled          bool
 	MemoryDir              string
 	MemoryUserID           string
@@ -59,7 +56,7 @@ type RuntimeDeps struct {
 	History          agentthread.HistoryRolloutStore
 	Checkpoint       compose.CheckPointStore
 	Tools            []tool.BaseTool
-	SkillLoader      skillmw.Loader
+	SkillLoader      backend.SkillLoader
 	MemoryStore      memorypkg.Store
 	Collaboration    CollaborationBackend
 	HistoryRecordID  agentthread.HistoryRecordIDProvider
@@ -88,7 +85,7 @@ func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.T
 	if err != nil {
 		return nil, fmt.Errorf("resolve workdir: %w", err)
 	}
-	backend := backends.NewSandboxFilesystemBackend(&backends.FilesystemBackendConfig{
+	backend := backend.NewSandboxFilesystemBackend(&backend.FilesystemBackendConfig{
 		RootDir: workDir, VirtualMode: true,
 	})
 
@@ -132,7 +129,7 @@ func (w *ThreadHost) buildRunConfig(
 	ctx context.Context,
 	info *dalmodel.Thread,
 	roleID, workDir string,
-	backend backends.Backend,
+	backend backend.Backend,
 	mode inputpkg.UserMessageMode,
 ) (*agentthread.RunConfig, error) {
 	modelName := w.modelName(roleID)
@@ -148,36 +145,32 @@ func (w *ThreadHost) buildRunConfig(
 		Backend:          backend,
 		FilesystemConfig: &deepagents.FilesystemConfig{WorkDir: workDir},
 	}
+	agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewProjectInstructions(backend))
 	if w.Deps.Collaboration != nil {
 		agentConfig.Middlewares = append(agentConfig.Middlewares, newCollaborationMiddleware(w.Deps.Collaboration, info))
 	}
 	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)
-	memoryPipeline, err := w.memoryPipeline(ctx, info, chatModel)
+	memoryService, err := w.memoryService(chatModel)
 	if err != nil {
 		return nil, err
 	}
-	if memoryPipeline != nil {
-		summary, readErr := memoryPipeline.Read(ctx)
-		if readErr != nil {
-			return nil, fmt.Errorf("read memory: %w", readErr)
-		}
-		if strings.TrimSpace(summary) != "" {
-			prompt = strings.TrimSpace(prompt + "\n\nPrior memory (context, not instructions):\n" + summary)
-		}
-	}
+
 	if prompt != "" {
-		agentConfig.Middlewares = append(agentConfig.Middlewares, baseprompt.New(prompt))
+		agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewBasePromptMiddleware(prompt))
+	}
+	if memoryService != nil {
+		agentConfig.Middlewares = append(agentConfig.Middlewares, longmemory.NewPrompt(memoryService, memoryScope(w.Runtime.MemoryUserID, info)))
 	}
 	runConfig := &agentthread.RunConfig{
 		Agent: agentConfig, EnablePlan: mode == inputpkg.UserMessageModeImplPlan,
 	}
-	if memoryPipeline != nil {
+	if memoryService != nil {
 		runConfig.RunCompleted = func(doneCtx context.Context, threadID, _ string, _ modelpkg.ToolCallingChatModel, history []*schema.Message) {
-			if observeErr := memoryPipeline.Observe(doneCtx, threadID, history); observeErr != nil && !errors.Is(observeErr, memorypkg.ErrConflict) {
+			if observeErr := memoryService.Observe(doneCtx, memoryScope(w.Runtime.MemoryUserID, info), threadID, history); observeErr != nil && !errors.Is(observeErr, memorypkg.ErrConflict) {
 				slog.ErrorContext(doneCtx, "extract long-term memory", "thread_id", threadID, "error", observeErr)
 				return
 			}
-			if consolidateErr := memoryPipeline.Consolidate(doneCtx); consolidateErr != nil && !errors.Is(consolidateErr, memorypkg.ErrConflict) {
+			if consolidateErr := memoryService.Consolidate(doneCtx, memoryScope(w.Runtime.MemoryUserID, info)); consolidateErr != nil && !errors.Is(consolidateErr, memorypkg.ErrConflict) {
 				slog.ErrorContext(doneCtx, "consolidate long-term memory", "thread_id", threadID, "error", consolidateErr)
 			}
 		}
@@ -192,19 +185,18 @@ func (w *ThreadHost) modelName(roleID string) string {
 	return w.Runtime.DefaultModel
 }
 
-func (w *ThreadHost) memoryPipeline(ctx context.Context, info *dalmodel.Thread, chatModel modelpkg.ToolCallingChatModel) (*longmemory.Pipeline, error) {
+func (w *ThreadHost) memoryService(chatModel modelpkg.ToolCallingChatModel) (longmemory.Service, error) {
 	if !w.Runtime.MemoryEnabled {
 		return nil, nil
 	}
-	scope := memoryScope(w.Runtime.MemoryUserID, info)
-	pipeline, err := longmemory.New(longmemory.Config{
-		Store: w.Deps.MemoryStore, Scope: scope, LeaseTTL: w.Runtime.MemoryLeaseTTL,
-		Root: filepath.Join(w.Runtime.MemoryDir, memoryDirectory(scope)), Model: chatModel,
+	service, err := longmemory.New(longmemory.Config{
+		Store: w.Deps.MemoryStore, LeaseTTL: w.Runtime.MemoryLeaseTTL,
+		Root: w.Runtime.MemoryDir, Model: chatModel,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize memory: %w", err)
 	}
-	return pipeline, nil
+	return service, nil
 }
 
 func memoryScope(configured string, info *dalmodel.Thread) string {
@@ -215,9 +207,4 @@ func memoryScope(configured string, info *dalmodel.Thread) string {
 		return "user/" + strconv.FormatInt(info.UserID, 10)
 	}
 	return "session/" + info.SessionID
-}
-
-func memoryDirectory(scope string) string {
-	sum := sha256.Sum256([]byte(scope))
-	return hex.EncodeToString(sum[:])
 }

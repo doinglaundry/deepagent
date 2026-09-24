@@ -3,9 +3,9 @@ package distributed
 import (
 	"context"
 	"eino-cli/deepagent/core/checkpoint"
-	"eino-cli/deepagent/core/engine/agentthread"
 	"eino-cli/deepagent/manager/api"
 	"fmt"
+	"github.com/cloudwego/eino/compose"
 	"github.com/redis/go-redis/v9"
 	"path/filepath"
 	"time"
@@ -16,7 +16,7 @@ type CheckpointConfig struct {
 	Path    string `yaml:"path"`
 }
 
-func newCheckpointStore(ctx context.Context, m api.Manager, c Config) (agentthread.Checkpoints, func(), error) {
+func newCheckpointStore(ctx context.Context, m api.Manager, c Config) (compose.CheckPointStore, func(), error) {
 	noop := func() {}
 	switch c.Checkpoint.Backend {
 	case "", "mysql":

@@ -2,9 +2,9 @@ package deepagents
 
 import (
 	"context"
-	"eino-cli/deepagent/core/backends"
+	"eino-cli/deepagent/core/backend"
+	canonical "eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/middlewares"
-	skillmw "eino-cli/deepagent/core/middlewares/skill"
 	deeptools "eino-cli/deepagent/core/tools"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -22,8 +22,8 @@ func (m *testBuilderMiddleware) Name() string {
 
 type testSkillLoader struct{}
 
-func (l *testSkillLoader) ListSkills(ctx context.Context) ([]*skillmw.SkillMetadata, error) {
-	return []*skillmw.SkillMetadata{{
+func (l *testSkillLoader) ListSkills(ctx context.Context) ([]*backend.SkillMetadata, error) {
+	return []*backend.SkillMetadata{{
 		Name:        "code_search",
 		Description: "search codebase",
 		Path:        "/skills/code_search/SKILL.md",
@@ -43,11 +43,11 @@ func (t *fakeToolCounter) InvokableRun(_ context.Context, _ string, _ ...tool.Op
 	return "ok", nil
 }
 
-func findSkillMiddleware(t *testing.T, middlewares []middleware.Middleware) *skillmw.Middleware {
+func findSkillMiddleware(t *testing.T, middlewares []middleware.Middleware) *canonical.Skill {
 	t.Helper()
 
 	for _, mw := range middlewares {
-		if skillMiddleware, ok := mw.(*skillmw.Middleware); ok {
+		if skillMiddleware, ok := mw.(*canonical.Skill); ok {
 			return skillMiddleware
 		}
 	}
@@ -55,16 +55,16 @@ func findSkillMiddleware(t *testing.T, middlewares []middleware.Middleware) *ski
 	return nil
 }
 
-func newTestBackend(t *testing.T) *backends.FilesystemBackend {
+func newTestBackend(t *testing.T) *backend.FilesystemBackend {
 	t.Helper()
-	return backends.NewFilesystemBackend(&backends.FilesystemBackendConfig{
+	return backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{
 		RootDir:     t.TempDir(),
 		VirtualMode: true,
 	})
 }
 
 type testApplyPatchBackend struct {
-	*backends.FilesystemBackend
+	*backend.FilesystemBackend
 }
 
 func newTestApplyPatchBackend(t *testing.T) *testApplyPatchBackend {
@@ -113,7 +113,7 @@ func TestWithConfigCopiesInput(t *testing.T) {
 	if _, exists := source.HITLConfig.ToolPolicyGates["execute"]; !exists {
 		t.Fatalf("source HITLConfig was mutated: %+v", source.HITLConfig)
 	}
-	if workDir := configured.filesystemWorkDir(); workDir != "/specific" {
+	if workDir := configured.FilesystemConfig.WorkDir; workDir != "/specific" {
 		t.Fatalf("filesystem workdir = %q, want /specific", workDir)
 	}
 }
@@ -124,15 +124,27 @@ func TestWithWorkDirWritesFilesystemConfig(t *testing.T) {
 	if configured.FilesystemConfig == nil {
 		t.Fatal("WithWorkDir() did not enable filesystem configuration")
 	}
-	if workDir := configured.filesystemWorkDir(); workDir != "/workspace" {
+	if workDir := configured.FilesystemConfig.WorkDir; workDir != "/workspace" {
 		t.Fatalf("filesystem workdir = %q, want /workspace", workDir)
 	}
 }
 
 func TestSelectBackendProvidesCommandExecution(t *testing.T) {
-	backend := selectBackend(buildCreateConfig(WithWorkDir(t.TempDir())))
-	if _, ok := backend.(backends.CommandExecutor); !ok {
-		t.Fatalf("default workdir backend %T does not implement CommandExecutor", backend)
+	ctx := context.Background()
+	m := &publicModel{}
+	a, err := New(ctx, WithModel(m), WithWorkDir(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(ctx)
+	found := false
+	for _, info := range m.infos {
+		if info.Name == "execute" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("default workdir backend does not expose command execution")
 	}
 }
 
@@ -174,18 +186,24 @@ func TestCollectAllTools_ToolMaskRunsBeforeHITLWrapping(t *testing.T) {
 		},
 	}
 
-	allTools, err := collectAllTools(ctx, middleware.NewMiddlewareChain(), config)
+	m := &publicModel{}
+	config.Model, config.DisableSubAgent = m, true
+	a, err := New(ctx, WithConfig(config))
 	if err != nil {
 		t.Fatalf("collectAllTools() error = %v", err)
 	}
-	if len(allTools) != 0 {
-		t.Fatalf("expected masked tool to be removed before HITL wrapping, got %v", collectToolNames(t, ctx, allTools))
+	defer a.Close(ctx)
+	if len(m.infos) != 0 {
+		t.Fatalf("expected masked tool to be removed before HITL wrapping, got %v", m.infos)
 	}
 }
 
 type explicitReadOnlyTool struct{ fakeToolCounter }
 
 func (*explicitReadOnlyTool) ReadOnly() bool { return true }
+func (*explicitReadOnlyTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: "readonly_counter"}, nil
+}
 
 func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T) {
 	ctx := context.Background()
@@ -193,12 +211,15 @@ func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T
 		Tools:             []tool.BaseTool{&fakeToolCounter{}, &explicitReadOnlyTool{}},
 		ReadOnlyToolsOnly: true,
 	}
-	allTools, err := collectAllTools(ctx, middleware.NewMiddlewareChain(), config)
+	m := &publicModel{}
+	config.Model, config.DisableSubAgent = m, true
+	a, err := New(ctx, WithConfig(config))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(allTools) != 1 {
-		t.Fatalf("read-only tools = %v", collectToolNames(t, ctx, allTools))
+	defer a.Close(ctx)
+	if len(m.infos) != 1 || m.infos[0].Name != "readonly_counter" {
+		t.Fatalf("read-only tools = %v", m.infos)
 	}
 }
 
@@ -221,21 +242,24 @@ func TestCollectAllTools_ToolPolicyGateDeniesWithoutRunningTool(t *testing.T) {
 		},
 	}
 
-	allTools, err := collectAllTools(ctx, middleware.NewMiddlewareChain(), config)
+	m := &publicModel{call: true}
+	config.Model, config.DisableSubAgent = m, true
+	a, err := New(ctx, WithConfig(config))
 	if err != nil {
 		t.Fatalf("collectAllTools() error = %v", err)
 	}
-	if len(allTools) != 1 {
-		t.Fatalf("tools len = %d, want 1", len(allTools))
+	defer a.Close(ctx)
+	if len(m.infos) != 1 {
+		t.Fatalf("tools len = %d, want 1", len(m.infos))
 	}
-	invokable, ok := allTools[0].(tool.InvokableTool)
-	if !ok {
-		t.Fatalf("tool is not invokable")
-	}
-	got, err := invokable.InvokableRun(ctx, `{"delta":3}`)
+	_, err = a.Run(ctx, []*schema.Message{schema.UserMessage("go")})
 	if err != nil {
 		t.Fatalf("InvokableRun() error = %v", err)
 	}
+	if len(m.inputs) != 2 {
+		t.Fatalf("model calls=%d", len(m.inputs))
+	}
+	got := m.inputs[1][len(m.inputs[1])-1].Content
 	if got != `{"denied":true,"reason":"blocked"}` {
 		t.Fatalf("output = %q", got)
 	}

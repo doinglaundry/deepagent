@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -144,6 +145,41 @@ func (as *GraphState) decode(data []byte) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// RestoreExtensions keeps the retained public GraphState API backed by the
+// single RunState checkpoint. New graph execution does not call Save/Resume.
+func (as *GraphState) RestoreExtensions(state *RunState) error {
+	for name, entry := range as.StateHolder {
+		raw, ok := state.Extensions["middleware:"+name]
+		if !ok || !entry.persist {
+			continue
+		}
+		var encoded string
+		if err := json.Unmarshal(raw, &encoded); err != nil {
+			return err
+		}
+		if err := entry.stateful.UnmarshalRuntimeState(encoded); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (as *GraphState) SnapshotExtensions(state *RunState) error {
+	if state.Extensions == nil {
+		state.Extensions = make(map[string]json.RawMessage)
+	}
+	for name, entry := range as.StateHolder {
+		if !entry.persist {
+			continue
+		}
+		raw, err := json.Marshal(entry.stateful.MarshalRuntimeState())
+		if err != nil {
+			return err
+		}
+		state.Extensions["middleware:"+name] = raw
 	}
 	return nil
 }

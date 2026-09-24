@@ -9,12 +9,14 @@ func (t Type) String() string { return string(t) }
 
 const (
 	EventTypeRunStatus          Type = "run_status"
+	EventTypeInputConsumed      Type = "input_consumed"
 	EventTypeAssistantMessage   Type = "assistant_message"
 	EventTypeToolCall           Type = "tool_call"
 	EventTypeInputRequired      Type = "input_required"
 	EventTypePlanUpdated        Type = "plan_updated"
 	EventTypeError              Type = "error"
 	EventTypeAssistantDelta     Type = "assistant_delta"
+	EventTypeTokens             Type = "tokens"
 	RunStatusStarted                 = "started"
 	RunStatusFinished                = "finished"
 	RunStatusInterrupted             = "interrupted"
@@ -34,6 +36,14 @@ type ContextUsage struct {
 	Ratio            *float64 `json:"ratio,omitempty"`
 	PromptTokens     *int64   `json:"prompt_tokens,omitempty"`
 	CompletionTokens *int64   `json:"completion_tokens,omitempty"`
+}
+
+type TokenUsageEventPayload struct {
+	PromptTokens       int64               `json:"prompt_tokens"`
+	CompletionTokens   int64               `json:"completion_tokens"`
+	TotalTokens        int64               `json:"total_tokens"`
+	ConsumedMessageIDs []string            `json:"consumed_message_ids,omitempty"`
+	ConsumedInputsMeta []map[string]string `json:"consumed_inputs_meta,omitempty"`
 }
 type MessagePartType string
 
@@ -124,6 +134,7 @@ type PlanInputRequiredEventPayload struct {
 	ConsumedInputsMeta []map[string]string  `json:"consumed_inputs_meta,omitempty"`
 }
 type ApprovalRequiredEventPayload struct {
+	ToolCallID         string              `json:"tool_call_id,omitempty"`
 	Kind               string              `json:"kind,omitempty"`
 	InterruptID        string              `json:"interrupt_id,omitempty"`
 	CheckpointID       string              `json:"checkpoint_id,omitempty"`
@@ -142,6 +153,7 @@ type InterruptRequiredEventPayload struct {
 	ConsumedInputsMeta []map[string]string `json:"consumed_inputs_meta,omitempty"`
 }
 type ErrorEventPayload struct {
+	Cancelled          bool                `json:"cancelled,omitempty"`
 	Status             string              `json:"status,omitempty"`
 	Message            string              `json:"message,omitempty"`
 	ContextUsage       *ContextUsage       `json:"context_usage,omitempty"`

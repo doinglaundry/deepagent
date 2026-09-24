@@ -149,7 +149,7 @@ func TestManagedConversationTwoWorkersAndSharedHistory(t *testing.T) {
 		t.Fatalf("competing workers duplicated model execution: %d", calls.Load())
 	}
 	history, err := m.LoadHistory(ctx, r.ThreadID())
-	if err != nil || !strings.Contains(string(history.Messages), "hello") {
+	if err != nil || !strings.Contains(string(history.Messages), "hello") || !strings.Contains(string(history.Rollout), "hello") {
 		t.Fatalf("shared history missing: %+v %v", history, err)
 	}
 	events, err := r.History(ctx)

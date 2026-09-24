@@ -20,6 +20,7 @@ type inputRow struct {
 func (inputRow) TableName() string { return "deepagent_inputs" }
 
 type historyRow struct {
+	Rollout     []byte `gorm:"type:longblob"`
 	Namespace   string `gorm:"primaryKey;type:varbinary(191)"`
 	ThreadID    string `gorm:"primaryKey;type:varbinary(64)"`
 	Version     int64
@@ -56,7 +57,7 @@ func (s *sqlStore) loadModelHistory(db *gorm.DB, r *record) error {
 	if e != nil {
 		return e
 	}
-	r.History = api.History{Version: h.Version, Messages: h.Messages, Compactions: h.Compactions}
+	r.History = api.History{Version: h.Version, Messages: h.Messages, Compactions: h.Compactions, Rollout: h.Rollout}
 	return nil
 }
 func (s *sqlStore) saveContent(db *gorm.DB, before, after *record) error {
@@ -83,10 +84,10 @@ func (s *sqlStore) saveContent(db *gorm.DB, before, after *record) error {
 			return e
 		}
 	}
-	changed := before == nil || before.legacy || before.History.Version != after.History.Version || !bytes.Equal(before.History.Messages, after.History.Messages) || !bytes.Equal(before.History.Compactions, after.History.Compactions)
+	changed := before == nil || before.legacy || before.History.Version != after.History.Version || !bytes.Equal(before.History.Messages, after.History.Messages) || !bytes.Equal(before.History.Compactions, after.History.Compactions) || !bytes.Equal(before.History.Rollout, after.History.Rollout)
 	if changed && after.History.Version > 0 {
 		h := after.History
-		if e := db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "namespace"}, {Name: "thread_id"}}, DoUpdates: clause.AssignmentColumns([]string{"version", "messages", "compactions"})}).Create(&historyRow{Namespace: s.namespace, ThreadID: after.Thread.ID, Version: h.Version, Messages: h.Messages, Compactions: h.Compactions}).Error; e != nil {
+		if e := db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "namespace"}, {Name: "thread_id"}}, DoUpdates: clause.AssignmentColumns([]string{"version", "messages", "compactions", "rollout"})}).Create(&historyRow{Namespace: s.namespace, ThreadID: after.Thread.ID, Version: h.Version, Messages: h.Messages, Compactions: h.Compactions, Rollout: h.Rollout}).Error; e != nil {
 			return e
 		}
 	}

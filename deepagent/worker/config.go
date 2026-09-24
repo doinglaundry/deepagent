@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"eino-cli/deepagent/core/mcp"
-	webmw "eino-cli/deepagent/core/middlewares/web"
 	"eino-cli/deepagent/core/modelhub"
+	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/manager"
 	"eino-cli/deepagent/threadhost"
 	"gopkg.in/yaml.v3"
@@ -30,7 +30,7 @@ type Config struct {
 	KeepRecentMessages     int               `yaml:"keep_recent_messages"`
 	HistoryTable           string            `yaml:"history_table"`
 	MCP                    []mcp.MCPConfig   `yaml:"mcp"`
-	Web                    *webmw.WebConfig  `yaml:"web"`
+	Web                    *tools.WebConfig  `yaml:"web"`
 	SkillPaths             []string          `yaml:"skill_paths"`
 	MemoryEnabled          bool              `yaml:"memory_enabled"`
 	MemoryDir              string            `yaml:"memory_dir"`

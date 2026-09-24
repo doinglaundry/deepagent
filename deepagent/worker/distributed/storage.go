@@ -5,6 +5,8 @@ import (
 	"eino-cli/deepagent/core/compact"
 	"eino-cli/deepagent/manager/api"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"github.com/cloudwego/eino/schema"
 	"sync"
 	"time"
@@ -20,29 +22,54 @@ type History struct {
 }
 
 func NewHistory(ctx context.Context, m api.Manager, p api.Permit) *History {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return &History{manager: m, permit: p, base: ctx}
 }
 func (h *History) Load(ctx context.Context) ([]*schema.Message, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	// Core construction has no context parameter. Bind its startup read to the claim.
-	callCtx, cancel := context.WithTimeout(h.base, 10*time.Second)
-	defer cancel()
-	stored, err := h.manager.LoadHistory(callCtx, h.permit.ThreadID)
+	stored, err := h.read(ctx)
 	if err != nil {
 		return nil, err
 	}
-	h.history = stored
-	if len(stored.Messages) == 0 {
-		return nil, nil
-	}
 	var messages []*schema.Message
-	err = json.Unmarshal(stored.Messages, &messages)
-	return messages, err
+	if len(stored.Messages) > 0 {
+		if err = json.Unmarshal(stored.Messages, &messages); err != nil {
+			return nil, err
+		}
+	}
+
+	h.history = stored
+	return messages, nil
+}
+func (h *History) read(ctx context.Context) (api.History, error) {
+	callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(h.base, cancel)
+	defer stop()
+	if h.base.Err() != nil {
+		cancel()
+	}
+	if err := callCtx.Err(); err != nil {
+		return api.History{}, err
+	}
+	stored, err := h.manager.LoadHistory(callCtx, h.permit.ThreadID)
+	if err != nil {
+		return api.History{}, err
+	}
+	if err = callCtx.Err(); err != nil {
+		return api.History{}, err
+	}
+	return stored, nil
 }
 func (h *History) Save(ctx context.Context, messages []*schema.Message) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if hasRollout(h.history.Rollout) {
+		return fmt.Errorf("canonical rollout history cannot be overwritten by snapshot writer")
+	}
 	data, err := json.Marshal(messages)
 	if err != nil {
 		return err
@@ -63,6 +90,9 @@ type Checkpoints struct {
 
 func (c Checkpoints) Get(ctx context.Context, key string) ([]byte, bool, error) {
 	data, err := c.Manager.GetCheckpoint(ctx, key)
+	if errors.Is(err, api.ErrNotFound) {
+		return nil, false, nil
+	}
 	return data, err == nil && data != nil, err
 }
 func (c Checkpoints) Set(ctx context.Context, key string, data []byte) error {
@@ -80,6 +110,9 @@ func (c Checkpoints) Set(ctx context.Context, key string, data []byte) error {
 func (h *History) SaveCompacted(ctx context.Context, messages []*schema.Message, record compact.Record) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if hasRollout(h.history.Rollout) {
+		return fmt.Errorf("canonical rollout history cannot be overwritten by snapshot writer")
+	}
 	data, err := json.Marshal(messages)
 	if err != nil {
 		return err

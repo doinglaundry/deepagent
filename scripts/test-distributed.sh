@@ -6,8 +6,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 test_bins="$(mktemp -d "${TMPDIR:-/tmp}/deepagent-test.XXXXXX")"
 trap 'rm -rf "$test_bins"' EXIT
-go build -o "$test_bins/deepagent" ./cmd/deepagent
+go build -o "$test_bins/deepagent_web" ./cmd/deepagent_web
 go build -o "$test_bins/deepagent_worker" ./cmd/deepagent_worker
-export DEEPAGENT_TEST_CLI="$test_bins/deepagent"
+export DEEPAGENT_TEST_WEB="$test_bins/deepagent_web"
 export DEEPAGENT_TEST_WORKER="$test_bins/deepagent_worker"
-go test -race -count=1 ./manager/... ./deepagent/core/... ./worker/... ./host/...
+node --test deepagent/host/web/app.test.cjs
+go test -race -count=1 ./deepagent/manager/... ./deepagent/core/... ./deepagent/worker/... ./deepagent/host/...

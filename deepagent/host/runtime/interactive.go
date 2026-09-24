@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	legacy "eino-cli/deepagent/host/runtime/local"
 	"eino-cli/deepagent/protocol"
 )
 
@@ -20,7 +19,7 @@ func (r *Runtime) SetInteractionHandler(h InteractionHandler) {
 
 // ExecuteEvents is the UI adapter. Approval replies resume the saved graph;
 // unhandled clarifications are retained and the next user input answers them.
-func (r *Runtime) ExecuteEvents(ctx context.Context, prompt string, sink func(protocol.Event)) (legacy.Result, error) {
+func (r *Runtime) ExecuteEvents(ctx context.Context, prompt string, sink func(protocol.Event)) (Result, error) {
 	input := protocol.Input{Kind: protocol.InputUser, Text: prompt}
 	r.mu.Lock()
 	block := r.pending
@@ -28,7 +27,7 @@ func (r *Runtime) ExecuteEvents(ctx context.Context, prompt string, sink func(pr
 	if block == nil && r.ThreadID() != "" {
 		t, err := r.manager.GetThread(ctx, r.ThreadID())
 		if err != nil {
-			return legacy.Result{}, err
+			return Result{}, err
 		}
 		if t.State == "blocked" {
 			block = t.Block
@@ -41,7 +40,7 @@ func (r *Runtime) ExecuteEvents(ctx context.Context, prompt string, sink func(pr
 	for {
 		stream, err := r.StartRun(ctx, input)
 		if err != nil {
-			return legacy.Result{}, err
+			return Result{}, err
 		}
 		if input.Kind == protocol.InputResume {
 			r.mu.Lock()
@@ -73,10 +72,10 @@ func (r *Runtime) ExecuteEvents(ctx context.Context, prompt string, sink func(pr
 		err = stream.Err()
 		stream.Close()
 		if err != nil {
-			return legacy.Result{}, err
+			return Result{}, err
 		}
 		if failed != nil {
-			return legacy.Result{}, failed
+			return Result{}, failed
 		}
 		for _, id := range order {
 			if text := strings.TrimSpace(responses[id]); text != "" {
@@ -90,7 +89,7 @@ func (r *Runtime) ExecuteEvents(ctx context.Context, prompt string, sink func(pr
 			r.mu.Lock()
 			r.pending = nil
 			r.mu.Unlock()
-			return legacy.Result{Success: true, Output: output.String()}, nil
+			return Result{Success: true, Output: output.String()}, nil
 		}
 		r.mu.Lock()
 		r.pending = waiting
@@ -104,11 +103,11 @@ func (r *Runtime) ExecuteEvents(ctx context.Context, prompt string, sink func(pr
 			for _, option := range waiting.Options {
 				output.WriteString("\n- " + option)
 			}
-			return legacy.Result{NeedsUser: true, Output: output.String()}, nil
+			return Result{NeedsUser: true, Output: output.String()}, nil
 		}
 		answer, err := handler(ctx, *waiting)
 		if err != nil {
-			return legacy.Result{}, err
+			return Result{}, err
 		}
 		input = resumeInput(*waiting, answer)
 	}
@@ -126,15 +125,15 @@ func isApproval(s string) bool {
 	}
 	return false
 }
-func (r *Runtime) ExecuteStream(ctx context.Context, prompt string, onChunk legacy.StreamChunkHandler) (legacy.Result, error) {
+func (r *Runtime) ExecuteStream(ctx context.Context, prompt string, onChunk func(string)) (Result, error) {
 	return r.ExecuteEvents(ctx, prompt, func(e protocol.Event) {
 		if onChunk != nil && e.Kind == protocol.EventTextDelta {
 			onChunk(e.Text)
 		}
 	})
 }
-func (r *Runtime) RunDream(context.Context) (legacy.Result, error) {
-	return legacy.Result{}, fmt.Errorf("memory consolidation is managed by Worker configuration")
+func (r *Runtime) RunDream(context.Context) (Result, error) {
+	return Result{}, fmt.Errorf("memory consolidation is managed by Worker configuration")
 }
 func (r *Runtime) ExportHistory() ([]byte, error) {
 	events, err := r.History(context.Background())
@@ -150,37 +149,37 @@ func (r *Runtime) RollbackToHistory([]byte) error {
 	return fmt.Errorf("distributed history does not support local filesystem rollback")
 }
 
-func (r *Runtime) Compact(ctx context.Context) (legacy.Result, error) {
+func (r *Runtime) Compact(ctx context.Context) (Result, error) {
 	stream, err := r.StartRun(ctx, protocol.Input{Kind: protocol.InputCompact})
 	if err != nil {
-		return legacy.Result{}, err
+		return Result{}, err
 	}
 	defer stream.Close()
 	output := ""
 	completed := false
 	for e := range stream.Events {
 		if e.Kind == protocol.EventRunFailed {
-			return legacy.Result{}, fmt.Errorf("compact: %s", e.Error)
+			return Result{}, fmt.Errorf("compact: %s", e.Error)
 		}
 		if e.Kind == protocol.EventRunCancelled {
-			return legacy.Result{}, context.Canceled
+			return Result{}, context.Canceled
 		}
 		if e.Kind == protocol.EventCompacted {
 			completed = true
 			if e.Error != "" {
-				return legacy.Result{}, fmt.Errorf("compact: %s", e.Error)
+				return Result{}, fmt.Errorf("compact: %s", e.Error)
 			}
 			output = e.Text
 		}
 	}
 	if err = stream.Err(); err != nil {
-		return legacy.Result{}, err
+		return Result{}, err
 	}
 	if !completed {
-		return legacy.Result{}, fmt.Errorf("compaction ended without a completion event")
+		return Result{}, fmt.Errorf("compaction ended without a completion event")
 	}
 	if output == "" {
 		output = "Context compacted"
 	}
-	return legacy.Result{Success: true, Output: output}, nil
+	return Result{Success: true, Output: output}, nil
 }

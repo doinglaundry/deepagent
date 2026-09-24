@@ -18,7 +18,7 @@ import (
 	inputpkg "eino-cli/deepagent/protocol/input"
 )
 
-//go:embed index.html
+//go:embed index.html app.js
 var files embed.FS
 
 type Server struct {
@@ -30,6 +30,10 @@ type Server struct {
 func New(coordinator *manager.Manager, root string) *Server {
 	s := &Server{Manager: coordinator, Root: root, Mux: http.NewServeMux()}
 	s.Mux.HandleFunc("/", s.index)
+	s.Mux.HandleFunc("/app.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		http.ServeFileFS(w, r, files, "app.js")
+	})
 	s.Mux.HandleFunc("/api/threads", s.threads)
 	s.Mux.HandleFunc("/api/threads/", s.thread)
 	return s
@@ -215,7 +219,8 @@ func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID 
 }
 
 type eventView struct {
-	Sequence int64           `json:"sequence"`
+	Sequence string          `json:"sequence"`
+	Status   string          `json:"status,omitempty"`
 	RunID    string          `json:"run_id,omitempty"`
 	Kind     string          `json:"kind"`
 	Text     string          `json:"text,omitempty"`
@@ -232,8 +237,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, threadID int64) 
 	rows := make([]eventView, 0, len(result.Messages))
 	for _, message := range result.Messages {
 		rows = append(rows, eventView{
-			Sequence: message.MessageID, RunID: message.TriggerRunID, Kind: message.MessageType,
-			Text: messageText(message), Payload: append(json.RawMessage(nil), message.Payload...),
+			Sequence: strconv.FormatInt(message.MessageID, 10), RunID: message.TriggerRunID, Kind: message.MessageType,
+			Status: message.Status,
+			Text:   messageText(message), Payload: append(json.RawMessage(nil), message.Payload...),
 		})
 	}
 	writeJSON(w, http.StatusOK, rows)

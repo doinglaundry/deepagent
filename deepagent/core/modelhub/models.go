@@ -1,4 +1,4 @@
-// Package modelhub constructs Worker-owned model clients. CLI code must not import it.
+// Package modelhub constructs the model clients used by the Core graph.
 package modelhub
 
 import (
@@ -27,7 +27,12 @@ type Config struct {
 }
 
 func New(ctx context.Context, c Config) (model.ToolCallingChatModel, error) {
-	if strings.TrimSpace(c.Name) == "" || strings.TrimSpace(c.Model) == "" {
+	c.Name = strings.TrimSpace(c.Name)
+	c.Model = strings.TrimSpace(c.Model)
+	c.BaseURL = strings.TrimSpace(c.BaseURL)
+	c.APIKey = strings.TrimSpace(c.APIKey)
+	c.ReasoningEffort = strings.ToLower(strings.TrimSpace(c.ReasoningEffort))
+	if c.Name == "" || c.Model == "" {
 		return nil, fmt.Errorf("model name and model identifier required")
 	}
 	if c.TimeoutSeconds < 0 || c.MaxTokens < 0 || c.ThinkingBudgetTokens < 0 {
@@ -37,10 +42,17 @@ func New(ctx context.Context, c Config) (model.ToolCallingChatModel, error) {
 	if timeout == 0 {
 		timeout = 120 * time.Second
 	}
-	switch strings.ToLower(strings.TrimSpace(c.Provider)) {
-	case "openai", "openai-compatible", "kimi", "moonshot":
-		if c.BaseURL == "" && (c.Provider == "kimi" || c.Provider == "moonshot") {
-			c.BaseURL = "https://api.moonshot.cn/v1"
+	provider := strings.ToLower(strings.TrimSpace(c.Provider))
+	switch provider {
+	case "openai", "openai-compatible", "kimi", "moonshot", "ark":
+		if c.BaseURL == "" {
+			switch provider {
+			case "kimi", "moonshot":
+				c.BaseURL = "https://api.moonshot.cn/v1"
+			case "ark":
+				// Ark's Chat API exposes the OpenAI-compatible tool/stream protocol.
+				c.BaseURL = "https://ark.cn-beijing.volces.com/api/v3"
+			}
 		}
 		cfg := &openai.ChatModelConfig{APIKey: c.APIKey, Model: c.Model, BaseURL: c.BaseURL, Timeout: timeout, ReasoningEffort: openai.ReasoningEffortLevel(c.ReasoningEffort)}
 		if c.MaxTokens > 0 {

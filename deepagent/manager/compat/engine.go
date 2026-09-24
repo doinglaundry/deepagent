@@ -180,6 +180,9 @@ func (m *engine) ResumeFromBlock(ctx context.Context, id string, in protocol.Inp
 		if in.Resume.RunID != b.RunID || in.Resume.CheckpointID != b.CheckpointID || in.Resume.InterruptID != b.InterruptID {
 			return api.ErrConflict
 		}
+		answer := *in.Resume
+		answer.Kind = b.Kind
+		in.Resume = &answer
 		var e error
 		out, e = prepareInput(r, in)
 		if e != nil {
@@ -353,7 +356,7 @@ func (m *engine) ClaimThread(ctx context.Context, id, worker string, ttl time.Du
 	if r.Thread.State == api.Blocked {
 		return api.Claim{}, api.ErrConflict
 	}
-	inputs, e := m.store.deliver(ctx, r)
+	inputs, e := m.deliver(ctx, r)
 	if e != nil { // Release preparation failure without relying on the cancelled caller context.
 		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -409,7 +412,7 @@ func (m *engine) ReadPendingInputs(ctx context.Context, p api.Permit) ([]protoco
 	if e != nil {
 		return nil, e
 	}
-	return m.store.deliver(ctx, r)
+	return m.deliver(ctx, r)
 }
 func (m *engine) ConfirmInputDelivery(ctx context.Context, p api.Permit, id string) error {
 	_, e := m.store.update(ctx, p.ThreadID, func(r *record) error {
@@ -687,6 +690,9 @@ func (m *engine) SaveHistory(ctx context.Context, p api.Permit, h api.History) (
 		}
 		if len(h.Messages) > 0 && !json.Valid(h.Messages) {
 			return fmt.Errorf("invalid messages JSON")
+		}
+		if len(h.Rollout) > 0 && !json.Valid(h.Rollout) {
+			return fmt.Errorf("invalid rollout JSON")
 		}
 		if len(h.Compactions) > 0 && !json.Valid(h.Compactions) {
 			return fmt.Errorf("invalid compactions JSON")

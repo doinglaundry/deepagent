@@ -184,9 +184,21 @@ var toolNameCleaner = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 func LoadMCP(ctx context.Context, configs []MCPConfig) (result []tool.BaseTool, err error) {
 	names := map[string]bool{}
+
+	var clients []*mcpClient
 	defer func() {
-		if err != nil {
-			CloseMCP(result)
+		retained := make(map[*mcpClient]bool)
+		if err == nil {
+			for _, base := range result {
+				if t, ok := base.(*mcpTool); ok {
+					retained[t.client] = true
+				}
+			}
+		}
+		for _, client := range clients {
+			if !retained[client] {
+				client.close()
+			}
 		}
 	}()
 	for _, config := range configs {
@@ -203,6 +215,7 @@ func LoadMCP(ctx context.Context, configs []MCPConfig) (result []tool.BaseTool, 
 			httpClient = &http.Client{Timeout: timeout}
 		}
 		client := &mcpClient{config: config, client: httpClient}
+		clients = append(clients, client)
 		init, e := client.request(ctx, "initialize", map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]string{"name": "deepagent-worker", "version": "1.0"}}, false)
 		if e != nil {
 			return result, e
@@ -268,33 +281,33 @@ func LoadMCP(ctx context.Context, configs []MCPConfig) (result []tool.BaseTool, 
 }
 func CloseMCP(tools []tool.BaseTool) {
 	for _, base := range tools {
-		t, ok := base.(*mcpTool)
-		if !ok {
-			continue
+		if t, ok := base.(*mcpTool); ok {
+			t.client.close()
 		}
-		c := t.client
-		c.closeOnce.Do(func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if c.session == "" {
-				return
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.config.URL, nil)
-			if err != nil {
-				return
-			}
-			for k, v := range c.config.Headers {
-				req.Header.Set(k, v)
-			}
-			req.Header.Set("Mcp-Session-Id", c.session)
-			if c.version != "" {
-				req.Header.Set("MCP-Protocol-Version", c.version)
-			}
-			if resp, err := c.client.Do(req); err == nil {
-				_ = resp.Body.Close()
-			}
-		})
 	}
+}
+func (c *mcpClient) close() {
+	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.session == "" {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.config.URL, nil)
+		if err != nil {
+			return
+		}
+		for k, v := range c.config.Headers {
+			req.Header.Set(k, v)
+		}
+		req.Header.Set("Mcp-Session-Id", c.session)
+		if c.version != "" {
+			req.Header.Set("MCP-Protocol-Version", c.version)
+		}
+		if resp, err := c.client.Do(req); err == nil {
+			_ = resp.Body.Close()
+		}
+	})
 }

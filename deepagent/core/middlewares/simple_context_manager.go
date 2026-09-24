@@ -5,22 +5,23 @@ import (
 
 	"eino-cli/deepagent/core/graph"
 	"eino-cli/deepagent/core/hooks"
+	"eino-cli/deepagent/core/internal/conversation"
 	"eino-cli/deepagent/core/types"
-	"eino-cli/deepagent/utils"
+	"fmt"
 	"github.com/bytedance/sonic"
 	"github.com/cloudwego/eino/schema"
+	"time"
 )
 
-// SimpleContextManager keeps the messages visible to the current model run.
-// It is intentionally lightweight; durable history and compaction belong to
-// agentthread.MemoryContextManager.
+// SimpleContextManager preserves the legacy hook API over the canonical
+// in-memory Conversation. Graph uses it directly as its Conversation owner.
 type SimpleContextManager struct {
 	BaseMiddleware
-	history []*schema.Message
+	*conversation.Conversation
 }
 
 func NewSimpleContextManager() *SimpleContextManager {
-	return &SimpleContextManager{history: make([]*schema.Message, 0)}
+	return &SimpleContextManager{Conversation: conversation.New("", nil, nil, nil)}
 }
 
 func (m *SimpleContextManager) Name() string { return "simple_context_manager" }
@@ -28,12 +29,21 @@ func (m *SimpleContextManager) Name() string { return "simple_context_manager" }
 func (m *SimpleContextManager) BuildStateHandler() types.RunTimeStateful { return m }
 
 func (m *SimpleContextManager) MarshalRuntimeState() string {
-	data, _ := sonic.MarshalString(m.history)
+	data, _ := sonic.MarshalString(m.History(context.Background()))
 	return data
 }
 
 func (m *SimpleContextManager) UnmarshalRuntimeState(state string) error {
-	return sonic.UnmarshalString(state, &m.history)
+	var messages []*schema.Message
+	if err := sonic.UnmarshalString(state, &messages); err != nil {
+		return err
+	}
+	restored := conversation.New("", nil, nil, nil)
+	if err := restored.AddHistory(context.Background(), "", messages...); err != nil {
+		return err
+	}
+	m.Conversation = restored
+	return nil
 }
 
 func (m *SimpleContextManager) Hooks() hook.Hooks {
@@ -59,13 +69,15 @@ func (m *SimpleContextManager) ModifyModelRequest(
 	messages []*schema.Message,
 	state *types.GraphState,
 ) ([]*schema.Message, error) {
+	if types.RunStateFromContext(ctx) != nil {
+		return messages, nil // Canonical Conversation already owns the complete request history.
+	}
 	_ = ctx
 	_ = state
-	m.history = append(m.history, messages...)
-	modelRequest := make([]*schema.Message, 0, len(initialContext)+len(m.history))
-	modelRequest = append(modelRequest, initialContext...)
-	modelRequest = append(modelRequest, m.history...)
-	return modelRequest, nil
+	if err := m.AddHistory(ctx, "", messages...); err != nil {
+		return nil, err
+	}
+	return m.BuildRequest(ctx, initialContext)
 }
 
 func (m *SimpleContextManager) ModifyModelResponse(
@@ -73,13 +85,15 @@ func (m *SimpleContextManager) ModifyModelResponse(
 	response *schema.Message,
 	state *types.GraphState,
 ) (*schema.Message, error) {
+	if types.RunStateFromContext(ctx) != nil {
+		return response, nil
+	}
 	_ = ctx
 	_ = state
 	if response == nil {
 		return nil, nil
 	}
-	m.history = append(m.history, response)
-	return response, nil
+	return response, m.AddHistory(ctx, "", response)
 }
 
 func (m *SimpleContextManager) ModifyModelStreamResponse(
@@ -87,27 +101,80 @@ func (m *SimpleContextManager) ModifyModelStreamResponse(
 	modelResponse *schema.StreamReader[*schema.Message],
 	state *types.GraphState,
 ) (*schema.StreamReader[*schema.Message], error) {
+	if types.RunStateFromContext(ctx) != nil {
+		return modelResponse, nil
+	}
 	_ = state
 	if modelResponse == nil {
 		return modelResponse, nil
 	}
-	outputReader, outputWriter := schema.Pipe[*schema.Message](1000)
+	streamCtx, cancel := context.WithCancel(ctx)
+	outputReader, outputWriter := schema.Pipe[*schema.Message](0)
+	outputReader.SetAutomaticClose()
+	modelResponse.SetAutomaticClose()
+	stopClose := context.AfterFunc(streamCtx, func() { outputReader.Close(); modelResponse.Close() })
+	chunks := make(chan *schema.Message)
+	done := make(chan error, 1)
 	go func() {
-		defer modelResponse.Close()
-		defer outputWriter.Close()
-		defer utils.PanicGuard(ctx)
+		var mergeErr error
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				mergeErr = fmt.Errorf("merge model stream: %v", recovered)
+			}
+			modelResponse.Close()
+			done <- mergeErr
+		}()
 		merger := graph.NewStreamMessageMerger(func(ctx context.Context, chunk *schema.Message) {
-			outputWriter.Send(chunk, nil)
+			select {
+			case chunks <- chunk:
+			case <-ctx.Done():
+			}
 		})
-		fullMessage, err := merger.Merge(ctx, modelResponse)
-		if err != nil {
-			outputWriter.Send(nil, err)
-			return
+		var message *schema.Message
+		message, mergeErr = merger.Merge(streamCtx, modelResponse)
+		if mergeErr == nil && message != nil {
+			mergeErr = m.AddHistory(streamCtx, "", message)
 		}
-		if fullMessage == nil {
-			return
-		}
-		m.history = append(m.history, fullMessage)
 	}()
-	return outputReader, nil
+	go func() {
+		defer outputWriter.Close()
+		defer cancel()
+		defer stopClose()
+		// Eino exposes consumer closure through Send only. Private nil probes
+		// detect closure while the provider is silent and are filtered below.
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case chunk := <-chunks:
+				if outputWriter.Send(chunk, nil) {
+					cancel()
+					<-done
+					return
+				}
+			case err := <-done:
+				if err != nil {
+					outputWriter.Send(nil, err)
+				}
+				return
+			case <-ticker.C:
+				if outputWriter.Send(nil, nil) {
+					cancel()
+					<-done
+					return
+				}
+			case <-streamCtx.Done():
+				<-done
+				return
+			}
+		}
+	}()
+	return schema.StreamReaderWithConvert(outputReader, func(message *schema.Message) (*schema.Message, error) {
+		if message == nil {
+			return nil, schema.ErrNoValue
+		}
+		return message, nil
+	}), nil
 }
+
+var _ graph.Conversation = (*SimpleContextManager)(nil)
