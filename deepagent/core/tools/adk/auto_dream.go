@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -16,6 +17,39 @@ import (
 )
 
 const autoDreamShellDenied = "auto-dream shell only allows read-only commands: ls, pwd, rg, grep"
+
+const shellToolDesc = `Execute a read-only command in the auto-dream workspace.`
+
+type shellArgs struct {
+	Command    string `json:"command" jsonschema:"required,description=Read-only shell command"`
+	WorkingDir string `json:"working_directory,omitempty"`
+}
+
+type writeFileArgs struct {
+	FilePath string `json:"file_path" jsonschema:"description=The path to the file to write"`
+	Content  string `json:"content" jsonschema:"description=The content to write to the file"`
+}
+
+type editFileArgs struct {
+	FilePath   string `json:"file_path" jsonschema:"description=The path to the file to modify"`
+	OldString  string `json:"old_string" jsonschema:"description=The text to replace"`
+	NewString  string `json:"new_string" jsonschema:"description=The text to replace it with"`
+	ReplaceAll bool   `json:"replace_all" jsonschema:"description=Replace all occurrences of old_string"`
+}
+
+func applyEditReplacement(content, oldStr, newStr string, replaceAll bool) (string, error) {
+	if replaceAll {
+		return strings.ReplaceAll(content, oldStr, newStr), nil
+	}
+	count := strings.Count(content, oldStr)
+	if count == 0 {
+		return "", fmt.Errorf("old_string not found in file")
+	}
+	if count > 1 {
+		return "", fmt.Errorf("old_string appears %d times; set replace_all=true or make it unique", count)
+	}
+	return strings.Replace(content, oldStr, newStr, 1), nil
+}
 
 func isReadOnlyShellCommand(command string) bool {
 	command = strings.TrimSpace(command)
@@ -47,7 +81,18 @@ func GetAutoDreamShellTool(sandboxManager sandbox.SandboxManager) (tool.BaseTool
 				}
 				return sb.ExecuteCommand(ctx, command)
 			}
-			return runShell(resolveRoot(), in)
+			workingDir := resolveRoot()
+			if strings.TrimSpace(in.WorkingDir) != "" {
+				var err error
+				workingDir, err = getResolvedPath(in.WorkingDir)
+				if err != nil {
+					return "", err
+				}
+			}
+			cmd := exec.CommandContext(ctx, "/bin/bash", "-c", in.Command)
+			cmd.Dir = workingDir
+			output, err := cmd.CombinedOutput()
+			return string(output), err
 		})
 }
 

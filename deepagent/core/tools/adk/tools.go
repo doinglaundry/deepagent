@@ -13,20 +13,6 @@ import (
 func BuildBuiltinTools(cfg *config.Config, sandboxManager sandbox.SandboxManager) []tool.BaseTool {
 	tools := []tool.BaseTool{
 		mustBuild(GetAskClarificationTool()),
-		mustBuild(GetLsTool(sandboxManager)),
-		mustBuild(GetReadFileTool(sandboxManager)),
-		mustBuild(GetWriteFileTool(sandboxManager)),
-		mustBuild(GetEditFileTool(sandboxManager)),
-		mustBuild(GetGlobTool(sandboxManager)),
-		mustBuild(GetGrepTool(sandboxManager)),
-		mustBuild(GetExecuteTool(sandboxManager)),
-		mustBuild(GetApplyPatchTool(sandboxManager)),
-		mustBuild(GetDeleteFileTool(sandboxManager)),
-		mustBuild(GetRgTool(sandboxManager)),
-		mustBuild(GetSemanticSearchTool(sandboxManager)),
-		mustBuild(GetReadLintsTool(sandboxManager)),
-		mustBuild(GetShellTool(sandboxManager, cfg)),
-		mustBuild(GetAwaitShellTool()),
 	}
 	if cfg.WebSearch.Enabled {
 		tools = append(tools, mustBuild(GetWebSearchTool(cfg.WebSearch)))
@@ -37,11 +23,6 @@ func BuildBuiltinTools(cfg *config.Config, sandboxManager sandbox.SandboxManager
 func BuildAutoDreamTools(sandboxManager sandbox.SandboxManager) []tool.BaseTool {
 	memoryRoot := config.DreamMemoryDir()
 	return []tool.BaseTool{
-		mustBuild(GetLsTool(sandboxManager)),
-		mustBuild(GetReadFileTool(sandboxManager)),
-		mustBuild(GetGlobTool(sandboxManager)),
-		mustBuild(GetGrepTool(sandboxManager)),
-		mustBuild(GetRgTool(sandboxManager)),
 		mustBuild(GetAutoDreamShellTool(sandboxManager)),
 		mustBuild(GetAutoDreamWriteFileTool(memoryRoot)),
 		mustBuild(GetAutoDreamEditFileTool(memoryRoot)),
