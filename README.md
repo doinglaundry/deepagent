@@ -89,5 +89,3 @@ bash scripts/test-distributed.sh
 脚本构建临时 Web / Worker 二进制，以本机模拟模型验证 HTTP 提交、审批、
 换 Worker 恢复和进程崩溃后的接管。未配置专用数据库时，进程测试明确跳过；
 测试编译通过不代表已经完成真实服务验收。
-
-Core 技术方案和迁移证据位于 `docs/superpowers/specs/`。
