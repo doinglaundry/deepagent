@@ -2,12 +2,15 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
+	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
 )
 
-func (a *DeepAgent) toolsNode(ctx context.Context, input *types.RunState) (*types.RunState, error) {
-	ctx, state, err := a.enterNode(ctx, input)
+func (a *DeepAgent) toolsNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+	ctx, state, err := a.enterNode(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +65,18 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 		s.Calls[i].Status = types.CallCompleted
 	}
 	for i, result := range results {
+		call := s.Calls[i].Call
+		if call.Name == tools.ToolUpdatePlan && !result.IsError {
+			var update tools.PlanUpdate
+			err := json.Unmarshal([]byte(result.Content), &update)
+			if err != nil {
+				return nil, fmt.Errorf("decode update_plan result: %w", err)
+			}
+			err = a.event(ctx, s, "plan_updated", result.CallID, update)
+			if err != nil {
+				return nil, err
+			}
+		}
 		message := messages[i]
 		err := a.conversation.AddHistory(ctx, s.RunID, message)
 		if err != nil {

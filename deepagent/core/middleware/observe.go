@@ -13,20 +13,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// Trace forwards the canonical event stream without another execution hook chain.
-type Trace struct {
-	BaseMiddleware
-	Sink types.EventSink
-}
-
-func (*Trace) Name() string { return "trace" }
-func (t *Trace) Observe(ctx context.Context, event types.RuntimeEvent) error {
-	if t.Sink == nil {
-		return nil
-	}
-	return t.Sink.Emit(ctx, event)
-}
-
 // Transcript opens an independently owned writer per run. The caller chooses
 // storage and naming; the middleware has no filesystem or session dependency.
 type Transcript struct {

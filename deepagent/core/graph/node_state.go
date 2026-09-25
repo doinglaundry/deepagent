@@ -45,8 +45,8 @@ func (a *DeepAgent) ensureInitialCheckpoint(ctx context.Context) error {
 }
 
 // enterNode always uses Eino's local state, including the restored state.
-func (a *DeepAgent) enterNode(ctx context.Context, input *types.RunState) (context.Context, *types.RunState, error) {
-	state, err := a.localState(ctx, input)
+func (a *DeepAgent) enterNode(ctx context.Context) (context.Context, *types.RunState, error) {
+	state, err := a.localState(ctx)
 	if err != nil {
 		return ctx, nil, err
 	}
@@ -55,9 +55,6 @@ func (a *DeepAgent) enterNode(ctx context.Context, input *types.RunState) (conte
 	}
 	state.GraphSteps++
 	ctx = types.WithRunState(ctx, state)
-	ctx = types.WithEventSink(ctx, types.EventSinkFunc(func(ctx context.Context, event types.RuntimeEvent) error {
-		return a.event(ctx, state, event.Kind, event.CallID, event.Data)
-	}))
 	return ctx, state, nil
 }
 
@@ -87,7 +84,9 @@ func (a *DeepAgent) leaveNode(ctx context.Context, state, output *types.RunState
 	return output, nodeErr
 }
 
-func (a *DeepAgent) localState(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+// localState reads the authoritative RunState from Eino, then restores runtime
+// collaborators once for each state object seen by this agent.
+func (a *DeepAgent) localState(ctx context.Context) (*types.RunState, error) {
 	var state *types.RunState
 	err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, s *types.RunState) error {
 		if s.Version != 1 {
@@ -107,55 +106,68 @@ func (a *DeepAgent) localState(ctx context.Context, _ *types.RunState) (*types.R
 	a.state = state
 	a.mu.Unlock()
 	if first {
-		raw, ok := state.Extensions["child_history"]
-		if ok && a.cfg.Depth > 0 {
-			var messages []*schema.Message
-			err = json.Unmarshal(raw, &messages)
-			if err != nil {
-				return nil, err
-			}
-			err = a.conversation.AddHistory(ctx, state.RunID, messages...)
-			if err != nil {
-				return nil, err
-			}
-			raw, ok = state.Extensions["child_usage"]
-			if ok {
-				var usage conversation.ContextUsageSnapshot
-				err = json.Unmarshal(raw, &usage)
-				if err != nil {
-					return nil, err
-				}
-				restorer, ok := a.conversation.(interface {
-					RestoreUsage(context.Context, conversation.ContextUsageSnapshot) error
-				})
-				if !ok {
-					return nil, fmt.Errorf("child conversation cannot restore usage")
-				}
-				err = restorer.RestoreUsage(ctx, usage)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-		err = a.graphState.RestoreExtensions(state)
-		if err != nil {
-			return nil, err
-		}
-		err = a.conversation.RestoreRunUsage(ctx, state.Usage)
-		if err != nil {
-			return nil, err
-		}
-		a.executor.restore(state.Calls)
-		a.executor.restoreChildCheckpoints(state)
-		a.executor.onStart = func(ctx context.Context, call types.ToolCallState) error {
-			return a.event(ctx, state, "tool_start", call.Call.ID, call)
-		}
-		err = a.event(ctx, state, "run_state_restored", "", state.Consumed)
+		err = a.restoreLocalState(ctx, state)
 		if err != nil {
 			return nil, err
 		}
 	}
 	return state, nil
+}
+
+func (a *DeepAgent) restoreLocalState(ctx context.Context, state *types.RunState) error {
+	err := a.restoreChildConversation(ctx, state)
+	if err != nil {
+		return err
+	}
+	err = a.graphState.RestoreExtensions(state)
+	if err != nil {
+		return err
+	}
+	err = a.conversation.RestoreRunUsage(ctx, state.Usage)
+	if err != nil {
+		return err
+	}
+	a.executor.restore(state.Calls)
+	a.executor.restoreChildCheckpoints(state)
+	a.executor.onStart = func(ctx context.Context, call types.ToolCallState) error {
+		return a.event(ctx, state, "tool_start", call.Call.ID, call)
+	}
+	return a.event(ctx, state, "run_state_restored", "", state.Consumed)
+}
+
+func (a *DeepAgent) restoreChildConversation(ctx context.Context, state *types.RunState) error {
+	if a.cfg.Depth <= 0 {
+		return nil
+	}
+	raw, ok := state.Extensions["child_history"]
+	if !ok {
+		return nil
+	}
+	var messages []*schema.Message
+	err := json.Unmarshal(raw, &messages)
+	if err != nil {
+		return err
+	}
+	err = a.conversation.AddHistory(ctx, state.RunID, messages...)
+	if err != nil {
+		return err
+	}
+	raw, ok = state.Extensions["child_usage"]
+	if !ok {
+		return nil
+	}
+	var usage conversation.ContextUsageSnapshot
+	err = json.Unmarshal(raw, &usage)
+	if err != nil {
+		return err
+	}
+	restorer, ok := a.conversation.(interface {
+		RestoreUsage(context.Context, conversation.ContextUsageSnapshot) error
+	})
+	if !ok {
+		return fmt.Errorf("child conversation cannot restore usage")
+	}
+	return restorer.RestoreUsage(ctx, usage)
 }
 
 // Node errors set checkpoint-visible state. The final execution error is

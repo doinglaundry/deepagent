@@ -7,8 +7,8 @@ import (
 	"eino-cli/deepagent/core/types"
 )
 
-func (a *DeepAgent) continueNode(ctx context.Context, input *types.RunState) (*types.RunState, error) {
-	ctx, state, err := a.enterNode(ctx, input)
+func (a *DeepAgent) continueNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+	ctx, state, err := a.enterNode(ctx)
 	if err != nil {
 		return nil, err
 	}

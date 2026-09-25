@@ -9,12 +9,12 @@ import (
 	"eino-cli/deepagent/core/types"
 )
 
-func (a *DeepAgent) prepareNode(ctx context.Context, input *types.RunState) (*types.RunState, error) {
+func (a *DeepAgent) prepareNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
 	err := a.ensureInitialCheckpoint(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ctx, state, err := a.enterNode(ctx, input)
+	ctx, state, err := a.enterNode(ctx)
 	if err != nil {
 		return nil, err
 	}

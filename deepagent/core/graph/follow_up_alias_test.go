@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"testing"
 
-	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
 	"github.com/cloudwego/eino/compose"
@@ -25,13 +24,13 @@ func TestRun_FollowUpArgumentAliasesPreserveQuestionAndResume(t *testing.T) {
 				{schema.AssistantMessage("done", nil)},
 			}}
 			var observed *schema.Message
-			trace := &middleware.Trace{Sink: types.EventSinkFunc(func(_ context.Context, e types.RuntimeEvent) error {
+			emit := func(_ context.Context, e types.RuntimeEvent) error {
 				if e.Kind == "llm_end" {
 					observed, _ = e.Data.(*schema.Message)
 				}
 				return nil
-			})}
-			cfg := Config{Middlewares: []middleware.Middleware{trace}, Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, Tools: nil, ToolDescriptors: []tools.Descriptor{{Tool: tools.GetFollowUpTool()}}}
+			}
+			cfg := Config{Emit: emit, Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, Tools: nil, ToolDescriptors: []tools.Descriptor{{Tool: tools.GetFollowUpTool()}}}
 			a, err := New(ctx, WithConfig(&cfg))
 			if err != nil {
 				t.Fatal(err)
@@ -43,7 +42,7 @@ func TestRun_FollowUpArgumentAliasesPreserveQuestionAndResume(t *testing.T) {
 				t.Fatalf("interrupt=%+v err=%v", info, err)
 			}
 			if observed == nil || len(observed.ToolCalls) != 1 || observed.ToolCalls[0].Function.Arguments != raw {
-				t.Fatalf("trace lost original clarification call: %+v", observed)
+				t.Fatalf("event lost original clarification call: %+v", observed)
 			}
 			question, ok := info.InterruptContexts[0].Info.(*tools.FollowUpInfo)
 			if !ok || question.Question != "Detail\n\nChoose" || !reflect.DeepEqual(question.Questions, []string{"yes", "no"}) {

@@ -52,9 +52,6 @@ func (t *updatePlanTool) InvokableRun(ctx context.Context, raw string, _ ...tool
 	if state := types.RunStateFromContext(ctx); state != nil {
 		state.Plan = append([]types.PlanStep(nil), update.Plan...)
 	}
-	if err := types.EmitEvent(ctx, types.RuntimeEvent{Kind: "plan_updated", Data: update}); err != nil {
-		return "", err
-	}
 	encoded, err := json.Marshal(update)
 	return string(encoded), err
 }

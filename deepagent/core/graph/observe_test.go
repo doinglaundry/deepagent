@@ -31,7 +31,7 @@ func (w *transcriptWriter) Write(p []byte) (int, error) {
 }
 func (w *transcriptWriter) Close() error { w.closes++; return nil }
 
-func TestRun_TraceAndTranscriptObserveCanonicalEvents(t *testing.T) {
+func TestRun_TranscriptObservesCanonicalEvents(t *testing.T) {
 	var writers []*transcriptWriter
 	template := &middleware.Transcript{Open: func(_ context.Context, threadID, runID string) (io.WriteCloser, error) {
 		if threadID != "thread" || runID == "" {
@@ -42,24 +42,24 @@ func TestRun_TraceAndTranscriptObserveCanonicalEvents(t *testing.T) {
 		return w, nil
 	}}
 	for range 2 {
-		var observed, delivered []types.RuntimeEvent
+		var delivered []types.RuntimeEvent
 		m := &sequenceModel{responses: [][]*schema.Message{
 			{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 			{schema.AssistantMessage("done", nil)},
 		}}
-		a, err := New(context.Background(), WithConfig(&Config{Model: m, ThreadID: "thread", ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}}}, Middlewares: []middleware.Middleware{template, &middleware.Trace{Sink: types.EventSinkFunc(func(_ context.Context, e types.RuntimeEvent) error { observed = append(observed, e); return nil })}}, Emit: func(_ context.Context, e types.RuntimeEvent) error { delivered = append(delivered, e); return nil }}))
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, ThreadID: "thread", ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}}}, Middlewares: []middleware.Middleware{template}, Emit: func(_ context.Context, e types.RuntimeEvent) error { delivered = append(delivered, e); return nil }}))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")}); err != nil {
 			t.Fatal(err)
 		}
-		if len(observed) != len(delivered) || observed[len(observed)-1].Kind != "turn_end" {
-			t.Fatal("trace skipped canonical events")
+		if len(delivered) == 0 || delivered[len(delivered)-1].Kind != "turn_end" {
+			t.Fatal("missing final event")
 		}
-		for i := range observed {
-			if observed[i].Sequence != delivered[i].Sequence {
-				t.Fatal("trace sequence diverged")
+		for i := range delivered {
+			if delivered[i].Sequence != uint64(i+1) {
+				t.Fatal("event sequence diverged")
 			}
 		}
 		w := writers[len(writers)-1]

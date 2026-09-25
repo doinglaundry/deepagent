@@ -12,8 +12,8 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func (a *DeepAgent) modelNode(ctx context.Context, input *types.RunState) (*types.RunState, error) {
-	ctx, state, err := a.enterNode(ctx, input)
+func (a *DeepAgent) modelNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+	ctx, state, err := a.enterNode(ctx)
 	if err != nil {
 		return nil, err
 	}

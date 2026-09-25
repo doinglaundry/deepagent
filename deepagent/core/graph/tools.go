@@ -354,10 +354,6 @@ func finishToolResult(ctx context.Context, result *types.ToolResult, err error) 
 		if errors.As(err, &internal) {
 			return nil, err
 		}
-		var delivery *types.EventDeliveryError
-		if errors.As(err, &delivery) {
-			return nil, err
-		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
