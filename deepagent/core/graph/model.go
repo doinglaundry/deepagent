@@ -12,19 +12,30 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+func (a *DeepAgent) modelNode(ctx context.Context, input *types.RunState) (*types.RunState, error) {
+	ctx, state, err := a.enterNode(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	output, nodeErr := a.callModel(ctx, state)
+	return a.leaveNode(ctx, state, output, nodeErr)
+}
+
 func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.RunState, error) {
 	if a.cfg.MaxModelCalls > 0 && s.ModelCalls >= a.cfg.MaxModelCalls {
 		return nil, fmt.Errorf("%w: maximum model calls exceeded: %d", ErrExceedMaxModelCalls, a.cfg.MaxModelCalls)
 	}
 	if hasPendingInputs(s) {
-		if _, err := a.prepare(ctx, s); err != nil {
+		_, err := a.prepare(ctx, s)
+		if err != nil {
 			return nil, err
 		}
 	}
 	// prepare handles new user input; tool results can independently cross the
 	// context limit before the next sampling boundary in the same graph loop.
 	if s.Phase == types.PhaseTools {
-		if err := a.compactContext(ctx, s); err != nil {
+		err := a.compactContext(ctx, s)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -56,14 +67,16 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 	if err != nil {
 		return nil, err
 	}
-	if err := a.event(ctx, s, "llm_requesting", "", request); err != nil {
+	err = a.event(ctx, s, "llm_requesting", "", request)
+	if err != nil {
 		return nil, err
 	}
 	endpoint := middleware.ModelHandler(func(ctx context.Context, input []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
 		return a.model.Stream(ctx, input)
 	})
 	for i := len(a.middlewares) - 1; i >= 0; i-- {
-		if wrapper, ok := a.middlewares[i].(middleware.ModelMiddleware); ok {
+		wrapper, ok := a.middlewares[i].(middleware.ModelMiddleware)
+		if ok {
 			endpoint = wrapper.WrapModel(endpoint)
 		}
 	}
@@ -111,7 +124,8 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 	buffer := toolCallBuffer{}
 	defer func() { a.executor.snapshot(s.Calls) }()
 	for {
-		if err := ctx.Err(); err != nil {
+		err := ctx.Err()
+		if err != nil {
 			return nil, err
 		}
 		chunk, err := stream.Recv()
@@ -144,16 +158,19 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 				}
 			}
 		}
-		if err := a.event(ctx, s, "llm_token", "", chunk); err != nil {
+		err = a.event(ctx, s, "llm_token", "", chunk)
+		if err != nil {
 			return nil, err
 		}
 		if a.chunk != nil {
-			if err := a.chunk(ctx, chunk); err != nil {
+			err = a.chunk(ctx, chunk)
+			if err != nil {
 				return nil, err
 			}
 		}
 	}
-	if err := ctx.Err(); err != nil {
+	err = ctx.Err()
+	if err != nil {
 		return nil, err
 	}
 	if len(chunks) == 0 {
@@ -182,7 +199,8 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 			return nil, fmt.Errorf("middleware returned nil model message")
 		}
 	}
-	if err := a.conversation.AddHistory(ctx, s.RunID, response); err != nil {
+	err = a.conversation.AddHistory(ctx, s.RunID, response)
+	if err != nil {
 		return nil, err
 	}
 	usage := responseUsage(response)
@@ -199,11 +217,13 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 		seen[call.ID] = true
 		s.Calls = append(s.Calls, types.ToolCallState{Call: types.ToolCall{ID: call.ID, Index: i, Name: call.Function.Name, Arguments: call.Function.Arguments}, Status: types.CallPending})
 	}
-	if err := a.event(ctx, s, "llm_end", "", response); err != nil {
+	err = a.event(ctx, s, "llm_end", "", response)
+	if err != nil {
 		return nil, err
 	}
 	if usage != nil {
-		if err := a.event(ctx, s, "tokens", "", s.Usage); err != nil {
+		err = a.event(ctx, s, "tokens", "", s.Usage)
+		if err != nil {
 			return nil, err
 		}
 	}
