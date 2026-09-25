@@ -79,6 +79,27 @@ test('follow-up shows typed question and options; failed resume remains retryabl
   assert.equal(app.get('status').textContent, 'checkpoint unavailable');
 });
 
+test('parallel approvals submit all correlated answers together', async () => {
+  const app = load(() => ({data: {}}));
+  const box = app.context.required({run_id: 'run'}, {
+    kind: 'batch', checkpoint_id: 'checkpoint', interrupt_id: 'first',
+    items: [
+      {kind: 'approve', interrupt_id: 'first', tool_name: 'write_file'},
+      {kind: 'approve', interrupt_id: 'second', tool_name: 'execute'}
+    ]
+  }, 'thread');
+  const first = box.children[1].children.find(e => e.tag === 'select');
+  first.value = 'allow';
+  const second = box.children[2].children.find(e => e.tag === 'select');
+  second.value = 'deny';
+  await box.children.find(e => e.tag === 'button').onclick();
+  const body = JSON.parse(app.calls.find(c => c.url.endsWith('/messages')).options.body).resume;
+  assert.equal(body.interrupt_id, 'first');
+  assert.deepEqual(body.answers.map(a => a.interrupt_id), ['first', 'second']);
+  assert.equal(body.answers[0].approval.approved, true);
+  assert.equal(body.answers[1].approval.approved, false);
+});
+
 test('poll cursor preserves full int64 message identity', async () => {
   const app = load(url => url.includes('/events?') ? {data: [{sequence: '9007199254740993', kind: 'text', text: 'answer'}]} : undefined);
   await app.context.select('large-id'); await tick();

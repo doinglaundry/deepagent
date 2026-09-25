@@ -27,6 +27,12 @@ type sandboxGraphModel struct {
 	inputs   [][]*schema.Message
 }
 
+type staticPathSandbox struct{ *Sandbox }
+
+func (*staticPathSandbox) ResolveContainerPath(_ context.Context, path string) (string, error) {
+	return path, nil
+}
+
 func (m *sandboxGraphModel) WithTools(infos []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
 	m.tools = map[string]bool{}
 	for _, info := range infos {
@@ -95,7 +101,7 @@ func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 			defer server.Close()
 			provider := newSandbox("sandbox", "thread", server.URL, nil)
 			provider.containerName, provider.runtime = "test-container", runtimeDocker
-			files, err := backend.NewDockerFilesystem(provider, "/virtual", "thread")
+			files, err := backend.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -150,7 +156,7 @@ func TestCoreDockerFilesystemPreservesInFlightCancellation(t *testing.T) {
 	defer close(release)
 	provider := newSandbox("sandbox", "thread", server.URL, nil)
 	provider.containerName, provider.runtime = "test-container", runtimeDocker
-	files, err := backend.NewDockerFilesystem(provider, "/virtual", "thread")
+	files, err := backend.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread")
 	if err != nil {
 		t.Fatal(err)
 	}

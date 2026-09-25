@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"eino-cli/deepagent/core/backend"
@@ -19,7 +20,13 @@ type fileSearchTool struct {
 func (*fileSearchTool) ReadOnly() bool     { return true }
 func (*fileSearchTool) ParallelSafe() bool { return true }
 func (t *fileSearchTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfo(t.name, "Search workspace paths or text.", map[string]*schema.ParameterInfo{"pattern": {Type: schema.String, Required: true}, "path": {Type: schema.String}, "glob": {Type: schema.String}, "ignore_case": {Type: schema.Boolean}, "head_limit": {Type: schema.Integer}})
+	params := map[string]*schema.ParameterInfo{"pattern": {Type: schema.String, Required: t.name == "glob"}, "path": {Type: schema.String}, "glob": {Type: schema.String}, "ignore_case": {Type: schema.Boolean}, "head_limit": {Type: schema.Integer}}
+	description := "Find workspace paths matching a glob pattern."
+	if t.name != "glob" {
+		params["query"] = &schema.ParameterInfo{Type: schema.String}
+		description = "Search workspace text. pattern is a regular expression; query matches literal text."
+	}
+	return toolInfo(t.name, description, params)
 }
 func (t *fileSearchTool) InvokableRun(ctx context.Context, raw string, _ ...einotool.Option) (string, error) {
 	var input struct {
@@ -35,6 +42,12 @@ func (t *fileSearchTool) InvokableRun(ctx context.Context, raw string, _ ...eino
 	}
 	if input.Pattern == "" {
 		input.Pattern = input.Query
+		if t.name != "glob" {
+			input.Pattern = regexp.QuoteMeta(input.Query)
+			if input.Query != "" && input.HeadLimit <= 0 {
+				input.HeadLimit = 100
+			}
+		}
 	}
 	if input.Pattern == "" {
 		return "", fmt.Errorf("pattern is required")

@@ -64,7 +64,9 @@ checkpoint 保存准确工具边界、消息、预算和恢复标识；恢复不
 - **MCP**：`mcp` 配置 Streamable HTTP 服务，支持初始化、工具发现和调用。stdio 服务需显式 HTTP bridge。
 - **Web**：`web.enabled: true` 注册页面读取；`web.search_url` 配置接受 `q` 参数或 `{query}` 占位符的搜索端点。
 - **Skills**：从 `skill_paths` 发现技能目录并按需激活；未配置时检查工作目录的 `.agents/skills`、`.codex/skills`。
-- **长期记忆**：`memory_enabled: true` 时设置 `memory_dir`。阶段一从来源历史提取，阶段二用内部 Agent 的文件工具整理 Markdown。处理凭证和产物基线持久化到 MySQL；启动时及 `memory_scan_interval` 周期扫描稳定历史。`memory_user_id` 可绑定稳定用户，默认按 Session 分组。
+- **长期记忆**：`memory_enabled: true` 时设置 `memory_dir`。Run 完成后从该 Thread 历史提取，再用同一 Eino Graph 的内部 Agent 整理 Markdown。处理凭证和产物基线持久化到 MySQL。`memory_user_id` 可绑定稳定用户，默认按 Session 分组。
+
+旧版 `global.json`、`agents/*.json` 及结构化事实格式不再读取或迁移；长期记忆使用上述 scoped Memory Service。
 - **分布式子任务**：`create_task`、`send_task`、`wait_task`、`close_task` 使用 Manager 调度；等待父任务会占用执行名额，需要给子任务预留 Worker 并发。
 
 ## 验证
@@ -88,4 +90,4 @@ bash scripts/test-distributed.sh
 换 Worker 恢复和进程崩溃后的接管。未配置专用数据库时，进程测试明确跳过；
 测试编译通过不代表已经完成真实服务验收。
 
-Core 重构尚在进行，技术方案和迁移证据位于 `docs/superpowers/specs/`。
+Core 技术方案和迁移证据位于 `docs/superpowers/specs/`。

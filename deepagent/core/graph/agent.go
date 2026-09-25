@@ -229,7 +229,7 @@ func (a *DeepAgent) configureRun(ctx context.Context) (err error) {
 			if cfg.EnableSubAgentTaskStreaming {
 				task = tools.NewStreamingTaskTool(NewChildRunner(childConfig), names...)
 			}
-			descriptors = append(descriptors, tools.Descriptor{Tool: task})
+			descriptors = append(descriptors, tools.Descriptor{Tool: task, ParallelSafe: true, ReadOnly: cfg.ReadOnlyToolsOnly})
 		}
 	}
 	registry, err := tools.NewRegistry(ctx, descriptors)

@@ -12,6 +12,9 @@ import (
 type dockerToolProvider struct{ sandbox.Sandbox }
 
 func (*dockerToolProvider) DockerExecTarget() (string, bool) { return "test-container", true }
+func (*dockerToolProvider) ResolveContainerPath(_ context.Context, p string) (string, error) {
+	return p, nil
+}
 
 func TestWorkspaceToolSchemasMatchLocalAndDocker(t *testing.T) {
 	ctx := context.Background()

@@ -321,26 +321,37 @@ func (m *eagerModel) Stream(ctx context.Context, _ []*schema.Message, _ ...model
 	return reader, nil
 }
 func TestRun_EagerExecutesBeforeModelStreamEnds(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	tool := &countingTool{started: make(chan struct{})}
-	m := &eagerModel{toolStarted: tool.started}
-	starts := 0
-	a, err := New(ctx, WithConfig(&Config{Model: m, EnableStreamToolCall: true, ToolDescriptors: []tools.Descriptor{{Tool: tool, ParallelSafe: true}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
-		if e.Kind == "tool_start" {
-			starts++
-		}
-		return nil
-	}}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := a.Run(ctx, []*schema.Message{schema.UserMessage("go")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Content != "done" || tool.count.Load() != 1 || starts != 1 {
-		t.Fatalf("result=%v count=%d starts=%d", result, tool.count.Load(), starts)
+	for _, withPolicy := range []bool{false, true} {
+		t.Run(fmt.Sprint(withPolicy), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			tool := &countingTool{started: make(chan struct{})}
+			m := &eagerModel{toolStarted: tool.started}
+			starts, policyCalls := 0, 0
+			cfg := &Config{Model: m, EnableStreamToolCall: true, ToolDescriptors: []tools.Descriptor{{Tool: tool, ParallelSafe: true}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+				if e.Kind == "tool_start" {
+					starts++
+				}
+				return nil
+			}}
+			if withPolicy {
+				cfg.Policy = tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+					policyCalls++
+					return tools.Decision{Action: tools.Allow}, nil
+				})
+			}
+			a, err := New(ctx, WithConfig(cfg))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := a.Run(ctx, []*schema.Message{schema.UserMessage("go")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Content != "done" || tool.count.Load() != 1 || starts != 1 || policyCalls != map[bool]int{false: 0, true: 1}[withPolicy] {
+				t.Fatalf("result=%v count=%d starts=%d policy=%d", result, tool.count.Load(), starts, policyCalls)
+			}
+		})
 	}
 }
 

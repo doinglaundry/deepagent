@@ -35,7 +35,7 @@ func TestConsolidatorRunsScopedGraphAndValidatesWrittenArtifact(t *testing.T) {
 		t.Fatal(out, e)
 	}
 	for _, info := range m.bound {
-		if info.Name != "read_file" && info.Name != "ls" && info.Name != "write_file" {
+		if info.Name != "read_file" && info.Name != "list_files" && info.Name != "write_file" {
 			t.Fatal("unsafe memory capability", info.Name)
 		}
 	}

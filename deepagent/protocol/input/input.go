@@ -75,12 +75,46 @@ type ResumeRunPayload struct {
 	Approval           *ApprovalDecision         `json:"approval,omitempty"`
 	RequestUserInput   *RequestUserInputResponse `json:"request_user_input,omitempty"`
 	Interrupt          *InterruptResume          `json:"interrupt,omitempty"`
+	Answers            []ResumeAnswer            `json:"answers,omitempty"`
 	ConsumedMessageIDs []string                  `json:"consumed_message_ids,omitempty"`
+}
+type ResumeAnswer struct {
+	InterruptID      string                    `json:"interrupt_id"`
+	Approval         *ApprovalDecision         `json:"approval,omitempty"`
+	RequestUserInput *RequestUserInputResponse `json:"request_user_input,omitempty"`
+	Interrupt        *InterruptResume          `json:"interrupt,omitempty"`
 }
 
 func (p ResumeRunPayload) Validate() error {
 	if strings.TrimSpace(p.RunID) == "" || strings.TrimSpace(p.CheckpointID) == "" || strings.TrimSpace(p.InterruptID) == "" {
 		return errors.New("run_id, checkpoint_id and interrupt_id are required")
+	}
+	if len(p.Answers) > 0 {
+		if p.Answers[0].InterruptID != p.InterruptID || p.Approval != nil || p.RequestUserInput != nil || p.Interrupt != nil {
+			return errors.New("batch answers must start with interrupt_id and cannot mix with a single answer")
+		}
+		seen := map[string]bool{}
+		for _, answer := range p.Answers {
+			if answer.InterruptID == "" || seen[answer.InterruptID] {
+				return errors.New("batch answer interrupt IDs must be nonempty and unique")
+			}
+			seen[answer.InterruptID] = true
+			count := 0
+			if answer.Approval != nil {
+				count++
+			}
+			if answer.RequestUserInput != nil {
+				count++
+			}
+			if answer.Interrupt != nil {
+				count++
+			}
+			if count != 1 {
+				return errors.New("each batch answer requires exactly one response")
+			}
+		}
+	} else if p.Approval == nil && p.RequestUserInput == nil && p.Interrupt == nil {
+		return errors.New("resume requires an answer")
 	}
 	return nil
 }

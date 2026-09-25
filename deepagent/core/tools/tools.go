@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -39,8 +38,6 @@ type ToolPolicyGate struct {
 type NeedReviewAndEdit struct{ Message string }
 type ApprovalGate func(context.Context, *ApprovalInfo) bool
 
-type WrapToolsConfig struct{ InfoRewriter ToolInfoRewriter }
-
 func CombineMasks(a, b Mask) Mask {
 	if a == nil {
 		return b
@@ -49,33 +46,6 @@ func CombineMasks(a, b Mask) Mask {
 		return a
 	}
 	return func(ctx context.Context, info *schema.ToolInfo) bool { return a(ctx, info) && b(ctx, info) }
-}
-func WrapToolsWithConfig(in []tool.BaseTool, cfg *WrapToolsConfig) []tool.BaseTool {
-	if cfg == nil || cfg.InfoRewriter == nil {
-		return in
-	}
-	out := make([]tool.BaseTool, 0, len(in))
-	for _, t := range in {
-		out = append(out, &rewrittenTool{inner: t, rewrite: cfg.InfoRewriter})
-	}
-	return out
-}
-
-type rewrittenTool struct {
-	inner   tool.BaseTool
-	rewrite ToolInfoRewriter
-}
-
-func (t *rewrittenTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	info, err := t.inner.Info(ctx)
-	if err != nil || info == nil {
-		return info, err
-	}
-	return t.rewrite(ctx, info)
-}
-
-func NewInvokableReviewEditTool(inner tool.InvokableTool, _ NeedReviewAndEdit) tool.BaseTool {
-	return inner
 }
 func init() {
 	schema.RegisterName[*ApprovalInfo]("deepagent_approval_info")

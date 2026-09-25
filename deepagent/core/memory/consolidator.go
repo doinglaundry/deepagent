@@ -42,7 +42,7 @@ func AgentConsolidator(m model.ToolCallingChatModel, root string) func(context.C
 			}),
 			FilesystemConfig: &deepagents.FilesystemConfig{WorkDir: dir, DisableExecute: true, DisableApplyPatch: true, DisableUploadDownload: true},
 			ToolMask: func(_ context.Context, info *schema.ToolInfo) bool {
-				return info != nil && (info.Name == "read_file" || info.Name == "ls" || info.Name == "write_file")
+				return info != nil && (info.Name == "read_file" || info.Name == "list_files" || info.Name == "write_file")
 			},
 		}))
 		if e != nil {

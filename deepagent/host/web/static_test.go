@@ -3,6 +3,8 @@ package web
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -21,5 +23,26 @@ func TestEmbeddedWebClient(t *testing.T) {
 		if path == "/app.js" && !strings.Contains(response.Header().Get("Content-Type"), "javascript") {
 			t.Fatal("client has incorrect MIME type")
 		}
+	}
+}
+
+func TestWorkspaceFilePreviewCannotFollowSymlinkOutsideRoot(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "inside.txt"), []byte("inside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(workspace, "escape.txt")); err != nil {
+		t.Fatal(err)
+	}
+	content, err := readWorkspaceFile(workspace, "inside.txt")
+	if err != nil || string(content) != "inside" {
+		t.Fatalf("inside file = %q, %v", content, err)
+	}
+	if _, err := readWorkspaceFile(workspace, "escape.txt"); err == nil {
+		t.Fatal("preview followed symlink outside workspace")
 	}
 }

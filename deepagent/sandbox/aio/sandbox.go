@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -59,6 +60,18 @@ func (s *Sandbox) SessionID() string { return s.sessionID }
 // DockerExecTarget identifies the same container used by the file HTTP API.
 func (s *Sandbox) DockerExecTarget() (string, bool) {
 	return s.containerName, s.runtime == runtimeDocker && s.containerName != ""
+}
+
+func (s *Sandbox) ResolveContainerPath(ctx context.Context, path string) (string, error) {
+	container, ok := s.DockerExecTarget()
+	if !ok {
+		return "", fmt.Errorf("Docker container is unavailable")
+	}
+	output, err := exec.CommandContext(ctx, "docker", "exec", container, "realpath", "-m", "--", path).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("resolve container path: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 // envelope is the FastAPI response shape every endpoint returns.

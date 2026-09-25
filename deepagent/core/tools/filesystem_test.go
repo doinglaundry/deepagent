@@ -11,7 +11,7 @@ import (
 	einotool "github.com/cloudwego/eino/components/tool"
 )
 
-func TestFilesystemToolsNamesAndArgumentAliases(t *testing.T) {
+func TestTools_AllRegisteredNamesSchemasAndArgumentAliases(t *testing.T) {
 	ctx := context.Background()
 	b, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
 	if err != nil {
@@ -28,9 +28,15 @@ func TestFilesystemToolsNamesAndArgumentAliases(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if info == nil || info.Name == "" || info.ParamsOneOf == nil {
+			t.Fatalf("tool has incomplete schema: %+v", info)
+		}
+		if registered[info.Name] != nil {
+			t.Fatalf("duplicate tool name %q", info.Name)
+		}
 		registered[info.Name] = tool.(einotool.InvokableTool)
 	}
-	for _, name := range []string{"list_files", "ls", "read_file", "write_file", "edit_file", "delete_file", "glob", "grep"} {
+	for _, name := range []string{"list_files", "read_file", "write_file", "edit_file", "delete_file", "glob", "grep", "rg", "semantic_search", "read_lints", "apply_patch", "execute", "shell", "await_shell"} {
 		if registered[name] == nil {
 			t.Fatalf("missing %s", name)
 		}

@@ -21,6 +21,7 @@ type fileSandbox struct {
 	err         error
 	lastPath    string
 	grepOpts    sandbox.GrepOpts
+	resolved    map[string]string
 }
 
 func (s *fileSandbox) DockerExecTarget() (string, bool) {
@@ -28,6 +29,13 @@ func (s *fileSandbox) DockerExecTarget() (string, bool) {
 		return s.containerID, true
 	}
 	return "test-container", true
+}
+
+func (s *fileSandbox) ResolveContainerPath(_ context.Context, p string) (string, error) {
+	if target := s.resolved[p]; target != "" {
+		return target, nil
+	}
+	return p, nil
 }
 
 func (s *fileSandbox) ReadFile(_ context.Context, p string) (string, error) {
@@ -172,6 +180,39 @@ func TestDockerFilesystemFailureDoesNotWriteOrUseHost(t *testing.T) {
 	}
 	if _, err := backend.NewDockerFilesystem(provider, "relative", "thread"); err == nil {
 		t.Fatal("relative root accepted")
+	}
+}
+
+func TestDockerFilesystemRejectsSymlinkOutsideWorkspace(t *testing.T) {
+	ctx := context.Background()
+	provider := &fileSandbox{files: map[string]string{}, resolved: map[string]string{"/remote/escape/file": "/outside/file"}}
+	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close(ctx)
+	if _, err := files.Write(ctx, "escape/file", "outside"); !errors.Is(err, backend.ErrInvalidPath) {
+		t.Fatalf("write through escaping symlink = %v", err)
+	}
+	if _, err := files.Read(ctx, "escape/file", nil, nil); !errors.Is(err, backend.ErrInvalidPath) {
+		t.Fatalf("read through escaping symlink = %v", err)
+	}
+	if provider.writes != 0 || provider.lastPath != "" {
+		t.Fatal("escaping path reached the sandbox file API")
+	}
+}
+
+func TestDockerFilesystemAllowsSymlinkInsideWorkspace(t *testing.T) {
+	ctx := context.Background()
+	provider := &fileSandbox{files: map[string]string{"/remote/alias": "inside"}, resolved: map[string]string{"/remote/alias": "/remote/target"}}
+	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close(ctx)
+	got, err := files.Read(ctx, "alias", nil, nil)
+	if err != nil || got != "inside" {
+		t.Fatalf("in-root symlink read = %q, %v", got, err)
 	}
 }
 

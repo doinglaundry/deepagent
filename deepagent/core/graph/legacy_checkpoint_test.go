@@ -12,7 +12,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestCheckpoint_LegacyBeforeModelFixtureResumes(t *testing.T) {
+func TestCheckpoint_LegacyFixturesResume(t *testing.T) {
 	raw, err := os.ReadFile("../runtime/checkpointer/testdata/legacy_before_model.json")
 	if err != nil {
 		t.Fatal(err)

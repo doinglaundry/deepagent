@@ -4,7 +4,6 @@ package thread
 
 import (
 	context "context"
-	constant "eino-cli/deepagent/core/constant"
 	agentthread "eino-cli/deepagent/core/runtime/agentthread"
 	tools "eino-cli/deepagent/core/tools"
 	coretypes "eino-cli/deepagent/core/types"
@@ -310,9 +309,16 @@ func (t *Thread) postResumeRun(ctx context.Context, cmd resumeRunCommand) (poste
 		t.approvalRemember.RememberApproval(ctx, payload)
 	}
 
+	resumeIDs := []string{payload.InterruptID}
+	if len(payload.Answers) > 0 {
+		resumeIDs = resumeIDs[:0]
+		for _, answer := range payload.Answers {
+			resumeIDs = append(resumeIDs, answer.InterruptID)
+		}
+	}
 	opts := agentthread.ResumeRunOptions{
 		CheckpointID:       payload.CheckpointID,
-		ResumeInterruptIDs: []string{payload.InterruptID},
+		ResumeInterruptIDs: resumeIDs,
 		ResumeData:         resumeData,
 		OnRunStart: func(runCtx context.Context, req agentthread.RunStartRequest) context.Context {
 			return ContextContextWithRunIdentity(runCtx, ContextRunIdentity{
@@ -386,7 +392,7 @@ func (t *Thread) emitCancelRunEvents(ctx context.Context, payload inputpkg.Resum
 		ThreadID:       t.threadID,
 		RunID:          payload.RunID,
 		Type:           agentthread.EventRunEnd,
-		Payload:        agentthread.RunEndPayload{},
+		Payload:        agentthread.RunEndPayload{Status: "interrupted"},
 		ConsumedInputs: consumed,
 	})
 }
@@ -1009,6 +1015,45 @@ func agentEventPayloadForOutput(ev agentthread.Event, usage *agentthread.Context
 			return "", nil, err
 		}
 		return eventpkg.EventTypeInputRequired, convertApprovalRequiredPayload(payload), nil
+	case agentthread.EventInterruptBatchRequested:
+		batch, err := agentEventPayload[agentthread.InterruptBatchPayload](ev)
+		if err != nil {
+			return "", nil, err
+		}
+		if len(batch.Items) == 0 || batch.CheckpointID == "" {
+			return "", nil, fmt.Errorf("interrupt batch lacks items or checkpoint ID")
+		}
+		out := &eventpkg.InterruptBatchRequiredEventPayload{Kind: eventpkg.InputRequiredKindBatch, InterruptID: batch.Items[0].InterruptID, CheckpointID: batch.CheckpointID}
+		for _, item := range batch.Items {
+			if item.InterruptID == "" {
+				return "", nil, fmt.Errorf("interrupt batch contains an item without ID")
+			}
+			entry := eventpkg.InterruptBatchItem{Kind: string(item.Kind), InterruptID: item.InterruptID, InfoType: item.InfoType}
+			switch {
+			case item.ApprovalInfo != nil:
+				entry.ToolCallID = item.ApprovalInfo.CallID
+				entry.ToolName = item.ApprovalInfo.ToolName
+				entry.ArgumentsJSON = stringPtrIfNotEmpty(item.ApprovalInfo.ArgumentsInJSON)
+			case item.ReviewEditInfo != nil:
+				entry.ToolName = item.ReviewEditInfo.ToolName
+				entry.ArgumentsJSON = stringPtrIfNotEmpty(item.ReviewEditInfo.ArgumentsInJSON)
+			case item.FollowUpInfo != nil:
+				entry.Info, err = json.Marshal(struct {
+					Question  string   `json:"question,omitempty"`
+					Questions []string `json:"questions,omitempty"`
+				}{Question: item.FollowUpInfo.Question, Questions: item.FollowUpInfo.Questions})
+				if err != nil {
+					return "", nil, err
+				}
+			default:
+				entry.Info, err = json.Marshal(item.Info)
+				if err != nil {
+					return "", nil, err
+				}
+			}
+			out.Items = append(out.Items, entry)
+		}
+		return eventpkg.EventTypeInputRequired, out, nil
 	case agentthread.EventFollowUpRequested:
 		payload, err := agentEventPayload[agentthread.FollowUpRequestedPayload](ev)
 		if err != nil {
@@ -1035,10 +1080,20 @@ func agentEventPayloadForOutput(ev agentthread.Event, usage *agentthread.Context
 		}
 		return eventpkg.EventTypeRunStatus, &eventpkg.ErrorEventPayload{Status: eventpkg.RunStatusInterrupted, Message: interruptedMessage(payload), ContextUsage: contextUsage}, nil
 	case agentthread.EventRunEnd:
-		if _, err := agentEventPayload[agentthread.RunEndPayload](ev); err != nil {
+		end, err := agentEventPayload[agentthread.RunEndPayload](ev)
+		if err != nil {
 			return "", nil, err
 		}
-		return eventpkg.EventTypeRunStatus, &eventpkg.RunFinishedEventPayload{Status: eventpkg.RunStatusFinished, ContextUsage: contextUsage}, nil
+		switch end.Status {
+		case "", "finished":
+			return eventpkg.EventTypeRunStatus, &eventpkg.RunFinishedEventPayload{Status: eventpkg.RunStatusFinished, ContextUsage: contextUsage}, nil
+		case "interrupted":
+			return eventpkg.EventTypeRunStatus, &eventpkg.RunFinishedEventPayload{Status: eventpkg.RunStatusInterrupted, ContextUsage: contextUsage}, nil
+		case "blocked", "failed":
+			return "", nil, nil
+		default:
+			return "", nil, fmt.Errorf("unknown run end status %q", end.Status)
+		}
 	case agentthread.EventError:
 		out := convertErrorPayload(ev.Payload)
 		out.ContextUsage = contextUsage
@@ -1064,6 +1119,8 @@ func attachConsumedInputs(payload any, inputs []*schemapkg.Message, meta []any) 
 	case *eventpkg.ToolCallEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
 	case *eventpkg.ApprovalRequiredEventPayload:
+		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
+	case *eventpkg.InterruptBatchRequiredEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
 	case *eventpkg.InterruptRequiredEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
@@ -1310,18 +1367,25 @@ func threadOutputItem(sessionID string, threadID string, ev agentthread.Event, u
 func yieldFromAgentEvent(ev agentthread.Event) *TransportThreadYield {
 	switch ev.Type {
 	case agentthread.EventRunEnd:
-		return &TransportThreadYield{Reason: "finished"}
-	case agentthread.EventInterrupted:
-		payload, err := agentEventPayload[agentthread.InterruptedPayload](ev)
+		payload, err := agentEventPayload[agentthread.RunEndPayload](ev)
 		if err != nil {
 			return &TransportThreadYield{Reason: "interrupted", Err: err}
 		}
-		if payload.Source != "external" && payload.CheckpointID != "" && payload.InterruptID != "" {
+		switch payload.Status {
+		case "", "finished", "failed":
+			return &TransportThreadYield{Reason: "finished"}
+		case "interrupted":
+			return &TransportThreadYield{Reason: "interrupted"}
+		case "blocked":
+			if payload.CheckpointID == "" || payload.InterruptID == "" {
+				return &TransportThreadYield{Reason: "interrupted", Err: fmt.Errorf("blocked run lacks checkpoint or interrupt ID")}
+			}
 			return &TransportThreadYield{Reason: "blocked", Block: &TransportPendingBlock{
 				RunID: ev.RunID, CheckpointID: payload.CheckpointID, InterruptID: payload.InterruptID,
 			}}
+		default:
+			return &TransportThreadYield{Reason: "interrupted", Err: fmt.Errorf("unknown run end status %q", payload.Status)}
 		}
-		return &TransportThreadYield{Reason: "interrupted"}
 	default:
 		return nil
 	}
@@ -2189,13 +2253,13 @@ func isHiddenInternalToolEvent(ev agentthread.Event) bool {
 	switch ev.Type {
 	case agentthread.EventToolStart:
 		payload, ok := ev.Payload.(agentthread.ToolStartPayload)
-		return ok && payload.Name == constant.ToolUpdatePlan
+		return ok && payload.Name == tools.ToolUpdatePlan
 	case agentthread.EventToolCallOutputChunk:
 		payload, ok := ev.Payload.(agentthread.ToolCallOutputChunkPayload)
-		return ok && payload.Name == constant.ToolUpdatePlan
+		return ok && payload.Name == tools.ToolUpdatePlan
 	case agentthread.EventToolEnd:
 		payload, ok := ev.Payload.(agentthread.ToolEndPayload)
-		return ok && payload.Name == constant.ToolUpdatePlan
+		return ok && payload.Name == tools.ToolUpdatePlan
 	default:
 		return false
 	}
@@ -2215,6 +2279,27 @@ func parseResumePayload(message *TransportMessage) (inputpkg.ResumeRunPayload, e
 }
 
 func resumeData(ctx context.Context, payload inputpkg.ResumeRunPayload, interruptResume InterruptResumeDecoder) (map[string]any, error) {
+	if len(payload.Answers) > 0 {
+		if payload.Answers[0].InterruptID != payload.InterruptID || payload.Approval != nil || payload.RequestUserInput != nil || payload.Interrupt != nil {
+			return nil, fmt.Errorf("batch resume correlation or answer format is invalid")
+		}
+		out := make(map[string]any, len(payload.Answers))
+		for _, answer := range payload.Answers {
+			if answer.InterruptID == "" {
+				return nil, fmt.Errorf("batch answer missing interrupt ID")
+			}
+			if _, exists := out[answer.InterruptID]; exists {
+				return nil, fmt.Errorf("duplicate batch interrupt ID %q", answer.InterruptID)
+			}
+			one := inputpkg.ResumeRunPayload{InterruptID: answer.InterruptID, Approval: answer.Approval, RequestUserInput: answer.RequestUserInput, Interrupt: answer.Interrupt}
+			value, err := resumeData(ctx, one, interruptResume)
+			if err != nil {
+				return nil, err
+			}
+			out[answer.InterruptID] = value[answer.InterruptID]
+		}
+		return out, nil
+	}
 	out := map[string]any{}
 	switch {
 	case payload.Approval != nil:

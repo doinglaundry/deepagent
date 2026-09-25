@@ -41,6 +41,7 @@ type toolExecutor struct {
 	completed        map[string]*types.ToolResult
 	unknown          map[string]bool
 	blocked          map[string]bool
+	eagerAllowed     map[string]string
 	closed           bool
 }
 
@@ -48,7 +49,7 @@ func newToolExecutor(runID string, registry *tools.Registry, parallelism int, po
 	if parallelism < 1 {
 		parallelism = 1
 	}
-	return &toolExecutor{registry: registry, runID: runID, parallelism: parallelism, policy: policy, running: make(map[string]*runningTool), completed: make(map[string]*types.ToolResult), unknown: make(map[string]bool), blocked: make(map[string]bool), started: make(map[string]time.Time), identities: make(map[string]types.ToolCall)}
+	return &toolExecutor{registry: registry, runID: runID, parallelism: parallelism, policy: policy, running: make(map[string]*runningTool), completed: make(map[string]*types.ToolResult), unknown: make(map[string]bool), blocked: make(map[string]bool), eagerAllowed: make(map[string]string), started: make(map[string]time.Time), identities: make(map[string]types.ToolCall)}
 }
 func (e *toolExecutor) key(callID string) string { return e.runID + "\x00" + callID }
 func (e *toolExecutor) execute(ctx context.Context, call types.ToolCall, resume *types.ResumeAnswer, emit types.ToolChunkSink) (*types.ToolResult, error) {
@@ -240,10 +241,20 @@ func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall, resum
 		decision.Action = tools.AskApproval
 	}
 	if e.policy != nil {
-		var err error
-		decision, err = e.policy.Decide(ctx, call, d)
-		if err != nil {
-			return d, call, nil, err
+		e.mu.Lock()
+		allowedArgs, eagerAllowed := e.eagerAllowed[e.key(call.ID)]
+		e.mu.Unlock()
+		if eagerAllowed {
+			if allowedArgs != call.Arguments {
+				return d, call, nil, fmt.Errorf("eager tool %s arguments changed after policy approval", call.ID)
+			}
+			decision.Action = tools.Allow
+		} else {
+			var err error
+			decision, err = e.policy.Decide(ctx, call, d)
+			if err != nil {
+				return d, call, nil, err
+			}
 		}
 	}
 	if state := types.RunStateFromContext(ctx); state != nil && decision.Action == tools.Allow {
@@ -378,7 +389,7 @@ func (e *toolExecutor) executeBatch(ctx context.Context, calls []types.ToolCall,
 	}
 	for start := 0; start < len(ordered); {
 		d, _ := e.registry.Lookup(ordered[start].Name)
-		if !d.ParallelSafe || d.RequiresApproval || e.policy != nil {
+		if !d.ParallelSafe || d.RequiresApproval {
 			execute(start)
 			if errs[start] != nil {
 				return nil, errs[start]
@@ -389,7 +400,7 @@ func (e *toolExecutor) executeBatch(ctx context.Context, calls []types.ToolCall,
 		end := start
 		for end < len(ordered) {
 			d, _ := e.registry.Lookup(ordered[end].Name)
-			if !d.ParallelSafe || d.RequiresApproval || e.policy != nil {
+			if !d.ParallelSafe || d.RequiresApproval {
 				break
 			}
 			end++
@@ -497,4 +508,33 @@ func (e *toolExecutor) start(ctx context.Context, call types.ToolCall, emit type
 	e.eager.Add(1)
 	e.mu.Unlock()
 	go func() { defer e.eager.Done(); _, _ = e.execute(ctx, call, nil, emit) }()
+}
+
+func (e *toolExecutor) startEagerIfAllowed(ctx context.Context, call types.ToolCall, emit types.ToolChunkSink) (bool, error) {
+	d, ok := e.registry.Lookup(call.Name)
+	if !ok || !d.ParallelSafe || d.RequiresApproval {
+		return false, nil
+	}
+	policyCall := call
+	if d.NormalizeArgs != nil {
+		args, err := d.NormalizeArgs(call.Arguments)
+		if err != nil {
+			return false, nil // The tools node returns the argument error to the model.
+		}
+		policyCall.Arguments = args
+	}
+	if e.policy != nil {
+		decision, err := e.policy.Decide(ctx, policyCall, d)
+		if err != nil {
+			return false, err
+		}
+		if decision.Action != tools.Allow {
+			return false, nil
+		}
+		e.mu.Lock()
+		e.eagerAllowed[e.key(call.ID)] = policyCall.Arguments
+		e.mu.Unlock()
+	}
+	e.start(ctx, call, emit)
+	return true, nil
 }

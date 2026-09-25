@@ -15,12 +15,14 @@ import (
 // DockerFilesystem keeps file and command operations in the same container.
 // The caller owns acquisition and release of the sandbox.
 type DockerFilesystem struct {
-	sandbox     sandbox.Sandbox
-	mu          sync.RWMutex
-	dir         string
-	root        string
-	containerID string
-	commands    *Commands
+	sandbox       sandbox.Sandbox
+	mu            sync.RWMutex
+	dir           string
+	root          string
+	containerID   string
+	pathResolver  sandbox.ContainerPathResolver
+	canonicalRoot string
+	commands      *Commands
 }
 
 func NewDockerFilesystem(provider sandbox.Sandbox, dir, threadID string) (*DockerFilesystem, error) {
@@ -38,7 +40,11 @@ func NewDockerFilesystem(provider sandbox.Sandbox, dir, threadID string) (*Docke
 	if !ok || containerID == "" || threadID == "" {
 		return nil, fmt.Errorf("Docker container and thread ID are required")
 	}
-	b := &DockerFilesystem{sandbox: provider, dir: path.Clean(dir), root: path.Clean(dir), containerID: containerID}
+	resolver, ok := provider.(sandbox.ContainerPathResolver)
+	if !ok {
+		return nil, fmt.Errorf("Docker sandbox must resolve container paths")
+	}
+	b := &DockerFilesystem{sandbox: provider, dir: path.Clean(dir), root: path.Clean(dir), containerID: containerID, pathResolver: resolver}
 	b.commands = NewDockerCommands(threadID, b, containerID)
 	return b, nil
 }
@@ -61,6 +67,36 @@ func (b *DockerFilesystem) resolve(ctx context.Context, name string) (string, er
 		resolved = path.Join(dir, resolved)
 	}
 	if resolved != b.root && b.root != "/" && !strings.HasPrefix(resolved, b.root+"/") {
+		return "", ErrInvalidPath
+	}
+	b.mu.RLock()
+	canonicalRoot := b.canonicalRoot
+	b.mu.RUnlock()
+	if canonicalRoot == "" {
+		var err error
+		canonicalRoot, err = b.pathResolver.ResolveContainerPath(ctx, b.root)
+		if err != nil {
+			return "", err
+		}
+		if !path.IsAbs(canonicalRoot) || path.Clean(canonicalRoot) != canonicalRoot {
+			return "", ErrInvalidPath
+		}
+		b.mu.Lock()
+		if b.canonicalRoot == "" {
+			b.canonicalRoot = canonicalRoot
+		} else {
+			canonicalRoot = b.canonicalRoot
+		}
+		b.mu.Unlock()
+	}
+	canonical, err := b.pathResolver.ResolveContainerPath(ctx, resolved)
+	if err != nil {
+		return "", err
+	}
+	if !path.IsAbs(canonical) || path.Clean(canonical) != canonical {
+		return "", ErrInvalidPath
+	}
+	if canonical != canonicalRoot && canonicalRoot != "/" && !strings.HasPrefix(canonical, canonicalRoot+"/") {
 		return "", ErrInvalidPath
 	}
 	return resolved, nil

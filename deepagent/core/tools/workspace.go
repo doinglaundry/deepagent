@@ -21,9 +21,9 @@ func NewWorkspaceTools(ws backend.ToolWorkspace, opts WorkspaceToolOptions) ([]e
 		return nil, fmt.Errorf("workspace is required")
 	}
 	items := []einotool.BaseTool{
-		NewListFilesTool(ws), &ListFilesTool{backend: ws, name: "ls"}, NewReadFileTool(ws),
+		NewListFilesTool(ws), NewReadFileTool(ws),
 		&fileSearchTool{backend: ws, name: "glob"}, &fileSearchTool{backend: ws, name: "grep"},
-		&fileSearchTool{backend: ws, name: "rg"}, NewSearchFilesTool(ws),
+		&fileSearchTool{backend: ws, name: "rg"},
 	}
 	semantic, err := NewSemanticSearchTool(ws)
 	if err != nil {

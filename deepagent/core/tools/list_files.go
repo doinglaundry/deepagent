@@ -10,18 +10,13 @@ import (
 
 type ListFilesTool struct {
 	backend backend.Filesystem
-	name    string
 }
 
 func NewListFilesTool(backend backend.Filesystem) tool.BaseTool {
 	return &ListFilesTool{backend: backend}
 }
-func (t *ListFilesTool) Info(context.Context) (*schema.ToolInfo, error) {
-	name := t.name
-	if name == "" {
-		name = "list_files"
-	}
-	return toolInfo(name, "List files in a directory.", map[string]*schema.ParameterInfo{"path": {Type: schema.String}})
+func (*ListFilesTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return toolInfo("list_files", "List files in a directory.", map[string]*schema.ParameterInfo{"path": {Type: schema.String}})
 }
 func (*ListFilesTool) ReadOnly() bool     { return true }
 func (*ListFilesTool) ParallelSafe() bool { return true }

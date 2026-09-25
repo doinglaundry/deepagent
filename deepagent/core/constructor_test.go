@@ -12,7 +12,7 @@ import (
 )
 
 type testBuilderMiddleware struct {
-	middleware.BaseMiddleware
+	canonical.BaseMiddleware
 }
 
 func (m *testBuilderMiddleware) Name() string {

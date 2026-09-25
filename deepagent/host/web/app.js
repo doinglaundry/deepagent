@@ -82,7 +82,31 @@ function required(ev, p, target) {
     const b = document.createElement('button'); b.textContent = label;
     b.onclick = () => resume(target, ev.run_id, {...p, response: response()}, box); box.append(b);
   };
-  if (p.kind === 'approval') {
+  if (p.kind === 'batch') {
+    const answers = [];
+    (p.items || []).forEach(item => {
+      const row = document.createElement('div'); row.className = 'batch-item';
+      const label = document.createElement('div');
+      label.textContent = item.tool_name || item.info?.question || item.kind;
+      row.append(label);
+      if (item.kind === 'approve' || item.kind === 'review_edit') {
+        if (item.arguments_json) {
+          const args = document.createElement('div'); args.textContent = item.arguments_json; row.append(args);
+        }
+        const select = document.createElement('select');
+        [['允许', 'allow'], ['拒绝', 'deny']].forEach(([text, value]) => {
+          const option = document.createElement('option'); option.textContent = text; option.value = value; select.append(option);
+        });
+        row.append(select);
+        answers.push(() => ({interrupt_id: item.interrupt_id, approval: {approved: select.value === 'allow', reason: select.value === 'allow' ? '' : 'user denied'}}));
+      } else {
+        const input = document.createElement('input'); input.placeholder = '输入回复'; row.append(input);
+        answers.push(() => ({interrupt_id: item.interrupt_id, interrupt: {kind: item.kind, info_type: item.info_type, data: {user_answer: input.value}}}));
+      }
+      box.append(row);
+    });
+    button('提交全部', () => ({answers: answers.map(answer => answer())}));
+  } else if (p.kind === 'approval') {
     const detail = document.createElement('div'); detail.textContent = (p.tool_name || '工具') + (p.arguments_json ? ' ' + p.arguments_json : ''); box.append(detail);
     [['允许', true], ['拒绝', false]].forEach(([label, approved]) => button(label, () => ({approval: {approved, reason: approved ? '' : 'user denied'}})));
   } else if (p.kind === 'plan_input') {

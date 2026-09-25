@@ -209,10 +209,23 @@ func (t *DeepAgentThread) executeRun(ctx context.Context, r *run) {
 		}
 		cancel()
 	}
+	end := RunEndPayload{Status: "finished"}
 	if info, interrupted := compose.ExtractInterruptInfo(err); interrupted {
+		end.Status = "blocked"
+		end.CheckpointID = r.checkpointID()
+		for _, interrupt := range info.InterruptContexts {
+			if interrupt != nil && interrupt.ID != "" {
+				end.InterruptID = interrupt.ID
+				break
+			}
+		}
+		if request != nil {
+			end.Status = "interrupted"
+		}
 		err = r.emitBlocked(terminalCtx, info)
 	}
 	if timedOut && err == nil {
+		end.Status = "interrupted"
 		payload := InterruptedPayload{Source: "external", Metadata: maps.Clone(request.Metadata)}
 		if request.Timeout != nil {
 			payload.TimeoutMS = request.Timeout.Milliseconds()
@@ -220,9 +233,14 @@ func (t *DeepAgentThread) executeRun(ctx context.Context, r *run) {
 		err = r.emit(terminalCtx, EventInterrupted, payload)
 	}
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			end.Status = "interrupted"
+		} else {
+			end.Status = "failed"
+		}
 		_ = r.emit(terminalCtx, EventError, ErrorPayload{Message: err.Error(), Cancelled: errors.Is(err, context.Canceled)})
 	}
-	if finalErr := r.emit(terminalCtx, EventRunEnd, RunEndPayload{}); err == nil {
+	if finalErr := r.emit(terminalCtx, EventRunEnd, end); err == nil {
 		err = finalErr
 	}
 	r.cancel(err)

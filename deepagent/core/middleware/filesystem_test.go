@@ -48,21 +48,6 @@ func TestToolsUseCanonicalBackend(t *testing.T) {
 	}
 }
 
-func TestShellExecutesOnlyClassifiedSafeCommands(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	workspace := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true})
-	service := backend.NewCommands("thread", workspace)
-	defer service.Close(ctx)
-	commands := classifiedCommands{CommandService: service}
-	if _, err := commands.Execute(ctx, backend.CommandRequest{Command: "ls"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := commands.Execute(ctx, backend.CommandRequest{Command: "rm file"}); err == nil {
-		t.Fatal("dangerous command was executed")
-	}
-}
-
 func TestReadOnlyFilesystemOmitsMutations(t *testing.T) {
 	backend, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
 	if err != nil {

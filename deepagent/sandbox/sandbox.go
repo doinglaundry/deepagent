@@ -15,6 +15,12 @@ type FileInfoProvider interface {
 	ListDirInfo(context.Context, string, int) ([]FileInfo, error)
 }
 
+// ContainerPathResolver resolves symlinks inside a container before a workspace
+// file operation is sent to its file API.
+type ContainerPathResolver interface {
+	ResolveContainerPath(context.Context, string) (string, error)
+}
+
 // Sandbox is the 7-method surface every concrete provider must implement.
 type Sandbox interface {
 	ID() string

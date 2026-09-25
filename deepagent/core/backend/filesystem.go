@@ -113,15 +113,6 @@ func (b *LocalFilesystem) RootDir() string { return b.rootDir }
 
 // GrepRaw 搜索文件内容
 
-func (b *LocalFilesystem) ChangeDir(ctx context.Context, path string) error {
-	absPath, err := b.resolvePath(path)
-	if err != nil {
-		return err
-	}
-
-	return os.Chdir(absPath)
-}
-
 func (b *LocalFilesystem) SupportsApplyPatch() bool {
 	return true
 }

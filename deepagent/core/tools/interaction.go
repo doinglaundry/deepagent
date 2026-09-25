@@ -12,6 +12,9 @@ import (
 )
 
 type PlanStep = types.PlanStep
+
+const ToolUpdatePlan = "update_plan"
+
 type PlanUpdate struct {
 	Plan        []PlanStep `json:"plan"`
 	Explanation string     `json:"explanation,omitempty"`
@@ -25,7 +28,7 @@ func NewUpdatePlanTool(onUpdate PlanUpdateHandler) tool.InvokableTool {
 }
 func (*updatePlanTool) ReadOnly() bool { return true }
 func (*updatePlanTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return &schema.ToolInfo{Name: "update_plan", Desc: "Publish the current plan and progress.", ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+	return &schema.ToolInfo{Name: ToolUpdatePlan, Desc: "Publish the current plan and progress.", ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 		"explanation": {Type: schema.String},
 		"plan": {Type: schema.Array, Required: true, ElemInfo: &schema.ParameterInfo{Type: schema.Object, SubParams: map[string]*schema.ParameterInfo{
 			"step":   {Type: schema.String, Required: true},

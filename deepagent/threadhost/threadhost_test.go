@@ -16,6 +16,7 @@ type managerProbe struct {
 	mu       sync.Mutex
 	renewErr error
 	saved    []manager.OutputFrame
+	order    []string
 	released bool
 	status   dalmodel.ThreadStatus
 	closed   bool
@@ -39,6 +40,7 @@ func (m *managerProbe) Renew(_ context.Context, threadID int64, token string, _ 
 func (m *managerProbe) ReleaseThread(_ context.Context, _ int64, _ string, _ string, status dalmodel.ThreadStatus) (*dalmodel.Thread, error) {
 	m.mu.Lock()
 	m.released = true
+	m.order = append(m.order, "release")
 	m.status = status
 	m.mu.Unlock()
 	return &dalmodel.Thread{}, nil
@@ -58,6 +60,7 @@ func (m *managerProbe) ConfirmThreadClosed(context.Context, int64, string, int64
 func (m *managerProbe) SaveOutput(_ context.Context, _ int64, _ string, _ string, frames []manager.OutputFrame) error {
 	m.mu.Lock()
 	m.saved = append(m.saved, frames...)
+	m.order = append(m.order, "save")
 	m.mu.Unlock()
 	return nil
 }
@@ -94,7 +97,7 @@ func testClaim() *manager.AcquireResult {
 	}
 }
 
-func TestRunThreadPersistsOutputBeforeRelease(t *testing.T) {
+func TestThreadHost_PersistsEventBeforeYield(t *testing.T) {
 	client := &managerProbe{}
 	runtime := &runtimeProbe{output: make(chan threadpkg.TransportThreadOutputItem, 2)}
 	runtime.output <- threadpkg.TransportThreadOutputItem{Event: &threadpkg.TransportEvent{
@@ -114,8 +117,8 @@ func TestRunThreadPersistsOutputBeforeRelease(t *testing.T) {
 	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if len(client.saved) != 1 || !client.released {
-		t.Fatalf("saved=%d released=%v", len(client.saved), client.released)
+	if len(client.saved) != 1 || !client.released || len(client.order) != 2 || client.order[0] != "save" || client.order[1] != "release" {
+		t.Fatalf("saved=%d released=%v order=%v", len(client.saved), client.released, client.order)
 	}
 }
 

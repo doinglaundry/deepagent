@@ -36,12 +36,19 @@ type Part struct {
 }
 type Resume struct {
 	// Kind is stamped by Manager from the correlated durable block.
-	Kind         string `json:"kind,omitempty"`
-	RunID        string `json:"run_id"`
-	CheckpointID string `json:"checkpoint_id"`
-	InterruptID  string `json:"interrupt_id"`
-	Answer       string `json:"answer"`
-	Approved     bool   `json:"approved"`
+	Kind         string         `json:"kind,omitempty"`
+	RunID        string         `json:"run_id"`
+	CheckpointID string         `json:"checkpoint_id"`
+	InterruptID  string         `json:"interrupt_id"`
+	Answer       string         `json:"answer"`
+	Approved     bool           `json:"approved"`
+	Answers      []ResumeAnswer `json:"answers,omitempty"`
+	Items        []BlockItem    `json:"items,omitempty"`
+}
+type ResumeAnswer struct {
+	InterruptID string `json:"interrupt_id"`
+	Approved    bool   `json:"approved"`
+	Answer      string `json:"answer,omitempty"`
 }
 type Input struct {
 	ID        string    `json:"id"`
@@ -93,14 +100,22 @@ const (
 )
 
 type Block struct {
-	RunID        string   `json:"run_id"`
-	CheckpointID string   `json:"checkpoint_id"`
-	InterruptID  string   `json:"interrupt_id"`
-	Kind         string   `json:"kind"`
-	Question     string   `json:"question"`
-	ToolName     string   `json:"tool_name,omitempty"`
-	Arguments    string   `json:"arguments,omitempty"`
-	Options      []string `json:"options,omitempty"`
+	RunID        string      `json:"run_id"`
+	CheckpointID string      `json:"checkpoint_id"`
+	InterruptID  string      `json:"interrupt_id"`
+	Kind         string      `json:"kind"`
+	Question     string      `json:"question"`
+	ToolName     string      `json:"tool_name,omitempty"`
+	Arguments    string      `json:"arguments,omitempty"`
+	Options      []string    `json:"options,omitempty"`
+	Items        []BlockItem `json:"items,omitempty"`
+}
+type BlockItem struct {
+	InterruptID string `json:"interrupt_id"`
+	Kind        string `json:"kind"`
+	ToolName    string `json:"tool_name,omitempty"`
+	Arguments   string `json:"arguments,omitempty"`
+	Question    string `json:"question,omitempty"`
 }
 type Event struct {
 	ID         string          `json:"id"`

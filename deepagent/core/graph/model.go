@@ -133,15 +133,15 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 		chunks = append(chunks, &messagePart)
 		if a.eager {
 			for _, call := range ready {
-				descriptor, ok := a.registry.Lookup(call.Name)
-				if !ok || !descriptor.ParallelSafe || descriptor.RequiresApproval || a.policy != nil {
-					continue
-				}
-				buffer.started[call.ID] = true
-				eagerCall := call
-				a.executor.start(ctx, eagerCall, func(ctx context.Context, call types.ToolCall, chunk string) error {
+				started, err := a.executor.startEagerIfAllowed(ctx, call, func(ctx context.Context, call types.ToolCall, chunk string) error {
 					return a.event(ctx, s, "tool_call_output_chunk", call.ID, types.ToolOutputChunk{Call: call, Content: chunk})
 				})
+				if err != nil {
+					return nil, err
+				}
+				if started {
+					buffer.started[call.ID] = true
+				}
 			}
 		}
 		if err := a.event(ctx, s, "llm_token", "", chunk); err != nil {

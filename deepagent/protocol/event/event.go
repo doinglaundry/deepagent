@@ -26,6 +26,7 @@ const (
 	InputRequiredKindApproval        = "approval"
 	InputRequiredKindPlanInput       = "plan_input"
 	InputRequiredKindFollowUp        = "follow_up"
+	InputRequiredKindBatch           = "batch"
 	ToolCallStatusStarted            = "started"
 	ToolCallStatusFinished           = "finished"
 )
@@ -142,6 +143,23 @@ type ApprovalRequiredEventPayload struct {
 	ArgumentsJSON      *string             `json:"arguments_json,omitempty"`
 	ConsumedMessageIDs []string            `json:"consumed_message_ids,omitempty"`
 	ConsumedInputsMeta []map[string]string `json:"consumed_inputs_meta,omitempty"`
+}
+type InterruptBatchItem struct {
+	Kind          string          `json:"kind"`
+	InterruptID   string          `json:"interrupt_id"`
+	ToolCallID    string          `json:"tool_call_id,omitempty"`
+	ToolName      string          `json:"tool_name,omitempty"`
+	ArgumentsJSON *string         `json:"arguments_json,omitempty"`
+	InfoType      string          `json:"info_type,omitempty"`
+	Info          json.RawMessage `json:"info,omitempty"`
+}
+type InterruptBatchRequiredEventPayload struct {
+	Kind               string               `json:"kind"`
+	InterruptID        string               `json:"interrupt_id"`
+	CheckpointID       string               `json:"checkpoint_id"`
+	Items              []InterruptBatchItem `json:"items"`
+	ConsumedMessageIDs []string             `json:"consumed_message_ids,omitempty"`
+	ConsumedInputsMeta []map[string]string  `json:"consumed_inputs_meta,omitempty"`
 }
 type InterruptRequiredEventPayload struct {
 	Kind               string              `json:"kind,omitempty"`

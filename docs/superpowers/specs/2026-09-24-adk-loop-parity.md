@@ -26,13 +26,12 @@ independent model/tool loop and ADK child-agent recursion.
 The unused local Runtime's UI-only tests were retired with that frontend
 implementation, not presented as canonical Web acceptance. Its autodream helper
 inferred touched files from attempted tool arguments; canonical consolidation
-validates the actual scoped artifact instead. The reusable autodream data helpers
-remain in memory/autodream.
+validates the actual scoped artifact instead. The unused autodream helpers were
+removed with the legacy memory implementation.
 
-Scope remaining: the old ADK directory still contains prompt/model/middleware
-assembly helpers and the global TUI approver; plural middleware/tool packages
-also remain. This removal eliminates the ADK execution loop, not all legacy
-scaffolding or all non-Web entrypoints. Those require further consolidation.
+The old ADK directory, plural middleware/tool packages, and non-Web user
+entrypoints were removed in the subsequent consolidation. The supported path
+is Web → Manager → ThreadHost → DeepAgentThread → Run → Eino Graph.
 
 Verification before deletion: Graph, middleware, Memory, ModelHub and Host race
 suites passed in `/tmp/core-adk-parity-after.log`.
@@ -191,9 +190,10 @@ Evidence inspected and run before removal:
 - TestMemorySweepProcessesPersistedHistoryAfterRestart;
 - Conversation compaction/race suite and actual Graph threshold-compaction test.
 
-Legacy memory/agent, memory/store and autodream artifact helpers remain for a
-separate data-format/capability audit. Removing these dead hooks does not establish
-migration of all existing legacy memory files or completion of Memory cleanup.
+The legacy memory/agent, memory/store and autodream packages were removed after
+the user chose to abandon their old JSON format and structured-fact behavior.
+Existing global.json and agents/*.json files are not migrated into the canonical
+scoped Memory Service.
 
 ## Retire duplicate HITL and deferred-tool middleware
 

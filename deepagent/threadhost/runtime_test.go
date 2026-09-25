@@ -121,4 +121,7 @@ func TestBuildRunConfigCreatesRunLocalConfig(t *testing.T) {
 	if first.EnablePlan || !second.EnablePlan {
 		t.Fatalf("plan mode first=%v second=%v", first.EnablePlan, second.EnablePlan)
 	}
+	if first.Agent.HITLConfig == nil || !first.Agent.HITLConfig.NeedFollowUpTool || second.Agent.HITLConfig == nil || !second.Agent.HITLConfig.NeedFollowUpTool {
+		t.Fatal("Web runs must expose ask_user")
+	}
 }

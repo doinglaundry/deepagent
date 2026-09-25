@@ -58,7 +58,9 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 		{ID: "a", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"a"}`}},
 		{ID: "b", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"b"}`}},
 	})}, {schema.AssistantMessage("parent done", nil)}}}
-	cfg := Config{Model: parentModel, RunID: "run", DisableSubAgent: true, Parallelism: 2, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.Descriptor{{Tool: task, ParallelSafe: true}}}
+	cfg := Config{Model: parentModel, RunID: "run", DisableSubAgent: true, Parallelism: 2, CheckpointStore: &checkpointMemory{}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+		return tools.Decision{Action: tools.Allow}, nil
+	}), ToolDescriptors: []tools.Descriptor{{Tool: task, ParallelSafe: true}}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -69,8 +71,10 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 		t.Fatalf("expected two child approvals: %v", err)
 	}
 	answers := map[string]any{}
+	ids := make([]string, 0, len(info.InterruptContexts))
 	for _, interrupt := range info.InterruptContexts {
 		approval := interrupt.Info.(*tools.ApprovalInfo)
+		ids = append(ids, interrupt.ID)
 		answers[interrupt.ID] = &tools.ApprovalResult{CallID: approval.CallID, Approved: true}
 	}
 	cfg.Conversation = a.conversation
@@ -78,7 +82,7 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := resumed.Run(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(answers))
+	out, err := resumed.Run(ctx, nil, WithCheckpointID("checkpoint"), WithResume(ids...), WithResumeData(answers))
 	if err != nil {
 		t.Fatal(err)
 	}

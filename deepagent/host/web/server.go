@@ -186,6 +186,10 @@ func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID 
 		err    error
 	)
 	if req.Resume != nil {
+		if err := req.Resume.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
 		payload, marshalErr := json.Marshal(req.Resume)
 		if marshalErr != nil {
 			writeError(w, http.StatusBadRequest, marshalErr)
@@ -314,12 +318,21 @@ func (s *Server) openFile(w http.ResponseWriter, r *http.Request, threadID int64
 		writeError(w, http.StatusForbidden, fmt.Errorf("path outside thread work directory"))
 		return
 	}
-	data, err := os.ReadFile(path)
+	data, err := readWorkspaceFile(base, rel)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"path": rel, "content": string(data)})
+}
+
+func readWorkspaceFile(base, relative string) ([]byte, error) {
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return root.ReadFile(relative)
 }
 
 func (s *Server) Shutdown(context.Context) error { return nil }

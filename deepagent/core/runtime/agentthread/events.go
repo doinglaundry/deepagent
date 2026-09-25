@@ -116,7 +116,10 @@ type ToolEndPayload struct {
 }
 
 type RunEndPayload struct {
-	Usage float64
+	Usage        float64
+	Status       string
+	CheckpointID string
+	InterruptID  string
 }
 
 type PlanStepStatus string

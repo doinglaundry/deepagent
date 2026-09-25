@@ -170,7 +170,7 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 	}
 	oldMask := cfg.ToolMask
 	cfg.ToolMask = tools.CombineMasks(oldMask, func(_ context.Context, info *schema.ToolInfo) bool {
-		return info.Name != "task" && info.Name != "internal_subagent" && info.Name != "ask_user"
+		return info.Name != "task" && info.Name != "ask_user"
 	})
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
