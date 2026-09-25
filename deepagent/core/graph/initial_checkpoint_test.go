@@ -3,7 +3,6 @@ package graph
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -106,107 +105,5 @@ func TestCheckpoint_FreshRunCreatesCursorAndFencesBeforeSideEffect(t *testing.T)
 				t.Fatalf("fresh crash replay: %v tools=%d models=%d", err, counter.count.Load(), m.calls)
 			}
 		})
-	}
-}
-
-func TestCheckpoint_EmptyInitialLocalStateMigratesOnResume(t *testing.T) {
-	for _, scenario := range []string{"valid", "wrong-run", "executed", "save-failure"} {
-		t.Run(scenario, func(t *testing.T) { testEmptyInitialCheckpoint(t, scenario) })
-	}
-}
-func testEmptyInitialCheckpoint(t *testing.T, scenario string) {
-	ctx := context.Background()
-	store := &checkpointMemory{}
-	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
-	cfg := Config{Model: m, ThreadID: "thread", RunID: "run", CheckpointStore: store, InterruptBeforeNodes: []string{"prepare"}}
-	a, err := New(ctx, WithConfig(&cfg))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = a.Run(ctx, []*schema.Message{schema.UserMessage("original")}, WithCheckpointID("checkpoint"))
-	if _, ok := compose.ExtractInterruptInfo(err); !ok {
-		t.Fatal(err)
-	}
-	// Reproduce the former canonical format: initialized prepare input, empty
-	// local State. Preserve every other byte-level checkpoint field.
-	raw, _, err := store.Get(ctx, "checkpoint")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var envelope checkpointer.Envelope
-	if err = json.Unmarshal(raw, &envelope); err != nil {
-		t.Fatal(err)
-	}
-	var root map[string]json.RawMessage
-	if err = json.Unmarshal(envelope.EinoSnapshot, &root); err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]json.RawMessage
-	if err = json.Unmarshal(root["MapValues"], &fields); err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]json.RawMessage
-	if err = json.Unmarshal(fields["State"], &state); err != nil {
-		t.Fatal(err)
-	}
-	state["JSONValue"], _ = json.Marshal(types.RunState{})
-	fields["State"], _ = json.Marshal(state)
-	if scenario == "wrong-run" || scenario == "executed" {
-		var inputs map[string]json.RawMessage
-		if err = json.Unmarshal(fields["Inputs"], &inputs); err != nil {
-			t.Fatal(err)
-		}
-		var entries map[string]json.RawMessage
-		if err = json.Unmarshal(inputs["MapValues"], &entries); err != nil {
-			t.Fatal(err)
-		}
-		var prepare map[string]json.RawMessage
-		if err = json.Unmarshal(entries[`"prepare"`], &prepare); err != nil {
-			t.Fatal(err)
-		}
-		var input types.RunState
-		if err = json.Unmarshal(prepare["JSONValue"], &input); err != nil {
-			t.Fatal(err)
-		}
-		if scenario == "wrong-run" {
-			input.RunID = "another-run"
-		} else {
-			input.ModelCalls = 1
-		}
-		prepare["JSONValue"], _ = json.Marshal(input)
-		entries[`"prepare"`], _ = json.Marshal(prepare)
-		inputs["MapValues"], _ = json.Marshal(entries)
-		fields["Inputs"], _ = json.Marshal(inputs)
-	}
-	root["MapValues"], _ = json.Marshal(fields)
-	envelope.EinoSnapshot, _ = json.Marshal(root)
-	raw, _ = json.Marshal(envelope)
-	if err = store.Set(ctx, "checkpoint", raw); err != nil {
-		t.Fatal(err)
-	}
-	if scenario == "save-failure" {
-		store.fail = true
-	}
-	cfg.InterruptBeforeNodes = nil
-	resumed, err := New(ctx, WithConfig(&cfg))
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := resumed.Run(ctx, nil, WithCheckpointID("checkpoint"))
-	if scenario != "valid" {
-		if err == nil || m.calls != 0 {
-			t.Fatalf("unsafe migration: err=%v modelCalls=%d", err, m.calls)
-		}
-		stored, _, _ := store.Get(ctx, "checkpoint")
-		if string(stored) != string(raw) {
-			t.Fatal("rejected migration overwrote checkpoint")
-		}
-		return
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.Content != "done" || m.calls != 1 || resumed.state.RunID != "run" || resumed.state.ThreadID != "thread" || len(resumed.state.Consumed) != 1 || resumed.state.Consumed[0].Message.Content != "original" {
-		t.Fatalf("out=%v calls=%d state=%+v", out, m.calls, resumed.state)
 	}
 }

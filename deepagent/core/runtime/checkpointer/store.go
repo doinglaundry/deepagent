@@ -48,32 +48,6 @@ func (s *Store) get(ctx context.Context, id string) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("decode checkpoint envelope: %w", err)
 	}
 	if envelope.Version != 1 {
-		var marker struct{ Type json.RawMessage }
-		if envelope.Version == 0 && json.Unmarshal(raw, &marker) == nil && len(marker.Type) > 0 {
-			snapshot, err := s.migrateLegacy(ctx, id, raw)
-			if err != nil {
-				return nil, false, err
-			}
-			snapshot, err = blockedSnapshot(snapshot)
-			if err != nil {
-				return nil, false, err
-			}
-			if err := s.Set(ctx, id, snapshot); err != nil {
-				return nil, false, fmt.Errorf("persist migrated checkpoint: %w", err)
-			}
-			return snapshot, true, nil
-		}
-		var engineMarker map[string]json.RawMessage
-		if envelope.Version == 0 && json.Unmarshal(raw, &engineMarker) == nil && engineMarker["run_id"] != nil {
-			snapshot, err := s.migrateEngine(id, raw)
-			if err != nil {
-				return nil, false, err
-			}
-			if err := s.Set(ctx, id, snapshot); err != nil {
-				return nil, false, fmt.Errorf("persist migrated engine checkpoint: %w", err)
-			}
-			return snapshot, true, nil
-		}
 		return nil, false, fmt.Errorf("unsupported checkpoint envelope version %d", envelope.Version)
 	}
 	if envelope.ThreadID != s.threadID || envelope.RunID != s.runID {
@@ -88,16 +62,6 @@ func (s *Store) get(ctx context.Context, id string) ([]byte, bool, error) {
 	if s.graphVersion == "core-graph-v1" {
 		if err := rejectTerminalSnapshot(envelope.EinoSnapshot); err != nil {
 			return nil, false, err
-		}
-		snapshot, changed, err := s.migrateEmptyInitial(envelope.EinoSnapshot)
-		if err != nil {
-			return nil, false, err
-		}
-		if changed {
-			if err := s.Set(ctx, id, snapshot); err != nil {
-				return nil, false, fmt.Errorf("persist initial checkpoint migration: %w", err)
-			}
-			return snapshot, true, nil
 		}
 	}
 	return envelope.EinoSnapshot, true, nil

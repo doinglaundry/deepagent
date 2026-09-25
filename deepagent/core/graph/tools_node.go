@@ -2,8 +2,6 @@ package graph
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
 	"eino-cli/deepagent/core/types"
 )
@@ -63,18 +61,7 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 		s.Calls[i].Result = &result
 		s.Calls[i].Status = types.CallCompleted
 	}
-	var persisted int
-	raw := s.Extensions["legacy_persisted_tool_results"]
-	if len(raw) > 0 {
-		decodeErr := json.Unmarshal(raw, &persisted)
-		if decodeErr != nil || persisted < 0 || persisted > len(results) {
-			return nil, fmt.Errorf("invalid legacy persisted tool cursor")
-		}
-	}
 	for i, result := range results {
-		if i < persisted {
-			continue
-		}
 		message := messages[i]
 		err := a.conversation.AddHistory(ctx, s.RunID, message)
 		if err != nil {
@@ -92,7 +79,6 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 			return nil, err
 		}
 	}
-	delete(s.Extensions, "legacy_persisted_tool_results")
 	s.Pending = nil
 	return s, nil
 }

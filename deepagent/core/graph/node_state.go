@@ -137,49 +137,6 @@ func (a *DeepAgent) localState(ctx context.Context, _ *types.RunState) (*types.R
 				}
 			}
 		}
-		raw, ok = state.Extensions["legacy_engine_history"]
-		if ok {
-			var expected []*schema.Message
-			err = json.Unmarshal(raw, &expected)
-			if err != nil {
-				return nil, err
-			}
-			actual, err := json.Marshal(a.conversation.History(ctx))
-			if err != nil {
-				return nil, err
-			}
-			normalized, err := json.Marshal(expected)
-			if err != nil {
-				return nil, err
-			}
-			if string(actual) != string(normalized) {
-				return nil, fmt.Errorf("legacy checkpoint requires matching durable conversation history")
-			}
-			delete(state.Extensions, "legacy_engine_history")
-		}
-		raw, ok = state.Extensions["legacy_tools_message"]
-		if ok {
-			var expected schema.Message
-			err = json.Unmarshal(raw, &expected)
-			if err != nil {
-				return nil, err
-			}
-			history := a.conversation.History(ctx)
-			if len(history) == 0 {
-				return nil, fmt.Errorf("legacy tools checkpoint requires durable conversation history")
-			}
-			last := history[len(history)-1]
-			if last == nil || last.Role != schema.Assistant || len(last.ToolCalls) != len(expected.ToolCalls) {
-				return nil, fmt.Errorf("legacy tools checkpoint history boundary mismatch")
-			}
-			for i, call := range expected.ToolCalls {
-				actual := last.ToolCalls[i]
-				if actual.ID != call.ID || actual.Function != call.Function {
-					return nil, fmt.Errorf("legacy tool call %q does not match durable history", call.ID)
-				}
-			}
-			delete(state.Extensions, "legacy_tools_message")
-		}
 		err = a.graphState.RestoreExtensions(state)
 		if err != nil {
 			return nil, err

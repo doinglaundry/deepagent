@@ -509,19 +509,11 @@ func (a *DeepAgent) execute(ctx context.Context, input []*schema.Message, resume
 		if current == nil {
 			current = state
 		}
-		// A rejected history reconciliation has not entered execution. Keep
-		// the original cursor resumable after the caller reloads its history.
-		uncheckedHistory := false
-		if current != nil {
-			_, historyPending := current.Extensions["legacy_engine_history"]
-			_, toolBoundaryPending := current.Extensions["legacy_tools_message"]
-			uncheckedHistory = historyPending || toolBoundaryPending
-		}
 		// A terminal failure must not discard accepted inputs embedded in a
 		// checkpoint. Interrupts retain them in the Eino snapshot.
 		if _, interrupted := compose.ExtractInterruptInfo(err); err != nil && !interrupted && current != nil {
 			pending := hasPendingInputs(current)
-			if pending && !uncheckedHistory {
+			if pending {
 				saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 				err = errors.Join(err, a.persistInputs(saveCtx, current))
 				cancel()
@@ -531,7 +523,7 @@ func (a *DeepAgent) execute(ctx context.Context, input []*schema.Message, resume
 		_, interrupted := compose.ExtractInterruptInfo(err)
 		// Only finalize a state actually entered by the Graph. A rejected resume
 		// or a BeforeRun failure must not overwrite the saved state with a new one.
-		if !interrupted && !uncheckedHistory && a.state != nil && current != nil && a.cfg.CheckpointStore != nil && (!options.ForceNewRun || initialCheckpointSaved) {
+		if !interrupted && a.state != nil && current != nil && a.cfg.CheckpointStore != nil && (!options.ForceNewRun || initialCheckpointSaved) {
 			checkpointID := options.CheckpointID
 			if options.WriteToCheckpointID != "" {
 				checkpointID = options.WriteToCheckpointID

@@ -12,13 +12,13 @@ func ValidateResume(snapshot []byte, ids []string, data map[string]any) error {
 	if len(ids) == 0 && len(data) == 0 {
 		return nil
 	}
-	var cp legacyValue
+	var cp checkpointValue
 	if err := json.Unmarshal(snapshot, &cp); err != nil {
 		return err
 	}
 	known := map[string]bool{}
-	var collect func(*legacyValue)
-	collect = func(value *legacyValue) {
+	var collect func(*checkpointValue)
+	collect = func(value *checkpointValue) {
 		if value == nil {
 			return
 		}

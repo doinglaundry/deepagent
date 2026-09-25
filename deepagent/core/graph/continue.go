@@ -18,8 +18,7 @@ func (a *DeepAgent) continueNode(ctx context.Context, input *types.RunState) (*t
 
 func hasPendingInputs(s *types.RunState) bool {
 	_, pending := s.Extensions["pending_inputs"]
-	_, legacy := s.Extensions["legacy_pending_inputs"]
-	return pending || legacy
+	return pending
 }
 
 func (a *DeepAgent) continueRun(ctx context.Context, s *types.RunState) (*types.RunState, error) {

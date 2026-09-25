@@ -49,7 +49,6 @@ func (a *DeepAgent) persistInputs(ctx context.Context, s *types.RunState) error 
 			return err
 		}
 	}
-	delete(s.Extensions, "legacy_pending_inputs")
 	delete(s.Extensions, "pending_inputs")
 	return nil
 }
