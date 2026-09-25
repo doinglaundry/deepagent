@@ -17,7 +17,8 @@ func (a *DeepAgent) buildGraph(ctx context.Context) error {
 	g := compose.NewGraph[*types.RunState, *schema.Message](compose.WithGenLocalState(func(ctx context.Context) *types.RunState {
 		// Initialize before Eino can interrupt at the first node. Resume uses
 		// the checkpoint local state instead of invoking this generator.
-		if state := types.RunStateFromContext(ctx); state != nil {
+		state := types.RunStateFromContext(ctx)
+		if state != nil {
 			return state
 		}
 		return &types.RunState{}
@@ -26,12 +27,14 @@ func (a *DeepAgent) buildGraph(ctx context.Context) error {
 	// a checkpoint state, even when resume starts directly at model or tools.
 	node := func(name string, fn func(context.Context, *types.RunState) (*types.RunState, error)) *compose.Lambda {
 		return compose.InvokableLambda(func(ctx context.Context, input *types.RunState) (*types.RunState, error) {
-			if initial, ok := ctx.Value(initialCheckpointKey{}).(*types.RunState); name == "prepare" && ok {
+			initial, ok := ctx.Value(initialCheckpointKey{}).(*types.RunState)
+			if name == "prepare" && ok {
 				fresh := false
-				if err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, s *types.RunState) error {
+				err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, s *types.RunState) error {
 					fresh = s == initial
 					return nil
-				}); err != nil {
+				})
+				if err != nil {
 					return nil, err
 				}
 				if fresh {
@@ -71,7 +74,8 @@ func (a *DeepAgent) buildGraph(ctx context.Context) error {
 			}
 			a.executor.snapshotChildCheckpoints(state)
 			markRunError(ctx, state, nodeErr)
-			if snapshotErr := a.graphState.SnapshotExtensions(state); snapshotErr != nil {
+			snapshotErr := a.graphState.SnapshotExtensions(state)
+			if snapshotErr != nil {
 				state.Phase = types.PhaseFailed
 				return nil, snapshotErr
 			}
@@ -82,42 +86,48 @@ func (a *DeepAgent) buildGraph(ctx context.Context) error {
 		name string
 		fn   func(context.Context, *types.RunState) (*types.RunState, error)
 	}{{"prepare", a.prepare}, {"model", a.callModel}, {"tools", a.callTools}, {"continue", a.continueRun}} {
-		if err := g.AddLambdaNode(n.name, node(n.name, n.fn)); err != nil {
+		err := g.AddLambdaNode(n.name, node(n.name, n.fn))
+		if err != nil {
 			return err
 		}
 	}
-	if err := g.AddLambdaNode("finish", compose.InvokableLambda(a.finish)); err != nil {
+	err := g.AddLambdaNode("finish", compose.InvokableLambda(a.finish))
+	if err != nil {
 		return err
 	}
 	for _, edge := range [][2]string{{compose.START, "prepare"}, {"prepare", "model"}, {"finish", compose.END}} {
-		if err := g.AddEdge(edge[0], edge[1]); err != nil {
+		err := g.AddEdge(edge[0], edge[1])
+		if err != nil {
 			return err
 		}
 	}
-	if err := g.AddBranch("model", compose.NewGraphBranch(func(_ context.Context, s *types.RunState) (string, error) {
+	err = g.AddBranch("model", compose.NewGraphBranch(func(_ context.Context, s *types.RunState) (string, error) {
 		if len(s.Calls) > 0 {
 			return "tools", nil
 		}
 		return "continue", nil
-	}, map[string]bool{"tools": true, "continue": true})); err != nil {
+	}, map[string]bool{"tools": true, "continue": true}))
+	if err != nil {
 		return err
 	}
-	if err := g.AddBranch("tools", compose.NewGraphBranch(func(_ context.Context, s *types.RunState) (string, error) {
+	err = g.AddBranch("tools", compose.NewGraphBranch(func(_ context.Context, s *types.RunState) (string, error) {
 		for _, c := range s.Calls {
 			if c.Result != nil && c.Result.ReturnDirect {
 				return "continue", nil
 			}
 		}
 		return "model", nil
-	}, map[string]bool{"model": true, "continue": true})); err != nil {
+	}, map[string]bool{"model": true, "continue": true}))
+	if err != nil {
 		return err
 	}
-	if err := g.AddBranch("continue", compose.NewGraphBranch(func(_ context.Context, s *types.RunState) (string, error) {
+	err = g.AddBranch("continue", compose.NewGraphBranch(func(_ context.Context, s *types.RunState) (string, error) {
 		if s.Phase == types.PhasePreparing {
 			return "prepare", nil
 		}
 		return "finish", nil
-	}, map[string]bool{"prepare": true, "finish": true})); err != nil {
+	}, map[string]bool{"prepare": true, "finish": true}))
+	if err != nil {
 		return err
 	}
 	options := []compose.GraphCompileOption{compose.WithGraphName("deepagent"), compose.WithNodeTriggerMode(compose.AnyPredecessor), compose.WithMaxRunSteps(a.cfg.MaxSteps)}
@@ -130,7 +140,6 @@ func (a *DeepAgent) buildGraph(ctx context.Context) error {
 	if len(a.cfg.InterruptAfterNodes) > 0 {
 		options = append(options, compose.WithInterruptAfterNodes(a.cfg.InterruptAfterNodes))
 	}
-	var err error
 	a.graph, err = g.Compile(ctx, options...)
 	return err
 }
@@ -154,17 +163,22 @@ func (a *DeepAgent) localState(ctx context.Context, _ *types.RunState) (*types.R
 	a.state = state
 	a.mu.Unlock()
 	if first {
-		if raw, ok := state.Extensions["child_history"]; ok && a.cfg.Depth > 0 {
+		raw, ok := state.Extensions["child_history"]
+		if ok && a.cfg.Depth > 0 {
 			var messages []*schema.Message
-			if err := json.Unmarshal(raw, &messages); err != nil {
+			err = json.Unmarshal(raw, &messages)
+			if err != nil {
 				return nil, err
 			}
-			if err := a.conversation.AddHistory(ctx, state.RunID, messages...); err != nil {
+			err = a.conversation.AddHistory(ctx, state.RunID, messages...)
+			if err != nil {
 				return nil, err
 			}
-			if raw, ok := state.Extensions["child_usage"]; ok {
+			raw, ok = state.Extensions["child_usage"]
+			if ok {
 				var usage conversation.ContextUsageSnapshot
-				if err := json.Unmarshal(raw, &usage); err != nil {
+				err = json.Unmarshal(raw, &usage)
+				if err != nil {
 					return nil, err
 				}
 				restorer, ok := a.conversation.(interface {
@@ -173,14 +187,17 @@ func (a *DeepAgent) localState(ctx context.Context, _ *types.RunState) (*types.R
 				if !ok {
 					return nil, fmt.Errorf("child conversation cannot restore usage")
 				}
-				if err := restorer.RestoreUsage(ctx, usage); err != nil {
+				err = restorer.RestoreUsage(ctx, usage)
+				if err != nil {
 					return nil, err
 				}
 			}
 		}
-		if raw, ok := state.Extensions["legacy_engine_history"]; ok {
+		raw, ok = state.Extensions["legacy_engine_history"]
+		if ok {
 			var expected []*schema.Message
-			if err := json.Unmarshal(raw, &expected); err != nil {
+			err = json.Unmarshal(raw, &expected)
+			if err != nil {
 				return nil, err
 			}
 			actual, err := json.Marshal(a.conversation.History(ctx))
@@ -196,9 +213,11 @@ func (a *DeepAgent) localState(ctx context.Context, _ *types.RunState) (*types.R
 			}
 			delete(state.Extensions, "legacy_engine_history")
 		}
-		if raw, ok := state.Extensions["legacy_tools_message"]; ok {
+		raw, ok = state.Extensions["legacy_tools_message"]
+		if ok {
 			var expected schema.Message
-			if err := json.Unmarshal(raw, &expected); err != nil {
+			err = json.Unmarshal(raw, &expected)
+			if err != nil {
 				return nil, err
 			}
 			history := a.conversation.History(ctx)
@@ -217,10 +236,12 @@ func (a *DeepAgent) localState(ctx context.Context, _ *types.RunState) (*types.R
 			}
 			delete(state.Extensions, "legacy_tools_message")
 		}
-		if err := a.graphState.RestoreExtensions(state); err != nil {
+		err = a.graphState.RestoreExtensions(state)
+		if err != nil {
 			return nil, err
 		}
-		if err := a.conversation.RestoreRunUsage(ctx, state.Usage); err != nil {
+		err = a.conversation.RestoreRunUsage(ctx, state.Usage)
+		if err != nil {
 			return nil, err
 		}
 		a.executor.restore(state.Calls)
@@ -228,7 +249,8 @@ func (a *DeepAgent) localState(ctx context.Context, _ *types.RunState) (*types.R
 		a.executor.onStart = func(ctx context.Context, call types.ToolCallState) error {
 			return a.event(ctx, state, "tool_start", call.Call.ID, call)
 		}
-		if err := a.event(ctx, state, "run_state_restored", "", state.Consumed); err != nil {
+		err = a.event(ctx, state, "run_state_restored", "", state.Consumed)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -242,8 +264,10 @@ func hasPendingInputs(s *types.RunState) bool {
 
 func (a *DeepAgent) persistInputs(ctx context.Context, s *types.RunState) error {
 	var prepared int
-	if raw := s.Extensions["prepared_inputs"]; len(raw) > 0 {
-		if err := json.Unmarshal(raw, &prepared); err != nil {
+	raw := s.Extensions["prepared_inputs"]
+	if len(raw) > 0 {
+		err := json.Unmarshal(raw, &prepared)
+		if err != nil {
 			return err
 		}
 	}
@@ -251,7 +275,8 @@ func (a *DeepAgent) persistInputs(ctx context.Context, s *types.RunState) error 
 		return fmt.Errorf("invalid prepared input cursor")
 	}
 	for _, input := range s.Consumed[prepared:] {
-		if err := a.conversation.AddHistory(ctx, s.RunID, input.Message); err != nil {
+		err := a.conversation.AddHistory(ctx, s.RunID, input.Message)
+		if err != nil {
 			return err
 		}
 		prepared++
@@ -259,7 +284,8 @@ func (a *DeepAgent) persistInputs(ctx context.Context, s *types.RunState) error 
 			s.Extensions = make(map[string]json.RawMessage)
 		}
 		s.Extensions["prepared_inputs"], _ = json.Marshal(prepared)
-		if err := a.event(ctx, s, "input_consumed", "", input); err != nil {
+		err = a.event(ctx, s, "input_consumed", "", input)
+		if err != nil {
 			return err
 		}
 	}
@@ -268,10 +294,12 @@ func (a *DeepAgent) persistInputs(ctx context.Context, s *types.RunState) error 
 	return nil
 }
 func (a *DeepAgent) prepare(ctx context.Context, s *types.RunState) (*types.RunState, error) {
-	if err := a.persistInputs(ctx, s); err != nil {
+	err := a.persistInputs(ctx, s)
+	if err != nil {
 		return nil, err
 	}
-	if err := a.compactContext(ctx, s); err != nil {
+	err = a.compactContext(ctx, s)
+	if err != nil {
 		return nil, err
 	}
 	s.Phase = types.PhaseModeling
@@ -281,7 +309,8 @@ func (a *DeepAgent) compactContext(ctx context.Context, s *types.RunState) error
 	if !a.conversation.CompactNeeded(ctx) {
 		return nil
 	}
-	if err := a.event(ctx, s, "context_compact_started", "", conversation.ContextCompactStartedPayload{ContextUsage: a.conversation.ContextUsage()}); err != nil {
+	err := a.event(ctx, s, "context_compact_started", "", conversation.ContextCompactStartedPayload{ContextUsage: a.conversation.ContextUsage()})
+	if err != nil {
 		return err
 	}
 	payload, err := a.conversation.Compact(ctx, s.RunID)
@@ -295,7 +324,8 @@ func (a *DeepAgent) compactContext(ctx context.Context, s *types.RunState) error
 }
 func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.RunState, error) {
 	s.Phase = types.PhaseTools
-	if err := a.prepareToolCalls(ctx, s); err != nil {
+	err := a.prepareToolCalls(ctx, s)
+	if err != nil {
 		return nil, err
 	}
 	calls := make([]types.ToolCall, len(s.Calls))
@@ -339,8 +369,10 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 		s.Calls[i].Status = types.CallCompleted
 	}
 	var persisted int
-	if raw := s.Extensions["legacy_persisted_tool_results"]; len(raw) > 0 {
-		if err := json.Unmarshal(raw, &persisted); err != nil || persisted < 0 || persisted > len(results) {
+	raw := s.Extensions["legacy_persisted_tool_results"]
+	if len(raw) > 0 {
+		decodeErr := json.Unmarshal(raw, &persisted)
+		if decodeErr != nil || persisted < 0 || persisted > len(results) {
 			return nil, fmt.Errorf("invalid legacy persisted tool cursor")
 		}
 	}
@@ -349,7 +381,8 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 			continue
 		}
 		message := messages[i]
-		if err := a.conversation.AddHistory(ctx, s.RunID, message); err != nil {
+		err := a.conversation.AddHistory(ctx, s.RunID, message)
+		if err != nil {
 			return nil, err
 		}
 		var callState types.ToolCallState
@@ -359,7 +392,8 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 				break
 			}
 		}
-		if err := a.event(ctx, s, "tool_end", result.CallID, callState); err != nil {
+		err = a.event(ctx, s, "tool_end", result.CallID, callState)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -431,7 +465,8 @@ func (a *DeepAgent) finish(ctx context.Context, s *types.RunState) (*schema.Mess
 			}
 		}
 		if a.chunk != nil {
-			if err := a.chunk(ctx, message); err != nil {
+			err := a.chunk(ctx, message)
+			if err != nil {
 				return nil, err
 			}
 		}
