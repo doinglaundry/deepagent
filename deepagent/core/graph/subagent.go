@@ -53,7 +53,6 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 	cfg.Depth++
 	cfg.Name = request.Name
 	cfg.Conversation = nil
-	cfg.ContextManager = nil
 	cfg.CheckpointStore = nil
 	executor, _ := ctx.Value(toolExecutorKey{}).(*toolExecutor)
 	callID, _ := ctx.Value(toolCallIDKey{}).(string)
@@ -70,7 +69,6 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 		}
 	}
 	cfg.DrainInput = nil
-	cfg.ContinueAfterModel = nil
 	cfg.Emit = nil
 	var chunks []*schema.Message
 	emitted := false
@@ -158,8 +156,10 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 		}
 		cfg.ToolMask = tools.CombineMasks(cfg.ToolMask, spec.ToolMask)
 		if len(spec.Tools) > 0 {
-			cfg.Tools = spec.Tools
-			cfg.ToolDescriptors = nil
+			cfg.ToolDescriptors = make([]tools.Descriptor, 0, len(spec.Tools))
+			for _, item := range spec.Tools {
+				cfg.ToolDescriptors = append(cfg.ToolDescriptors, tools.Describe(item))
+			}
 		}
 		if spec.MaxSteps > 0 {
 			cfg.MaxSteps = spec.MaxSteps

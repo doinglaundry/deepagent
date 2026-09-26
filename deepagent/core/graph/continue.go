@@ -28,26 +28,6 @@ func (a *DeepAgent) continueRun(ctx context.Context, s *types.RunState) (*types.
 		return s, nil
 	}
 
-	// Consult the compatibility callback before DrainInput seals the thread's
-	// acceptance boundary. A continuation stays inside this same graph.
-	returnDirect := false
-	for _, call := range s.Calls {
-		if call.Result != nil && call.Result.ReturnDirect {
-			returnDirect = true
-			break
-		}
-	}
-	if !returnDirect && a.cfg.ContinueAfterModel != nil {
-		more, err := a.cfg.ContinueAfterModel(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if more {
-			s.Calls = nil
-			s.Phase = types.PhasePreparing
-			return s, nil
-		}
-	}
 	if a.drainInput != nil {
 		inputs, more, err := a.drainInput(ctx, s.RunID)
 		if err != nil {

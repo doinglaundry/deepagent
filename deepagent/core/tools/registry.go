@@ -20,6 +20,28 @@ type Descriptor struct {
 	NormalizeArgs    func(string) (string, error)
 }
 
+// Describe preserves capability metadata exposed by an Eino tool.
+func Describe(tool einotool.BaseTool) Descriptor {
+	d := Descriptor{Tool: tool}
+	readOnly, ok := tool.(interface{ ReadOnly() bool })
+	if ok {
+		d.ReadOnly = readOnly.ReadOnly()
+	}
+	approval, ok := tool.(interface{ RequiresApproval() bool })
+	if ok {
+		d.RequiresApproval = approval.RequiresApproval()
+	}
+	parallel, ok := tool.(interface{ ParallelSafe() bool })
+	if ok {
+		d.ParallelSafe = parallel.ParallelSafe()
+	}
+	returnDirect, ok := tool.(interface{ ReturnDirect() bool })
+	if ok {
+		d.ReturnDirect = returnDirect.ReturnDirect()
+	}
+	return d
+}
+
 // Registry is configured before a run, then read concurrently by model and tools.
 // Schemas are separate from executable objects, so rewriting never loses tool interfaces.
 type Registry struct {

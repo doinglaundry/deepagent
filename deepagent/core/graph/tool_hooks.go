@@ -66,7 +66,8 @@ func (a *DeepAgent) finishToolCalls(ctx context.Context, s *types.RunState, resu
 		return messages, nil
 	}
 	if toolHookDone(s, "tools_post_model_call") {
-		if err := json.Unmarshal(s.Extensions["tools_post_messages"], &messages); err != nil {
+		err := json.Unmarshal(s.Extensions["tools_post_messages"], &messages)
+		if err != nil {
 			return nil, err
 		}
 	} else {

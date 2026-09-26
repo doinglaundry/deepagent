@@ -177,11 +177,14 @@ func (w *ThreadHost) buildRunConfig(
 	agentConfig := deepagents.Config{
 		Model: chatModel, MaxSteps: w.Runtime.MaxSteps, MaxModelCalls: w.Runtime.MaxModelCalls,
 		CheckpointStore: w.Deps.Checkpoint, EnablePatchToolCalls: true,
-		HITLConfig: &deepagents.HITLConfig{NeedFollowUpTool: true},
-		Tools:      append([]tool.BaseTool(nil), w.Deps.Tools...), SkillLoader: w.Deps.SkillLoader,
+		HITLConfig:       &deepagents.HITLConfig{NeedFollowUpTool: true},
+		SkillLoader:      w.Deps.SkillLoader,
 		WebConfig:        w.Runtime.Web,
 		Workspace:        workspace,
 		FilesystemConfig: &deepagents.FilesystemConfig{WorkDir: workDir},
+	}
+	for _, item := range w.Deps.Tools {
+		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.Describe(item))
 	}
 	agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewProjectInstructions(workspace))
 	if w.Deps.Collaboration != nil {

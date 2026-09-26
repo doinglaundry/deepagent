@@ -99,13 +99,6 @@ func (a *DeepAgent) configureRun(ctx context.Context) (err error) {
 		cfg.EnableStreamToolCall = false
 	}
 	configured := make([]middleware.Middleware, 0, len(cfg.Middlewares)+3)
-	if cfg.ContextManager != nil {
-		if history, ok := cfg.ContextManager.(Conversation); ok {
-			cfg.Conversation = history
-		} else {
-			configured = append(configured, cfg.ContextManager)
-		}
-	}
 	if cfg.SkillLoader != nil {
 		configured = append(configured, middleware.NewSkill(cfg.SkillLoader))
 	}
@@ -166,23 +159,9 @@ func (a *DeepAgent) configureRun(ctx context.Context) (err error) {
 		if err != nil {
 			return err
 		}
-		cfg.Tools = append(cfg.Tools, extra...)
-	}
-	for _, t := range cfg.Tools {
-		d := tools.Descriptor{Tool: t}
-		if x, ok := t.(interface{ ReadOnly() bool }); ok {
-			d.ReadOnly = x.ReadOnly()
+		for _, item := range extra {
+			descriptors = append(descriptors, tools.Describe(item))
 		}
-		if x, ok := t.(interface{ RequiresApproval() bool }); ok {
-			d.RequiresApproval = x.RequiresApproval()
-		}
-		if x, ok := t.(interface{ ParallelSafe() bool }); ok {
-			d.ParallelSafe = x.ParallelSafe()
-		}
-		if x, ok := t.(interface{ ReturnDirect() bool }); ok {
-			d.ReturnDirect = x.ReturnDirect()
-		}
-		descriptors = append(descriptors, d)
 	}
 	if cfg.HITLConfig != nil && cfg.HITLConfig.NeedFollowUpTool {
 		found := false

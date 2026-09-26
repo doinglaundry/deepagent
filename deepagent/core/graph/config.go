@@ -43,7 +43,6 @@ type Config struct {
 	DisableSubAgent                bool
 	WebConfig                      *tools.WebConfig
 	HITLConfig                     *HITLConfig
-	ContextManager                 middleware.Middleware
 	Workspace                      backend.ToolWorkspace
 	Callbacks                      []callbacks.Handler
 	InterruptBeforeNodes           []string
@@ -53,11 +52,9 @@ type Config struct {
 	ToolInfoRewriter               tools.ToolInfoRewriter
 	ToolNodePreHandler             ToolNodePreHandler
 	ToolNodePostHandler            ToolNodePostHandler
-	ContinueAfterModel             ContinueAfterModelFunc
 	Middlewares                    []middleware.Middleware
 	EnableStreamToolCall           bool
 	Model                          model.ToolCallingChatModel
-	Tools                          []einotool.BaseTool
 	ToolDescriptors                []tools.Descriptor
 	ToolMask                       tools.Mask
 	ReadOnlyToolsOnly              bool
@@ -130,11 +127,8 @@ func WithInputMetadata(meta ...any) RunOptionFunc {
 type HITLConfig struct {
 	ToolPolicyGates map[string]tools.ToolPolicyGate
 
-	NeedReviewAndEditTools map[string]tools.NeedReviewAndEdit
-	NeedFollowUpTool       bool
+	NeedFollowUpTool bool
 }
-
-type ContinueAfterModelFunc func(context.Context) (bool, error)
 
 type FilesystemConfig struct {
 	WorkDir               string
@@ -157,7 +151,6 @@ func (c *Config) Clone() (cloned *Config) {
 	cloned = &value
 	cloned.ToolDescriptors = append([]tools.Descriptor(nil), c.ToolDescriptors...)
 	cloned.Prompts = append([]*schema.Message(nil), c.Prompts...)
-	cloned.Tools = append([]einotool.BaseTool(nil), c.Tools...)
 	cloned.SubAgents = append([]*SubAgent(nil), c.SubAgents...)
 	cloned.SubAgentsDirs = append([]string(nil), c.SubAgentsDirs...)
 	cloned.Middlewares = append([]middleware.Middleware(nil), c.Middlewares...)
@@ -179,7 +172,6 @@ func (c *Config) Clone() (cloned *Config) {
 	if c.HITLConfig != nil {
 		hitl := *c.HITLConfig
 		hitl.ToolPolicyGates = maps.Clone(c.HITLConfig.ToolPolicyGates)
-		hitl.NeedReviewAndEditTools = maps.Clone(c.HITLConfig.NeedReviewAndEditTools)
 		cloned.HITLConfig = &hitl
 	}
 	return cloned
@@ -230,9 +222,11 @@ func WithWorkDir(dir string) Option {
 	}
 }
 
-func WithTools(tools ...einotool.BaseTool) Option {
+func WithTools(items ...einotool.BaseTool) Option {
 	return func(c *Config) {
-		c.Tools = append(c.Tools, tools...)
+		for _, item := range items {
+			c.ToolDescriptors = append(c.ToolDescriptors, tools.Describe(item))
+		}
 	}
 }
 
@@ -240,13 +234,6 @@ func WithToolMask(mask tools.Mask) Option {
 	return func(c *Config) {
 		c.ToolMask = mask
 	}
-}
-
-func WithContinueAfterModel(continueAfterModel ContinueAfterModelFunc) (option Option) {
-	option = func(c *Config) {
-		c.ContinueAfterModel = continueAfterModel
-	}
-	return option
 }
 
 func WithSubAgents(agents ...*SubAgent) Option {
@@ -429,12 +416,6 @@ func WithAllFeatures() (option Option) {
 func WithHITLConfig(cfg *HITLConfig) Option {
 	return func(c *Config) {
 		c.HITLConfig = cfg
-	}
-}
-
-func WithContextManager(manager middleware.Middleware) Option {
-	return func(c *Config) {
-		c.ContextManager = manager
 	}
 }
 
