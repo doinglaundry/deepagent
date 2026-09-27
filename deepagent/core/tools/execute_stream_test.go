@@ -26,7 +26,7 @@ func (s completedOutputCommands) Wait(ctx context.Context, id, _ string, offset 
 }
 
 func TestExecuteSlowConsumerRetainsFirstMiB(t *testing.T) {
-	workspace := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true})
+	workspace := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
 	service := backend.NewCommands("thread", workspace)
 	defer service.Close(context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -54,7 +54,7 @@ func (s *joinedCommands) Cancel(ctx context.Context, id string) error {
 func TestExecuteStreamsAndConsumerCloseJoinsJob(t *testing.T) {
 	for _, command := range []string{"printf first; sleep 30", "sleep 30"} {
 		t.Run(command, func(t *testing.T) {
-			workspace := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true})
+			workspace := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
 			service := &joinedCommands{backend.NewCommands("thread", workspace), make(chan error, 1)}
 			defer service.Close(context.Background())
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -83,7 +83,7 @@ func TestExecuteStreamsAndConsumerCloseJoinsJob(t *testing.T) {
 }
 
 func TestExecuteStreamAndInvokeShareResultAndErrors(t *testing.T) {
-	workspace := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true})
+	workspace := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
 	service := backend.NewCommands("thread", workspace)
 	defer service.Close(context.Background())
 	command := NewCommandTools(service)[0]
@@ -116,7 +116,7 @@ func TestExecuteStreamAndInvokeShareResultAndErrors(t *testing.T) {
 }
 
 func TestExecuteTimeoutAndParentCancellation(t *testing.T) {
-	workspace := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true})
+	workspace := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
 	service := backend.NewCommands("thread", workspace)
 	defer service.Close(context.Background())
 	command := NewCommandTools(service)[0].(einotool.InvokableTool)

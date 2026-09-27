@@ -54,7 +54,7 @@ func TestConfigRequiresMemoryDirectoryWhenEnabled(t *testing.T) {
 }
 
 func TestDockerWorkspaceRequiresImage(t *testing.T) {
-	base := Config{Manager: ManagerConfig{MySQLDSN: "dsn", RedisAddr: "redis"}, Models: []modelhub.Config{{Name: "primary"}}, DefaultModel: "primary", WorkspaceKind: "docker"}
+	base := Config{Manager: ManagerConfig{MySQLDSN: "dsn", RedisAddr: "redis"}, Models: []modelhub.Config{{Name: "primary"}}, DefaultModel: "primary", FilesystemKind: "docker"}
 	if err := base.Validate(); err == nil {
 		t.Fatal("Docker workspace without image accepted")
 	}

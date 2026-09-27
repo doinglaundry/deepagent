@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -40,7 +41,8 @@ func (*semanticSearchTool) Info(context.Context) (*schema.ToolInfo, error) {
 }
 func (t *semanticSearchTool) InvokableRun(ctx context.Context, raw string, _ ...tool.Option) (string, error) {
 	var input semanticSearchArgs
-	if err := decodeToolArgs(raw, &input); err != nil {
+	err := json.Unmarshal([]byte(raw), &input)
+	if err != nil {
 		return "", err
 	}
 	terms := semanticTerms(input.Query)

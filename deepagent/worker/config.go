@@ -18,7 +18,7 @@ import (
 type ManagerConfig = manager.Config
 
 type Config struct {
-	WorkspaceKind          string               `yaml:"workspace_kind"`
+	FilesystemKind         string               `yaml:"filesystem_kind"`
 	Docker                 config.SandboxConfig `yaml:"docker"`
 	Manager                ManagerConfig        `yaml:"manager"`
 	Host                   threadhost.Config    `yaml:"worker"`
@@ -68,14 +68,14 @@ func LoadConfig(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
-	switch c.WorkspaceKind {
+	switch c.FilesystemKind {
 	case "", "local":
 	case "docker":
 		if strings.TrimSpace(c.Docker.Image) == "" {
 			return fmt.Errorf("docker.image required for Docker workspace")
 		}
 	default:
-		return fmt.Errorf("workspace_kind must be local or docker")
+		return fmt.Errorf("filesystem_kind must be local or docker")
 	}
 	if strings.TrimSpace(c.Manager.MySQLDSN) == "" || strings.TrimSpace(c.Manager.RedisAddr) == "" {
 		return fmt.Errorf("manager mysql_dsn and redis_addr are required")

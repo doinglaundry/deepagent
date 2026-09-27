@@ -5,10 +5,11 @@ import (
 	"eino-cli/deepagent/core/backend"
 	canonical "eino-cli/deepagent/core/middleware"
 	deeptools "eino-cli/deepagent/core/tools"
-	"github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino/schema"
 	"strings"
 	"testing"
+
+	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/schema"
 )
 
 type testBuilderMiddleware struct {
@@ -42,11 +43,11 @@ func (t *fakeToolCounter) InvokableRun(_ context.Context, _ string, _ ...tool.Op
 	return "ok", nil
 }
 
-func findSkillMiddleware(t *testing.T, middlewares []canonical.Middleware) *canonical.Skill {
+func findSkillMiddleware(t *testing.T, middlewares []canonical.Middleware) *canonical.SkillMiddleware {
 	t.Helper()
 
 	for _, mw := range middlewares {
-		if skillMiddleware, ok := mw.(*canonical.Skill); ok {
+		if skillMiddleware, ok := mw.(*canonical.SkillMiddleware); ok {
 			return skillMiddleware
 		}
 	}
@@ -54,21 +55,21 @@ func findSkillMiddleware(t *testing.T, middlewares []canonical.Middleware) *cano
 	return nil
 }
 
-func newTestBackend(t *testing.T) *backend.FilesystemBackend {
+func newTestBackend(t *testing.T) *backend.LocalFilesystem {
 	t.Helper()
-	return backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{
+	return mustLocalFilesystem(t, &backend.LocalFilesystemConfig{
 		RootDir:     t.TempDir(),
 		VirtualMode: true,
 	})
 }
 
 type testApplyPatchBackend struct {
-	*backend.FilesystemBackend
+	*backend.LocalFilesystem
 }
 
 func newTestApplyPatchBackend(t *testing.T) *testApplyPatchBackend {
 	t.Helper()
-	return &testApplyPatchBackend{FilesystemBackend: newTestBackend(t)}
+	return &testApplyPatchBackend{LocalFilesystem: newTestBackend(t)}
 }
 
 func (b *testApplyPatchBackend) SupportsApplyPatch() bool {
@@ -95,7 +96,7 @@ func collectToolNames(t *testing.T, ctx context.Context, toolList []tool.BaseToo
 
 func TestWithConfigCopiesInput(t *testing.T) {
 	source := &Config{
-		FilesystemConfig:    &FilesystemConfig{WorkDir: "/specific"},
+		FilesystemConfig:    &FilesystemConfig{ReadOnly: true},
 		InterruptAfterNodes: []string{"model"},
 		HITLConfig: &HITLConfig{
 			ToolPolicyGates: map[string]deeptools.ToolPolicyGate{"execute": {}},
@@ -112,26 +113,20 @@ func TestWithConfigCopiesInput(t *testing.T) {
 	if _, exists := source.HITLConfig.ToolPolicyGates["execute"]; !exists {
 		t.Fatalf("source HITLConfig was mutated: %+v", source.HITLConfig)
 	}
-	if workDir := configured.FilesystemConfig.WorkDir; workDir != "/specific" {
-		t.Fatalf("filesystem workdir = %q, want /specific", workDir)
-	}
-}
-
-func TestWithWorkDirWritesFilesystemConfig(t *testing.T) {
-	configured := buildCreateConfig(WithWorkDir("/workspace"))
-
-	if configured.FilesystemConfig == nil {
-		t.Fatal("WithWorkDir() did not enable filesystem configuration")
-	}
-	if workDir := configured.FilesystemConfig.WorkDir; workDir != "/workspace" {
-		t.Fatalf("filesystem workdir = %q, want /workspace", workDir)
+	if !configured.FilesystemConfig.ReadOnly {
+		t.Fatal("filesystem options were not copied")
 	}
 }
 
 func TestSelectBackendProvidesCommandExecution(t *testing.T) {
 	ctx := context.Background()
 	m := &publicModel{}
-	a, err := New(ctx, WithModel(m), WithWorkDir(t.TempDir()))
+	filesystem, err := backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer filesystem.Close(ctx)
+	a, err := New(ctx, WithModel(m), WithFilesystem(filesystem))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +138,7 @@ func TestSelectBackendProvidesCommandExecution(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("default workdir backend does not expose command execution")
+		t.Fatal("local filesystem does not expose command execution")
 	}
 }
 
@@ -153,9 +148,9 @@ func TestFeatureConfigPresenceControlsEnablement(t *testing.T) {
 		t.Fatalf("zero config unexpectedly enables features: %+v", configured)
 	}
 
-	configured = buildCreateConfig(WithFilesystem(), WithWeb())
+	configured = buildCreateConfig(WithFilesystemConfig(nil), WithWeb())
 	if configured.FilesystemConfig == nil {
-		t.Fatal("WithFilesystem() did not create filesystem config")
+		t.Fatal("WithFilesystemConfig() did not create filesystem config")
 	}
 	if configured.WebConfig == nil || !configured.WebConfig.EnableWebSearch || !configured.WebConfig.EnableFetchURL {
 		t.Fatalf("WithWeb() config = %+v", configured.WebConfig)

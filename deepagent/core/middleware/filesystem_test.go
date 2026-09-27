@@ -18,12 +18,12 @@ func TestToolsUseCanonicalBackend(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	backend, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true}, "test")
+	backend, err := backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: root, VirtualMode: true}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer backend.Close(context.Background())
-	middleware := NewFilesystem(&FilesystemConfig{Workspace: backend})
+	middleware := NewFilesystem(&FilesystemConfig{Filesystem: backend})
 	items, err := middleware.Tools(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -42,19 +42,19 @@ func TestToolsUseCanonicalBackend(t *testing.T) {
 	if reader == nil {
 		t.Fatalf("read_file missing from %d tools", len(items))
 	}
-	output, err := reader.InvokableRun(context.Background(), `{"file_path":"a.txt"}`)
+	output, err := reader.InvokableRun(context.Background(), `{"path":"a.txt"}`)
 	if err != nil || output == "" {
 		t.Fatalf("read_file = %q, %v", output, err)
 	}
 }
 
 func TestReadOnlyFilesystemOmitsMutations(t *testing.T) {
-	backend, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
+	backend, err := backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer backend.Close(context.Background())
-	items, err := NewFilesystem(&FilesystemConfig{Workspace: backend, ReadOnly: true}).Tools(context.Background())
+	items, err := NewFilesystem(&FilesystemConfig{Filesystem: backend, ReadOnly: true}).Tools(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,13 +78,13 @@ func (p *applyPatchProbe) ApplyPatch(_ context.Context, patch string) (string, e
 }
 
 func TestApplyPatchIsExposedByCapableBackend(t *testing.T) {
-	fs, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
+	fs, err := backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer fs.Close(context.Background())
 	backend := &applyPatchProbe{LocalFilesystem: fs}
-	items, err := NewFilesystem(&FilesystemConfig{Workspace: backend}).Tools(context.Background())
+	items, err := NewFilesystem(&FilesystemConfig{Filesystem: backend}).Tools(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,12 +107,12 @@ func TestApplyPatchIsExposedByCapableBackend(t *testing.T) {
 }
 
 func TestWorkspaceToolsAreExposed(t *testing.T) {
-	backend, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
+	backend, err := backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer backend.Close(context.Background())
-	items, err := NewFilesystem(&FilesystemConfig{Workspace: backend}).Tools(context.Background())
+	items, err := NewFilesystem(&FilesystemConfig{Filesystem: backend}).Tools(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,15 +128,15 @@ func TestWorkspaceToolsAreExposed(t *testing.T) {
 
 func TestDeleteFileRefusesDirectories(t *testing.T) {
 	root := t.TempDir()
-	backend := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true})
-	if _, err := backend.DeleteFile(context.Background(), "."); err == nil {
+	backend := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
+	if _, err := backend.Delete(context.Background(), "."); err == nil {
 		t.Fatal("DeleteFile accepted a directory")
 	}
 	path := filepath.Join(root, "remove.txt")
 	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := backend.DeleteFile(context.Background(), "remove.txt"); err != nil {
+	if _, err := backend.Delete(context.Background(), "remove.txt"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -149,7 +149,7 @@ func TestSemanticSearchRanksWorkspaceContent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "manager.go"), []byte("func ClaimLease() {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	search, err := tools.NewSemanticSearchTool(backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true}))
+	search, err := tools.NewSemanticSearchTool(mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: root, VirtualMode: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestSemanticSearchRanksWorkspaceContent(t *testing.T) {
 func TestBackgroundShellCanBeAwaited(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	service := backend.NewCommands("thread", backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}))
+	service := backend.NewCommands("thread", mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}))
 	defer service.Close(context.Background())
 	id, err := service.Start(ctx, backend.CommandRequest{Command: "printf ready"})
 	if err != nil {

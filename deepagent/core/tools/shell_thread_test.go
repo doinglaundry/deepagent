@@ -11,7 +11,7 @@ import (
 )
 
 func TestShellJobCanBeAwaitedAfterStartingRunContextEnds(t *testing.T) {
-	workspace, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "thread")
+	workspace, err := backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "thread")
 	if err != nil {
 		t.Fatal(err)
 	}

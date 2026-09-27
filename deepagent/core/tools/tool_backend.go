@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 
@@ -12,28 +11,6 @@ import (
 func requireBackend(b backend.Filesystem) error {
 	if b == nil {
 		return fmt.Errorf("backend is required")
-	}
-	return nil
-}
-
-func decodeToolArgs(args string, target any) error {
-	var values map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(args), &values); err != nil {
-		return err
-	}
-	for canonical, alias := range map[string]string{"path": "file_path", "old": "old_string", "new": "new_string"} {
-		if _, exists := values[canonical]; !exists {
-			if value, ok := values[alias]; ok {
-				values[canonical] = value
-			}
-		}
-	}
-	raw, err := json.Marshal(values)
-	if err != nil {
-		return err
-	}
-	if err := json.Unmarshal(raw, target); err != nil {
-		return err
 	}
 	return nil
 }

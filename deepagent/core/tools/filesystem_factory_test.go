@@ -18,7 +18,7 @@ func (*dockerToolProvider) ResolveContainerPath(_ context.Context, p string) (st
 
 func TestWorkspaceToolSchemasMatchLocalAndDocker(t *testing.T) {
 	ctx := context.Background()
-	local, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "local")
+	local, err := backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,10 +28,10 @@ func TestWorkspaceToolSchemasMatchLocalAndDocker(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer docker.Close(ctx)
-	for _, opts := range []WorkspaceToolOptions{{ReadOnly: true}, {EnableCommands: true, EnablePatch: true}} {
+	for _, opts := range []FilesystemToolOptions{{ReadOnly: true}, {EnableCommands: true, EnablePatch: true}} {
 		infos := make([]map[string]any, 0, 2)
-		for _, ws := range []backend.ToolWorkspace{local, docker} {
-			items, err := NewWorkspaceTools(ws, opts)
+		for _, ws := range []backend.ToolFilesystem{local, docker} {
+			items, err := NewFilesystemTools(ws, opts)
 			if err != nil {
 				t.Fatal(err)
 			}

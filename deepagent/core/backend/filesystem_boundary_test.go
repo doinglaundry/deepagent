@@ -18,7 +18,7 @@ func TestWorkspace_PathAndSymlinkBoundaries(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	b := NewFilesystemBackend(&FilesystemBackendConfig{RootDir: root, VirtualMode: true})
+	b := mustLocalFilesystem(t, &LocalFilesystemConfig{RootDir: root, VirtualMode: true})
 	for _, path := range []string{"../secret.txt", "escape/secret.txt"} {
 		if _, err := b.Read(ctx, path, nil, nil); err == nil {
 			t.Errorf("read escaped workspace: %q", path)

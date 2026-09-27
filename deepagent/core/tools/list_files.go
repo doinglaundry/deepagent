@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"eino-cli/deepagent/core/backend"
+	"encoding/json"
 	"fmt"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -24,7 +25,8 @@ func (t *ListFilesTool) InvokableRun(ctx context.Context, args string, _ ...tool
 	var in struct {
 		Path string `json:"path"`
 	}
-	if err := decodeToolArgs(args, &in); err != nil {
+	err := json.Unmarshal([]byte(args), &in)
+	if err != nil {
 		return "", err
 	}
 	items, err := t.backend.List(ctx, in.Path)

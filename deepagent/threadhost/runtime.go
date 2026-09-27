@@ -37,7 +37,7 @@ const defaultEventBusSize = 256
 // RuntimeConfig contains process-owned values used to build each Thread and
 // each Run. A RunConfig is intentionally rebuilt for every submitted run.
 type RuntimeConfig struct {
-	WorkspaceKind          string
+	FilesystemKind         string
 	Docker                 config.SandboxConfig
 	Models                 map[string]modelpkg.ToolCallingChatModel
 	DefaultModel           string
@@ -95,19 +95,19 @@ func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.T
 	if chatModel == nil {
 		return nil, fmt.Errorf("model %q is unavailable", modelName)
 	}
-	var workspace backend.ToolWorkspace
+	var filesystem backend.ToolFilesystem
 	cleanup := func() {}
-	switch w.Runtime.WorkspaceKind {
+	switch w.Runtime.FilesystemKind {
 	case "", "local":
-		workspace, err = backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: workDir, VirtualMode: true}, threadID)
+		filesystem, err = backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: workDir, VirtualMode: true}, threadID)
 	case "docker":
 		var provider sandbox.Sandbox
 		provider, cleanup, err = aio.AcquireDockerWorkspace(ctx, w.Runtime.Docker, info.SessionID+"-"+threadID, workDir)
 		if err == nil {
-			workspace, err = backend.NewDockerFilesystem(provider, workDir, threadID)
+			filesystem, err = backend.NewDockerFilesystem(provider, workDir, threadID)
 		}
 	default:
-		return nil, fmt.Errorf("unsupported workspace kind %q", w.Runtime.WorkspaceKind)
+		return nil, fmt.Errorf("unsupported filesystem kind %q", w.Runtime.FilesystemKind)
 	}
 	if err != nil {
 		cleanup()
@@ -137,27 +137,27 @@ func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.T
 		},
 		Thread: deepThread, EventBus: events,
 		RunConfig: func(runCtx context.Context, request threadpkg.RunStartRequest) (*agentthread.RunConfig, error) {
-			return w.buildRunConfig(runCtx, info, roleID, workDir, workspace, request.Mode)
+			return w.buildRunConfig(runCtx, info, roleID, filesystem, request.Mode)
 		},
 		ApprovalRemember: w.Deps.ApprovalRemember,
 		InterruptResume:  w.Deps.InterruptResume,
 	})
 	if err != nil {
-		_ = workspace.Close(context.WithoutCancel(ctx))
+		_ = filesystem.Close(context.WithoutCancel(ctx))
 		cleanup()
 		return nil, err
 	}
-	return &workspaceThread{ThreadRuntime: thread, workspace: workspace, cleanup: cleanup}, nil
+	return &filesystemThread{ThreadRuntime: thread, filesystem: filesystem, cleanup: cleanup}, nil
 }
 
-type workspaceThread struct {
+type filesystemThread struct {
 	threadpkg.ThreadRuntime
-	workspace backend.ToolWorkspace
-	cleanup   func()
+	filesystem backend.ToolFilesystem
+	cleanup    func()
 }
 
-func (t *workspaceThread) Close(ctx context.Context) error {
-	err := errors.Join(t.ThreadRuntime.Close(ctx), t.workspace.Close(context.WithoutCancel(ctx)))
+func (t *filesystemThread) Close(ctx context.Context) error {
+	err := errors.Join(t.ThreadRuntime.Close(ctx), t.filesystem.Close(context.WithoutCancel(ctx)))
 	t.cleanup()
 	return err
 }
@@ -165,8 +165,8 @@ func (t *workspaceThread) Close(ctx context.Context) error {
 func (w *ThreadHost) buildRunConfig(
 	ctx context.Context,
 	info *dalmodel.Thread,
-	roleID, workDir string,
-	workspace backend.ToolWorkspace,
+	roleID string,
+	filesystem backend.ToolFilesystem,
 	mode inputpkg.UserMessageMode,
 ) (*agentthread.RunConfig, error) {
 	modelName := w.modelName(roleID)
@@ -180,13 +180,13 @@ func (w *ThreadHost) buildRunConfig(
 		HITLConfig:       &deepagents.HITLConfig{NeedFollowUpTool: true},
 		SkillLoader:      w.Deps.SkillLoader,
 		WebConfig:        w.Runtime.Web,
-		Workspace:        workspace,
-		FilesystemConfig: &deepagents.FilesystemConfig{WorkDir: workDir},
+		Filesystem:       filesystem,
+		FilesystemConfig: &deepagents.FilesystemConfig{},
 	}
 	for _, item := range w.Deps.Tools {
 		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.Describe(item))
 	}
-	agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewProjectInstructions(workspace))
+	agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewProjectInstructions(filesystem))
 	if w.Deps.Collaboration != nil {
 		agentConfig.Middlewares = append(agentConfig.Middlewares, newCollaborationMiddleware(w.Deps.Collaboration, info))
 	}

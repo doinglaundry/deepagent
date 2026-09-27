@@ -183,8 +183,8 @@ func TestRun_FilesystemWriteRequiresApprovalWithoutExplicitPolicy(t *testing.T) 
 		{schema.AssistantMessage("done", nil)},
 	}}
 	cfg := Config{ThreadID: "thread", RunID: "run", Model: model, CheckpointStore: store,
-		Workspace:        backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true}),
-		FilesystemConfig: &FilesystemConfig{WorkDir: root, DisableExecute: true, DisableApplyPatch: true}}
+		Filesystem:       mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: root, VirtualMode: true}),
+		FilesystemConfig: &FilesystemConfig{DisableExecute: true, DisableApplyPatch: true}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)

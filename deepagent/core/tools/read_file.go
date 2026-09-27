@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
@@ -29,7 +30,8 @@ func (t *readFileTool) InvokableRun(ctx context.Context, args string, _ ...tool.
 		Offset *int   `json:"offset"`
 		Limit  *int   `json:"limit"`
 	}
-	if err := decodeToolArgs(args, &in); err != nil {
+	err := json.Unmarshal([]byte(args), &in)
+	if err != nil {
 		return "", err
 	}
 	if in.Offset != nil && *in.Offset > 0 {

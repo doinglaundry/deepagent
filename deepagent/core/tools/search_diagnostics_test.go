@@ -23,7 +23,7 @@ func TestSemanticSearchUsesWorkspaceBoundary(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	workspace := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true})
+	workspace := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
 	search, err := NewSemanticSearchTool(workspace)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func (c *diagnosticsCommands) Execute(_ context.Context, request backend.Command
 }
 
 func TestReadLintsUsesCommandServiceAndPropagatesCancellation(t *testing.T) {
-	workspace := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true})
+	workspace := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
 	commands := &diagnosticsCommands{}
 	lints, err := NewReadLintsTool(workspace, commands)
 	if err != nil {

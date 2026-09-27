@@ -15,7 +15,7 @@ func TestGrepPreservesLiteralQueryAlias(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "data.txt"), []byte("a.b\naxb\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	workspace := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true})
+	workspace := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
 	search := &fileSearchTool{backend: workspace, name: "grep"}
 	result, err := search.InvokableRun(context.Background(), `{"query":"a.b","path":"."}`)
 	if err != nil || !strings.Contains(result, "a.b") || strings.Contains(result, "axb") {
@@ -31,7 +31,7 @@ func TestGrepRejectsEmptyQueryAndBoundsResults(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "data.txt"), []byte(strings.Repeat("match\n", 101)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	workspace := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true})
+	workspace := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
 	search := &fileSearchTool{backend: workspace, name: "grep"}
 	if _, err := search.InvokableRun(context.Background(), `{"query":"","path":"."}`); err == nil {
 		t.Fatal("empty query accepted")

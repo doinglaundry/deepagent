@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"eino-cli/deepagent/core/backend"
+	"encoding/json"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
@@ -22,7 +23,8 @@ func (t *WriteFileTool) InvokableRun(ctx context.Context, args string, _ ...tool
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
-	if err := decodeToolArgs(args, &in); err != nil {
+	err := json.Unmarshal([]byte(args), &in)
+	if err != nil {
 		return "", err
 	}
 	result, err := t.backend.Write(ctx, in.Path, in.Content)

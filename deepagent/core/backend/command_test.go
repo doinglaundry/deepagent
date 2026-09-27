@@ -9,7 +9,7 @@ import (
 func TestShell_JobsAreThreadScoped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	workspace := NewFilesystemBackend(&FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true})
+	workspace := mustLocalFilesystem(t, &LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
 	first := NewCommands("thread-1", workspace)
 	second := NewCommands("thread-2", workspace)
 	defer first.Close(context.Background())
@@ -42,7 +42,7 @@ func TestShell_JobsAreThreadScoped(t *testing.T) {
 func TestCommands_CloseKillsJobsAndBoundsOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	service := NewCommands("thread", NewFilesystemBackend(&FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}))
+	service := NewCommands("thread", mustLocalFilesystem(t, &LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}))
 	result, err := service.Execute(ctx, CommandRequest{Command: "printf 1234567890", MaxOutputBytes: 4})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestCommands_CloseKillsJobsAndBoundsOutput(t *testing.T) {
 func TestCommandsPrefixRetentionAndIncrementalOffsets(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	service := NewCommands("thread", NewFilesystemBackend(&FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}))
+	service := NewCommands("thread", mustLocalFilesystem(t, &LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}))
 	defer service.Close(context.Background())
 	id, err := service.Start(ctx, CommandRequest{Command: "printf 1234567890", MaxOutputBytes: 4, KeepOutputPrefix: true})
 	if err != nil {

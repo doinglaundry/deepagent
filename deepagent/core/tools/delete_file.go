@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"eino-cli/deepagent/core/backend"
+	"encoding/json"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
@@ -21,7 +22,8 @@ func (t *DeleteFileTool) InvokableRun(ctx context.Context, args string, _ ...too
 	var in struct {
 		Path string `json:"path"`
 	}
-	if err := decodeToolArgs(args, &in); err != nil {
+	err := json.Unmarshal([]byte(args), &in)
+	if err != nil {
 		return "", err
 	}
 	return t.workspace.Delete(ctx, in.Path)

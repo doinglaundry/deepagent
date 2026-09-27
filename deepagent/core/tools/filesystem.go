@@ -37,7 +37,8 @@ func (t *fileSearchTool) InvokableRun(ctx context.Context, raw string, _ ...eino
 		IgnoreCase bool   `json:"ignore_case"`
 		HeadLimit  int    `json:"head_limit"`
 	}
-	if err := decodeToolArgs(raw, &input); err != nil {
+	err := json.Unmarshal([]byte(raw), &input)
+	if err != nil {
 		return "", err
 	}
 	if input.Pattern == "" {

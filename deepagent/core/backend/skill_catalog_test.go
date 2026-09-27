@@ -88,7 +88,7 @@ func TestBundledSkillCatalogFitsExampleConfiguration(t *testing.T) {
 
 func catalogPrompt(t *testing.T, loader backend.SkillLoader) string {
 	t.Helper()
-	messages, err := middleware.NewSkill(loader).BuildPrompt(context.Background())
+	messages, err := middleware.NewSkillMiddleware(loader).BuildPrompt(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

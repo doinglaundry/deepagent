@@ -22,7 +22,7 @@ func TestActivateSkillLoadsInstructions(t *testing.T) {
 	if err := os.WriteFile(path, []byte("follow these instructions"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	middleware := NewSkill(testLoader{item: &backend.SkillMetadata{Name: "review", Description: "Review code", Path: path}})
+	middleware := NewSkillMiddleware(testLoader{item: &backend.SkillMetadata{Name: "review", Description: "Review code", Path: path}})
 	prompt, err := middleware.BuildPrompt(context.Background())
 	if err != nil || len(prompt) != 1 || !strings.Contains(prompt[0].Content, "review") {
 		t.Fatalf("prompt = %+v, %v", prompt, err)

@@ -43,7 +43,7 @@ type Config struct {
 	DisableSubAgent                bool
 	WebConfig                      *tools.WebConfig
 	HITLConfig                     *HITLConfig
-	Workspace                      backend.ToolWorkspace
+	Filesystem                     backend.ToolFilesystem
 	Callbacks                      []callbacks.Handler
 	InterruptBeforeNodes           []string
 	InterruptAfterNodes            []string
@@ -131,8 +131,6 @@ type HITLConfig struct {
 }
 
 type FilesystemConfig struct {
-	WorkDir               string
-	localFromOption       bool
 	ReadOnly              bool
 	DisableUploadDownload bool
 	DisableExecute        bool
@@ -177,17 +175,6 @@ func (c *Config) Clone() (cloned *Config) {
 	return cloned
 }
 
-func (c *Config) filesystemConfig() (filesystem FilesystemConfig) {
-	if c != nil && c.FilesystemConfig != nil {
-		return *c.FilesystemConfig
-	}
-	return filesystem
-}
-
-func (c *Config) filesystemWorkDir() (workDir string) {
-	return c.filesystemConfig().WorkDir
-}
-
 func WithCustomGraphState(fields map[string]types.RunTimeStateful) Option {
 	return func(c *Config) {
 		c.CustomGraphState = fields
@@ -209,16 +196,6 @@ func WithMaxSteps(steps int) Option {
 func WithMaxModelCalls(calls int) Option {
 	return func(c *Config) {
 		c.MaxModelCalls = calls
-	}
-}
-
-func WithWorkDir(dir string) Option {
-	return func(c *Config) {
-		if c.FilesystemConfig == nil {
-			c.FilesystemConfig = &FilesystemConfig{}
-		}
-		c.FilesystemConfig.WorkDir = dir
-		c.FilesystemConfig.localFromOption = true
 	}
 }
 
@@ -276,13 +253,13 @@ func WithPlanMiddleware(cfg *middleware.PlanMiddlewareConfig) Option {
 	}
 }
 
-func WithFilesystem() (option Option) {
-	option = func(c *Config) {
+func WithFilesystem(filesystem backend.ToolFilesystem) Option {
+	return func(c *Config) {
+		c.Filesystem = filesystem
 		if c.FilesystemConfig == nil {
 			c.FilesystemConfig = &FilesystemConfig{}
 		}
 	}
-	return option
 }
 
 func WithFilesystemConfig(cfg *FilesystemConfig) (option Option) {
@@ -319,16 +296,6 @@ func WithDisableExecute() Option {
 		}
 		c.FilesystemConfig.DisableExecute = true
 	}
-}
-
-func WithBackend(b backend.ToolWorkspace) Option { return WithWorkspace(b) }
-
-func WithWorkspace(ws backend.ToolWorkspace) Option {
-	return func(c *Config) { c.Workspace = ws }
-}
-
-func WithSandboxBackend(b backend.ToolWorkspace) Option {
-	return WithWorkspace(b)
 }
 
 func WithPatchToolCalls() Option {

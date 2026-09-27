@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,8 @@ func (*readLintsTool) Info(context.Context) (*schema.ToolInfo, error) {
 }
 func (t *readLintsTool) InvokableRun(ctx context.Context, raw string, _ ...tool.Option) (string, error) {
 	var input readLintsArgs
-	if err := decodeToolArgs(raw, &input); err != nil {
+	err := json.Unmarshal([]byte(raw), &input)
+	if err != nil {
 		return "", err
 	}
 	args := []string{}

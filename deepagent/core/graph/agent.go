@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"eino-cli/deepagent/core/backend"
 	"eino-cli/deepagent/core/internal/conversation"
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/runtime/checkpointer"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
+
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -80,7 +80,11 @@ func New(ctx context.Context, opts ...Option) (*DeepAgent, error) {
 			return nil, err
 		}
 	}
-	a := &DeepAgent{cfg: cfg, emit: cfg.Emit, drainInput: cfg.DrainInput}
+	history := cfg.Conversation
+	if history == nil {
+		history = conversation.New(cfg.ThreadID, nil, nil, nil)
+	}
+	a := &DeepAgent{cfg: cfg, emit: cfg.Emit, drainInput: cfg.DrainInput, conversation: history}
 	a.runID = cfg.RunID
 	if a.runID == "" {
 		a.runID = uuid.NewString()
@@ -91,182 +95,228 @@ func New(ctx context.Context, opts ...Option) (*DeepAgent, error) {
 	return a, nil
 }
 
-// configureRun creates mutable middleware and the tools bound to those instances.
-// Conversation remains thread-owned across executions.
+// configureRun binds one run's middleware, tools, model and state handlers
+// before compiling the graph with that run's checkpoint store.
 func (a *DeepAgent) configureRun(ctx context.Context) (err error) {
-	cfg := *a.cfg.Clone()
-	if cfg.ToolNodePreHandler != nil {
-		cfg.EnableStreamToolCall = false
+	childConfig := *a.cfg.Clone()
+	childConfig.RunID = a.runID
+
+	middlewares, err := a.newRunMiddlewares(ctx, &childConfig)
+	if err != nil {
+		return err
 	}
-	configured := make([]middleware.Middleware, 0, len(cfg.Middlewares)+3)
-	if cfg.SkillLoader != nil {
-		configured = append(configured, middleware.NewSkill(cfg.SkillLoader))
-	}
-	if cfg.FilesystemConfig != nil {
-		filesystemCfg := cfg.FilesystemConfig
-		ws := cfg.Workspace
-		owned := false
-		if ws == nil && filesystemCfg.localFromOption {
-			var err error
-			ws, err = backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: filesystemCfg.WorkDir, VirtualMode: true}, cfg.ThreadID+"/"+cfg.RunID)
-			if err != nil {
-				return err
-			}
-			owned = true
-		}
-		if ws == nil {
-			return errors.New("filesystem requires LocalFilesystem or DockerFilesystem")
-		}
-		cfg.Workspace = ws
-		configured = append(configured, middleware.NewFilesystem(&middleware.FilesystemConfig{Workspace: ws, OwnWorkspace: owned, ReadOnly: filesystemCfg.ReadOnly, DisableExecute: filesystemCfg.DisableExecute, DisableApplyPatch: filesystemCfg.DisableApplyPatch, CommandTimeout: filesystemCfg.CommandTimeout}))
-	}
-	if cfg.WebConfig != nil {
-		webConfig := *cfg.WebConfig
-		webConfig.ToolMask = tools.CombineMasks(webConfig.ToolMask, cfg.ToolMask)
-		configured = append(configured, middleware.NewWeb(&webConfig))
-	}
-	configured = append(configured, cfg.Middlewares...)
-	if cfg.EnablePatchToolCalls {
-		configured = append(configured, middleware.NewPatchToolCalls())
-	}
-	middlewares := make([]middleware.Middleware, 0, len(cfg.Middlewares))
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, closeMiddlewareResources(context.WithoutCancel(ctx), middlewares))
 		}
 	}()
-	for _, mw := range configured {
-		if mw == nil {
+
+	descriptors, err := a.collectToolDescriptors(ctx, middlewares, childConfig)
+	if err != nil {
+		return err
+	}
+	registry, err := a.buildToolRegistry(ctx, descriptors)
+	if err != nil {
+		return err
+	}
+	chatModel, err := a.bindModelTools(ctx, registry)
+	if err != nil {
+		return err
+	}
+
+	a.middlewares = middlewares
+	a.registry = registry
+	a.model = chatModel
+	a.policy = a.buildPolicy()
+	a.eager = a.canExecuteToolsEagerly(middlewares)
+	a.graphState = a.buildRuntimeState(middlewares)
+
+	err = a.buildGraph(ctx)
+	if err != nil {
+		return err
+	}
+	a.resourcesOpen = true
+	return nil
+}
+
+// newRunMiddlewares creates run-local middleware. The caller owns the filesystem.
+func (a *DeepAgent) newRunMiddlewares(ctx context.Context, childConfig *Config) (middlewares []middleware.Middleware, err error) {
+	configured := make([]middleware.Middleware, 0, len(childConfig.Middlewares)+4)
+	if childConfig.SkillLoader != nil {
+		configured = append(configured, middleware.NewSkillMiddleware(childConfig.SkillLoader))
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		err = errors.Join(err, closeMiddlewareResources(context.WithoutCancel(ctx), middlewares))
+	}()
+
+	filesystemConfig := childConfig.FilesystemConfig
+	if filesystemConfig != nil && childConfig.Filesystem != nil {
+		configured = append(configured, middleware.NewFilesystem(&middleware.FilesystemConfig{
+			Filesystem: childConfig.Filesystem,
+			ReadOnly:   filesystemConfig.ReadOnly, DisableExecute: filesystemConfig.DisableExecute,
+			DisableApplyPatch: filesystemConfig.DisableApplyPatch, CommandTimeout: filesystemConfig.CommandTimeout,
+		}))
+	}
+	if childConfig.WebConfig != nil {
+		webConfig := *childConfig.WebConfig
+		webConfig.ToolMask = tools.CombineMasks(webConfig.ToolMask, childConfig.ToolMask)
+		configured = append(configured, middleware.NewWeb(&webConfig))
+	}
+	configured = append(configured, childConfig.Middlewares...)
+	if childConfig.EnablePatchToolCalls {
+		configured = append(configured, middleware.NewPatchToolCalls())
+	}
+
+	middlewares = make([]middleware.Middleware, 0, len(configured))
+	for _, source := range configured {
+		if source == nil {
 			continue
 		}
-		if factory, ok := mw.(middleware.RunFactory); ok {
-			mw = factory.NewRun()
+		instance := source
+		factory, ok := source.(middleware.RunFactory)
+		if ok {
+			instance = factory.NewRun()
 		}
-		if mw == nil {
-			return fmt.Errorf("middleware factory returned nil")
+		if instance == nil {
+			return middlewares, fmt.Errorf("middleware factory returned nil")
 		}
-		if guard, ok := mw.(interface{ RequiresCompleteModelResponse() bool }); ok && guard.RequiresCompleteModelResponse() {
-			cfg.EnableStreamToolCall = false
-		}
-		middlewares = append(middlewares, mw)
+		middlewares = append(middlewares, instance)
 	}
-	// Capture source configuration before adding middleware tools; children
-	// construct their own middleware instances and must not inherit built tools.
-	childConfig := *cfg.Clone()
-	descriptors := append([]tools.Descriptor(nil), cfg.ToolDescriptors...)
+	return middlewares, nil
+}
+
+// collectToolDescriptors keeps the child configuration free of tools created
+// from the parent's mutable middleware instances.
+func (a *DeepAgent) collectToolDescriptors(ctx context.Context, middlewares []middleware.Middleware, childConfig Config) ([]tools.Descriptor, error) {
+	descriptors := append([]tools.Descriptor(nil), childConfig.ToolDescriptors...)
 	for _, mw := range middlewares {
 		extra, err := mw.Tools(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, item := range extra {
 			descriptors = append(descriptors, tools.Describe(item))
 		}
 	}
-	if cfg.HITLConfig != nil && cfg.HITLConfig.NeedFollowUpTool {
-		found := false
-		for _, descriptor := range descriptors {
-			if descriptor.Tool == nil {
-				continue
-			}
-			info, err := descriptor.Tool.Info(ctx)
-			if err != nil {
-				return err
-			}
-			if info != nil && info.Name == "ask_user" {
-				found = true
-				break
-			}
+	if childConfig.HITLConfig != nil && childConfig.HITLConfig.NeedFollowUpTool {
+		found, err := hasToolNamed(ctx, descriptors, "ask_user")
+		if err != nil {
+			return nil, err
 		}
 		if !found {
 			descriptors = append(descriptors, tools.Descriptor{Tool: tools.GetFollowUpTool(), ReadOnly: true})
 		}
 	}
-	if !cfg.DisableSubAgent {
-		hasTask := false
-		for _, descriptor := range descriptors {
-			if descriptor.Tool == nil {
-				continue
-			}
-			info, err := descriptor.Tool.Info(ctx)
-			if err != nil {
-				return err
-			}
-			if info != nil && info.Name == "task" {
-				hasTask = true
-				break
-			}
+	if !childConfig.DisableSubAgent {
+		found, err := hasToolNamed(ctx, descriptors, "task")
+		if err != nil {
+			return nil, err
 		}
-		if !hasTask {
+		if !found {
 			names := []string{"general-purpose"}
 			for _, spec := range childConfig.SubAgents {
 				if spec.Name != "general-purpose" {
 					names = append(names, spec.Name)
 				}
 			}
-			task := tools.NewTaskTool(NewChildRunner(childConfig), names...)
-			if cfg.EnableSubAgentTaskStreaming {
-				task = tools.NewStreamingTaskTool(NewChildRunner(childConfig), names...)
+			runner := NewChildRunner(childConfig)
+			task := tools.NewTaskTool(runner, names...)
+			if childConfig.EnableSubAgentTaskStreaming {
+				task = tools.NewStreamingTaskTool(runner, names...)
 			}
-			descriptors = append(descriptors, tools.Descriptor{Tool: task, ParallelSafe: true, ReadOnly: cfg.ReadOnlyToolsOnly})
+			descriptors = append(descriptors, tools.Descriptor{
+				Tool: task, ParallelSafe: true, ReadOnly: childConfig.ReadOnlyToolsOnly,
+			})
 		}
 	}
+	return descriptors, nil
+}
+
+func hasToolNamed(ctx context.Context, descriptors []tools.Descriptor, name string) (bool, error) {
+	for _, descriptor := range descriptors {
+		if descriptor.Tool == nil {
+			continue
+		}
+		info, err := descriptor.Tool.Info(ctx)
+		if err != nil {
+			return false, err
+		}
+		if info != nil && info.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (a *DeepAgent) buildToolRegistry(ctx context.Context, descriptors []tools.Descriptor) (*tools.Registry, error) {
 	registry, err := tools.NewRegistry(ctx, descriptors)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if cfg.ToolInfoRewriter != nil {
-		if err := registry.RewriteInfo(ctx, cfg.ToolInfoRewriter); err != nil {
-			return err
+	if a.cfg.ToolInfoRewriter != nil {
+		err = registry.RewriteInfo(ctx, a.cfg.ToolInfoRewriter)
+		if err != nil {
+			return nil, err
 		}
 	}
-	registry, err = registry.Filter(ctx, cfg.ReadOnlyToolsOnly, cfg.ToolMask)
-	if err != nil {
-		return err
-	}
+	return registry.Filter(ctx, a.cfg.ReadOnlyToolsOnly, a.cfg.ToolMask)
+}
+
+func (a *DeepAgent) bindModelTools(ctx context.Context, registry *tools.Registry) (model.ToolCallingChatModel, error) {
 	infos, err := registry.ModelTools(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if cfg.HITLConfig != nil && len(cfg.HITLConfig.ToolPolicyGates) > 0 {
-		cfg.Policy = policyWithGates(cfg.Policy, cfg.HITLConfig.ToolPolicyGates)
+	if len(infos) == 0 {
+		return a.cfg.Model, nil
 	}
-	if len(infos) > 0 {
-		cfg.Model, err = cfg.Model.WithTools(infos)
-		if err != nil {
-			return err
-		}
+	return a.cfg.Model.WithTools(infos)
+}
+
+func (a *DeepAgent) buildPolicy() tools.Policy {
+	if a.cfg.HITLConfig == nil || len(a.cfg.HITLConfig.ToolPolicyGates) == 0 {
+		return a.cfg.Policy
 	}
-	history := cfg.Conversation
-	if history == nil {
-		history = conversation.New(cfg.ThreadID, nil, nil, nil)
-	}
-	a.middlewares, a.graphState, a.registry = middlewares, types.NewGraphState(nil), registry
-	a.model, a.policy, a.eager = cfg.Model, cfg.Policy, cfg.EnableStreamToolCall
-	if a.conversation == nil {
-		a.conversation = history
+	return policyWithGates(a.cfg.Policy, a.cfg.HITLConfig.ToolPolicyGates)
+}
+
+func (a *DeepAgent) canExecuteToolsEagerly(middlewares []middleware.Middleware) bool {
+	if !a.cfg.EnableStreamToolCall || a.cfg.ToolNodePreHandler != nil {
+		return false
 	}
 	for _, mw := range middlewares {
-		if state := mw.BuildStateHandler(); state != nil {
-			a.graphState.RegisterStateful(mw.Name(), state)
+		guard, ok := mw.(interface{ RequiresCompleteModelResponse() bool })
+		if ok && guard.RequiresCompleteModelResponse() {
+			return false
 		}
 	}
-	// Explicit custom state overrides middleware defaults, as in the original
-	// public configuration contract. Child-shared entries remain runtime-only.
-	for name, state := range cfg.CustomGraphState {
-		if state != nil {
-			if cfg.Depth > 0 && slices.Contains(cfg.SubAgentSharedCustomStateNames, name) {
-				a.graphState.RegisterRuntimeOnlyStateful(name, state)
-			} else {
-				a.graphState.RegisterStateful(name, state)
-			}
+	return true
+}
+
+func (a *DeepAgent) buildRuntimeState(middlewares []middleware.Middleware) *types.GraphState {
+	state := types.NewGraphState(nil)
+	for _, mw := range middlewares {
+		handler := mw.BuildStateHandler()
+		if handler != nil {
+			state.RegisterStateful(mw.Name(), handler)
 		}
 	}
-	if err := a.buildGraph(ctx); err != nil {
-		return err
+	// Custom handlers override middleware defaults. Child-shared handlers are
+	// owned by the parent and must not be persisted in the child checkpoint.
+	for name, handler := range a.cfg.CustomGraphState {
+		if handler == nil {
+			continue
+		}
+		if a.cfg.Depth > 0 && slices.Contains(a.cfg.SubAgentSharedCustomStateNames, name) {
+			state.RegisterRuntimeOnlyStateful(name, handler)
+			continue
+		}
+		state.RegisterStateful(name, handler)
 	}
-	a.resourcesOpen = true
-	return nil
+	return state
 }
 
 func closeMiddlewareResources(ctx context.Context, middlewares []middleware.Middleware) error {

@@ -18,7 +18,7 @@ func TestWorkspacePatchHasSameLocalAndDockerBehavior(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(localRoot, "a.txt"), []byte("old\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	local, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: localRoot, VirtualMode: true}, "local-thread")
+	local, err := backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true}, "local-thread")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestWorkspacePatchHasSameLocalAndDockerBehavior(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer docker.Close(ctx)
-	for name, ws := range map[string]backend.ToolWorkspace{"local": local, "docker": docker} {
+	for name, ws := range map[string]backend.ToolFilesystem{"local": local, "docker": docker} {
 		t.Run(name, func(t *testing.T) {
 			bad := "*** Begin Patch\n*** Update File: a.txt\n@@\n-missing\n+new\n*** End Patch"
 			if _, err := ws.ApplyPatch(ctx, bad); err == nil {

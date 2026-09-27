@@ -13,13 +13,13 @@ import (
 
 func TestTools_AllRegisteredNamesSchemasAndArgumentAliases(t *testing.T) {
 	ctx := context.Background()
-	b, err := backend.NewLocalFilesystem(&backend.FilesystemBackendConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
+	b, err := backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.Close(ctx)
 	registered := map[string]einotool.InvokableTool{}
-	items, err := NewWorkspaceTools(b, WorkspaceToolOptions{EnableCommands: true, EnablePatch: true})
+	items, err := NewFilesystemTools(b, FilesystemToolOptions{EnableCommands: true, EnablePatch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,18 +48,18 @@ func TestTools_AllRegisteredNamesSchemasAndArgumentAliases(t *testing.T) {
 		}
 	}
 	for _, step := range []struct{ name, args string }{
-		{"write_file", `{"file_path":"a.txt","content":"first\nsecond\n"}`},
-		{"edit_file", `{"file_path":"a.txt","old_string":"second","new_string":"changed"}`},
+		{"write_file", `{"path":"a.txt","content":"first\nsecond\n"}`},
+		{"edit_file", `{"path":"a.txt","old":"second","new":"changed"}`},
 	} {
 		if _, err := registered[step.name].InvokableRun(ctx, step.args); err != nil {
 			t.Fatal(err)
 		}
 	}
-	text, err := registered["read_file"].InvokableRun(ctx, `{"file_path":"a.txt","offset":2,"limit":1}`)
+	text, err := registered["read_file"].InvokableRun(ctx, `{"path":"a.txt","offset":2,"limit":1}`)
 	if err != nil || !strings.Contains(text, "changed") || strings.Contains(text, "first") {
 		t.Fatalf("read=%q err=%v", text, err)
 	}
-	if _, err := registered["delete_file"].InvokableRun(ctx, `{"file_path":"a.txt"}`); err != nil {
+	if _, err := registered["delete_file"].InvokableRun(ctx, `{"path":"a.txt"}`); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -67,7 +67,7 @@ func TestTools_AllRegisteredNamesSchemasAndArgumentAliases(t *testing.T) {
 func TestFilesystemPreservesWorkerReadAndExactEditContracts(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	b := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true, MaxFileSizeMB: 1})
+	b := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: root, VirtualMode: true, MaxFileSizeMB: 1})
 	read := NewReadFileTool(b).(einotool.InvokableTool)
 	edit := NewEditFileTool(b).(einotool.InvokableTool)
 	if err := os.WriteFile(filepath.Join(root, "data.txt"), []byte("hello world"), 0600); err != nil {

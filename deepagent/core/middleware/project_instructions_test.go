@@ -12,7 +12,7 @@ import (
 
 func TestProjectInstructionsOnlyLoadDiscipline(t *testing.T) {
 	root := t.TempDir()
-	files := backend.NewFilesystemBackend(&backend.FilesystemBackendConfig{RootDir: root, VirtualMode: true})
+	files := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
 	mw := NewProjectInstructions(files)
 	if out, err := mw.BuildPrompt(context.Background()); err != nil || len(out) != 0 {
 		t.Fatalf("missing file: %v %v", out, err)

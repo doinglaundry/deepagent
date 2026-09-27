@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"eino-cli/deepagent/core/backend"
+	"encoding/json"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
@@ -24,7 +25,8 @@ func (t *EditFileTool) InvokableRun(ctx context.Context, args string, _ ...tool.
 		New        string `json:"new"`
 		ReplaceAll bool   `json:"replace_all"`
 	}
-	if err := decodeToolArgs(args, &in); err != nil {
+	err := json.Unmarshal([]byte(args), &in)
+	if err != nil {
 		return "", err
 	}
 	result, err := t.backend.Edit(ctx, in.Path, in.Old, in.New, in.ReplaceAll)

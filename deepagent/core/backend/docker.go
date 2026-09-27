@@ -50,7 +50,8 @@ func NewDockerFilesystem(provider sandbox.Sandbox, dir, threadID string) (*Docke
 }
 
 func (b *DockerFilesystem) resolve(ctx context.Context, name string) (string, error) {
-	if err := ctx.Err(); err != nil {
+	err := ctx.Err()
+	if err != nil {
 		return "", dockerFileError(ctx, err)
 	}
 	if strings.ContainsRune(name, 0) {
@@ -102,19 +103,9 @@ func (b *DockerFilesystem) resolve(ctx context.Context, name string) (string, er
 	return resolved, nil
 }
 
-func (b *DockerFilesystem) Root() string    { return b.root }
-func (b *DockerFilesystem) RootDir() string { return b.root }
+func (b *DockerFilesystem) Root() string { return b.root }
 func (b *DockerFilesystem) Resolve(ctx context.Context, name string, _ bool) (string, error) {
 	return b.resolve(ctx, name)
-}
-func (b *DockerFilesystem) List(ctx context.Context, name string) ([]FileInfo, error) {
-	return b.LsInfo(ctx, name)
-}
-func (b *DockerFilesystem) Glob(ctx context.Context, pattern, name string) ([]FileInfo, error) {
-	return b.GlobInfo(ctx, pattern, name)
-}
-func (b *DockerFilesystem) Grep(ctx context.Context, pattern, name, glob string) ([]GrepMatch, error) {
-	return b.GrepRaw(ctx, pattern, name, glob)
 }
 func (b *DockerFilesystem) Execute(ctx context.Context, req CommandRequest) (*CommandResult, error) {
 	return b.commands.Execute(ctx, req)
@@ -137,12 +128,13 @@ func dockerFileInfos(paths []string) []FileInfo {
 	}
 	return out
 }
-func (b *DockerFilesystem) LsInfo(ctx context.Context, name string) ([]FileInfo, error) {
+func (b *DockerFilesystem) List(ctx context.Context, name string) ([]FileInfo, error) {
 	name, err := b.resolve(ctx, name)
 	if err != nil {
 		return nil, dockerFileError(ctx, err)
 	}
-	if provider, ok := b.sandbox.(sandbox.FileInfoProvider); ok {
+	provider, ok := b.sandbox.(sandbox.FileInfoProvider)
+	if ok {
 		entries, err := provider.ListDirInfo(ctx, name, 1)
 		if err != nil {
 			return nil, dockerFileError(ctx, err)
@@ -178,7 +170,8 @@ func (b *DockerFilesystem) Write(ctx context.Context, name, content string) (*Wr
 	if err != nil {
 		return nil, dockerFileError(ctx, err)
 	}
-	if err = b.sandbox.WriteFile(ctx, resolved, content, false); err != nil {
+	err = b.sandbox.WriteFile(ctx, resolved, content, false)
+	if err != nil {
 		return nil, dockerFileError(ctx, err)
 	}
 	return &WriteResult{Path: name}, nil
@@ -200,22 +193,25 @@ func (b *DockerFilesystem) Edit(ctx context.Context, name, old, new string, all 
 	}
 	// Providers can complete a read after cancellation. Do not begin a second
 	// remote operation once the caller has stopped this edit.
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	contextErr := ctx.Err()
+	if contextErr != nil {
+		return nil, contextErr
 	}
 	updated, count, err := ReplaceFileText(content, old, new, all)
 	if err != nil {
 		return &EditResult{Path: name, Occurrences: count}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	contextErr = ctx.Err()
+	if contextErr != nil {
+		return nil, contextErr
 	}
-	if err = b.sandbox.WriteFile(ctx, resolved, updated, false); err != nil {
+	err = b.sandbox.WriteFile(ctx, resolved, updated, false)
+	if err != nil {
 		return nil, dockerFileError(ctx, err)
 	}
 	return &EditResult{Path: name, Occurrences: count}, nil
 }
-func (b *DockerFilesystem) GrepRaw(ctx context.Context, pattern, name, glob string) ([]GrepMatch, error) {
+func (b *DockerFilesystem) Grep(ctx context.Context, pattern, name, glob string) ([]GrepMatch, error) {
 	name, err := b.resolve(ctx, name)
 	if err != nil {
 		return nil, dockerFileError(ctx, err)
@@ -230,7 +226,7 @@ func (b *DockerFilesystem) GrepRaw(ctx context.Context, pattern, name, glob stri
 	}
 	return out, nil
 }
-func (b *DockerFilesystem) GlobInfo(ctx context.Context, pattern, name string) ([]FileInfo, error) {
+func (b *DockerFilesystem) Glob(ctx context.Context, pattern, name string) ([]FileInfo, error) {
 	name, err := b.resolve(ctx, name)
 	if err != nil {
 		return nil, dockerFileError(ctx, err)
@@ -251,7 +247,8 @@ func (b *DockerFilesystem) UploadFiles(ctx context.Context, files []struct {
 		if err != nil {
 			return out, dockerFileError(ctx, err)
 		}
-		if err = b.sandbox.UpdateFile(ctx, name, file.Content); err != nil {
+		err = b.sandbox.UpdateFile(ctx, name, file.Content)
+		if err != nil {
 			return out, dockerFileError(ctx, err)
 		}
 		out = append(out, FileUploadResponse{Path: file.Path})
@@ -263,7 +260,8 @@ func (b *DockerFilesystem) ChangeDir(ctx context.Context, name string) error {
 	if err != nil {
 		return dockerFileError(ctx, err)
 	}
-	if _, err = b.sandbox.ListDir(ctx, name, 1); err != nil {
+	_, err = b.sandbox.ListDir(ctx, name, 1)
+	if err != nil {
 		return dockerFileError(ctx, err)
 	}
 	b.mu.Lock()
@@ -273,9 +271,6 @@ func (b *DockerFilesystem) ChangeDir(ctx context.Context, name string) error {
 }
 
 func (b *DockerFilesystem) Delete(ctx context.Context, name string) (string, error) {
-	return b.DeleteFile(ctx, name)
-}
-func (b *DockerFilesystem) DeleteFile(ctx context.Context, name string) (string, error) {
 	resolved, err := b.resolve(ctx, name)
 	if err != nil {
 		return "", err
@@ -291,14 +286,13 @@ func (b *DockerFilesystem) DeleteFile(ctx context.Context, name string) (string,
 	return "Deleted file " + name, nil
 }
 
-func (b *DockerFilesystem) SupportsApplyPatch() bool { return true }
 func (b *DockerFilesystem) ApplyPatch(ctx context.Context, patch string) (string, error) {
 	return ApplyWorkspacePatch(ctx, b, patch)
 }
 
 var _ Filesystem = (*DockerFilesystem)(nil)
 var _ CommandService = (*DockerFilesystem)(nil)
-var _ ToolWorkspace = (*DockerFilesystem)(nil)
+var _ ToolFilesystem = (*DockerFilesystem)(nil)
 
 // Older providers wrap transport failures as text. Retain their details while
 // preserving cancellation identity for the Graph's system-error boundary.

@@ -88,7 +88,7 @@ func TestDockerFilesystemToolsUseProvider(t *testing.T) {
 	}
 	defer b.Close(ctx)
 	registered := map[string]einotool.InvokableTool{}
-	items, err := tools.NewWorkspaceTools(b, tools.WorkspaceToolOptions{EnableCommands: true, EnablePatch: true})
+	items, err := tools.NewFilesystemTools(b, tools.FilesystemToolOptions{EnableCommands: true, EnablePatch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,11 +99,11 @@ func TestDockerFilesystemToolsUseProvider(t *testing.T) {
 		}
 		registered[info.Name] = item.(einotool.InvokableTool)
 	}
-	read, err := registered["read_file"].InvokableRun(ctx, `{"file_path":"a.txt","offset":2,"limit":1}`)
+	read, err := registered["read_file"].InvokableRun(ctx, `{"path":"a.txt","offset":2,"limit":1}`)
 	if err != nil || !strings.Contains(read, "second") || strings.Contains(read, "first") || provider.lastPath != "/remote/a.txt" {
 		t.Fatalf("read=%q path=%q err=%v", read, provider.lastPath, err)
 	}
-	_, err = registered["edit_file"].InvokableRun(ctx, `{"path":"a.txt","old_string":"second","new_string":"changed"}`)
+	_, err = registered["edit_file"].InvokableRun(ctx, `{"path":"a.txt","old":"second","new":"changed"}`)
 	if err != nil || provider.files["/remote/a.txt"] != "first\nchanged\n" || provider.writes != 1 {
 		t.Fatalf("edit=%v files=%v", err, provider.files)
 	}
@@ -115,11 +115,11 @@ func TestDockerFilesystemToolsUseProvider(t *testing.T) {
 	if err != nil || out != "/remote/a.txt:2:second" || provider.grepOpts.Glob != "*.txt" || !provider.grepOpts.CaseSensitive {
 		t.Fatalf("grep=%q %v opts=%+v", out, err, provider.grepOpts)
 	}
-	entries, err := b.LsInfo(ctx, "")
+	entries, err := b.List(ctx, "")
 	if err != nil || len(entries) != 2 || !entries[0].IsDir || entries[1].IsDir {
 		t.Fatalf("list=%v %v", entries, err)
 	}
-	matches, err := b.GlobInfo(ctx, "*.txt", "")
+	matches, err := b.Glob(ctx, "*.txt", "")
 	if err != nil || len(matches) != 1 || matches[0].Path != "/remote/a.txt" {
 		t.Fatalf("glob=%v %v", matches, err)
 	}
