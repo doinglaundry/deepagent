@@ -15,29 +15,6 @@ import (
 
 type childRunner struct{ config Config }
 
-func loadSubAgents(ctx context.Context, cfg *Config) error {
-	cfg.SubAgents = append([]*SubAgent(nil), cfg.SubAgents...)
-	for _, dir := range cfg.SubAgentsDirs {
-		loaded, err := loadSubAgentsFromDir(ctx, dir)
-		if err != nil {
-			return err
-		}
-		cfg.SubAgents = append(cfg.SubAgents, loaded...)
-	}
-	names := map[string]bool{}
-	for _, spec := range cfg.SubAgents {
-		if spec == nil || strings.TrimSpace(spec.Name) == "" {
-			return fmt.Errorf("subagent name is required")
-		}
-		if names[spec.Name] {
-			return fmt.Errorf("duplicate subagent name %q", spec.Name)
-		}
-		names[spec.Name] = true
-	}
-	cfg.SubAgentsDirs = nil
-	return nil
-}
-
 func NewChildRunner(cfg Config) tools.ChildRunner { return &childRunner{config: *cfg.Clone()} }
 func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit types.ModelChunkSink) (*schema.Message, error) {
 	if r.config.Depth >= 4 {

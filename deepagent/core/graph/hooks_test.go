@@ -64,26 +64,3 @@ func TestRun_BeforeModelErrorStopsModel(t *testing.T) {
 		t.Fatalf("err=%v calls=%d", err, m.calls)
 	}
 }
-
-func TestRun_ContinueAfterModelUsesSameGraph(t *testing.T) {
-	ctx := context.Background()
-	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("first", nil)}, {schema.AssistantMessage("second", nil)}}}
-	checks := 0
-	a, err := New(ctx, WithModel(m), WithContinueAfterModel(func(context.Context) (bool, error) {
-		checks++
-		return checks == 1, nil
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := a.Run(ctx, []*schema.Message{schema.UserMessage("input")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.Content != "second" || m.calls != 2 || checks != 2 {
-		t.Fatalf("continuation skipped: output=%v calls=%d checks=%d", out, m.calls, checks)
-	}
-	if len(m.inputs[1]) != 2 || m.inputs[1][1].Content != "first" {
-		t.Fatal("continuation lost conversation")
-	}
-}

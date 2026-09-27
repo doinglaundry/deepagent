@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
 	"time"
 )
 
@@ -59,3 +60,10 @@ func (a *DeepAgent) savePending(ctx context.Context, id string, info *compose.In
 	a.state.Pending = pending
 	return nil
 }
+
+// This private interrupt creates Eino's real execution cursor before prepare.
+// execute resumes it internally, within the same Run lifecycle.
+type initialCheckpoint struct{}
+type initialCheckpointKey struct{}
+
+func init() { schema.RegisterName[*initialCheckpoint]("deepagent_initial_checkpoint_v1") }

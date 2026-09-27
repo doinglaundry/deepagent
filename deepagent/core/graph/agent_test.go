@@ -103,10 +103,7 @@ func TestRun_ModelToolModel(t *testing.T) {
 func TestRun_ReturnDirectDoesNotCallModelAgain(t *testing.T) {
 	ctx := context.Background()
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "direct"}}})}}}
-	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}, ReturnDirect: true}}, ContinueAfterModel: func(context.Context) (bool, error) {
-		t.Error("ReturnDirect consulted model continuation callback")
-		return true, nil
-	}}))
+	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}, ReturnDirect: true}}}))
 	if err != nil {
 		t.Fatal(err)
 	}

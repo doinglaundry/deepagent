@@ -9,26 +9,20 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestRun_ArgumentNormalizationPrecedesPolicyAndExecution(t *testing.T) {
+func TestRun_PolicyAndExecutionReceiveModelArguments(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{}
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{
 		{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: `{"value":"hello"}`}},
 	})}}}
-	normalized, checked := 0, 0
+	checked := 0
 	a, err := New(ctx, WithConfig(&Config{
 		Model: m,
-		ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true, NormalizeArgs: func(raw string) (string, error) {
-			normalized++
-			if raw != `{"value":"hello"}` {
-				t.Fatalf("raw arguments=%q", raw)
-			}
-			return `{"value":"rewritten"}`, nil
-		}}},
+		ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}},
 		Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
 			checked++
-			if call.Arguments != `{"value":"rewritten"}` {
-				t.Fatalf("policy saw unnormalized arguments: %q", call.Arguments)
+			if call.Arguments != `{"value":"hello"}` {
+				t.Fatalf("policy saw unexpected arguments: %q", call.Arguments)
 			}
 			return tools.Decision{Action: tools.Allow}, nil
 		}),
@@ -41,7 +35,7 @@ func TestRun_ArgumentNormalizationPrecedesPolicyAndExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if answer.Content != `{"value":"rewritten"}` || tool.count.Load() != 1 || m.calls != 1 || normalized != 1 || checked != 1 {
-		t.Fatalf("answer=%+v executions=%d models=%d normalized=%d checked=%d", answer, tool.count.Load(), m.calls, normalized, checked)
+	if answer.Content != `{"value":"hello"}` || tool.count.Load() != 1 || m.calls != 1 || checked != 1 {
+		t.Fatalf("answer=%+v executions=%d models=%d checked=%d", answer, tool.count.Load(), m.calls, checked)
 	}
 }

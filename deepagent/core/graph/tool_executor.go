@@ -3,7 +3,6 @@ package graph
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -227,15 +226,6 @@ func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall, resum
 	if err := ctx.Err(); err != nil {
 		return d, call, nil, err
 	}
-	if d.NormalizeArgs != nil {
-		args, err := d.NormalizeArgs(call.Arguments)
-		if err != nil {
-			result.IsError = true
-			result.Content = err.Error()
-			return d, call, result, nil
-		}
-		call.Arguments = args
-	}
 	decision := tools.Decision{Action: tools.Allow}
 	if d.RequiresApproval {
 		decision.Action = tools.AskApproval
@@ -322,54 +312,6 @@ func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall, resum
 		}
 	}
 	return d, call, nil, nil
-}
-func (e *toolExecutor) invoke(ctx context.Context, call types.ToolCall, resume *types.ResumeAnswer, emit types.ToolChunkSink, options ...einotool.Option) (*types.ToolResult, error) {
-	ctx = context.WithValue(ctx, toolCallIDKey{}, call.ID)
-	ctx = context.WithValue(ctx, toolExecutorKey{}, e)
-	descriptor, _ := e.registry.Lookup(call.Name)
-	if enhanced, ok := descriptor.Tool.(einotool.EnhancedStreamableTool); ok {
-		return e.invokeEnhancedStream(ctx, call, resume, emit, enhanced, options...)
-	}
-	if enhanced, ok := descriptor.Tool.(einotool.EnhancedInvokableTool); ok {
-		return e.invokeEnhanced(ctx, call, resume, enhanced, options...)
-	}
-	if streaming, ok := descriptor.Tool.(einotool.StreamableTool); ok {
-		return e.invokeStream(ctx, call, resume, emit, streaming, options...)
-	}
-	descriptor, call, early, err := e.authorize(ctx, call, resume)
-	if early != nil || err != nil {
-		return early, err
-	}
-	result := &types.ToolResult{CallID: call.ID, ReturnDirect: descriptor.ReturnDirect}
-	invokable, ok := descriptor.Tool.(einotool.InvokableTool)
-	if !ok {
-		return nil, fmt.Errorf("tool %s has no Eino execution interface", call.Name)
-	}
-	result.Content, err = invokable.InvokableRun(ctx, call.Arguments, options...)
-	return finishToolResult(ctx, result, err)
-}
-func finishToolResult(ctx context.Context, result *types.ToolResult, err error) (*types.ToolResult, error) {
-	if err != nil {
-		var internal *types.InternalError
-		if errors.As(err, &internal) {
-			return nil, err
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, err
-		}
-		if _, ok := compose.ExtractInterruptInfo(err); ok {
-			return nil, err
-		}
-		if _, ok := compose.IsInterruptRerunError(err); ok {
-			return nil, err
-		}
-		result.IsError = true
-		result.Content = err.Error()
-	}
-	return result, nil
 }
 func (e *toolExecutor) executeBatch(ctx context.Context, calls []types.ToolCall, emit types.ToolChunkSink) ([]types.ToolResult, error) {
 	ordered := append([]types.ToolCall(nil), calls...)
@@ -511,16 +453,8 @@ func (e *toolExecutor) startEagerIfAllowed(ctx context.Context, call types.ToolC
 	if !ok || !d.ParallelSafe || d.RequiresApproval {
 		return false, nil
 	}
-	policyCall := call
-	if d.NormalizeArgs != nil {
-		args, err := d.NormalizeArgs(call.Arguments)
-		if err != nil {
-			return false, nil // The tools node returns the argument error to the model.
-		}
-		policyCall.Arguments = args
-	}
 	if e.policy != nil {
-		decision, err := e.policy.Decide(ctx, policyCall, d)
+		decision, err := e.policy.Decide(ctx, call, d)
 		if err != nil {
 			return false, err
 		}
@@ -528,9 +462,17 @@ func (e *toolExecutor) startEagerIfAllowed(ctx context.Context, call types.ToolC
 			return false, nil
 		}
 		e.mu.Lock()
-		e.eagerAllowed[e.key(call.ID)] = policyCall.Arguments
+		e.eagerAllowed[e.key(call.ID)] = call.Arguments
 		e.mu.Unlock()
 	}
 	e.start(ctx, call, emit)
 	return true, nil
+}
+
+// GetToolCallID returns the identity assigned by the current tool execution.
+func GetToolCallID(ctx context.Context) string {
+	if id, ok := ctx.Value(toolCallIDKey{}).(string); ok && id != "" {
+		return id
+	}
+	return compose.GetToolCallID(ctx)
 }

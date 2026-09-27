@@ -17,7 +17,6 @@ type Descriptor struct {
 	RequiresApproval bool
 	ParallelSafe     bool
 	ReturnDirect     bool
-	NormalizeArgs    func(string) (string, error)
 }
 
 // Describe preserves capability metadata exposed by an Eino tool.

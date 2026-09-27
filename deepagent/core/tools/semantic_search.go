@@ -1,10 +1,12 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"math"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -14,8 +16,8 @@ import (
 )
 
 type semanticSearchArgs struct {
-	Query string `json:"query" jsonschema:"required,description=Natural-language question about code"`
-	Path  string `json:"path,omitempty" jsonschema:"description=Optional file or directory to search"`
+	Query string `json:"query"`
+	Path  string `json:"path"`
 }
 
 type semanticMatch struct {
@@ -25,14 +27,14 @@ type semanticMatch struct {
 
 // NewSemanticSearchTool provides a local, deterministic semantic-like search.
 // It ranks files and lines by query-term matches without requiring an index.
-func NewSemanticSearchTool(workspace backend.Filesystem) (tool.BaseTool, error) {
-	if workspace == nil {
-		return nil, fmt.Errorf("workspace is required")
+func NewSemanticSearchTool(filesystem backend.Filesystem) (tool.BaseTool, error) {
+	if filesystem == nil {
+		return nil, fmt.Errorf("filesystem is required")
 	}
-	return &semanticSearchTool{workspace: workspace}, nil
+	return &semanticSearchTool{filesystem: filesystem}, nil
 }
 
-type semanticSearchTool struct{ workspace backend.Filesystem }
+type semanticSearchTool struct{ filesystem backend.Filesystem }
 
 func (*semanticSearchTool) ReadOnly() bool     { return true }
 func (*semanticSearchTool) ParallelSafe() bool { return true }
@@ -49,65 +51,12 @@ func (t *semanticSearchTool) InvokableRun(ctx context.Context, raw string, _ ...
 	if len(terms) == 0 {
 		return "", fmt.Errorf("query must include searchable terms")
 	}
-	var matches []semanticMatch
-	read := func(path string) error {
-		limit := int(^uint(0) >> 1)
-		content, err := t.workspace.Read(ctx, path, nil, &limit)
-		if err != nil {
-			return err
-		}
-		if bytesBinary([]byte(content)) {
-			return nil
-		}
-		pathScore := scoreTerms(strings.ToLower(path), terms) * 3
-		for i, line := range strings.Split(content, "\n") {
-			score := scoreTerms(strings.ToLower(line), terms) + pathScore
-			if score > 0 {
-				matches = append(matches, semanticMatch{path: path, line: i + 1, score: score, text: strings.TrimSpace(line)})
-			}
-		}
-		return nil
+	matches, err := t.findMatches(ctx, input.Path, terms)
+	if err != nil {
+		return "", err
 	}
-	pending := []string{input.Path}
-	for len(pending) > 0 {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		path := pending[0]
-		pending = pending[1:]
-		entries, err := t.workspace.List(ctx, path)
-		if err != nil {
-			if err := read(path); err != nil {
-				return "", err
-			}
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsSymlink {
-				continue
-			}
-			if entry.IsDir {
-				switch entry.Name() {
-				case ".git", "node_modules", "vendor", ".cache":
-					continue
-				}
-				pending = append(pending, entry.Path)
-			} else if err := read(entry.Path); err != nil {
-				if ctx.Err() != nil {
-					return "", ctx.Err()
-				}
-				// Unreadable or oversized files do not prevent searching other files.
-			}
-		}
-	}
-	sort.SliceStable(matches, func(i, j int) bool {
-		if matches[i].score != matches[j].score {
-			return matches[i].score > matches[j].score
-		}
-		if matches[i].path != matches[j].path {
-			return matches[i].path < matches[j].path
-		}
-		return matches[i].line < matches[j].line
+	slices.SortStableFunc(matches, func(a, b semanticMatch) int {
+		return cmp.Or(cmp.Compare(b.score, a.score), cmp.Compare(a.path, b.path), cmp.Compare(a.line, b.line))
 	})
 	if len(matches) > 10 {
 		matches = matches[:10]
@@ -122,14 +71,75 @@ func (t *semanticSearchTool) InvokableRun(ctx context.Context, raw string, _ ...
 	return strings.Join(lines, "\n"), nil
 }
 
+func (t *semanticSearchTool) findMatches(ctx context.Context, start string, terms []string) ([]semanticMatch, error) {
+	type fileToRead struct {
+		path     string
+		required bool
+	}
+	pending := []string{start}
+	var files []fileToRead
+	for len(pending) > 0 {
+		contextErr := ctx.Err()
+		if contextErr != nil {
+			return nil, contextErr
+		}
+		path := pending[0]
+		pending = pending[1:]
+		entries, err := t.filesystem.List(ctx, path)
+		if err != nil {
+			files = append(files, fileToRead{path: path, required: true})
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsSymlink {
+				continue
+			}
+			if entry.IsDir {
+				switch entry.Name() {
+				case ".git", "node_modules", "vendor", ".cache":
+					continue
+				}
+				pending = append(pending, entry.Path)
+				continue
+			}
+			files = append(files, fileToRead{path: entry.Path})
+		}
+	}
+	var matches []semanticMatch
+	limit := math.MaxInt
+	for _, file := range files {
+		content, err := t.filesystem.Read(ctx, file.path, nil, &limit)
+		if err != nil {
+			if file.required {
+				return nil, err
+			}
+			contextErr := ctx.Err()
+			if contextErr != nil {
+				return nil, contextErr
+			}
+			continue
+		}
+		if strings.IndexByte(content[:min(len(content), 8000)], 0) >= 0 {
+			continue
+		}
+		pathScore := scoreTerms(strings.ToLower(file.path), terms) * 3
+		for i, line := range strings.Split(content, "\n") {
+			score := scoreTerms(strings.ToLower(line), terms) + pathScore
+			if score > 0 {
+				matches = append(matches, semanticMatch{path: file.path, line: i + 1, score: score, text: strings.TrimSpace(line)})
+			}
+		}
+	}
+	return matches, nil
+}
+
 func semanticTerms(query string) []string {
-	seen := map[string]bool{}
 	var result []string
 	for _, term := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }) {
-		if len(term) >= 3 && !seen[term] {
-			seen[term] = true
-			result = append(result, term)
+		if len(term) < 3 || slices.Contains(result, term) {
+			continue
 		}
+		result = append(result, term)
 	}
 	return result
 }
@@ -142,21 +152,4 @@ func scoreTerms(text string, terms []string) int {
 		}
 	}
 	return score
-}
-
-func bytesBinary(data []byte) bool {
-	limit := len(data)
-	if limit > 8000 {
-		limit = 8000
-	}
-	return bytesIndexByte(data[:limit], 0)
-}
-
-func bytesIndexByte(data []byte, target byte) bool {
-	for _, b := range data {
-		if b == target {
-			return true
-		}
-	}
-	return false
 }

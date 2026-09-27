@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"eino-cli/deepagent/core/tools"
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"gopkg.in/yaml.v3"
 )
@@ -93,4 +94,36 @@ func loadSubAgentsFromDir(ctx context.Context, dir string) ([]*SubAgent, error) 
 		result = append(result, &SubAgent{Name: spec.Name, SystemPrompt: spec.SystemPrompt, MaxSteps: spec.MaxSteps, EnableFilesystem: spec.EnableFilesystem, EnableWeb: spec.EnableWeb, ReadOnly: spec.ReadOnly, ToolMask: mask})
 	}
 	return result, nil
+}
+
+type SubAgent struct {
+	Name, SystemPrompt                    string
+	MaxSteps                              int
+	EnableFilesystem, EnableWeb, ReadOnly bool
+	ToolMask                              tools.Mask
+	Tools                                 []tool.BaseTool
+}
+type SubAgentContextInjector func(context.Context, string) ([]*schema.Message, error)
+
+func loadSubAgents(ctx context.Context, cfg *Config) error {
+	cfg.SubAgents = append([]*SubAgent(nil), cfg.SubAgents...)
+	for _, dir := range cfg.SubAgentsDirs {
+		loaded, err := loadSubAgentsFromDir(ctx, dir)
+		if err != nil {
+			return err
+		}
+		cfg.SubAgents = append(cfg.SubAgents, loaded...)
+	}
+	names := map[string]bool{}
+	for _, spec := range cfg.SubAgents {
+		if spec == nil || strings.TrimSpace(spec.Name) == "" {
+			return fmt.Errorf("subagent name is required")
+		}
+		if names[spec.Name] {
+			return fmt.Errorf("duplicate subagent name %q", spec.Name)
+		}
+		names[spec.Name] = true
+	}
+	cfg.SubAgentsDirs = nil
+	return nil
 }

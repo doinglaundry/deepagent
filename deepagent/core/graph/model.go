@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
+
+var ErrExceedMaxModelCalls = errors.New("exceeds max model calls")
 
 func (a *DeepAgent) modelNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
 	ctx, state, err := a.enterNode(ctx)
