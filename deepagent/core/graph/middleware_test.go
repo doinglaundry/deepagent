@@ -34,12 +34,7 @@ func (m *orderedMiddleware) WrapModel(next middleware.ModelHandler) middleware.M
 		return next(ctx, input)
 	}
 }
-func (m *orderedMiddleware) WrapTool(next middleware.ToolHandler) middleware.ToolHandler {
-	return func(ctx context.Context, call types.ToolCall) (*types.ToolResult, error) {
-		*m.order = append(*m.order, "tool:"+m.name)
-		return next(ctx, call)
-	}
-}
+
 func TestMiddleware_OrderAndAfterRunOnce(t *testing.T) {
 	ctx := context.Background()
 	var order []string
@@ -51,7 +46,7 @@ func TestMiddleware_OrderAndAfterRunOnce(t *testing.T) {
 	if _, err := a.Run(ctx, []*schema.Message{schema.UserMessage("go")}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"before:outer", "before:inner", "model:outer", "model:inner", "tool:outer", "tool:inner", "after:inner", "after:outer"}
+	want := []string{"before:outer", "before:inner", "model:outer", "model:inner", "after:inner", "after:outer"}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("middleware order=%v want=%v", order, want)
 	}

@@ -26,7 +26,6 @@ type Middleware interface {
 	ModifyModelResponse(context.Context, *schema.Message, *types.GraphState) (*schema.Message, error)
 	ModifyModelStreamResponse(context.Context, *schema.StreamReader[*schema.Message], *types.GraphState) (*schema.StreamReader[*schema.Message], error)
 	Tools(context.Context) ([]tool.BaseTool, error)
-	ToolCallMiddlewares() []compose.ToolMiddleware
 }
 
 // BaseMiddleware makes every hook optional. Concrete middleware only needs to
@@ -47,7 +46,6 @@ func (BaseMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schem
 	return stream, nil
 }
 func (BaseMiddleware) Tools(context.Context) ([]tool.BaseTool, error) { return nil, nil }
-func (BaseMiddleware) ToolCallMiddlewares() []compose.ToolMiddleware  { return nil }
 
 // Optional capabilities are detected directly by DeepAgent; there is no second
 // middleware pipeline or intermediate execution object.
@@ -65,8 +63,6 @@ type ModelHandler func(context.Context, []*schema.Message) (*schema.StreamReader
 type ModelMiddleware interface {
 	WrapModel(ModelHandler) ModelHandler
 }
-type ToolHandler func(context.Context, types.ToolCall) (*types.ToolResult, error)
-type ToolMiddleware interface{ WrapTool(ToolHandler) ToolHandler }
 
 // RunFactory creates fresh mutable state when a configured middleware is reused.
 type RunFactory interface{ NewRun() Middleware }

@@ -8,38 +8,31 @@ import (
 	"sync"
 	"time"
 
-	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
-	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 )
 
-type runningTool struct {
+// toolExecution owns one attempt and its durable call state.
+// A resumed blocked call gets a new entry so previous waiters keep their result.
+type toolExecution struct {
+	state  types.ToolCallState
 	done   chan struct{}
 	cancel context.CancelFunc
-	result *types.ToolResult
 	err    error
-	call   types.ToolCall
 }
 type toolExecutor struct {
 	approvalResumed  bool // A node-scoped Eino answer authorizes only one call per resume.
 	childCheckpoints map[string]*childCheckpointStore
-	identities       map[string]types.ToolCall
 	onStart          func(context.Context, types.ToolCallState) error
 	beforeInvoke     func(context.Context, types.ToolCall) error
-	started          map[string]time.Time
-	middlewares      []middleware.Middleware
 	eager            sync.WaitGroup
 	registry         *tools.Registry
 	runID            string
 	parallelism      int
 	policy           tools.Policy
+	calls            map[string]*toolExecution
 	mu               sync.Mutex
-	running          map[string]*runningTool
-	completed        map[string]*types.ToolResult
-	unknown          map[string]bool
-	blocked          map[string]bool
 	eagerAllowed     map[string]string
 	closed           bool
 }
@@ -48,7 +41,11 @@ func newToolExecutor(runID string, registry *tools.Registry, parallelism int, po
 	if parallelism < 1 {
 		parallelism = 1
 	}
-	return &toolExecutor{registry: registry, runID: runID, parallelism: parallelism, policy: policy, running: make(map[string]*runningTool), completed: make(map[string]*types.ToolResult), unknown: make(map[string]bool), blocked: make(map[string]bool), eagerAllowed: make(map[string]string), started: make(map[string]time.Time), identities: make(map[string]types.ToolCall)}
+	return &toolExecutor{
+		registry: registry, runID: runID, parallelism: parallelism, policy: policy,
+		calls:        make(map[string]*toolExecution),
+		eagerAllowed: make(map[string]string),
+	}
 }
 func (e *toolExecutor) key(callID string) string { return e.runID + "\x00" + callID }
 func (e *toolExecutor) execute(ctx context.Context, call types.ToolCall, resume *types.ResumeAnswer, emit types.ToolChunkSink) (*types.ToolResult, error) {
@@ -57,174 +54,102 @@ func (e *toolExecutor) execute(ctx context.Context, call types.ToolCall, resume 
 	}
 	key := e.key(call.ID)
 	e.mu.Lock()
-	if original, exists := e.identities[key]; exists && (original.Name != call.Name || original.Arguments != call.Arguments) {
-		e.mu.Unlock()
-		return nil, fmt.Errorf("tool call %s changed after execution started", call.ID)
-	}
-	if result, ok := e.completed[key]; ok {
-		copy := *result
-		e.mu.Unlock()
-		return &copy, nil
-	}
-	if running, ok := e.running[key]; ok {
-		if running.call.Name != call.Name || running.call.Arguments != call.Arguments {
+	entry := e.calls[key]
+	if entry != nil {
+		original := entry.state.Call
+		if original.Name != call.Name || original.Arguments != call.Arguments {
 			e.mu.Unlock()
 			return nil, fmt.Errorf("tool call %s changed after execution started", call.ID)
 		}
-		e.mu.Unlock()
-		select {
-		case <-running.done:
-			return running.result, running.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		switch entry.state.Status {
+		case types.CallCompleted:
+			result := copyToolResult(entry.state.Result)
+			e.mu.Unlock()
+			return result, nil
+		case types.CallRunning:
+			e.mu.Unlock()
+			select {
+			case <-entry.done:
+				return copyToolResult(entry.state.Result), entry.err
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
 	}
 	if e.closed {
 		e.mu.Unlock()
 		return nil, context.Canceled
 	}
-	if e.unknown[key] {
+	if entry != nil && entry.state.Status == types.CallOutcomeUnknown {
 		e.mu.Unlock()
 		return nil, fmt.Errorf("tool call %s has unknown outcome; explicit reconciliation required", call.ID)
 	}
 	runCtx, cancel := context.WithCancel(ctx)
-	running := &runningTool{done: make(chan struct{}), cancel: cancel, call: call}
-	e.running[key] = running
-	delete(e.blocked, key)
-	e.identities[key] = call
-	started := time.Now()
-	e.started[key] = started
+	state := types.ToolCallState{Call: call, Status: types.CallRunning, StartedAt: time.Now()}
+	entry = &toolExecution{state: state, done: make(chan struct{}), cancel: cancel}
+	e.calls[key] = entry
 	e.mu.Unlock()
-	result, err := func() (result *types.ToolResult, err error) {
-		// Tool and middleware code may panic after producing a side effect.
-		// Return a system error, then finalize the shared ledger below so waiters
-		// and cleanup cannot remain blocked on this execution forever.
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				result = nil
-				err = fmt.Errorf("tool %s panicked: %v", call.Name, recovered)
-			}
-		}()
-		var invocationMu sync.Mutex
-		var invoked *types.ToolCall
-		var savedResult *types.ToolResult
-		var savedErr error
-		invoke := func(ctx context.Context, current types.ToolCall, options ...einotool.Option) (*types.ToolResult, error) {
-			invocationMu.Lock()
-			defer invocationMu.Unlock()
-			if invoked != nil && (invoked.ID != current.ID || invoked.Name != current.Name || invoked.Arguments != current.Arguments) {
-				return nil, fmt.Errorf("tool middleware changed an already executed call")
-			}
-			if invoked == nil {
-				copy := current
-				invoked = &copy
-				savedResult, savedErr = e.invoke(ctx, current, resume, emit, options...)
-			}
-			if savedResult == nil {
-				return nil, savedErr
-			}
-			copy := *savedResult
-			return &copy, savedErr
-		}
-		endpoint := middleware.ToolHandler(func(ctx context.Context, call types.ToolCall) (*types.ToolResult, error) {
-			descriptor, _ := e.registry.Lookup(call.Name)
-			if _, enhanced := descriptor.Tool.(einotool.EnhancedStreamableTool); enhanced {
-				return invoke(ctx, call)
-			}
-			if _, enhanced := descriptor.Tool.(einotool.EnhancedInvokableTool); enhanced {
-				return invoke(ctx, call)
-			}
-			if _, streaming := descriptor.Tool.(einotool.StreamableTool); streaming {
-				return invoke(ctx, call)
-			}
-			var result *types.ToolResult
-			var resultMu sync.Mutex
-			native := compose.InvokableToolEndpoint(func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
-				resultMu.Lock()
-				defer resultMu.Unlock()
-				if input == nil || input.CallID != call.ID || input.Name != call.Name {
-					return nil, fmt.Errorf("tool middleware changed call identity")
-				}
-				modified := call
-				modified.Arguments = input.Arguments
-				var err error
-				result, err = invoke(ctx, modified, input.CallOptions...)
-				if err != nil {
-					return nil, err
-				}
-				return &compose.ToolOutput{Result: result.Content}, nil
-			})
-			for i := len(e.middlewares) - 1; i >= 0; i-- {
-				wrappers := e.middlewares[i].ToolCallMiddlewares()
-				for j := len(wrappers) - 1; j >= 0; j-- {
-					if wrappers[j].Invokable != nil {
-						native = wrappers[j].Invokable(native)
-					}
-				}
-			}
-			output, err := native(ctx, &compose.ToolInput{Name: call.Name, CallID: call.ID, Arguments: call.Arguments})
-			if err != nil {
-				return nil, err
-			}
-			if output == nil {
-				return nil, fmt.Errorf("tool middleware returned nil output")
-			}
-			resultMu.Lock()
-			defer resultMu.Unlock()
-			if result == nil {
-				result = &types.ToolResult{CallID: call.ID, ReturnDirect: descriptor.ReturnDirect}
-			}
-			result.Content = output.Result
-			return result, nil
-		})
-		for i := len(e.middlewares) - 1; i >= 0; i-- {
-			if wrapper, ok := e.middlewares[i].(middleware.ToolMiddleware); ok {
-				endpoint = wrapper.WrapTool(endpoint)
-			}
-		}
-		if e.onStart != nil {
-			if err := e.onStart(runCtx, types.ToolCallState{Call: call, Status: types.CallRunning, StartedAt: started}); err != nil {
-				return nil, err
-			}
-		}
-		result, err = endpoint(runCtx, call)
-		if err == nil && result == nil {
-			err = fmt.Errorf("tool %s returned no result", call.Name)
-		}
-		return result, err
-	}()
+
+	result, err := e.runTool(runCtx, state, resume, emit)
 	cancel()
 	e.mu.Lock()
-	running.result = result
-	running.err = err
-	if err == nil && result != nil {
-		copy := *result
-		e.completed[key] = &copy
-	}
+	entry.state.Result = copyToolResult(result)
+	entry.err = err
+	entry.state.Status = types.CallCompleted
 	if err != nil {
 		_, interrupt := compose.IsInterruptRerunError(err)
 		_, nested := compose.ExtractInterruptInfo(err)
+		entry.state.Status = types.CallOutcomeUnknown
 		if interrupt || nested {
-			e.blocked[key] = true
-		} else {
-			e.unknown[key] = true
+			entry.state.Status = types.CallBlocked
 		}
 	}
-	delete(e.running, key)
-	close(running.done)
+	close(entry.done)
 	e.mu.Unlock()
 	return result, err
 }
-func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall, resume *types.ResumeAnswer) (tools.Descriptor, types.ToolCall, *types.ToolResult, error) {
+
+func copyToolResult(result *types.ToolResult) *types.ToolResult {
+	if result == nil {
+		return nil
+	}
+	copy := *result
+	return &copy
+}
+
+// runTool reports start and contains panics so the execution record always completes.
+func (e *toolExecutor) runTool(ctx context.Context, state types.ToolCallState, resume *types.ResumeAnswer, emit types.ToolChunkSink) (result *types.ToolResult, err error) {
+	call := state.Call
+	// Tool code may panic after producing a side effect.
+	// Return a system error, then finalize the shared ledger below so waiters
+	// and cleanup cannot remain blocked on this execution forever.
+	defer func() {
+		recovered := recover()
+		if recovered != nil {
+			result = nil
+			err = fmt.Errorf("tool %s panicked: %v", call.Name, recovered)
+		}
+	}()
+	if e.onStart != nil {
+		err = e.onStart(ctx, state)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return e.invoke(ctx, call, resume, emit)
+}
+
+func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall, resume *types.ResumeAnswer) (tools.Descriptor, *types.ToolResult, error) {
 	d, ok := e.registry.Lookup(call.Name)
 	result := &types.ToolResult{CallID: call.ID, ReturnDirect: d.ReturnDirect}
 	if !ok {
 		result.IsError = true
 		result.Content = "unknown tool: " + call.Name
-		return d, call, result, nil
+		return d, result, nil
 	}
-	if err := ctx.Err(); err != nil {
-		return d, call, nil, err
+	err := ctx.Err()
+	if err != nil {
+		return d, nil, err
 	}
 	decision := tools.Decision{Action: tools.Allow}
 	if d.RequiresApproval {
@@ -236,18 +161,19 @@ func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall, resum
 		e.mu.Unlock()
 		if eagerAllowed {
 			if allowedArgs != call.Arguments {
-				return d, call, nil, fmt.Errorf("eager tool %s arguments changed after policy approval", call.ID)
+				return d, nil, fmt.Errorf("eager tool %s arguments changed after policy approval", call.ID)
 			}
 			decision.Action = tools.Allow
 		} else {
 			var err error
 			decision, err = e.policy.Decide(ctx, call, d)
 			if err != nil {
-				return d, call, nil, err
+				return d, nil, err
 			}
 		}
 	}
-	if state := types.RunStateFromContext(ctx); state != nil && decision.Action == tools.Allow {
+	state := types.RunStateFromContext(ctx)
+	if state != nil && decision.Action == tools.Allow {
 		for _, pending := range state.Pending {
 			if pending.CallID == call.ID && pending.Kind == "approval" {
 				decision.Action = tools.AskApproval
@@ -263,7 +189,7 @@ func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall, resum
 			e.mu.Unlock()
 			if target && hasData && answer != nil && !used {
 				if answer.CallID != "" && answer.CallID != call.ID {
-					return d, call, nil, fmt.Errorf("approval call ID %q does not match %q", answer.CallID, call.ID)
+					return d, nil, fmt.Errorf("approval call ID %q does not match %q", answer.CallID, call.ID)
 				}
 				resume = &types.ResumeAnswer{CallID: call.ID, Approved: answer.Approved}
 				e.mu.Lock()
@@ -275,7 +201,7 @@ func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall, resum
 			info := &tools.ApprovalInfo{CallID: call.ID, ToolName: call.Name, Arguments: call.Arguments, ArgumentsInJSON: call.Arguments, Reason: decision.Reason}
 			// Approval calls are sequential barriers. Persist the obligation before
 			// Eino saves its first snapshot, even if later ID enrichment fails.
-			if state := types.RunStateFromContext(ctx); state != nil {
+			if state != nil {
 				found := false
 				for _, pending := range state.Pending {
 					if pending.CallID == call.ID && pending.Kind == "approval" {
@@ -287,7 +213,7 @@ func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall, resum
 					state.Pending = append(state.Pending, types.Interrupt{CallID: call.ID, Kind: "approval", Data: data})
 				}
 			}
-			return d, call, nil, compose.Interrupt(ctx, info)
+			return d, nil, compose.Interrupt(ctx, info)
 		}
 		if resume.Approved {
 			decision.Action = tools.Allow
@@ -301,17 +227,18 @@ func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall, resum
 		if result.Content == "" {
 			result.Content = "tool call denied"
 		}
-		return d, call, result, nil
+		return d, result, nil
 	}
 	if decision.Action != tools.Allow {
-		return d, call, nil, fmt.Errorf("invalid policy action %q", decision.Action)
+		return d, nil, fmt.Errorf("invalid policy action %q", decision.Action)
 	}
 	if !d.ReadOnly && e.beforeInvoke != nil {
-		if err := e.beforeInvoke(ctx, call); err != nil {
-			return d, call, nil, err
+		err = e.beforeInvoke(ctx, call)
+		if err != nil {
+			return d, nil, err
 		}
 	}
-	return d, call, nil, nil
+	return d, nil, nil
 }
 func (e *toolExecutor) executeBatch(ctx context.Context, calls []types.ToolCall, emit types.ToolChunkSink) ([]types.ToolResult, error) {
 	ordered := append([]types.ToolCall(nil), calls...)
@@ -373,37 +300,35 @@ func (e *toolExecutor) executeBatch(ctx context.Context, calls []types.ToolCall,
 func (e *toolExecutor) restore(calls []types.ToolCallState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for _, call := range calls {
-		key := e.key(call.Call.ID)
-		e.identities[key] = call.Call
-		if !call.StartedAt.IsZero() {
-			e.started[key] = call.StartedAt
-		}
-		switch call.Status {
-		case types.CallBlocked:
-			e.blocked[key] = true
+	for _, state := range calls {
+		state.Result = copyToolResult(state.Result)
+		switch state.Status {
+		case types.CallRunning:
+			// The process that owned this invocation is gone; do not replay it.
+			state.Status = types.CallOutcomeUnknown
 		case types.CallCompleted:
-			if call.Result != nil {
-				copy := *call.Result
-				e.completed[key] = &copy
+			if state.Result == nil {
+				state.Status = types.CallPending
 			}
-		case types.CallRunning, types.CallOutcomeUnknown:
-			e.unknown[key] = true
 		}
+		e.calls[e.key(state.Call.ID)] = &toolExecution{state: state}
 	}
 }
+
 func (e *toolExecutor) cancel(ctx context.Context) error {
 	e.mu.Lock()
 	e.closed = true
-	active := make([]*runningTool, 0, len(e.running))
-	for _, running := range e.running {
-		running.cancel()
-		active = append(active, running)
+	var active []*toolExecution
+	for _, entry := range e.calls {
+		if entry.state.Status == types.CallRunning {
+			entry.cancel()
+			active = append(active, entry)
+		}
 	}
 	e.mu.Unlock()
-	for _, running := range active {
+	for _, entry := range active {
 		select {
-		case <-running.done:
+		case <-entry.done:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -412,28 +337,19 @@ func (e *toolExecutor) cancel(ctx context.Context) error {
 	return nil
 }
 
-// snapshot joins eager and ordinary execution results into the graph's state.
+// snapshot copies the ledger into the existing graph call order.
 func (e *toolExecutor) snapshot(calls []types.ToolCallState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for i := range calls {
-		key := e.key(calls[i].Call.ID)
-		if started, ok := e.started[key]; ok {
-			calls[i].StartedAt = started
-		}
-		if result, ok := e.completed[key]; ok {
-			copy := *result
-			calls[i].Result = &copy
-			calls[i].Status = types.CallCompleted
-		} else if e.unknown[key] {
-			calls[i].Status = types.CallOutcomeUnknown
-		} else if _, ok := e.running[key]; ok {
-			calls[i].Status = types.CallRunning
-		} else if e.blocked[key] {
-			calls[i].Status = types.CallBlocked
-		} else {
+		entry := e.calls[e.key(calls[i].Call.ID)]
+		if entry == nil {
 			calls[i].Status = types.CallPending
+			continue
 		}
+		calls[i].Status = entry.state.Status
+		calls[i].StartedAt = entry.state.StartedAt
+		calls[i].Result = copyToolResult(entry.state.Result)
 	}
 }
 
@@ -471,7 +387,8 @@ func (e *toolExecutor) startEagerIfAllowed(ctx context.Context, call types.ToolC
 
 // GetToolCallID returns the identity assigned by the current tool execution.
 func GetToolCallID(ctx context.Context) string {
-	if id, ok := ctx.Value(toolCallIDKey{}).(string); ok && id != "" {
+	id, ok := ctx.Value(toolCallIDKey{}).(string)
+	if ok && id != "" {
 		return id
 	}
 	return compose.GetToolCallID(ctx)

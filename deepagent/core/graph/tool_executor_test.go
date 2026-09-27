@@ -5,6 +5,7 @@ import (
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
 	"errors"
+	"fmt"
 	"github.com/cloudwego/eino/components/tool"
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -247,5 +248,126 @@ func TestRun_PolicyAndExecutionReceiveModelArguments(t *testing.T) {
 	}
 	if answer.Content != `{"value":"hello"}` || tool.count.Load() != 1 || m.calls != 1 || checked != 1 {
 		t.Fatalf("answer=%+v executions=%d models=%d checked=%d", answer, tool.count.Load(), m.calls, checked)
+	}
+}
+
+func TestToolExecutor_RestoreUsesOneCallState(t *testing.T) {
+	for _, status := range []types.CallStatus{
+		types.CallPending, types.CallBlocked, types.CallCompleted,
+		types.CallRunning, types.CallOutcomeUnknown,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			ctx := context.Background()
+			counter := &countingTool{}
+			registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: counter}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			e := newToolExecutor("run", registry, 1, nil)
+			defer e.cancel(ctx)
+			call := types.ToolCall{ID: "call", Name: "counter", Arguments: "{}"}
+			state := types.ToolCallState{Call: call, Status: status, StartedAt: time.Unix(10, 0)}
+			if status == types.CallCompleted {
+				state.Result = &types.ToolResult{CallID: call.ID, Content: "saved"}
+			}
+			e.restore([]types.ToolCallState{state})
+			snapshot := []types.ToolCallState{{Call: call}}
+			e.snapshot(snapshot)
+			expectedStatus := status
+			if status == types.CallRunning {
+				expectedStatus = types.CallOutcomeUnknown
+			}
+			if snapshot[0].Status != expectedStatus || snapshot[0].StartedAt != state.StartedAt {
+				t.Fatalf("restored snapshot=%+v", snapshot[0])
+			}
+			result, err := e.execute(ctx, call, nil, nil)
+			switch status {
+			case types.CallRunning, types.CallOutcomeUnknown:
+				if err == nil || counter.count.Load() != 0 {
+					t.Fatalf("replayed unknown outcome: err=%v count=%d", err, counter.count.Load())
+				}
+			case types.CallCompleted:
+				if err != nil || result.Content != "saved" || counter.count.Load() != 0 {
+					t.Fatalf("completed call replayed: result=%v err=%v", result, err)
+				}
+				result.Content = "caller mutation"
+				e.snapshot(snapshot)
+				if snapshot[0].Result.Content != "saved" {
+					t.Fatal("caller mutated saved result")
+				}
+			default:
+				if err != nil || counter.count.Load() != 1 {
+					t.Fatalf("pending/blocked call not resumed: err=%v count=%d", err, counter.count.Load())
+				}
+			}
+		})
+	}
+}
+
+type countingStreamTool struct{ countingTool }
+
+func (t *countingStreamTool) StreamableRun(context.Context, string, ...einotool.Option) (*schema.StreamReader[string], error) {
+	t.count.Add(1)
+	return schema.StreamReaderFromArray([]string{"done"}), nil
+}
+
+func TestToolExecutor_AllInterfacesAuthorizeOnceBeforeInvocation(t *testing.T) {
+	for _, deny := range []bool{false, true} {
+		plain := &countingTool{}
+		stream := &countingStreamTool{}
+		enhanced := &imageTool{}
+		enhancedStream := &imageStreamTool{}
+		cases := []struct {
+			name  string
+			tool  einotool.BaseTool
+			calls func() int
+		}{
+			{"plain", plain, func() int { return int(plain.count.Load()) }},
+			{"stream", stream, func() int { return int(stream.count.Load()) }},
+			{"enhanced", enhanced, func() int { return enhanced.calls }},
+			{"enhanced_stream", enhancedStream, func() int { return enhancedStream.calls }},
+		}
+		for _, item := range cases {
+			t.Run(item.name+"/"+fmt.Sprint(deny), func(t *testing.T) {
+				ctx := context.Background()
+				registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: item.tool}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				info, err := item.tool.Info(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				decisions := 0
+				policy := tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+					decisions++
+					if item.calls() != 0 {
+						t.Fatal("tool executed before authorization")
+					}
+					action := tools.Allow
+					if deny {
+						action = tools.Deny
+					}
+					return tools.Decision{Action: action}, nil
+				})
+				e := newToolExecutor("run", registry, 1, policy)
+				defer e.cancel(ctx)
+				call := types.ToolCall{ID: "call", Name: info.Name, Arguments: "{}"}
+				// Repeated calls must reuse the outer execution record.
+				for range 2 {
+					result, err := e.execute(ctx, call, nil, nil)
+					if err != nil || result == nil || result.IsError != deny {
+						t.Fatalf("result=%v err=%v", result, err)
+					}
+				}
+				expected := 1
+				if deny {
+					expected = 0
+				}
+				if decisions != 1 || item.calls() != expected {
+					t.Fatalf("policy=%d tool=%d", decisions, item.calls())
+				}
+			})
+		}
 	}
 }

@@ -2,15 +2,15 @@ package graph
 
 import (
 	"context"
-	"eino-cli/deepagent/core/middleware"
+
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
 	"encoding/json"
 	"errors"
 	einotool "github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino/compose"
+
 	"github.com/cloudwego/eino/schema"
-	"strings"
+
 	"testing"
 	"time"
 )
@@ -72,34 +72,14 @@ func TestRun_EnhancedToolPreservesMultimodalHistoryAndState(t *testing.T) {
 	}
 }
 
-type enhancedMiddleware struct{ middleware.BaseMiddleware }
-
-func (*enhancedMiddleware) Name() string { return "enhanced" }
-func (*enhancedMiddleware) ToolCallMiddlewares() []compose.ToolMiddleware {
-	return []compose.ToolMiddleware{{EnhancedInvokable: func(next compose.EnhancedInvokableToolEndpoint) compose.EnhancedInvokableToolEndpoint {
-		return func(ctx context.Context, input *compose.ToolInput) (*compose.EnhancedInvokableToolOutput, error) {
-			copy := *input
-			copy.Arguments = `{"modified":true}`
-			if _, err := next(ctx, &copy); err != nil {
-				return nil, err
-			}
-			output, err := next(ctx, &copy)
-			if err != nil {
-				return nil, err
-			}
-			output.Result.Parts[0].Text = "wrapped:" + output.Result.Parts[0].Text
-			return output, nil
-		}
-	}}}
-}
-func TestRun_EnhancedMiddlewareSharesPolicyAndExecutionLedger(t *testing.T) {
+func TestRun_EnhancedToolPolicyAndReturnDirect(t *testing.T) {
 	for _, deny := range []bool{false, true} {
 		tool := &imageTool{}
 		m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "image-call", Function: schema.FunctionCall{Name: "image", Arguments: "{}"}}})}}}
 		policies := 0
-		a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}}, Middlewares: []middleware.Middleware{&enhancedMiddleware{}}, Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}}, Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
 			policies++
-			if call.Arguments != `{"modified":true}` {
+			if call.Arguments != `{}` {
 				t.Errorf("policy saw original arguments: %s", call.Arguments)
 			}
 			if deny {
@@ -114,11 +94,11 @@ func TestRun_EnhancedMiddlewareSharesPolicyAndExecutionLedger(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, calls, parts := "wrapped:image description", 1, 2
+		want, calls, parts := "image description", 1, 2
 		if deny {
-			want, calls, parts = "wrapped:denied", 0, 1
+			want, calls, parts = "denied", 0, 0
 		}
-		if tool.calls != calls || m.calls != 1 || policies != 1 || message.Content != want || len(message.UserInputMultiContent) != parts || message.UserInputMultiContent[0].Text != want {
+		if tool.calls != calls || m.calls != 1 || policies != 1 || message.Content != want || len(message.UserInputMultiContent) != parts {
 			t.Fatalf("tool=%d model=%d policy=%d message=%+v", tool.calls, m.calls, policies, message)
 		}
 		history := a.conversation.History(context.Background())
@@ -174,46 +154,17 @@ func TestRun_EnhancedStreamPreservesTextOrderAndImage(t *testing.T) {
 	}
 }
 
-type enhancedStreamMiddleware struct {
-	middleware.BaseMiddleware
-	repeat bool
-}
-
-func (*enhancedStreamMiddleware) Name() string { return "enhanced_stream" }
-func (m *enhancedStreamMiddleware) ToolCallMiddlewares() []compose.ToolMiddleware {
-	return []compose.ToolMiddleware{{EnhancedStreamable: func(next compose.EnhancedStreamableToolEndpoint) compose.EnhancedStreamableToolEndpoint {
-		return func(ctx context.Context, input *compose.ToolInput) (*compose.EnhancedStreamableToolOutput, error) {
-			copy := *input
-			copy.Arguments = `{"modified":true}`
-			out, err := next(ctx, &copy)
-			if err != nil {
-				return nil, err
-			}
-			if m.repeat {
-				return next(ctx, &copy)
-			}
-			return &compose.EnhancedStreamableToolOutput{Result: schema.StreamReaderWithConvert(out.Result, func(chunk *schema.ToolResult) (*schema.ToolResult, error) {
-				copy := *chunk
-				copy.Parts = append([]schema.ToolOutputPart(nil), chunk.Parts...)
-				for i := range copy.Parts {
-					copy.Parts[i].Text = strings.ToUpper(copy.Parts[i].Text)
-				}
-				return &copy, nil
-			})}, nil
-		}
-	}}}
-}
 func enhancedStreamModel() *sequenceModel {
 	return &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "image-call", Function: schema.FunctionCall{Name: "image_stream", Arguments: "{}"}}})}}}
 }
-func TestRun_EnhancedStreamMiddlewarePolicyAndDeduplication(t *testing.T) {
-	for _, scenario := range []string{"allow", "deny", "repeat"} {
+func TestRun_EnhancedStreamPolicyAndReturnDirect(t *testing.T) {
+	for _, scenario := range []string{"allow", "deny"} {
 		t.Run(scenario, func(t *testing.T) {
 			tool := &imageStreamTool{}
 			m := enhancedStreamModel()
 			var chunks string
-			a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}}, Middlewares: []middleware.Middleware{&enhancedStreamMiddleware{repeat: scenario == "repeat"}}, Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
-				if call.Arguments != `{"modified":true}` {
+			a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}}, Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
+				if call.Arguments != `{}` {
 					t.Errorf("wrong policy arguments: %s", call.Arguments)
 				}
 				if scenario == "deny" {
@@ -230,23 +181,19 @@ func TestRun_EnhancedStreamMiddlewarePolicyAndDeduplication(t *testing.T) {
 				t.Fatal(err)
 			}
 			output, err := a.Run(context.Background(), []*schema.Message{schema.UserMessage("show")})
-			if scenario == "repeat" {
-				if err == nil || !strings.Contains(err.Error(), "more than once") || tool.calls != 1 {
-					t.Fatalf("err=%v calls=%d", err, tool.calls)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, calls := "FIRST SECOND", 1
+			want, calls := "first second", 1
+			wantChunks := want
 			if scenario == "deny" {
-				want, calls = "DENIED", 0
+				want, calls = "denied", 0
+				wantChunks = ""
 			}
-			if chunks != want || output.Content != want || tool.calls != calls || m.calls != 1 {
+			if chunks != wantChunks || output.Content != want || tool.calls != calls || m.calls != 1 {
 				t.Fatalf("chunks=%s output=%+v tool=%d model=%d", chunks, output, tool.calls, m.calls)
 			}
-			if scenario == "allow" && (tool.arguments != `{"modified":true}` || len(output.UserInputMultiContent) != 2) {
+			if scenario == "allow" && (tool.arguments != `{}` || len(output.UserInputMultiContent) != 2) {
 				t.Fatalf("arguments=%s output=%+v", tool.arguments, output)
 			}
 		})
