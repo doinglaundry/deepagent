@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -227,7 +228,19 @@ func TestChildAgent_ConcurrencyLimitQueuesEveryTask(t *testing.T) {
 		err     error
 	}, 1)
 	go func() {
-		results, err := executor.executeBatch(ctx, calls, nil)
+		err := executor.executeBatch(ctx, calls, nil)
+		states := make([]types.ToolCallState, len(calls))
+		for i, call := range calls {
+			states[i].Call = call
+		}
+		executor.snapshot(states)
+		sort.SliceStable(states, func(i, j int) bool { return states[i].Call.Index < states[j].Call.Index })
+		results := make([]types.ToolResult, 0, len(states))
+		for _, state := range states {
+			if state.Result != nil {
+				results = append(results, *state.Result)
+			}
+		}
 		done <- struct {
 			results []types.ToolResult
 			err     error

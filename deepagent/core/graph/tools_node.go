@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
@@ -25,7 +26,7 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 	for i := range s.Calls {
 		calls[i] = s.Calls[i].Call
 	}
-	results, err := a.executor.executeBatch(ctx, calls, func(ctx context.Context, call types.ToolCall, chunk string) error {
+	err := a.executor.executeBatch(ctx, calls, func(ctx context.Context, call types.ToolCall, chunk string) error {
 		return a.event(ctx, s, "tool_call_output_chunk", call.ID, types.ToolOutputChunk{Call: call, Content: chunk})
 	})
 	a.executor.snapshot(s.Calls)
@@ -48,17 +49,10 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 	if err != nil {
 		return nil, err
 	}
-	byID := make(map[string]types.ToolResult, len(results))
-	for _, result := range results {
-		byID[result.CallID] = result
-	}
-	for i := range s.Calls {
-		result := byID[s.Calls[i].Call.ID]
-		s.Calls[i].Result = &result
-		s.Calls[i].Status = types.CallCompleted
-	}
-	for i, result := range results {
-		call := s.Calls[i].Call
+	sort.SliceStable(s.Calls, func(i, j int) bool { return s.Calls[i].Call.Index < s.Calls[j].Call.Index })
+	for _, callState := range s.Calls {
+		call := callState.Call
+		result := callState.Result
 		if call.Name == tools.ToolUpdatePlan && !result.IsError {
 			var update tools.PlanUpdate
 			err := json.Unmarshal([]byte(result.Content), &update)
@@ -78,13 +72,6 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 		err := a.conversation.AddHistory(ctx, s.RunID, message)
 		if err != nil {
 			return nil, err
-		}
-		var callState types.ToolCallState
-		for _, call := range s.Calls {
-			if call.Call.ID == result.CallID {
-				callState = call
-				break
-			}
 		}
 		err = a.event(ctx, s, "tool_end", result.CallID, callState)
 		if err != nil {

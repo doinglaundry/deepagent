@@ -13,14 +13,32 @@ import (
 )
 
 // Every tool passes policy and checkpoint fencing before interface dispatch.
-func (e *toolExecutor) invoke(ctx context.Context, call types.ToolCall, emit types.ToolChunkSink) (*types.ToolResult, error) {
+func (e *toolExecutor) invokeTool(ctx context.Context, state types.ToolCallState, emit types.ToolChunkSink) (result *types.ToolResult, err error) {
+	call := state.Call
+	// Tool code may panic after producing a side effect.
+	// Return a system error so execute can finalize the shared ledger and waiters
+	// and cleanup cannot remain blocked on this execution forever.
+	defer func() {
+		recovered := recover()
+		if recovered != nil {
+			result = nil
+			err = fmt.Errorf("tool %s panicked: %v", call.Name, recovered)
+		}
+	}()
+	if e.onToolStart != nil {
+		err = e.onToolStart(ctx, state)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	ctx = context.WithValue(ctx, toolCallIDKey{}, call.ID)
 	ctx = context.WithValue(ctx, toolExecutorKey{}, e)
 	descriptor, early, err := e.authorize(ctx, call)
 	if early != nil || err != nil {
 		return early, err
 	}
-	result := &types.ToolResult{CallID: call.ID, ReturnDirect: descriptor.ReturnDirect}
+	result = &types.ToolResult{CallID: call.ID, ReturnDirect: descriptor.ReturnDirect}
 	switch t := descriptor.Tool.(type) {
 	case einotool.EnhancedStreamableTool:
 		stream, err := t.StreamableRun(ctx, &schema.ToolArgument{Text: call.Arguments})

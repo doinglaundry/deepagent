@@ -92,7 +92,7 @@ func (e *toolExecutor) execute(ctx context.Context, call types.ToolCall, emit ty
 	e.toolExecutionsByKey[executionKey] = toolExecutionRecord
 	e.mu.Unlock()
 
-	result, err := e.runTool(runCtx, state, emit)
+	result, err := e.invokeTool(runCtx, state, emit)
 	cancel()
 	e.mu.Lock()
 	toolExecutionRecord.state.Result = copyToolResult(result)
@@ -117,28 +117,6 @@ func copyToolResult(result *types.ToolResult) *types.ToolResult {
 	}
 	copy := *result
 	return &copy
-}
-
-// runTool reports start and contains panics so the execution record always completes.
-func (e *toolExecutor) runTool(ctx context.Context, state types.ToolCallState, emit types.ToolChunkSink) (result *types.ToolResult, err error) {
-	call := state.Call
-	// Tool code may panic after producing a side effect.
-	// Return a system error, then finalize the shared ledger below so waiters
-	// and cleanup cannot remain blocked on this execution forever.
-	defer func() {
-		recovered := recover()
-		if recovered != nil {
-			result = nil
-			err = fmt.Errorf("tool %s panicked: %v", call.Name, recovered)
-		}
-	}()
-	if e.onToolStart != nil {
-		err = e.onToolStart(ctx, state)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return e.invoke(ctx, call, emit)
 }
 
 func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall) (tools.ToolDescriptor, *types.ToolResult, error) {
@@ -241,24 +219,20 @@ func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall) (tool
 	}
 	return toolDescriptor, nil, nil
 }
-func (e *toolExecutor) executeBatch(ctx context.Context, toolCalls []types.ToolCall, emit types.ToolChunkSink) ([]types.ToolResult, error) {
+func (e *toolExecutor) executeBatch(ctx context.Context, toolCalls []types.ToolCall, emit types.ToolChunkSink) error {
 	ordered := append([]types.ToolCall(nil), toolCalls...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Index < ordered[j].Index })
-	results := make([]types.ToolResult, len(ordered))
 	errs := make([]error, len(ordered))
 	execute := func(i int) {
-		result, err := e.execute(ctx, ordered[i], emit)
+		_, err := e.execute(ctx, ordered[i], emit)
 		errs[i] = err
-		if result != nil {
-			results[i] = *result
-		}
 	}
 	for start := 0; start < len(ordered); {
 		toolDescriptor, _ := e.tools.Lookup(ordered[start].Name)
 		if !toolDescriptor.ParallelSafe || toolDescriptor.RequiresApproval {
 			execute(start)
 			if errs[start] != nil {
-				return nil, errs[start]
+				return errs[start]
 			}
 			start++
 			continue
@@ -287,16 +261,16 @@ func (e *toolExecutor) executeBatch(ctx context.Context, toolCalls []types.ToolC
 			_, rerun := compose.IsInterruptRerunError(errs[i])
 			_, interrupted := compose.ExtractInterruptInfo(errs[i])
 			if !rerun && !interrupted {
-				return nil, errs[i]
+				return errs[i]
 			}
 			interrupts = append(interrupts, errs[i])
 		}
 		if len(interrupts) > 0 {
-			return nil, compose.CompositeInterrupt(ctx, nil, nil, interrupts...)
+			return compose.CompositeInterrupt(ctx, nil, nil, interrupts...)
 		}
 		start = end
 	}
-	return results, nil
+	return nil
 }
 func (e *toolExecutor) restore(toolCalls []types.ToolCallState) {
 	e.mu.Lock()
@@ -354,17 +328,6 @@ func (e *toolExecutor) snapshot(toolCalls []types.ToolCallState) {
 	}
 }
 
-func (e *toolExecutor) start(ctx context.Context, call types.ToolCall, emit types.ToolChunkSink) {
-	e.mu.Lock()
-	if e.isClosed {
-		e.mu.Unlock()
-		return
-	}
-	e.eagerToolWaitGroup.Add(1)
-	e.mu.Unlock()
-	go func() { defer e.eagerToolWaitGroup.Done(); _, _ = e.execute(ctx, call, emit) }()
-}
-
 func (e *toolExecutor) startEagerIfAllowed(ctx context.Context, call types.ToolCall, emit types.ToolChunkSink) (bool, error) {
 	toolDescriptor, ok := e.tools.Lookup(call.Name)
 	if !ok || !toolDescriptor.ParallelSafe || toolDescriptor.RequiresApproval {
@@ -382,7 +345,17 @@ func (e *toolExecutor) startEagerIfAllowed(ctx context.Context, call types.ToolC
 		e.approvedEagerArgumentsByKey[e.executionKey(call.ID)] = call.Arguments
 		e.mu.Unlock()
 	}
-	e.start(ctx, call, emit)
+	e.mu.Lock()
+	if e.isClosed {
+		e.mu.Unlock()
+		return false, nil
+	}
+	e.eagerToolWaitGroup.Add(1)
+	e.mu.Unlock()
+	go func() {
+		defer e.eagerToolWaitGroup.Done()
+		_, _ = e.execute(ctx, call, emit)
+	}()
 	return true, nil
 }
 

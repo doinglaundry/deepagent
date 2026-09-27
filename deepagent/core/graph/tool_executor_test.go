@@ -122,10 +122,13 @@ func TestTools_ParallelResultsPersistInCallOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := newToolExecutor("run", r, 2, nil)
-	results, err := e.executeBatch(ctx, []types.ToolCall{{ID: "b", Index: 1, Name: "counter", Arguments: "second"}, {ID: "a", Index: 0, Name: "counter", Arguments: "first"}}, nil)
+	err = e.executeBatch(ctx, []types.ToolCall{{ID: "b", Index: 1, Name: "counter", Arguments: "second"}, {ID: "a", Index: 0, Name: "counter", Arguments: "first"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	states := []types.ToolCallState{{Call: types.ToolCall{ID: "a"}}, {Call: types.ToolCall{ID: "b"}}}
+	e.snapshot(states)
+	results := []*types.ToolResult{states[0].Result, states[1].Result}
 	if len(results) != 2 || results[0].Content != "first" || results[1].Content != "second" {
 		t.Fatalf("out of order: %v", results)
 	}
@@ -161,13 +164,16 @@ func TestToolExecutorExposesAssignedCallIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor := newToolExecutor("run", toolSet, 2, nil)
-	results, err := executor.executeBatch(ctx, []types.ToolCall{
+	err = executor.executeBatch(ctx, []types.ToolCall{
 		{ID: "first", Index: 0, Name: "counter", Arguments: "{}"},
 		{ID: "second", Index: 1, Name: "counter", Arguments: "{}"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	states := []types.ToolCallState{{Call: types.ToolCall{ID: "first"}}, {Call: types.ToolCall{ID: "second"}}}
+	executor.snapshot(states)
+	results := []*types.ToolResult{states[0].Result, states[1].Result}
 	if len(results) != 2 || results[0].Content != "first" || results[1].Content != "second" {
 		t.Fatalf("incorrect tool context identities: %+v", results)
 	}
