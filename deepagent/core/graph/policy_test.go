@@ -11,11 +11,11 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestRun_ReadOnlyRegistryCannotExecuteUnclassifiedTool(t *testing.T) {
+func TestRun_ReadOnlyToolSetCannotExecuteUnclassifiedTool(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{}
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}, {schema.AssistantMessage("unavailable", nil)}}}
-	a, err := New(ctx, WithConfig(&Config{Model: m, ReadOnlyToolsOnly: true, ToolDescriptors: []tools.Descriptor{{Tool: tool}}}))
+	a, err := New(ctx, WithConfig(&Config{Model: m, ReadOnlyToolsOnly: true, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +38,8 @@ func TestPolicy_DenyPreventsExecutionAndApproval(t *testing.T) {
 		m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
 		a, err := New(context.Background(), WithConfig(&Config{
 			Model:           m,
-			ToolDescriptors: []tools.Descriptor{{Tool: counter, RequiresApproval: requiresApproval, ReturnDirect: true}},
-			Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+			ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: requiresApproval, ReturnDirect: true}},
+			Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
 				return tools.Decision{Action: tools.Deny, Reason: "blocked"}, nil
 			}),
 		}))

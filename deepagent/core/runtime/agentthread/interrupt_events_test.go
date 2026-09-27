@@ -14,11 +14,9 @@ import (
 func TestThreadInterruptEventContracts(t *testing.T) {
 	approval := &tools.ApprovalInfo{}
 	question := &tools.FollowUpInfo{Question: "Which format?"}
-	edit := &tools.ReviewEditInfo{ToolName: "edit_file"}
 	contexts := []*compose.InterruptCtx{
 		{ID: "approve", Info: approval},
 		{ID: "question", Info: question},
-		{ID: "edit", Info: edit},
 		{ID: "custom", Info: "custom data"},
 	}
 	for _, tc := range []struct {
@@ -27,8 +25,8 @@ func TestThreadInterruptEventContracts(t *testing.T) {
 		kind     EventType
 	}{
 		{"batch", contexts, EventInterruptBatchRequested},
-		{"edit", contexts[2:3], EventApproveRequested},
-		{"custom", contexts[3:], EventInterrupted},
+		{"approve", contexts[:1], EventApproveRequested},
+		{"custom", contexts[2:], EventInterrupted},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			events := make(chan Event, 8)
@@ -43,19 +41,19 @@ func TestThreadInterruptEventContracts(t *testing.T) {
 			}
 			switch p := event.Payload.(type) {
 			case InterruptBatchPayload:
-				if p.CheckpointID != "new" || len(p.Items) != 4 {
+				if p.CheckpointID != "new" || len(p.Items) != 3 {
 					t.Fatalf("batch=%+v", p)
 				}
-				if p.Items[0].ApprovalInfo != approval || p.Items[1].FollowUpInfo != question || p.Items[2].ReviewEditInfo != edit || p.Items[3].Info != "custom data" {
+				if p.Items[0].ApprovalInfo != approval || p.Items[1].FollowUpInfo != question || p.Items[2].Info != "custom data" {
 					t.Fatalf("lost typed data: %+v", p.Items)
 				}
-				for i, kind := range []InterruptItemKind{InterruptItemApprove, InterruptItemFollowUp, InterruptItemReviewEdit, InterruptItemCustom} {
+				for i, kind := range []InterruptItemKind{InterruptItemApprove, InterruptItemFollowUp, InterruptItemCustom} {
 					if p.Items[i].Kind != kind || p.Items[i].InterruptID != contexts[i].ID || p.Items[i].InfoType == "" {
 						t.Fatalf("item=%+v", p.Items[i])
 					}
 				}
 			case ApprovalRequiredPayload:
-				if p.ReviewEditInfo != edit || p.InterruptID != "edit" || p.CheckpointID != "new" {
+				if p.ApprovalInfo != approval || p.InterruptID != "approve" || p.CheckpointID != "new" {
 					t.Fatalf("edit=%+v", p)
 				}
 			case InterruptedPayload:

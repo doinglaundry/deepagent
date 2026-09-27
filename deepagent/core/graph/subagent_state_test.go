@@ -41,7 +41,7 @@ func TestCheckpoint_ChildConversationRestoresProviderUsage(t *testing.T) {
 			t.Errorf("lost provider baseline: %+v", usage)
 		}
 	}}
-	cfg := Config{Depth: 1, RunID: "child-run", Model: m, Conversation: initial, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
+	cfg := Config{Depth: 1, RunID: "child-run", Model: m, Conversation: initial, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)

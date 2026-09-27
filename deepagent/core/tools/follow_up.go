@@ -16,8 +16,6 @@ type ApprovalResult struct {
 	DisapproveReason *string
 }
 
-type FollowUpResult struct{ UserAnswer string }
-
 func GetFollowUpTool() tool.BaseTool { return &followUpTool{} }
 
 type followUpTool struct{}

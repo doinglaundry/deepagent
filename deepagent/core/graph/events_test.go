@@ -23,7 +23,7 @@ func TestRun_ToolPanicDoesNotHangCleanup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: &panicTool{}}}}))
+	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: &panicTool{}}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestRun_ModelAndToolStreamsPreserveOrder(t *testing.T) {
 		{schema.AssistantMessage("calling", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "stream_tool", Arguments: "{}"}}})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: &eventStreamTool{}}}, Emit: func(_ context.Context, e types.RuntimeEvent) error { events = append(events, e); return nil }}))
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: &eventStreamTool{}}}, Emit: func(_ context.Context, e types.RuntimeEvent) error { events = append(events, e); return nil }}))
 	if err != nil {
 		t.Fatal(err)
 	}

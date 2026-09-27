@@ -47,7 +47,7 @@ func TestRun_TranscriptObservesCanonicalEvents(t *testing.T) {
 			{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 			{schema.AssistantMessage("done", nil)},
 		}}
-		a, err := New(context.Background(), WithConfig(&Config{Model: m, ThreadID: "thread", ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}}}, Middlewares: []middleware.Middleware{template}, Emit: func(_ context.Context, e types.RuntimeEvent) error { delivered = append(delivered, e); return nil }}))
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, ThreadID: "thread", ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}}}, Middlewares: []middleware.Middleware{template}, Emit: func(_ context.Context, e types.RuntimeEvent) error { delivered = append(delivered, e); return nil }}))
 		if err != nil {
 			t.Fatal(err)
 		}

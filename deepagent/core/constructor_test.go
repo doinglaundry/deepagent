@@ -143,7 +143,7 @@ func (*explicitReadOnlyTool) Info(context.Context) (*schema.ToolInfo, error) {
 func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T) {
 	ctx := context.Background()
 	config := &Config{
-		ToolDescriptors:   []deeptools.Descriptor{{Tool: &fakeToolCounter{}}, {Tool: &explicitReadOnlyTool{}, ReadOnly: true}},
+		ToolDescriptors:   []deeptools.ToolDescriptor{{Tool: &fakeToolCounter{}}, {Tool: &explicitReadOnlyTool{}, ReadOnly: true}},
 		ReadOnlyToolsOnly: true,
 	}
 	m := &publicModel{}
@@ -181,7 +181,7 @@ func TestToolMaskExcludesToolFromModel(t *testing.T) {
 	m := &publicModel{}
 	a, err := New(context.Background(), WithConfig(&Config{
 		Model:           m,
-		ToolDescriptors: []deeptools.Descriptor{{Tool: &fakeToolCounter{}}},
+		ToolDescriptors: []deeptools.ToolDescriptor{{Tool: &fakeToolCounter{}}},
 		ToolMask:        func(_ context.Context, info *schema.ToolInfo) bool { return info.Name != "counter" },
 	}))
 	if err != nil {
@@ -198,8 +198,8 @@ func TestToolPolicyDeniesWithoutRunningTool(t *testing.T) {
 	m := &publicModel{call: true}
 	a, err := New(context.Background(), WithConfig(&Config{
 		Model:           m,
-		ToolDescriptors: []deeptools.Descriptor{{Tool: counter}},
-		Policy: deeptools.PolicyFunc(func(context.Context, types.ToolCall, deeptools.Descriptor) (deeptools.Decision, error) {
+		ToolDescriptors: []deeptools.ToolDescriptor{{Tool: counter}},
+		Policy: deeptools.PolicyFunc(func(context.Context, types.ToolCall, deeptools.ToolDescriptor) (deeptools.Decision, error) {
 			return deeptools.Decision{Action: deeptools.Deny, Reason: "blocked"}, nil
 		}),
 	}))

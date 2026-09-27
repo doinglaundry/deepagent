@@ -54,7 +54,7 @@ func TestThreadAdapter_FollowUpIncludesQuestion(t *testing.T) {
 }
 
 func TestThreadAdapter_ApprovalPreservesCallIdentity(t *testing.T) {
-	payload := convertApprovalRequiredPayload(agentthread.ApprovalRequiredPayload{InterruptID: "interrupt", CheckpointID: "checkpoint", ApprovalInfo: &tools.ApprovalInfo{CallID: "call", ToolName: "execute", ArgumentsInJSON: `{"command":"pwd"}`}})
+	payload := convertApprovalRequiredPayload(agentthread.ApprovalRequiredPayload{InterruptID: "interrupt", CheckpointID: "checkpoint", ApprovalInfo: &tools.ApprovalInfo{CallID: "call", ToolName: "execute", Arguments: `{"command":"pwd"}`}})
 	if payload.ToolCallID != "call" || payload.InterruptID != "interrupt" || payload.CheckpointID != "checkpoint" || payload.ToolName != "execute" || payload.ArgumentsJSON == nil {
 		t.Fatalf("approval identity lost: %+v", payload)
 	}

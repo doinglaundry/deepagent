@@ -90,7 +90,7 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			}
 			history := &historyMemory{}
 			m := &pendingQuestionModel{started: make(chan struct{}), release: make(chan struct{})}
-			cfg := &RunConfig{Agent: graph.Config{Model: m, CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: tools.GetFollowUpTool()}}}}
+			cfg := &RunConfig{Agent: graph.Config{Model: m, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tools.GetFollowUpTool()}}}}
 			events := make(chan Event, 64)
 			first := New("thread", cfg, events, ThreadOptions{HistoryStore: history})
 			if err := first.Init(ctx); err != nil {

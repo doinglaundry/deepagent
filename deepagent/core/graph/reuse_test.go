@@ -58,7 +58,7 @@ func TestRun_ConcurrentRunsDoNotShareState(t *testing.T) {
 	guard.HardLimit = 2
 	m := &overlappingRunModel{ready: make(chan struct{}, 2), release: make(chan struct{})}
 	tool := &countingTool{}
-	cfg := &Config{Model: m, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.Descriptor{{Tool: tool}}}
+	cfg := &Config{Model: m, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}}
 	agents := make([]*DeepAgent, 2)
 	for i := range agents {
 		var err error
@@ -109,7 +109,7 @@ func TestRun_ReusingAgentRecreatesMutableMiddleware(t *testing.T) {
 			[]*schema.Message{schema.AssistantMessage("stopping loop", []schema.ToolCall{{ID: "second", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})})
 	}
 	tool := &countingTool{}
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.Descriptor{{Tool: tool}}}))
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestRun_ReusingAgentRebindsCommandTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer filesystem.Close(context.Background())
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, Filesystem: filesystem, FilesystemConfig: &FilesystemConfig{DisableApplyPatch: true}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, Filesystem: filesystem, FilesystemConfig: &FilesystemConfig{DisableApplyPatch: true}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
 		return tools.Decision{Action: tools.Allow}, nil
 	})}))
 	if err != nil {

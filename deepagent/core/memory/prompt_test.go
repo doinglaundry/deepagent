@@ -53,7 +53,7 @@ func TestMemoryPrompt_ReadsCurrentScopeBeforeEachModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &promptModel{}
-	agent, err := graph.New(ctx, graph.WithConfig(&graph.Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool}}, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
+	agent, err := graph.New(ctx, graph.WithConfig(&graph.Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
 	if err != nil {
 		t.Fatal(err)
 	}

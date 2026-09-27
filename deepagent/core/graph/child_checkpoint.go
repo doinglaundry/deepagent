@@ -41,22 +41,22 @@ type toolExecutorKey struct{}
 func (e *toolExecutor) childCheckpoint(callID string) *childCheckpointStore {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.childCheckpoints == nil {
-		e.childCheckpoints = map[string]*childCheckpointStore{}
+	if e.childCheckpointStoresByCallID == nil {
+		e.childCheckpointStoresByCallID = map[string]*childCheckpointStore{}
 	}
-	if e.childCheckpoints[callID] == nil {
-		e.childCheckpoints[callID] = &childCheckpointStore{}
+	if e.childCheckpointStoresByCallID[callID] == nil {
+		e.childCheckpointStoresByCallID[callID] = &childCheckpointStore{}
 	}
-	return e.childCheckpoints[callID]
+	return e.childCheckpointStoresByCallID[callID]
 }
 
 func (e *toolExecutor) restoreChildCheckpoints(state *types.RunState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.childCheckpoints = map[string]*childCheckpointStore{}
+	e.childCheckpointStoresByCallID = map[string]*childCheckpointStore{}
 	for key, raw := range state.Extensions {
 		if id, ok := strings.CutPrefix(key, "child_checkpoint/"); ok {
-			e.childCheckpoints[id] = &childCheckpointStore{data: append([]byte(nil), raw...)}
+			e.childCheckpointStoresByCallID[id] = &childCheckpointStore{data: append([]byte(nil), raw...)}
 		}
 	}
 }
@@ -66,7 +66,7 @@ func (e *toolExecutor) restoreChildCheckpoints(state *types.RunState) {
 func (e *toolExecutor) snapshotChildCheckpoints(state *types.RunState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for id, checkpoint := range e.childCheckpoints {
+	for id, checkpoint := range e.childCheckpointStoresByCallID {
 		checkpoint.mu.Lock()
 		raw := append([]byte(nil), checkpoint.data...)
 		checkpoint.mu.Unlock()

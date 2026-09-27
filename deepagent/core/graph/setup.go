@@ -31,17 +31,17 @@ func (a *DeepAgent) configureRun(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	registry, err := a.buildToolRegistry(ctx, descriptors)
+	toolSet, err := a.buildToolSet(ctx, descriptors)
 	if err != nil {
 		return err
 	}
-	chatModel, err := a.bindModelTools(ctx, registry)
+	chatModel, err := a.bindModelTools(ctx, toolSet)
 	if err != nil {
 		return err
 	}
 
 	a.middlewares = middlewares
-	a.registry = registry
+	a.tools = toolSet
 	a.model = chatModel
 	a.policy = a.cfg.Policy
 	a.eager = a.canExecuteToolsEagerly(middlewares)
@@ -104,8 +104,8 @@ func (a *DeepAgent) newRunMiddlewares(ctx context.Context, childConfig *Config) 
 
 // collectToolDescriptors keeps the child configuration free of tools created
 // from the parent's mutable middleware instances.
-func (a *DeepAgent) collectToolDescriptors(ctx context.Context, middlewares []middleware.Middleware, childConfig Config) ([]tools.Descriptor, error) {
-	descriptors := append([]tools.Descriptor(nil), childConfig.ToolDescriptors...)
+func (a *DeepAgent) collectToolDescriptors(ctx context.Context, middlewares []middleware.Middleware, childConfig Config) ([]tools.ToolDescriptor, error) {
+	descriptors := append([]tools.ToolDescriptor(nil), childConfig.ToolDescriptors...)
 	for _, mw := range middlewares {
 		extra, err := mw.Tools(ctx)
 		if err != nil {
@@ -121,7 +121,7 @@ func (a *DeepAgent) collectToolDescriptors(ctx context.Context, middlewares []mi
 			names = append(names, spec.Name)
 		}
 		task := tools.NewStreamingTaskTool(NewChildRunner(childConfig), names...)
-		descriptors = append(descriptors, tools.Descriptor{
+		descriptors = append(descriptors, tools.ToolDescriptor{
 			Tool: task, ParallelSafe: true, ReadOnly: childConfig.ReadOnlyToolsOnly,
 		})
 	}
@@ -129,17 +129,17 @@ func (a *DeepAgent) collectToolDescriptors(ctx context.Context, middlewares []mi
 	return descriptors, nil
 }
 
-func (a *DeepAgent) buildToolRegistry(ctx context.Context, descriptors []tools.Descriptor) (*tools.Registry, error) {
-	registry, err := tools.NewRegistry(ctx, descriptors)
+func (a *DeepAgent) buildToolSet(ctx context.Context, descriptors []tools.ToolDescriptor) (*tools.ToolSet, error) {
+	toolSet, err := tools.NewToolSet(ctx, descriptors)
 	if err != nil {
 		return nil, err
 	}
 
-	return registry.Filter(ctx, a.cfg.ReadOnlyToolsOnly, a.cfg.ToolMask)
+	return toolSet.Filter(ctx, a.cfg.ReadOnlyToolsOnly, a.cfg.ToolMask)
 }
 
-func (a *DeepAgent) bindModelTools(ctx context.Context, registry *tools.Registry) (model.ToolCallingChatModel, error) {
-	infos, err := registry.ModelTools(ctx)
+func (a *DeepAgent) bindModelTools(ctx context.Context, toolSet *tools.ToolSet) (model.ToolCallingChatModel, error) {
+	infos, err := toolSet.ModelTools(ctx)
 	if err != nil {
 		return nil, err
 	}

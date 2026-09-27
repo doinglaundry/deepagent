@@ -147,10 +147,9 @@ type ContextCompactStartedPayload = conversation.ContextCompactStartedPayload
 type InterruptItemKind string
 
 const (
-	InterruptItemApprove    InterruptItemKind = "approve"
-	InterruptItemFollowUp   InterruptItemKind = "follow_up"
-	InterruptItemReviewEdit InterruptItemKind = "review_edit"
-	InterruptItemCustom     InterruptItemKind = "custom"
+	InterruptItemApprove  InterruptItemKind = "approve"
+	InterruptItemFollowUp InterruptItemKind = "follow_up"
+	InterruptItemCustom   InterruptItemKind = "custom"
 )
 
 type InterruptedPayload struct {
@@ -173,10 +172,9 @@ type FollowUpRequestedPayload struct {
 }
 
 type ApprovalRequiredPayload struct {
-	InterruptID    string
-	CheckpointID   string
-	ApprovalInfo   *deeptools.ApprovalInfo
-	ReviewEditInfo *deeptools.ReviewEditInfo
+	InterruptID  string
+	CheckpointID string
+	ApprovalInfo *deeptools.ApprovalInfo
 }
 
 type InterruptBatchItem struct {
@@ -188,9 +186,8 @@ type InterruptBatchItem struct {
 	// 需要自行对具体类型调用 schema.Register[*YourInfo]() / schema.Register[*YourState]()。
 	Info any
 
-	ApprovalInfo   *deeptools.ApprovalInfo
-	FollowUpInfo   *deeptools.FollowUpInfo
-	ReviewEditInfo *deeptools.ReviewEditInfo
+	ApprovalInfo *deeptools.ApprovalInfo
+	FollowUpInfo *deeptools.FollowUpInfo
 }
 
 type InterruptBatchPayload struct {

@@ -22,7 +22,7 @@ func TestCheckpoint_PendingApprovalSurvivesPolicyChange(t *testing.T) {
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	cfg := Config{Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.Descriptor{{Tool: tool, RequiresApproval: true}}}
+	cfg := Config{Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestCheckpoint_PendingWriteFailureCannotLoseApprovalObligation(t *testing.T
 	tool := &countingTool{}
 	store := &pendingWriteFailure{failure: errors.New("pending metadata write failed")}
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: tool, RequiresApproval: true}}}
+	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestCheckpoint_CompletedApprovalRemovedBeforeNextInterruptSnapshot(t *testi
 					})},
 					{schema.AssistantMessage("done", nil)},
 				}}
-				cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: counter, RequiresApproval: true}}}
+				cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 				a, err := New(ctx, WithConfig(&cfg))
 				if err != nil {
 					t.Fatal(err)
@@ -255,7 +255,7 @@ func TestRun_FollowUpArgumentAliasesPreserveQuestionAndResume(t *testing.T) {
 				}
 				return nil
 			}
-			cfg := Config{Emit: emit, Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.Descriptor{{Tool: tools.GetFollowUpTool()}}}
+			cfg := Config{Emit: emit, Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tools.GetFollowUpTool()}}}
 			a, err := New(ctx, WithConfig(&cfg))
 			if err != nil {
 				t.Fatal(err)

@@ -106,7 +106,7 @@ func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := &sandboxGraphModel{readOnly: readOnly}
-			agent, err := graph.New(context.Background(), graph.WithConfig(&graph.Config{ThreadID: "thread", Model: m, Filesystem: files, FilesystemConfig: &graph.FilesystemConfig{ReadOnly: readOnly}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+			agent, err := graph.New(context.Background(), graph.WithConfig(&graph.Config{ThreadID: "thread", Model: m, Filesystem: files, FilesystemConfig: &graph.FilesystemConfig{ReadOnly: readOnly}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
 				return tools.Decision{Action: tools.Allow}, nil
 			})}))
 			if err != nil {

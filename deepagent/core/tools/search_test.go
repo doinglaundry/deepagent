@@ -23,7 +23,7 @@ func TestGrepPreservesLiteralQueryAlias(t *testing.T) {
 		t.Fatalf("result=%q err=%v", result, err)
 	}
 	if !search.ReadOnly() {
-		t.Fatal("search missing from read-only tool registry")
+		t.Fatal("search missing from read-only tool set")
 	}
 }
 

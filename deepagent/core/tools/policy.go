@@ -8,12 +8,12 @@ import (
 
 // Policy decides before a tool can produce a side effect.
 type Policy interface {
-	Decide(context.Context, types.ToolCall, Descriptor) (Decision, error)
+	Decide(context.Context, types.ToolCall, ToolDescriptor) (Decision, error)
 }
 
-type PolicyFunc func(context.Context, types.ToolCall, Descriptor) (Decision, error)
+type PolicyFunc func(context.Context, types.ToolCall, ToolDescriptor) (Decision, error)
 
-func (f PolicyFunc) Decide(ctx context.Context, call types.ToolCall, descriptor Descriptor) (Decision, error) {
+func (f PolicyFunc) Decide(ctx context.Context, call types.ToolCall, descriptor ToolDescriptor) (Decision, error) {
 	return f(ctx, call, descriptor)
 }
 

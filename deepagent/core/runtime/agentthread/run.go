@@ -404,10 +404,6 @@ func (r *run) emitBlocked(ctx context.Context, info *compose.InterruptInfo) erro
 			if err := r.emit(ctx, EventFollowUpRequested, FollowUpRequestedPayload{InterruptID: interrupt.ID, CheckpointID: checkpointID, Info: data}); err != nil {
 				return err
 			}
-		case *tools.ReviewEditInfo:
-			if err := r.emit(ctx, EventApproveRequested, ApprovalRequiredPayload{InterruptID: interrupt.ID, CheckpointID: checkpointID, ReviewEditInfo: data}); err != nil {
-				return err
-			}
 		default:
 			if err := r.emit(ctx, EventInterrupted, InterruptedPayload{Source: "custom", InterruptID: interrupt.ID, CheckpointID: checkpointID, InfoType: fmt.Sprintf("%T", data), Info: data}); err != nil {
 				return err
@@ -432,8 +428,6 @@ func interruptBatchItem(interrupt *compose.InterruptCtx) InterruptBatchItem {
 		item.Kind, item.ApprovalInfo = InterruptItemApprove, data
 	case *tools.FollowUpInfo:
 		item.Kind, item.FollowUpInfo = InterruptItemFollowUp, data
-	case *tools.ReviewEditInfo:
-		item.Kind, item.ReviewEditInfo = InterruptItemReviewEdit, data
 	default:
 		item.Kind = InterruptItemCustom
 	}

@@ -55,7 +55,7 @@ func TestCheckpoint_FreshRunCreatesCursorAndFencesBeforeSideEffect(t *testing.T)
 				{schema.AssistantMessage("done", nil)},
 			}}
 			before, after, ended := 0, 0, 0
-			cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: counter}}, Middlewares: []middleware.Middleware{&checkpointLifecycle{before: &before, after: &after}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+			cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter}}, Middlewares: []middleware.Middleware{&checkpointLifecycle{before: &before, after: &after}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
 				if e.Kind == "turn_end" {
 					ended++
 				}
@@ -128,7 +128,7 @@ func TestCheckpoint_TerminalStorageFailureDoesNotPublishSuccess(t *testing.T) {
 				{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 				{schema.AssistantMessage("done", nil)},
 			}}
-			cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: counter, RequiresApproval: true}}}
+			cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 			first, err := New(ctx, WithConfig(&cfg))
 			if err != nil {
 				t.Fatal(err)
@@ -191,7 +191,7 @@ func TestCheckpoint_FailedOrCanceledResumeCannotReplayApprovedTool(t *testing.T)
 			ctx := context.Background()
 			counter := &countingTool{}
 			m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-			cfg := Config{Model: m, RunID: "run", MaxModelCalls: 1, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.Descriptor{{Tool: counter, RequiresApproval: true}}}
+			cfg := Config{Model: m, RunID: "run", MaxModelCalls: 1, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 			first, err := New(ctx, WithConfig(&cfg))
 			if err != nil {
 				t.Fatal(err)

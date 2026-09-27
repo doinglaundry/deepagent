@@ -21,7 +21,7 @@ func TestCheckpoint_PartialBatchPreservesBlockedAndPendingStates(t *testing.T) {
 		{ID: "approval", Function: schema.FunctionCall{Name: "approval", Arguments: "{}"}},
 		{ID: "last", Function: schema.FunctionCall{Name: "last", Arguments: "{}"}},
 	})}, {schema.AssistantMessage("done", nil)}}}
-	cfg := Config{Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.Descriptor{{Tool: first}, {Tool: approval, RequiresApproval: true}, {Tool: last}}}
+	cfg := Config{Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: first}, {Tool: approval, RequiresApproval: true}, {Tool: last}}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestRun_ResumeContinuesGraphAndModelBudgets(t *testing.T) {
 			ctx := context.Background()
 			tool := &countingTool{}
 			model := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "approved", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}, {schema.AssistantMessage("done", nil)}}}
-			cfg := Config{ThreadID: "thread", RunID: "run", Model: model, CheckpointStore: &checkpointMemory{}, MaxSteps: tc.steps, MaxModelCalls: tc.models, ToolDescriptors: []tools.Descriptor{{Tool: tool, RequiresApproval: true}}}
+			cfg := Config{ThreadID: "thread", RunID: "run", Model: model, CheckpointStore: &checkpointMemory{}, MaxSteps: tc.steps, MaxModelCalls: tc.models, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
 			first, err := New(ctx, WithConfig(&cfg))
 			if err != nil {
 				t.Fatal(err)
@@ -156,7 +156,7 @@ func TestCheckpoint_AutomaticRunIdentityRestoresOnNewAgent(t *testing.T) {
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	cfg := Config{Model: m, ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: tool, RequiresApproval: true}}}
+	cfg := Config{Model: m, ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +206,7 @@ func TestCheckpoint_ForceNewRunDoesNotReuseSuspendedIdentity(t *testing.T) {
 		{schema.AssistantMessage("fresh", nil)},
 	}}
 	tool := &countingTool{}
-	a, err := New(ctx, WithConfig(&Config{Model: m, ThreadID: "thread", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.Descriptor{{Tool: tool, RequiresApproval: true}}}))
+	a, err := New(ctx, WithConfig(&Config{Model: m, ThreadID: "thread", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,7 +21,7 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			if fail {
 				store.failure = failure
 			}
-			cfg := &RunConfig{Agent: graph.Config{Model: &resumeModel{}, CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: tools.GetFollowUpTool()}}}}
+			cfg := &RunConfig{Agent: graph.Config{Model: &resumeModel{}, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tools.GetFollowUpTool()}}}}
 			history := &historyMemory{}
 			events := make(chan Event, 64)
 			first := New("thread", cfg, events, ThreadOptions{HistoryStore: history})

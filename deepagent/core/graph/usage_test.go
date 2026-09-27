@@ -24,7 +24,7 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 		{usageReply("done")}, {usageReply("new run")},
 	}}
 	var totals []types.Usage
-	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
 		if e.Kind == "tokens" {
 			totals = append(totals, e.Data.(types.Usage))
 		}
@@ -56,7 +56,7 @@ func TestCheckpoint_ResumeContinuesCumulativeUsage(t *testing.T) {
 		{usageReply("", schema.ToolCall{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}})},
 		{usageReply("done")},
 	}}
-	cfg := Config{ThreadID: "thread", RunID: "run", Model: m, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
+	cfg := Config{ThreadID: "thread", RunID: "run", Model: m, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)

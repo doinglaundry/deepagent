@@ -32,17 +32,17 @@ func (*panicTool) InvokableRun(context.Context, string, ...einotool.Option) (str
 func TestRun_ToolPanicReleasesLedger(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: &panicTool{}}})
+	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: &panicTool{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	executor := newToolExecutor("run", registry, 1, nil)
+	executor := newToolExecutor("run", toolSet, 1, nil)
 	call := types.ToolCall{ID: "call", Name: "counter", Arguments: "{}"}
-	_, err = executor.execute(ctx, call, nil, nil)
+	_, err = executor.execute(ctx, call, nil)
 	if err == nil || !strings.Contains(err.Error(), "tool crashed") {
 		t.Fatalf("panic not reported: %v", err)
 	}
-	if _, err := executor.execute(ctx, call, nil, nil); err == nil || !strings.Contains(err.Error(), "unknown outcome") {
+	if _, err := executor.execute(ctx, call, nil); err == nil || !strings.Contains(err.Error(), "unknown outcome") {
 		t.Fatalf("panic was retried: %v", err)
 	}
 	if err := executor.cancel(ctx); err != nil {
@@ -53,17 +53,17 @@ func TestRun_ToolPanicReleasesLedger(t *testing.T) {
 func TestToolExecutor_CompletedCallIdentityCannotChange(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{}
-	registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: tool}})
+	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: tool}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	executor := newToolExecutor("run", registry, 1, nil)
+	executor := newToolExecutor("run", toolSet, 1, nil)
 	call := types.ToolCall{ID: "call", Name: "counter", Arguments: "original"}
-	if _, err := executor.execute(ctx, call, nil, nil); err != nil {
+	if _, err := executor.execute(ctx, call, nil); err != nil {
 		t.Fatal(err)
 	}
 	call.Arguments = "changed"
-	if _, err := executor.execute(ctx, call, nil, nil); err == nil {
+	if _, err := executor.execute(ctx, call, nil); err == nil {
 		t.Fatal("reused result for changed tool arguments")
 	}
 	if tool.count.Load() != 1 {
@@ -91,23 +91,23 @@ func (t *countingTool) InvokableRun(ctx context.Context, args string, _ ...einot
 func TestRun_EagerToolDoesNotExecuteTwice(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{started: make(chan struct{}), release: make(chan struct{})}
-	registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: tool}})
+	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: tool}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := newToolExecutor("run", registry, 2, nil)
+	e := newToolExecutor("run", toolSet, 2, nil)
 	call := types.ToolCall{ID: "call", Name: "counter", Arguments: "one"}
 	done := make(chan error, 2)
-	go func() { _, err := e.execute(ctx, call, nil, nil); done <- err }()
+	go func() { _, err := e.execute(ctx, call, nil); done <- err }()
 	<-tool.started
-	go func() { _, err := e.execute(ctx, call, nil, nil); done <- err }()
+	go func() { _, err := e.execute(ctx, call, nil); done <- err }()
 	close(tool.release)
 	for range 2 {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := e.execute(ctx, call, nil, nil); err != nil {
+	if _, err := e.execute(ctx, call, nil); err != nil {
 		t.Fatal(err)
 	}
 	if tool.count.Load() != 1 {
@@ -117,7 +117,7 @@ func TestRun_EagerToolDoesNotExecuteTwice(t *testing.T) {
 func TestTools_ParallelResultsPersistInCallOrder(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{}
-	r, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: tool, ParallelSafe: true}})
+	r, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: tool, ParallelSafe: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,14 +133,14 @@ func TestTools_ParallelResultsPersistInCallOrder(t *testing.T) {
 func TestCheckpoint_OutcomeUnknownToolIsNotReexecuted(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{}
-	r, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: tool}})
+	r, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: tool}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	e := newToolExecutor("run", r, 1, nil)
 	call := types.ToolCall{ID: "call", Name: "counter"}
 	e.restore([]types.ToolCallState{{Call: call, Status: types.CallOutcomeUnknown}})
-	if _, err := e.execute(ctx, call, nil, nil); err == nil {
+	if _, err := e.execute(ctx, call, nil); err == nil {
 		t.Fatal("unknown outcome must block")
 	}
 	if tool.count.Load() != 0 {
@@ -156,11 +156,11 @@ func (*identityTool) InvokableRun(ctx context.Context, _ string, _ ...einotool.O
 
 func TestToolExecutorExposesAssignedCallIdentity(t *testing.T) {
 	ctx := context.Background()
-	registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: &identityTool{}, ParallelSafe: true}})
+	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: &identityTool{}, ParallelSafe: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	executor := newToolExecutor("run", registry, 2, nil)
+	executor := newToolExecutor("run", toolSet, 2, nil)
 	results, err := executor.executeBatch(ctx, []types.ToolCall{
 		{ID: "first", Index: 0, Name: "counter", Arguments: "{}"},
 		{ID: "second", Index: 1, Name: "counter", Arguments: "{}"},
@@ -192,7 +192,7 @@ func TestRun_ToolErrorVisibleButCancellationStopsGraph(t *testing.T) {
 				{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 				{schema.AssistantMessage("handled", nil)},
 			}}
-			a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: &failingContractTool{failure: failure}}}}))
+			a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: &failingContractTool{failure: failure}}}}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -229,8 +229,8 @@ func TestRun_PolicyAndExecutionReceiveModelArguments(t *testing.T) {
 	checked := 0
 	a, err := New(ctx, WithConfig(&Config{
 		Model:           m,
-		ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}},
-		Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
+		ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}},
+		Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.ToolDescriptor) (tools.Decision, error) {
 			checked++
 			if call.Arguments != `{"value":"hello"}` {
 				t.Fatalf("policy saw unexpected arguments: %q", call.Arguments)
@@ -259,11 +259,11 @@ func TestToolExecutor_RestoreUsesOneCallState(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			ctx := context.Background()
 			counter := &countingTool{}
-			registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: counter}})
+			toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: counter}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			e := newToolExecutor("run", registry, 1, nil)
+			e := newToolExecutor("run", toolSet, 1, nil)
 			defer e.cancel(ctx)
 			call := types.ToolCall{ID: "call", Name: "counter", Arguments: "{}"}
 			state := types.ToolCallState{Call: call, Status: status, StartedAt: time.Unix(10, 0)}
@@ -280,7 +280,7 @@ func TestToolExecutor_RestoreUsesOneCallState(t *testing.T) {
 			if snapshot[0].Status != expectedStatus || snapshot[0].StartedAt != state.StartedAt {
 				t.Fatalf("restored snapshot=%+v", snapshot[0])
 			}
-			result, err := e.execute(ctx, call, nil, nil)
+			result, err := e.execute(ctx, call, nil)
 			switch status {
 			case types.CallRunning, types.CallOutcomeUnknown:
 				if err == nil || counter.count.Load() != 0 {
@@ -330,7 +330,7 @@ func TestToolExecutor_AllInterfacesAuthorizeOnceBeforeInvocation(t *testing.T) {
 		for _, item := range cases {
 			t.Run(item.name+"/"+fmt.Sprint(deny), func(t *testing.T) {
 				ctx := context.Background()
-				registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: item.tool}})
+				toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: item.tool}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -339,7 +339,7 @@ func TestToolExecutor_AllInterfacesAuthorizeOnceBeforeInvocation(t *testing.T) {
 					t.Fatal(err)
 				}
 				decisions := 0
-				policy := tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+				policy := tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
 					decisions++
 					if item.calls() != 0 {
 						t.Fatal("tool executed before authorization")
@@ -350,12 +350,12 @@ func TestToolExecutor_AllInterfacesAuthorizeOnceBeforeInvocation(t *testing.T) {
 					}
 					return tools.Decision{Action: action}, nil
 				})
-				e := newToolExecutor("run", registry, 1, policy)
+				e := newToolExecutor("run", toolSet, 1, policy)
 				defer e.cancel(ctx)
 				call := types.ToolCall{ID: "call", Name: info.Name, Arguments: "{}"}
 				// Repeated calls must reuse the outer execution record.
 				for range 2 {
-					result, err := e.execute(ctx, call, nil, nil)
+					result, err := e.execute(ctx, call, nil)
 					if err != nil || result == nil || result.IsError != deny {
 						t.Fatalf("result=%v err=%v", result, err)
 					}

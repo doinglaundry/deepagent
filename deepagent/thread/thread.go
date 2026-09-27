@@ -1033,10 +1033,7 @@ func agentEventPayloadForOutput(ev agentthread.Event, usage *agentthread.Context
 			case item.ApprovalInfo != nil:
 				entry.ToolCallID = item.ApprovalInfo.CallID
 				entry.ToolName = item.ApprovalInfo.ToolName
-				entry.ArgumentsJSON = stringPtrIfNotEmpty(item.ApprovalInfo.ArgumentsInJSON)
-			case item.ReviewEditInfo != nil:
-				entry.ToolName = item.ReviewEditInfo.ToolName
-				entry.ArgumentsJSON = stringPtrIfNotEmpty(item.ReviewEditInfo.ArgumentsInJSON)
+				entry.ArgumentsJSON = stringPtrIfNotEmpty(item.ApprovalInfo.Arguments)
 			case item.FollowUpInfo != nil:
 				entry.Info, err = json.Marshal(struct {
 					Question  string   `json:"question,omitempty"`
@@ -1245,14 +1242,10 @@ func convertApprovalRequiredPayload(payload agentthread.ApprovalRequiredPayload)
 	if payload.ApprovalInfo != nil {
 		out.ToolCallID = payload.ApprovalInfo.CallID
 		out.ToolName = payload.ApprovalInfo.ToolName
-		out.ArgumentsJSON = stringPtrIfNotEmpty(payload.ApprovalInfo.ArgumentsInJSON)
+		out.ArgumentsJSON = stringPtrIfNotEmpty(payload.ApprovalInfo.Arguments)
 		return out
 	}
-	if payload.ReviewEditInfo != nil {
-		out.ToolName = payload.ReviewEditInfo.ToolName
-		out.ArgumentsJSON = stringPtrIfNotEmpty(payload.ReviewEditInfo.ArgumentsInJSON)
-		return out
-	}
+
 	return out
 }
 

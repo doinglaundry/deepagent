@@ -52,7 +52,7 @@ func TestCheckpoint_ExecutionFencePreventsCrashReplayAndGatesTool(t *testing.T) 
 				{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 				{schema.AssistantMessage("done", nil)},
 			}}
-			cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: counter, RequiresApproval: true}}}
+			cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 			first, err := New(ctx, WithConfig(&cfg))
 			if err != nil {
 				t.Fatal(err)
@@ -111,7 +111,7 @@ func TestCheckpoint_ParallelFencesRetainEveryCall(t *testing.T) {
 		})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, Parallelism: 2, ToolDescriptors: []tools.Descriptor{{Tool: counter, ParallelSafe: true}}}
+	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, Parallelism: 2, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, ParallelSafe: true}}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestCheckpoint_DisappearingRestoredSnapshotPreventsToolExecution(t *testing
 	store := &checkpointMemory{}
 	counter := &countingTool{}
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: counter, RequiresApproval: true}}}
+	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)

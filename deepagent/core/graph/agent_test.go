@@ -46,7 +46,7 @@ func TestRun_ModelToolModel(t *testing.T) {
 	call := schema.ToolCall{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{call})}, {schema.AssistantMessage("done", nil)}}}
 	tool := &countingTool{}
-	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool}}}))
+	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestRun_ModelToolModel(t *testing.T) {
 func TestRun_ReturnDirectDoesNotCallModelAgain(t *testing.T) {
 	ctx := context.Background()
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "direct"}}})}}}
-	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}, ReturnDirect: true}}}))
+	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, ReturnDirect: true}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestRun_ApprovalDenyNeverExecutesTool(t *testing.T) {
 	store := &checkpointMemory{}
 	tool := &countingTool{}
 	model := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "approved-call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}, {schema.AssistantMessage("denied acknowledged", nil)}}}
-	cfg := Config{Model: model, RunID: "run", ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: tool, RequiresApproval: true}}}
+	cfg := Config{Model: model, RunID: "run", ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -123,13 +123,23 @@ func TestRun_ApprovalDenyNeverExecutesTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := restored.Run(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "approved-call", Approved: false}}))
+	reason := "do not change this file"
+	out, err := restored.Run(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "approved-call", Approved: false, DisapproveReason: &reason}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Content != "denied acknowledged" || tool.count.Load() != 0 || model.calls != 2 {
 		t.Fatalf("out=%v tool=%d model=%d", out, tool.count.Load(), model.calls)
 	}
+	messages := model.inputs[1]
+	last := messages[len(messages)-1]
+	if last.Role != schema.Tool || last.Content != reason {
+		t.Fatalf("model lost rejection reason: %+v", last)
+	}
+	if approval.Arguments != "{}" {
+		t.Fatalf("approval lost arguments: %+v", approval)
+	}
+
 }
 
 func TestRun_FilesystemWriteRequiresApprovalWithoutExplicitPolicy(t *testing.T) {
@@ -150,7 +160,7 @@ func TestRun_FilesystemWriteRequiresApprovalWithoutExplicitPolicy(t *testing.T) 
 	_, err = first.Run(ctx, []*schema.Message{schema.UserMessage("write")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
-		descriptor, found := first.registry.Lookup("write_file")
+		descriptor, found := first.tools.Lookup("write_file")
 		t.Fatalf("expected approval interrupt, got %+v: %v; tool found=%v requires_approval=%v history=%v", info, err, found, descriptor.RequiresApproval, first.conversation.History(ctx))
 	}
 	if _, err := os.Stat(filepath.Join(root, "result.txt")); !os.IsNotExist(err) {
@@ -178,7 +188,7 @@ func TestRun_FilesystemWriteRequiresApprovalWithoutExplicitPolicy(t *testing.T) 
 func TestCheckpoint_SaveFailureDoesNotPublishBlocked(t *testing.T) {
 	ctx := context.Background()
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	a, err := New(ctx, WithConfig(&Config{Model: m, CheckpointStore: &checkpointMemory{fail: true}, ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}, RequiresApproval: true}}}))
+	a, err := New(ctx, WithConfig(&Config{Model: m, CheckpointStore: &checkpointMemory{fail: true}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +225,7 @@ func TestRun_ResumeDoesNotRepeatCompletedTool(t *testing.T) {
 	firstTool := &namedCountingTool{name: "first"}
 	approvalTool := &namedCountingTool{name: "approval"}
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "1", Type: "function", Function: schema.FunctionCall{Name: "first", Arguments: "{}"}}, {ID: "2", Type: "function", Function: schema.FunctionCall{Name: "approval", Arguments: "{}"}}})}, {schema.AssistantMessage("done", nil)}}}
-	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: firstTool}, {Tool: approvalTool, RequiresApproval: true}}}
+	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: firstTool}, {Tool: approvalTool, RequiresApproval: true}}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -286,14 +296,14 @@ func TestRun_EagerExecutesBeforeModelStreamEnds(t *testing.T) {
 			tool := &countingTool{started: make(chan struct{})}
 			m := &eagerModel{toolStarted: tool.started}
 			starts, policyCalls := 0, 0
-			cfg := &Config{Model: m, EnableEagerTools: true, ToolDescriptors: []tools.Descriptor{{Tool: tool, ParallelSafe: true}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+			cfg := &Config{Model: m, EnableEagerTools: true, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ParallelSafe: true}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
 				if e.Kind == "tool_start" {
 					starts++
 				}
 				return nil
 			}}
 			if withPolicy {
-				cfg.Policy = tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+				cfg.Policy = tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
 					policyCalls++
 					return tools.Decision{Action: tools.Allow}, nil
 				})

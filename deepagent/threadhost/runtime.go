@@ -177,7 +177,7 @@ func (w *ThreadHost) buildRunConfig(
 	agentConfig := deepagents.Config{
 		Model: chatModel, MaxSteps: w.Runtime.MaxSteps, MaxModelCalls: w.Runtime.MaxModelCalls,
 		CheckpointStore:  w.Deps.Checkpoint,
-		ToolDescriptors:  []tools.Descriptor{tools.Describe(tools.GetFollowUpTool())},
+		ToolDescriptors:  []tools.ToolDescriptor{tools.Describe(tools.GetFollowUpTool())},
 		SubAgents:        []*deepagents.SubAgent{{Name: "general-purpose", EnableFilesystem: true, EnableWeb: true}},
 		SkillLoader:      w.Deps.SkillLoader,
 		WebConfig:        w.Runtime.Web,

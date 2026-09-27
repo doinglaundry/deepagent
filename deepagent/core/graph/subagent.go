@@ -119,7 +119,7 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 		}
 		cfg.ToolMask = tools.CombineMasks(cfg.ToolMask, spec.ToolMask)
 		if len(spec.Tools) > 0 {
-			cfg.ToolDescriptors = make([]tools.Descriptor, 0, len(spec.Tools))
+			cfg.ToolDescriptors = make([]tools.ToolDescriptor, 0, len(spec.Tools))
 			for _, item := range spec.Tools {
 				cfg.ToolDescriptors = append(cfg.ToolDescriptors, tools.Describe(item))
 			}

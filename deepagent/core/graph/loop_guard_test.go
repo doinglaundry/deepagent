@@ -20,7 +20,7 @@ func TestLoopGuardStopsRepeatedToolsAndIsRunLocal(t *testing.T) {
 			{schema.AssistantMessage("stopping loop", []schema.ToolCall{{ID: "second", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 		}}
 		tool := &countingTool{}
-		a, err := New(context.Background(), WithConfig(&Config{Model: m, EnableEagerTools: true, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.Descriptor{{Tool: tool, ParallelSafe: true}}}))
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, EnableEagerTools: true, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ParallelSafe: true}}}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -43,7 +43,7 @@ func TestLoopGuardRestoresWindowFromCheckpoint(t *testing.T) {
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "first", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 		{schema.AssistantMessage("stopping loop", []schema.ToolCall{{ID: "second", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 	}}
-	cfg := Config{Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.Descriptor{{Tool: counter, RequiresApproval: true}}}
+	cfg := Config{Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func TestLoopGuardDistinctCallsExpireFromWindow(t *testing.T) {
 	}
 	m.responses = append(m.responses, []*schema.Message{schema.AssistantMessage("done", nil)})
 	counter := &countingTool{}
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.Descriptor{{Tool: counter}}}))
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter}}}))
 	if err != nil {
 		t.Fatal(err)
 	}

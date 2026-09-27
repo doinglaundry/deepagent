@@ -63,12 +63,12 @@ func (s *streamErrorTool) StreamableRun(context.Context, string, ...einotool.Opt
 func TestToolExecutor_OpenErrorClosesReturnedStream(t *testing.T) {
 	reader, writer := schema.Pipe[string](0)
 	defer writer.Close()
-	registry, err := tools.NewRegistry(context.Background(), []tools.Descriptor{{Tool: &streamErrorTool{reader: reader}}})
+	toolSet, err := tools.NewToolSet(context.Background(), []tools.ToolDescriptor{{Tool: &streamErrorTool{reader: reader}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := newToolExecutor("run", registry, 1, nil)
-	result, err := e.execute(context.Background(), types.ToolCall{ID: "call", Name: "stream_error", Arguments: "{}"}, nil, nil)
+	e := newToolExecutor("run", toolSet, 1, nil)
+	result, err := e.execute(context.Background(), types.ToolCall{ID: "call", Name: "stream_error", Arguments: "{}"}, nil)
 	if err != nil || result == nil || !result.IsError {
 		t.Fatalf("result=%v err=%v", result, err)
 	}

@@ -13,10 +13,10 @@ import (
 )
 
 // Every tool passes policy and checkpoint fencing before interface dispatch.
-func (e *toolExecutor) invoke(ctx context.Context, call types.ToolCall, resume *types.ResumeAnswer, emit types.ToolChunkSink) (*types.ToolResult, error) {
+func (e *toolExecutor) invoke(ctx context.Context, call types.ToolCall, emit types.ToolChunkSink) (*types.ToolResult, error) {
 	ctx = context.WithValue(ctx, toolCallIDKey{}, call.ID)
 	ctx = context.WithValue(ctx, toolExecutorKey{}, e)
-	descriptor, early, err := e.authorize(ctx, call, resume)
+	descriptor, early, err := e.authorize(ctx, call)
 	if early != nil || err != nil {
 		return early, err
 	}

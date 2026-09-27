@@ -34,8 +34,6 @@ func (a *DeepAgent) savePending(ctx context.Context, id string, info *compose.In
 			item.CallID = value.CallID
 		case *tools.FollowUpInfo:
 			item.Kind = "follow_up"
-		case *tools.ReviewEditInfo:
-			item.Kind = "review_edit"
 		}
 		if item.CallID == "" {
 			// A single suspended call is unambiguous. Nested/parallel contexts keep
@@ -89,7 +87,7 @@ func (a *DeepAgent) invokeGraph(ctx context.Context, state *types.RunState, opti
 		ctx = context.WithValue(ctx, initialCheckpointKey{}, state)
 		store := checkpointer.New(a.cfg.CheckpointStore, a.cfg.ThreadID, a.runID, "core-graph-v1")
 		var fenceMu sync.Mutex
-		a.executor.beforeInvoke = func(ctx context.Context, call types.ToolCall) error {
+		a.executor.persistToolExecutionFence = func(ctx context.Context, call types.ToolCall) error {
 			fenceMu.Lock()
 			defer fenceMu.Unlock()
 			// Fresh local state is the input pointer returned by our Eino state

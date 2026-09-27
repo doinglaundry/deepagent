@@ -9,20 +9,20 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-type registryTestTool struct{ calls int }
+type toolSetTestTool struct{ calls int }
 
-func (*registryTestTool) Info(context.Context) (*schema.ToolInfo, error) {
+func (*toolSetTestTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{Name: "read", Desc: "original"}, nil
 }
-func (t *registryTestTool) InvokableRun(_ context.Context, args string, _ ...einotool.Option) (string, error) {
+func (t *toolSetTestTool) InvokableRun(_ context.Context, args string, _ ...einotool.Option) (string, error) {
 	t.calls++
 	return "result:" + args, nil
 }
 
-func TestRegistryPreservesSchemaAndExecution(t *testing.T) {
+func TestToolSetPreservesSchemaAndExecution(t *testing.T) {
 	ctx := context.Background()
-	original := &registryTestTool{}
-	r, err := NewRegistry(ctx, []Descriptor{{Tool: original, ReadOnly: true}})
+	original := &toolSetTestTool{}
+	r, err := NewToolSet(ctx, []ToolDescriptor{{Tool: original, ReadOnly: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,24 +44,32 @@ func TestRegistryPreservesSchemaAndExecution(t *testing.T) {
 	}
 }
 
-func TestRegistryRejectsDuplicate(t *testing.T) {
+func TestToolSetRejectsDuplicate(t *testing.T) {
 	ctx := context.Background()
-	if _, err := NewRegistry(ctx, []Descriptor{{Tool: &registryTestTool{}}, {Tool: &registryTestTool{}}}); err == nil {
+	if _, err := NewToolSet(ctx, []ToolDescriptor{{Tool: &toolSetTestTool{}}, {Tool: &toolSetTestTool{}}}); err == nil {
 		t.Fatal("accepted duplicate tool name")
 	}
 }
 
-func TestRegistryFilterKeepsExecutionAndOrder(t *testing.T) {
+func TestToolSetFilterKeepsExecutionAndOrder(t *testing.T) {
 	ctx := context.Background()
-	r, err := NewRegistry(ctx, []Descriptor{{Tool: &registryTestTool{}, ReadOnly: true}})
+	r, err := NewToolSet(ctx, []ToolDescriptor{{Tool: &toolSetTestTool{}, ReadOnly: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	filtered, err := r.Filter(ctx, true, func(_ context.Context, info *schema.ToolInfo) bool { return info.Name == "read" })
+	filtered, err := r.Filter(ctx, true, func(_ context.Context, info *schema.ToolInfo) bool {
+		info.Desc = "mask mutation"
+		return info.Name == "read"
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d, ok := filtered.Lookup("read"); !ok || !d.ReadOnly {
+	infos, err := filtered.ModelTools(ctx)
+	if err != nil || len(infos) != 1 || infos[0].Desc != "original" {
+		t.Fatalf("mask mutated stored schema: infos=%v err=%v", infos, err)
+	}
+	d, ok := filtered.Lookup("read")
+	if !ok || !d.ReadOnly {
 		t.Fatal("lost descriptor")
 	}
 	excluded, err := r.Filter(ctx, false, func(context.Context, *schema.ToolInfo) bool { return false })

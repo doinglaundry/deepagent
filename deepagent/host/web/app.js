@@ -89,7 +89,7 @@ function required(ev, p, target) {
       const label = document.createElement('div');
       label.textContent = item.tool_name || item.info?.question || item.kind;
       row.append(label);
-      if (item.kind === 'approve' || item.kind === 'review_edit') {
+      if (item.kind === 'approve') {
         if (item.arguments_json) {
           const args = document.createElement('div'); args.textContent = item.arguments_json; row.append(args);
         }

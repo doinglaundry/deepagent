@@ -39,7 +39,7 @@ func TestChildAgent_DirectoryConfigurationReachesTaskGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	infos, err := a.registry.ModelTools(context.Background())
+	infos, err := a.tools.ModelTools(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestChildAgent_TaskStreamingReturnsOnlyFinalAnswer(t *testing.T) {
 	}}
 	var chunks []string
 	tool := &countingTool{}
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, SubAgents: []*SubAgent{{Name: "general-purpose"}}, ToolDescriptors: []tools.Descriptor{{Tool: tool}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, SubAgents: []*SubAgent{{Name: "general-purpose"}}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
 		if chunk, ok := event.Data.(types.ToolOutputChunk); ok && chunk.Call.ID == "task-call" {
 			chunks = append(chunks, chunk.Content)
 		}
@@ -137,7 +137,7 @@ func TestChildAgent_UsesSameGraphWithIndependentBudget(t *testing.T) {
 	}
 	model := &childModel{}
 	tool := &countingTool{}
-	runner := NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: model, RunID: "parent-run", MaxModelCalls: 1, Conversation: parentHistory, ToolDescriptors: []tools.Descriptor{{Tool: tool}}})
+	runner := NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: model, RunID: "parent-run", MaxModelCalls: 1, Conversation: parentHistory, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}})
 	_, err := runner.Run(ctx, tools.ChildRequest{Name: "general-purpose", Prompt: "first child", MaxModelCalls: 1}, nil)
 	if err == nil || !strings.Contains(err.Error(), "maximum model calls") {
 		t.Fatalf("child budget not enforced: %v", err)
@@ -167,7 +167,7 @@ func TestChildAgent_TaskIsRegisteredOnParentGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := a.registry.Lookup("task"); !ok {
+	if _, ok := a.tools.Lookup("task"); !ok {
 		t.Fatal("task is not registered")
 	}
 	result, err := a.Run(context.Background(), []*schema.Message{schema.UserMessage("delegate")})
@@ -213,11 +213,11 @@ func TestChildAgent_ConcurrencyLimitQueuesEveryTask(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	runner := &boundedChildRunner{started: make(chan string, 5), release: make(chan struct{}, 5)}
-	registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: tools.NewTaskTool(runner), ParallelSafe: true}})
+	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: tools.NewTaskTool(runner), ParallelSafe: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	executor := newToolExecutor("run", registry, 2, nil)
+	executor := newToolExecutor("run", toolSet, 2, nil)
 	var calls []types.ToolCall
 	for _, i := range []int{4, 2, 0, 3, 1} {
 		calls = append(calls, types.ToolCall{ID: fmt.Sprint(i), Index: i, Name: "task", Arguments: fmt.Sprintf(`{"description":"task-%d"}`, i)})
@@ -328,7 +328,7 @@ func TestChildAgent_RequiresExplicitRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close(ctx)
-	_, exists := a.registry.Lookup("task")
+	_, exists := a.tools.Lookup("task")
 	if exists {
 		t.Fatal("task registered without configured subagents")
 	}

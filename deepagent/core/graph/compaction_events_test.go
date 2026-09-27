@@ -34,7 +34,7 @@ func TestRun_CompactionEventsAtEachSamplingBoundary(t *testing.T) {
 		{schema.AssistantMessage("done", nil)},
 	}}
 	var events []types.RuntimeEvent
-	a, err := New(ctx, WithConfig(&Config{Model: m, Conversation: c, ToolDescriptors: []tools.Descriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e types.RuntimeEvent) error { events = append(events, e); return nil }}))
+	a, err := New(ctx, WithConfig(&Config{Model: m, Conversation: c, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e types.RuntimeEvent) error { events = append(events, e); return nil }}))
 	if err != nil {
 		t.Fatal(err)
 	}

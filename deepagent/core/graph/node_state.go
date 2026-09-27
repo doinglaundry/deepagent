@@ -129,7 +129,7 @@ func (a *DeepAgent) restoreLocalState(ctx context.Context, state *types.RunState
 	}
 	a.executor.restore(state.Calls)
 	a.executor.restoreChildCheckpoints(state)
-	a.executor.onStart = func(ctx context.Context, call types.ToolCallState) error {
+	a.executor.onToolStart = func(ctx context.Context, call types.ToolCallState) error {
 		return a.event(ctx, state, "tool_start", call.Call.ID, call)
 	}
 	return a.event(ctx, state, "run_state_restored", "", state.Consumed)

@@ -34,9 +34,3 @@ type ToolCallState struct {
 	Result    *ToolResult
 	StartedAt time.Time
 }
-type ResumeAnswer struct {
-	InterruptID string
-	CallID      string
-	Approved    bool
-	Data        any
-}

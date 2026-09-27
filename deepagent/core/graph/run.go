@@ -94,7 +94,7 @@ func (a *DeepAgent) startRun(ctx context.Context, options RunOptions) error {
 	}
 
 	a.started = true
-	a.executor = newToolExecutor(a.runID, a.registry, a.cfg.Parallelism, a.policy)
+	a.executor = newToolExecutor(a.runID, a.tools, a.cfg.Parallelism, a.policy)
 	return nil
 }
 

@@ -35,7 +35,7 @@ func TestRun_EnhancedToolPreservesMultimodalHistoryAndState(t *testing.T) {
 		{schema.AssistantMessage("done", nil)},
 	}}
 	var completed types.ToolCallState
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
 		if event.Kind == "tool_end" {
 			completed = event.Data.(types.ToolCallState)
 		}
@@ -77,7 +77,7 @@ func TestRun_EnhancedToolPolicyAndReturnDirect(t *testing.T) {
 		tool := &imageTool{}
 		m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "image-call", Function: schema.FunctionCall{Name: "image", Arguments: "{}"}}})}}}
 		policies := 0
-		a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}}, Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}}, Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.ToolDescriptor) (tools.Decision, error) {
 			policies++
 			if call.Arguments != `{}` {
 				t.Errorf("policy saw original arguments: %s", call.Arguments)
@@ -133,7 +133,7 @@ func TestRun_EnhancedStreamPreservesTextOrderAndImage(t *testing.T) {
 	tool := &imageStreamTool{}
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "image-call", Function: schema.FunctionCall{Name: "image_stream", Arguments: "{}"}}})}}}
 	var chunks []string
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
 		if chunk, ok := event.Data.(types.ToolOutputChunk); ok {
 			chunks = append(chunks, chunk.Content)
 		}
@@ -163,7 +163,7 @@ func TestRun_EnhancedStreamPolicyAndReturnDirect(t *testing.T) {
 			tool := &imageStreamTool{}
 			m := enhancedStreamModel()
 			var chunks string
-			a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}}, Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
+			a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}}, Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.ToolDescriptor) (tools.Decision, error) {
 				if call.Arguments != `{}` {
 					t.Errorf("wrong policy arguments: %s", call.Arguments)
 				}
@@ -206,7 +206,7 @@ func TestRun_EnhancedStreamCancelReleasesProducer(t *testing.T) {
 		go func() { defer close(exited); defer writer.Close(); close(opened); <-ctx.Done() }()
 		return reader, nil
 	}}
-	a, err := New(context.Background(), WithConfig(&Config{Model: enhancedStreamModel(), ToolDescriptors: []tools.Descriptor{{Tool: tool}}}))
+	a, err := New(context.Background(), WithConfig(&Config{Model: enhancedStreamModel(), ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestRun_EnhancedStreamOpenErrorClosesReturnedReader(t *testing.T) {
 	defer writer.Close()
 	want := errors.New("stream open failure")
 	tool := &imageStreamTool{run: func(context.Context) (*schema.StreamReader[*schema.ToolResult], error) { return reader, want }}
-	a, err := New(context.Background(), WithConfig(&Config{Model: enhancedStreamModel(), ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}}}))
+	a, err := New(context.Background(), WithConfig(&Config{Model: enhancedStreamModel(), ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}}}))
 	if err != nil {
 		t.Fatal(err)
 	}

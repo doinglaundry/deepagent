@@ -40,7 +40,7 @@ type Config struct {
 	Middlewares       []middleware.Middleware
 	EnableEagerTools  bool
 	Model             model.ToolCallingChatModel
-	ToolDescriptors   []tools.Descriptor
+	ToolDescriptors   []tools.ToolDescriptor
 	ToolMask          tools.Mask
 	ReadOnlyToolsOnly bool
 	Policy            tools.Policy
@@ -115,7 +115,7 @@ func (c *Config) Clone() (cloned *Config) {
 	}
 	value := *c
 	cloned = &value
-	cloned.ToolDescriptors = append([]tools.Descriptor(nil), c.ToolDescriptors...)
+	cloned.ToolDescriptors = append([]tools.ToolDescriptor(nil), c.ToolDescriptors...)
 	cloned.Prompts = append([]*schema.Message(nil), c.Prompts...)
 	cloned.SubAgents = append([]*SubAgent(nil), c.SubAgents...)
 	cloned.Middlewares = append([]middleware.Middleware(nil), c.Middlewares...)

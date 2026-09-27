@@ -30,7 +30,7 @@ type DeepAgent struct {
 	cfg               Config
 	graph             compose.Runnable[*types.RunState, *schema.Message]
 	conversation      Conversation
-	registry          *tools.Registry
+	tools             *tools.ToolSet
 	executor          *toolExecutor
 	emit              func(context.Context, types.RuntimeEvent) error
 	drainInput        func(context.Context, string) ([]types.Input, bool, error)

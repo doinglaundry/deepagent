@@ -28,7 +28,7 @@ func testChildApprovalResume(t *testing.T, allow bool) {
 		{schema.AssistantMessage("parent done", nil)},
 	}}
 	store := &checkpointMemory{}
-	cfg := Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: m, ThreadID: "parent", RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: first}, {Tool: approved, RequiresApproval: true}}}
+	cfg := Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: m, ThreadID: "parent", RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: first}, {Tool: approved, RequiresApproval: true}}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -128,14 +128,14 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 	ctx := context.Background()
 	childModel := &parallelChildModel{both: make(chan struct{})}
 	counter := &countingTool{}
-	task := tools.NewTaskTool(NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: childModel, ToolDescriptors: []tools.Descriptor{{Tool: counter, RequiresApproval: true}}}))
+	task := tools.NewTaskTool(NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: childModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}))
 	parentModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{
 		{ID: "a", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"a"}`}},
 		{ID: "b", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"b"}`}},
 	})}, {schema.AssistantMessage("parent done", nil)}}}
-	cfg := Config{Model: parentModel, RunID: "run", Parallelism: 2, CheckpointStore: &checkpointMemory{}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+	cfg := Config{Model: parentModel, RunID: "run", Parallelism: 2, CheckpointStore: &checkpointMemory{}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
 		return tools.Decision{Action: tools.Allow}, nil
-	}), ToolDescriptors: []tools.Descriptor{{Tool: task, ParallelSafe: true}}}
+	}), ToolDescriptors: []tools.ToolDescriptor{{Tool: task, ParallelSafe: true}}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)

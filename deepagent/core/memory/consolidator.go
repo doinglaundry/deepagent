@@ -39,7 +39,7 @@ func AgentConsolidator(m model.ToolCallingChatModel, root string) func(context.C
 		defer filesystem.Close(context.WithoutCancel(ctx))
 		a, e := deepagents.New(ctx, deepagents.WithConfig(&deepagents.Config{
 			Model: m, Filesystem: filesystem, MaxSteps: 20, MaxModelCalls: 8,
-			Policy: tools.PolicyFunc(func(_ context.Context, _ types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
+			Policy: tools.PolicyFunc(func(_ context.Context, _ types.ToolCall, _ tools.ToolDescriptor) (tools.Decision, error) {
 				return tools.Decision{Action: tools.Allow}, nil
 			}),
 			FilesystemConfig: &deepagents.FilesystemConfig{DisableExecute: true, DisableApplyPatch: true, DisableUploadDownload: true},
