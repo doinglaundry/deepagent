@@ -10,6 +10,7 @@ import (
 
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
+
 	"github.com/cloudwego/eino/compose"
 )
 
@@ -27,7 +28,7 @@ type toolExecutor struct {
 	onToolStart                   func(context.Context, types.ToolCallState) error
 	persistToolExecutionFence     func(context.Context, types.ToolCall) error
 	eagerToolWaitGroup            sync.WaitGroup
-	tools                         *tools.ToolSet
+	toolset                       *tools.ToolSet
 	runID                         string
 	maxParallelTools              int
 	toolPolicy                    tools.Policy
@@ -42,7 +43,7 @@ func newToolExecutor(runID string, toolSet *tools.ToolSet, maxParallelTools int,
 		maxParallelTools = 1
 	}
 	return &toolExecutor{
-		tools: toolSet, runID: runID, maxParallelTools: maxParallelTools, toolPolicy: toolPolicy,
+		toolset: toolSet, runID: runID, maxParallelTools: maxParallelTools, toolPolicy: toolPolicy,
 		toolExecutionsByKey:         make(map[string]*toolExecution),
 		approvedEagerArgumentsByKey: make(map[string]string),
 	}
@@ -56,23 +57,23 @@ func (e *toolExecutor) execute(ctx context.Context, call types.ToolCall, emit ty
 	}
 	executionKey := e.executionKey(call.ID)
 	e.mu.Lock()
-	toolExecutionRecord := e.toolExecutionsByKey[executionKey]
-	if toolExecutionRecord != nil {
-		original := toolExecutionRecord.state.Call
+	execution := e.toolExecutionsByKey[executionKey]
+	if execution != nil {
+		original := execution.state.Call
 		if original.Name != call.Name || original.Arguments != call.Arguments {
 			e.mu.Unlock()
 			return nil, fmt.Errorf("tool call %s changed after execution started", call.ID)
 		}
-		switch toolExecutionRecord.state.Status {
+		switch execution.state.Status {
 		case types.CallCompleted:
-			result := copyToolResult(toolExecutionRecord.state.Result)
+			result := copyToolResult(execution.state.Result)
 			e.mu.Unlock()
 			return result, nil
 		case types.CallRunning:
 			e.mu.Unlock()
 			select {
-			case <-toolExecutionRecord.done:
-				return copyToolResult(toolExecutionRecord.state.Result), toolExecutionRecord.err
+			case <-execution.done:
+				return copyToolResult(execution.state.Result), execution.err
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
@@ -82,31 +83,31 @@ func (e *toolExecutor) execute(ctx context.Context, call types.ToolCall, emit ty
 		e.mu.Unlock()
 		return nil, context.Canceled
 	}
-	if toolExecutionRecord != nil && toolExecutionRecord.state.Status == types.CallOutcomeUnknown {
+	if execution != nil && execution.state.Status == types.CallOutcomeUnknown {
 		e.mu.Unlock()
 		return nil, fmt.Errorf("tool call %s has unknown outcome; explicit reconciliation required", call.ID)
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	state := types.ToolCallState{Call: call, Status: types.CallRunning, StartedAt: time.Now()}
-	toolExecutionRecord = &toolExecution{state: state, done: make(chan struct{}), cancel: cancel}
-	e.toolExecutionsByKey[executionKey] = toolExecutionRecord
+	execution = &toolExecution{state: state, done: make(chan struct{}), cancel: cancel}
+	e.toolExecutionsByKey[executionKey] = execution
 	e.mu.Unlock()
 
 	result, err := e.invokeTool(runCtx, state, emit)
 	cancel()
 	e.mu.Lock()
-	toolExecutionRecord.state.Result = copyToolResult(result)
-	toolExecutionRecord.err = err
-	toolExecutionRecord.state.Status = types.CallCompleted
+	execution.state.Result = copyToolResult(result)
+	execution.err = err
+	execution.state.Status = types.CallCompleted
 	if err != nil {
 		_, interrupt := compose.IsInterruptRerunError(err)
 		_, nested := compose.ExtractInterruptInfo(err)
-		toolExecutionRecord.state.Status = types.CallOutcomeUnknown
+		execution.state.Status = types.CallOutcomeUnknown
 		if interrupt || nested {
-			toolExecutionRecord.state.Status = types.CallBlocked
+			execution.state.Status = types.CallBlocked
 		}
 	}
-	close(toolExecutionRecord.done)
+	close(execution.done)
 	e.mu.Unlock()
 	return result, err
 }
@@ -120,7 +121,7 @@ func copyToolResult(result *types.ToolResult) *types.ToolResult {
 }
 
 func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall) (tools.ToolDescriptor, *types.ToolResult, error) {
-	toolDescriptor, ok := e.tools.Lookup(call.Name)
+	toolDescriptor, ok := e.toolset.Lookup(call.Name)
 	result := &types.ToolResult{CallID: call.ID, ReturnDirect: toolDescriptor.ReturnDirect}
 	if !ok {
 		result.IsError = true
@@ -228,7 +229,7 @@ func (e *toolExecutor) executeBatch(ctx context.Context, toolCalls []types.ToolC
 		errs[i] = err
 	}
 	for start := 0; start < len(ordered); {
-		toolDescriptor, _ := e.tools.Lookup(ordered[start].Name)
+		toolDescriptor, _ := e.toolset.Lookup(ordered[start].Name)
 		if !toolDescriptor.ParallelSafe || toolDescriptor.RequiresApproval {
 			execute(start)
 			if errs[start] != nil {
@@ -239,7 +240,7 @@ func (e *toolExecutor) executeBatch(ctx context.Context, toolCalls []types.ToolC
 		}
 		end := start
 		for end < len(ordered) {
-			toolDescriptor, _ := e.tools.Lookup(ordered[end].Name)
+			toolDescriptor, _ := e.toolset.Lookup(ordered[end].Name)
 			if !toolDescriptor.ParallelSafe || toolDescriptor.RequiresApproval {
 				break
 			}
@@ -317,19 +318,19 @@ func (e *toolExecutor) snapshot(toolCalls []types.ToolCallState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for i := range toolCalls {
-		toolExecutionRecord := e.toolExecutionsByKey[e.executionKey(toolCalls[i].Call.ID)]
-		if toolExecutionRecord == nil {
+		execution := e.toolExecutionsByKey[e.executionKey(toolCalls[i].Call.ID)]
+		if execution == nil {
 			toolCalls[i].Status = types.CallPending
 			continue
 		}
-		toolCalls[i].Status = toolExecutionRecord.state.Status
-		toolCalls[i].StartedAt = toolExecutionRecord.state.StartedAt
-		toolCalls[i].Result = copyToolResult(toolExecutionRecord.state.Result)
+		toolCalls[i].Status = execution.state.Status
+		toolCalls[i].StartedAt = execution.state.StartedAt
+		toolCalls[i].Result = copyToolResult(execution.state.Result)
 	}
 }
 
 func (e *toolExecutor) startEagerIfAllowed(ctx context.Context, call types.ToolCall, emit types.ToolChunkSink) (bool, error) {
-	toolDescriptor, ok := e.tools.Lookup(call.Name)
+	toolDescriptor, ok := e.toolset.Lookup(call.Name)
 	if !ok || !toolDescriptor.ParallelSafe || toolDescriptor.RequiresApproval {
 		return false, nil
 	}
