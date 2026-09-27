@@ -20,10 +20,17 @@ func TestRun_PlanRestoresFromCheckpointAfterContextCompaction(t *testing.T) {
 		{schema.AssistantMessage("done", nil)},
 	}}
 	published := 0
-	cfg := Config{Model: m, RunID: "plan-run", CheckpointStore: &checkpointMemory{}, InterruptAfterNodes: []string{"tools"}, Middlewares: []middleware.Middleware{middleware.NewPlan(&middleware.PlanMiddlewareConfig{OnPlanUpdate: func(context.Context, middleware.PlanUpdate) error { published++; return nil }})}}
+	cfg := Config{Model: m, RunID: "plan-run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{middleware.NewPlan(&middleware.PlanMiddlewareConfig{OnPlanUpdate: func(context.Context, middleware.PlanUpdate) error { published++; return nil }})}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
+	}
+	cfg.Emit = nil
+	first.emit = func(_ context.Context, event types.RuntimeEvent) error {
+		if event.Kind == "tool_end" {
+			first.Interrupt()
+		}
+		return nil
 	}
 	_, err = first.Run(ctx, []*schema.Message{schema.UserMessage("inspect")}, WithCheckpointID("plan-checkpoint"))
 	if _, ok := compose.ExtractInterruptInfo(err); !ok {

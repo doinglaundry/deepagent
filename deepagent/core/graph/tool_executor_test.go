@@ -2,16 +2,17 @@ package graph
 
 import (
 	"context"
+	"eino-cli/deepagent/core/tools"
+	"eino-cli/deepagent/core/types"
+	"errors"
+	"github.com/cloudwego/eino/components/tool"
+	einotool "github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/schema"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"eino-cli/deepagent/core/tools"
-	"eino-cli/deepagent/core/types"
-	einotool "github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino/schema"
 )
 
 type countingTool struct {
@@ -143,5 +144,108 @@ func TestCheckpoint_OutcomeUnknownToolIsNotReexecuted(t *testing.T) {
 	}
 	if tool.count.Load() != 0 {
 		t.Fatal("reexecuted side effect")
+	}
+}
+
+type identityTool struct{ countingTool }
+
+func (*identityTool) InvokableRun(ctx context.Context, _ string, _ ...einotool.Option) (string, error) {
+	return GetToolCallID(ctx), nil
+}
+
+func TestToolExecutorExposesAssignedCallIdentity(t *testing.T) {
+	ctx := context.Background()
+	registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: &identityTool{}, ParallelSafe: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newToolExecutor("run", registry, 2, nil)
+	results, err := executor.executeBatch(ctx, []types.ToolCall{
+		{ID: "first", Index: 0, Name: "counter", Arguments: "{}"},
+		{ID: "second", Index: 1, Name: "counter", Arguments: "{}"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].Content != "first" || results[1].Content != "second" {
+		t.Fatalf("incorrect tool context identities: %+v", results)
+	}
+	if id := GetToolCallID(ctx); id != "" {
+		t.Fatalf("tool identity leaked into caller: %q", id)
+	}
+}
+
+type failingContractTool struct {
+	countingTool
+	failure error
+}
+
+func (t *failingContractTool) InvokableRun(context.Context, string, ...tool.Option) (string, error) {
+	return "", t.failure
+}
+
+func TestRun_ToolErrorVisibleButCancellationStopsGraph(t *testing.T) {
+	for _, failure := range []error{errors.New("ordinary tool failure"), context.Canceled, context.DeadlineExceeded} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			m := &sequenceModel{responses: [][]*schema.Message{
+				{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
+				{schema.AssistantMessage("handled", nil)},
+			}}
+			a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: &failingContractTool{failure: failure}}}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer a.Close(context.Background())
+			out, err := a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")})
+			if errors.Is(failure, context.Canceled) || errors.Is(failure, context.DeadlineExceeded) {
+				if !errors.Is(err, failure) || m.calls != 1 {
+					t.Fatalf("cancellation swallowed: err=%v calls=%d", err, m.calls)
+				}
+				return
+			}
+			if err != nil || out == nil || out.Content != "handled" || m.calls != 2 {
+				t.Fatalf("ordinary error aborted Graph: out=%v err=%v calls=%d", out, err, m.calls)
+			}
+			found := false
+			for _, message := range m.inputs[1] {
+				if message.Role == schema.Tool && message.ToolCallID == "call" && strings.Contains(message.Content, failure.Error()) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("tool error not visible in next model request")
+			}
+		})
+	}
+}
+
+func TestRun_PolicyAndExecutionReceiveModelArguments(t *testing.T) {
+	ctx := context.Background()
+	tool := &countingTool{}
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{
+		{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: `{"value":"hello"}`}},
+	})}}}
+	checked := 0
+	a, err := New(ctx, WithConfig(&Config{
+		Model:           m,
+		ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}},
+		Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.Descriptor) (tools.Decision, error) {
+			checked++
+			if call.Arguments != `{"value":"hello"}` {
+				t.Fatalf("policy saw unexpected arguments: %q", call.Arguments)
+			}
+			return tools.Decision{Action: tools.Allow}, nil
+		}),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(ctx)
+	answer, err := a.Run(ctx, []*schema.Message{schema.UserMessage("run")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer.Content != `{"value":"hello"}` || tool.count.Load() != 1 || m.calls != 1 || checked != 1 {
+		t.Fatalf("answer=%+v executions=%d models=%d checked=%d", answer, tool.count.Load(), m.calls, checked)
 	}
 }

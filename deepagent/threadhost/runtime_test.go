@@ -4,6 +4,7 @@ package threadhost
 
 import (
 	"context"
+	"eino-cli/deepagent/core/runtime/agentthread"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -107,11 +108,11 @@ func TestBuildRunConfigCreatesRunLocalConfig(t *testing.T) {
 		Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default",
 	}}
 	info := &model.Thread{ThreadID: 42, SessionID: "session"}
-	first, err := host.buildRunConfig(context.Background(), info, "", t.TempDir(), nil, "")
+	first, err := host.buildRunConfig(context.Background(), info, "", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := host.buildRunConfig(context.Background(), info, "", t.TempDir(), nil, inputpkg.UserMessageModeImplPlan)
+	second, err := host.buildRunConfig(context.Background(), info, "", nil, inputpkg.UserMessageModeImplPlan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +122,21 @@ func TestBuildRunConfigCreatesRunLocalConfig(t *testing.T) {
 	if first.EnablePlan || !second.EnablePlan {
 		t.Fatalf("plan mode first=%v second=%v", first.EnablePlan, second.EnablePlan)
 	}
-	if first.Agent.HITLConfig == nil || !first.Agent.HITLConfig.NeedFollowUpTool || second.Agent.HITLConfig == nil || !second.Agent.HITLConfig.NeedFollowUpTool {
-		t.Fatal("Web runs must expose ask_user")
+	for _, cfg := range []*agentthread.RunConfig{first, second} {
+		found := false
+		for _, descriptor := range cfg.Agent.ToolDescriptors {
+			info, err := descriptor.Tool.Info(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			found = found || info.Name == "ask_user"
+		}
+		if !found {
+			t.Fatal("Web runs must expose ask_user")
+		}
+		if len(cfg.Agent.SubAgents) != 1 || cfg.Agent.SubAgents[0].Name != "general-purpose" {
+			t.Fatal("Web must explicitly configure its default child")
+		}
 	}
+
 }

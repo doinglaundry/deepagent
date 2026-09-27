@@ -2,10 +2,10 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"testing"
-
 	"github.com/cloudwego/eino/schema"
+	"testing"
 )
 
 func TestStreamMergerPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
@@ -62,5 +62,50 @@ func TestStreamMergerPropagatesStreamFailure(t *testing.T) {
 	_, err := NewStreamMessageMerger(nil).Merge(context.Background(), stream)
 	if !errors.Is(err, want) {
 		t.Fatalf("stream error swallowed: %v", err)
+	}
+}
+
+func TestRepairToolArgumentsOnlyUnambiguousSyntax(t *testing.T) {
+	for _, s := range []string{"```json\n{\"path\":\"x\",}\n```", `{"a":[1,2,],"literal":",}"}`} {
+		out, e := repairToolArguments(s)
+		if e != nil || !json.Valid([]byte(out)) {
+			t.Fatal(out, e)
+		}
+	}
+	for _, s := range []string{`{path:"x"}`, `{"path":`, "text {\"a\":1}"} {
+		if _, e := repairToolArguments(s); e == nil {
+			t.Fatal("invented missing JSON", s)
+		}
+	}
+}
+
+func TestCollectorRepairsOnlyUnambiguousJSONAtStreamEnd(t *testing.T) {
+	collector := &toolCallBuffer{}
+	_, err := collector.add([]schema.ToolCall{{
+		ID: "call", Function: schema.FunctionCall{Name: "read_file", Arguments: "```json\n{\"path\":\"a.go\",}\n```"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, err := collector.finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0].Function.Arguments != `{"path":"a.go"}` {
+		t.Fatalf("repaired calls = %+v", calls)
+	}
+
+	_, err = collector.add([]schema.ToolCall{{
+		ID: "bad", Function: schema.FunctionCall{Name: "read_file", Arguments: `{path:"a.go"}`},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, err = collector.finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls[1].Function.Arguments != `{path:"a.go"}` {
+		t.Fatalf("ambiguous JSON was invented or silently dropped: %+v", calls)
 	}
 }

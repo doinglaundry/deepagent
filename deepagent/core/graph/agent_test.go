@@ -325,7 +325,7 @@ func TestRun_EagerExecutesBeforeModelStreamEnds(t *testing.T) {
 			tool := &countingTool{started: make(chan struct{})}
 			m := &eagerModel{toolStarted: tool.started}
 			starts, policyCalls := 0, 0
-			cfg := &Config{Model: m, EnableStreamToolCall: true, ToolDescriptors: []tools.Descriptor{{Tool: tool, ParallelSafe: true}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+			cfg := &Config{Model: m, EnableEagerTools: true, ToolDescriptors: []tools.Descriptor{{Tool: tool, ParallelSafe: true}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
 				if e.Kind == "tool_start" {
 					starts++
 				}

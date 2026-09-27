@@ -42,7 +42,7 @@ func Describe(tool einotool.BaseTool) Descriptor {
 }
 
 // Registry is configured before a run, then read concurrently by model and tools.
-// Schemas are separate from executable objects, so rewriting never loses tool interfaces.
+// Registry keeps tool schemas alongside their executable objects.
 type Registry struct {
 	entries map[string]Descriptor
 	infos   map[string]*schema.ToolInfo
@@ -120,46 +120,6 @@ func (r *Registry) Filter(ctx context.Context, readOnly bool, mask Mask) (*Regis
 		out.order = append(out.order, name)
 	}
 	return out, nil
-}
-
-// RewriteInfo commits schemas and execution names together only if every rewrite succeeds.
-func (r *Registry) RewriteInfo(ctx context.Context, rewrite ToolInfoRewriter) error {
-	if rewrite == nil {
-		return nil
-	}
-	next := make(map[string]*schema.ToolInfo, len(r.infos))
-	entries := make(map[string]Descriptor, len(r.entries))
-	order := make([]string, 0, len(r.order))
-	for _, name := range r.order {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		info, err := cloneToolInfo(r.infos[name])
-		if err != nil {
-			return err
-		}
-		info, err = rewrite(ctx, info)
-		if err != nil {
-			return err
-		}
-		if info == nil || strings.TrimSpace(info.Name) == "" {
-			return fmt.Errorf("rewriter returned empty tool name for %q", name)
-		}
-		if _, exists := next[info.Name]; exists {
-			return fmt.Errorf("duplicate rewritten tool name %q", info.Name)
-		}
-		info, err = cloneToolInfo(info)
-		if err != nil {
-			return err
-		}
-		next[info.Name] = info
-		entries[info.Name] = r.entries[name]
-		order = append(order, info.Name)
-	}
-	r.infos = next
-	r.entries = entries
-	r.order = order
-	return nil
 }
 
 func cloneToolInfo(info *schema.ToolInfo) (*schema.ToolInfo, error) {

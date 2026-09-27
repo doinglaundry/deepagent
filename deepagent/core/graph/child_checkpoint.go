@@ -12,9 +12,8 @@ import (
 // the bytes in the parent RunState before propagating interruption, so the
 // parent's Eino checkpoint is the only external persistence operation.
 type childCheckpointStore struct {
-	mu        sync.Mutex
-	data      []byte
-	addressed bool
+	mu   sync.Mutex
+	data []byte
 }
 
 func (s *childCheckpointStore) Get(ctx context.Context, _ string) ([]byte, bool, error) {
@@ -46,7 +45,7 @@ func (e *toolExecutor) childCheckpoint(callID string) *childCheckpointStore {
 		e.childCheckpoints = map[string]*childCheckpointStore{}
 	}
 	if e.childCheckpoints[callID] == nil {
-		e.childCheckpoints[callID] = &childCheckpointStore{addressed: true}
+		e.childCheckpoints[callID] = &childCheckpointStore{}
 	}
 	return e.childCheckpoints[callID]
 }
@@ -57,7 +56,7 @@ func (e *toolExecutor) restoreChildCheckpoints(state *types.RunState) {
 	e.childCheckpoints = map[string]*childCheckpointStore{}
 	for key, raw := range state.Extensions {
 		if id, ok := strings.CutPrefix(key, "child_checkpoint/"); ok {
-			e.childCheckpoints[id] = &childCheckpointStore{data: append([]byte(nil), raw...), addressed: string(state.Extensions["child_checkpoint_address/"+id]) == "true"}
+			e.childCheckpoints[id] = &childCheckpointStore{data: append([]byte(nil), raw...)}
 		}
 	}
 }
@@ -74,15 +73,11 @@ func (e *toolExecutor) snapshotChildCheckpoints(state *types.RunState) {
 		key := "child_checkpoint/" + id
 		if len(raw) == 0 {
 			delete(state.Extensions, key)
-			delete(state.Extensions, "child_checkpoint_address/"+id)
 			continue
 		}
 		if state.Extensions == nil {
 			state.Extensions = map[string]json.RawMessage{}
 		}
 		state.Extensions[key] = raw
-		if checkpoint.addressed {
-			state.Extensions["child_checkpoint_address/"+id] = json.RawMessage("true")
-		}
 	}
 }

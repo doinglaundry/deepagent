@@ -2,13 +2,15 @@ package graph
 
 import (
 	"context"
-	"reflect"
-	"testing"
+	"errors"
 
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
+
 	"github.com/cloudwego/eino/schema"
+	"reflect"
+	"testing"
 )
 
 type orderedMiddleware struct {
@@ -79,5 +81,64 @@ func TestRun_FinalEventFollowsAfterRun(t *testing.T) {
 	}
 	if _, err := a.Run(ctx, []*schema.Message{schema.UserMessage("input")}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type modelTransformMiddleware struct {
+	middleware.BaseMiddleware
+	before, after int
+	failure       error
+}
+
+func (m *modelTransformMiddleware) ModifyModelRequest(_ context.Context, _ []*schema.Message, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
+	m.before++
+	if m.failure != nil {
+		return nil, m.failure
+	}
+	return append([]*schema.Message{schema.SystemMessage("middleware prompt")}, messages...), nil
+}
+
+func (m *modelTransformMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schema.StreamReader[*schema.Message], _ *types.GraphState) (*schema.StreamReader[*schema.Message], error) {
+	m.after++
+	return schema.StreamReaderWithConvert(stream, func(message *schema.Message) (*schema.Message, error) {
+		copy := *message
+		copy.Content = "rewritten"
+		return &copy, nil
+	}), nil
+}
+
+func TestRun_ModelMiddlewareModifiesRequestAndStream(t *testing.T) {
+	ctx := context.Background()
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("original", nil)}}}
+	mw := &modelTransformMiddleware{}
+	a, err := New(ctx, WithModel(m), WithMiddleware(mw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(ctx)
+	out, err := a.Run(ctx, []*schema.Message{schema.UserMessage("input")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mw.before != 1 || mw.after != 1 || out.Content != "rewritten" || m.inputs[0][0].Content != "middleware prompt" {
+		t.Fatalf("middleware not applied: before=%d after=%d output=%v inputs=%v", mw.before, mw.after, out, m.inputs)
+	}
+	history := a.conversation.History(ctx)
+	if history[len(history)-1].Content != "rewritten" {
+		t.Fatal("history bypassed middleware")
+	}
+}
+
+func TestRun_ModelMiddlewareErrorStopsModel(t *testing.T) {
+	want := errors.New("before model failed")
+	m := &sequenceModel{}
+	a, err := New(context.Background(), WithModel(m), WithMiddleware(&modelTransformMiddleware{failure: want}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(context.Background())
+	_, err = a.Run(context.Background(), []*schema.Message{schema.UserMessage("input")})
+	if !errors.Is(err, want) || m.calls != 0 {
+		t.Fatalf("err=%v calls=%d", err, m.calls)
 	}
 }

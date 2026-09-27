@@ -17,7 +17,6 @@ import (
 
 type RunConfig struct {
 	MiddlewaresProvider func(context.Context, string) []middleware.Middleware
-	CustomStateBuilder  func(context.Context, string, string) map[string]types.RunTimeStateful
 	Agent               graph.Config
 	EnablePlan          bool
 	EventIDProvider     func(context.Context, string, string) string

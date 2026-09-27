@@ -26,12 +26,3 @@ func GetWholeGraphState(ctx context.Context) *types.GraphState {
 	}
 	return a.GraphState()
 }
-
-// GetCustomGraphState 获取自定义的运行时状态。
-func GetCustomGraphState(ctx context.Context, name string) types.RunTimeStateful {
-	graphState := GetWholeGraphState(ctx)
-	if graphState == nil {
-		return nil
-	}
-	return graphState.GetStateful(name)
-}

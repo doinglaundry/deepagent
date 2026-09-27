@@ -7,13 +7,6 @@ import (
 )
 
 type Mask func(context.Context, *schema.ToolInfo) bool
-type ToolInfoRewriter func(context.Context, *schema.ToolInfo) (*schema.ToolInfo, error)
-type ToolCallDecision struct {
-	Action string
-	Reason string
-}
-
-const ToolCallDeny = "deny"
 
 type ApprovalInfo struct {
 	CallID          string
@@ -31,10 +24,7 @@ type ReviewEditInfo struct {
 	ToolName        string
 	Arguments       string
 }
-type ToolPolicyGate struct {
-	Policy        func(context.Context, *ApprovalInfo) (ToolCallDecision, error)
-	DenyFormatter func(context.Context, *ApprovalInfo, ToolCallDecision) (string, error)
-}
+
 type NeedReviewAndEdit struct{ Message string }
 type ApprovalGate func(context.Context, *ApprovalInfo) bool
 

@@ -8,8 +8,8 @@ import (
 
 	"eino-cli/deepagent/core/graph"
 	"eino-cli/deepagent/core/middleware"
+	"eino-cli/deepagent/core/tools"
 	"github.com/cloudwego/eino/components/model"
-	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
 )
@@ -53,7 +53,7 @@ func TestMemoryPrompt_ReadsCurrentScopeBeforeEachModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &promptModel{}
-	agent, err := graph.New(ctx, graph.WithConfig(&graph.Config{Model: m, Tools: []einotool.BaseTool{tool}, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
+	agent, err := graph.New(ctx, graph.WithConfig(&graph.Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool}}, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
 	if err != nil {
 		t.Fatal(err)
 	}

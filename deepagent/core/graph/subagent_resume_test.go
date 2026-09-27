@@ -2,22 +2,23 @@ package graph
 
 import (
 	"context"
-	"fmt"
-	"testing"
-
 	"eino-cli/deepagent/core/tools"
+	"eino-cli/deepagent/core/types"
+	"fmt"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"sync"
+	"testing"
 )
 
 func TestChildAgent_ApprovalResumesNestedGraphOnNewParent(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		for _, allow := range []bool{false, true} {
-			t.Run(fmt.Sprintf("stream=%v/allow=%v", streaming, allow), func(t *testing.T) { testChildApprovalResume(t, streaming, allow) })
-		}
+	for _, allow := range []bool{false, true} {
+		t.Run(fmt.Sprintf("allow=%v", allow), func(t *testing.T) { testChildApprovalResume(t, allow) })
 	}
 }
-func testChildApprovalResume(t *testing.T, streaming, allow bool) {
+
+func testChildApprovalResume(t *testing.T, allow bool) {
 	ctx := context.Background()
 	first, approved := &namedCountingTool{name: "first"}, &namedCountingTool{name: "approved"}
 	m := &sequenceModel{responses: [][]*schema.Message{
@@ -27,14 +28,7 @@ func testChildApprovalResume(t *testing.T, streaming, allow bool) {
 		{schema.AssistantMessage("parent done", nil)},
 	}}
 	store := &checkpointMemory{}
-	injections := 0
-	cfg := Config{SubAgentContextInjector: func(context.Context, string) ([]*schema.Message, error) {
-		injections++
-		if injections > 1 {
-			return nil, fmt.Errorf("context injector executed again during resume")
-		}
-		return []*schema.Message{schema.SystemMessage("injected context")}, nil
-	}, EnableSubAgentTaskStreaming: streaming, Model: m, ThreadID: "parent", RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: first}, {Tool: approved, RequiresApproval: true}}}
+	cfg := Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: m, ThreadID: "parent", RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: first}, {Tool: approved, RequiresApproval: true}}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -72,9 +66,6 @@ func testChildApprovalResume(t *testing.T, streaming, allow bool) {
 	if len(restored.state.Extensions["child_checkpoint/child-task"]) != 0 {
 		t.Fatal("completed child retained stale checkpoint")
 	}
-	if injections != 1 {
-		t.Fatalf("injections=%d", injections)
-	}
 	childInput := m.inputs[2]
 	foundPrompt, foundAssistant, foundFirst, foundApproved := false, false, false, false
 	for _, message := range childInput {
@@ -93,5 +84,84 @@ func testChildApprovalResume(t *testing.T, streaming, allow bool) {
 	}
 	if !foundPrompt || !foundAssistant || !foundFirst || !foundApproved {
 		t.Fatalf("restored child lost conversation: %+v", childInput)
+	}
+}
+
+type parallelChildModel struct {
+	mu      sync.Mutex
+	started int
+	both    chan struct{}
+}
+
+func (m *parallelChildModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return m, nil
+}
+func (*parallelChildModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+	panic("must stream")
+}
+func (m *parallelChildModel) Stream(ctx context.Context, messages []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	for _, msg := range messages {
+		if msg.Role == schema.Tool {
+			return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("child done", nil)}), nil
+		}
+	}
+	name := ""
+	for _, msg := range messages {
+		if msg.Role == schema.User {
+			name = msg.Content
+		}
+	}
+	m.mu.Lock()
+	m.started++
+	if m.started == 2 {
+		close(m.both)
+	}
+	m.mu.Unlock()
+	select {
+	case <-m.both:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("", []schema.ToolCall{{ID: "approval-" + name, Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}), nil
+}
+func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
+	ctx := context.Background()
+	childModel := &parallelChildModel{both: make(chan struct{})}
+	counter := &countingTool{}
+	task := tools.NewTaskTool(NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: childModel, ToolDescriptors: []tools.Descriptor{{Tool: counter, RequiresApproval: true}}}))
+	parentModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{
+		{ID: "a", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"a"}`}},
+		{ID: "b", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"b"}`}},
+	})}, {schema.AssistantMessage("parent done", nil)}}}
+	cfg := Config{Model: parentModel, RunID: "run", Parallelism: 2, CheckpointStore: &checkpointMemory{}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+		return tools.Decision{Action: tools.Allow}, nil
+	}), ToolDescriptors: []tools.Descriptor{{Tool: task, ParallelSafe: true}}}
+	a, err := New(ctx, WithConfig(&cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.Run(ctx, []*schema.Message{schema.UserMessage("delegate")}, WithCheckpointID("checkpoint"))
+	info, ok := compose.ExtractInterruptInfo(err)
+	if !ok || len(info.InterruptContexts) != 2 {
+		t.Fatalf("expected two child approvals: %v", err)
+	}
+	answers := map[string]any{}
+	ids := make([]string, 0, len(info.InterruptContexts))
+	for _, interrupt := range info.InterruptContexts {
+		approval := interrupt.Info.(*tools.ApprovalInfo)
+		ids = append(ids, interrupt.ID)
+		answers[interrupt.ID] = &tools.ApprovalResult{CallID: approval.CallID, Approved: true}
+	}
+	cfg.Conversation = a.conversation
+	resumed, err := New(ctx, WithConfig(&cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := resumed.Run(ctx, nil, WithCheckpointID("checkpoint"), WithResume(ids...), WithResumeData(answers))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Content != "parent done" || counter.count.Load() != 2 || parentModel.calls != 2 || childModel.started != 2 {
+		t.Fatalf("out=%v tools=%d parent=%d children=%d", out, counter.count.Load(), parentModel.calls, childModel.started)
 	}
 }

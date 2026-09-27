@@ -9,7 +9,7 @@ import (
 )
 
 func TestRun_PatchDanglingToolCallsOnlyInModelRequest(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
+	{
 		ctx := context.Background()
 		history := conversation.New("thread", nil, nil, nil)
 		assistant := schema.AssistantMessage("", []schema.ToolCall{
@@ -20,7 +20,7 @@ func TestRun_PatchDanglingToolCallsOnlyInModelRequest(t *testing.T) {
 			t.Fatal(err)
 		}
 		m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("new answer", nil)}}}
-		a, err := New(ctx, WithConfig(&Config{Model: m, Conversation: history, EnablePatchToolCalls: enabled}))
+		a, err := New(ctx, WithConfig(&Config{Model: m, Conversation: history}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -36,12 +36,8 @@ func TestRun_PatchDanglingToolCallsOnlyInModelRequest(t *testing.T) {
 				}
 			}
 		}
-		want := 0
-		if enabled {
-			want = 1
-		}
-		if repairs != want {
-			t.Fatalf("enabled=%v repairs=%d", enabled, repairs)
+		if repairs != 1 {
+			t.Fatalf("repairs=%d", repairs)
 		}
 		for _, message := range history.History(ctx) {
 			if message.Role == schema.Tool && message.ToolCallID == "interrupted" {

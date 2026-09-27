@@ -43,23 +43,12 @@ func (r *run) execute(ctx context.Context) error {
 	if r.config.MiddlewaresProvider != nil {
 		cfg.Middlewares = append(r.config.MiddlewaresProvider(ctx, r.id), cfg.Middlewares...)
 	}
-	if r.config.CustomStateBuilder != nil {
-		if cfg.CustomGraphState == nil {
-			cfg.CustomGraphState = map[string]types.RunTimeStateful{}
-		}
-		for name, state := range r.config.CustomStateBuilder(ctx, r.owner.ThreadID, r.id) {
-			cfg.CustomGraphState[name] = state
-		}
-	}
 	if r.config.EnablePlan {
 		cfg.Middlewares = append(cfg.Middlewares, middleware.NewPlan(nil))
 	}
 	cfg.ThreadID = r.owner.ThreadID
 	cfg.RunID = r.id
 	cfg.Conversation = r.owner.conversation
-	// A fresh run may follow a canceled tool exchange. Repair only the model
-	// request; the durable conversation must retain the actual execution history.
-	cfg.EnablePatchToolCalls = true
 	cfg.DrainInput = r.owner.drainInput
 	cfg.Emit = func(ctx context.Context, e types.RuntimeEvent) error {
 		if e.Kind == "run_state_restored" {

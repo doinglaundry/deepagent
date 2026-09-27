@@ -15,8 +15,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// loadSubAgentsFromDir reads dir/name/SUBAGENT.yaml in deterministic name order.
-func loadSubAgentsFromDir(ctx context.Context, dir string) ([]*SubAgent, error) {
+// LoadSubAgents reads dir/name/SUBAGENT.yaml in deterministic name order.
+func LoadSubAgents(ctx context.Context, dir string) ([]*SubAgent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -103,19 +103,11 @@ type SubAgent struct {
 	ToolMask                              tools.Mask
 	Tools                                 []tool.BaseTool
 }
-type SubAgentContextInjector func(context.Context, string) ([]*schema.Message, error)
 
-func loadSubAgents(ctx context.Context, cfg *Config) error {
-	cfg.SubAgents = append([]*SubAgent(nil), cfg.SubAgents...)
-	for _, dir := range cfg.SubAgentsDirs {
-		loaded, err := loadSubAgentsFromDir(ctx, dir)
-		if err != nil {
-			return err
-		}
-		cfg.SubAgents = append(cfg.SubAgents, loaded...)
-	}
+// validateSubAgents checks the explicit list before task registration.
+func validateSubAgents(agents []*SubAgent) error {
 	names := map[string]bool{}
-	for _, spec := range cfg.SubAgents {
+	for _, spec := range agents {
 		if spec == nil || strings.TrimSpace(spec.Name) == "" {
 			return fmt.Errorf("subagent name is required")
 		}
@@ -124,6 +116,5 @@ func loadSubAgents(ctx context.Context, cfg *Config) error {
 		}
 		names[spec.Name] = true
 	}
-	cfg.SubAgentsDirs = nil
 	return nil
 }

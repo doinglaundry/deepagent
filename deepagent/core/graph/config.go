@@ -2,11 +2,10 @@ package graph
 
 import (
 	"context"
-	"eino-cli/deepagent/core/backend"
-	"eino-cli/deepagent/core/hooks"
-	"github.com/cloudwego/eino/callbacks"
-	"maps"
 	"time"
+
+	"eino-cli/deepagent/core/backend"
+	"github.com/cloudwego/eino/callbacks"
 
 	"eino-cli/deepagent/core/internal/conversation"
 	"eino-cli/deepagent/core/middleware"
@@ -32,45 +31,31 @@ type Conversation interface {
 }
 
 type Config struct {
-	Hooks                          hook.HooksChain
-	SubAgents                      []*SubAgent
-	SubAgentsDirs                  []string
-	SubAgentContextInjector        SubAgentContextInjector
-	EnableSubAgentTaskStreaming    bool
-	SkillLoader                    backend.SkillLoader
-	FilesystemConfig               *FilesystemConfig
-	EnablePatchToolCalls           bool
-	DisableSubAgent                bool
-	WebConfig                      *tools.WebConfig
-	HITLConfig                     *HITLConfig
-	Filesystem                     backend.ToolFilesystem
-	Callbacks                      []callbacks.Handler
-	InterruptBeforeNodes           []string
-	InterruptAfterNodes            []string
-	CustomGraphState               map[string]types.RunTimeStateful
-	SubAgentSharedCustomStateNames []string
-	ToolInfoRewriter               tools.ToolInfoRewriter
-	ToolNodePreHandler             ToolNodePreHandler
-	ToolNodePostHandler            ToolNodePostHandler
-	Middlewares                    []middleware.Middleware
-	EnableStreamToolCall           bool
-	Model                          model.ToolCallingChatModel
-	ToolDescriptors                []tools.Descriptor
-	ToolMask                       tools.Mask
-	ReadOnlyToolsOnly              bool
-	Policy                         tools.Policy
-	Parallelism                    int
-	MaxSteps                       int
-	MaxModelCalls                  int
-	Name                           string
-	Depth                          int
-	ThreadID                       string
-	RunID                          string
-	Prompts                        []*schema.Message
-	Conversation                   Conversation
-	Emit                           func(context.Context, types.RuntimeEvent) error
-	DrainInput                     func(context.Context, string) ([]types.Input, bool, error)
-	CheckpointStore                compose.CheckPointStore
+	SubAgents         []*SubAgent
+	SkillLoader       backend.SkillLoader
+	FilesystemConfig  *FilesystemConfig
+	WebConfig         *tools.WebConfig
+	Filesystem        backend.ToolFilesystem
+	Callbacks         []callbacks.Handler
+	Middlewares       []middleware.Middleware
+	EnableEagerTools  bool
+	Model             model.ToolCallingChatModel
+	ToolDescriptors   []tools.Descriptor
+	ToolMask          tools.Mask
+	ReadOnlyToolsOnly bool
+	Policy            tools.Policy
+	Parallelism       int
+	MaxSteps          int
+	MaxModelCalls     int
+	Name              string
+	Depth             int
+	ThreadID          string
+	RunID             string
+	Prompts           []*schema.Message
+	Conversation      Conversation
+	Emit              func(context.Context, types.RuntimeEvent) error
+	DrainInput        func(context.Context, string) ([]types.Input, bool, error)
+	CheckpointStore   compose.CheckPointStore
 }
 type Option func(*Config)
 
@@ -124,12 +109,6 @@ func WithInputMetadata(meta ...any) RunOptionFunc {
 	return func(o *RunOptions) { o.InputMeta = append([]any(nil), meta...) }
 }
 
-type HITLConfig struct {
-	ToolPolicyGates map[string]tools.ToolPolicyGate
-
-	NeedFollowUpTool bool
-}
-
 type FilesystemConfig struct {
 	ReadOnly              bool
 	DisableUploadDownload bool
@@ -137,9 +116,6 @@ type FilesystemConfig struct {
 	DisableApplyPatch     bool
 	CommandTimeout        time.Duration
 }
-
-type ToolNodePreHandler func(context.Context, *schema.Message) (*schema.Message, error)
-type ToolNodePostHandler func(context.Context, []*schema.Message) ([]*schema.Message, error)
 
 func (c *Config) Clone() (cloned *Config) {
 	if c == nil {
@@ -150,14 +126,8 @@ func (c *Config) Clone() (cloned *Config) {
 	cloned.ToolDescriptors = append([]tools.Descriptor(nil), c.ToolDescriptors...)
 	cloned.Prompts = append([]*schema.Message(nil), c.Prompts...)
 	cloned.SubAgents = append([]*SubAgent(nil), c.SubAgents...)
-	cloned.SubAgentsDirs = append([]string(nil), c.SubAgentsDirs...)
 	cloned.Middlewares = append([]middleware.Middleware(nil), c.Middlewares...)
 	cloned.Callbacks = append([]callbacks.Handler(nil), c.Callbacks...)
-	cloned.InterruptBeforeNodes = append([]string(nil), c.InterruptBeforeNodes...)
-	cloned.InterruptAfterNodes = append([]string(nil), c.InterruptAfterNodes...)
-	cloned.CustomGraphState = maps.Clone(c.CustomGraphState)
-	cloned.SubAgentSharedCustomStateNames = append([]string(nil), c.SubAgentSharedCustomStateNames...)
-	cloned.Hooks = append(hook.HooksChain(nil), c.Hooks...)
 
 	if c.FilesystemConfig != nil {
 		filesystem := *c.FilesystemConfig
@@ -167,24 +137,8 @@ func (c *Config) Clone() (cloned *Config) {
 		webConfig := *c.WebConfig
 		cloned.WebConfig = &webConfig
 	}
-	if c.HITLConfig != nil {
-		hitl := *c.HITLConfig
-		hitl.ToolPolicyGates = maps.Clone(c.HITLConfig.ToolPolicyGates)
-		cloned.HITLConfig = &hitl
-	}
+
 	return cloned
-}
-
-func WithCustomGraphState(fields map[string]types.RunTimeStateful) Option {
-	return func(c *Config) {
-		c.CustomGraphState = fields
-	}
-}
-
-func WithSubAgentSharedCustomState(names ...string) Option {
-	return func(c *Config) {
-		c.SubAgentSharedCustomStateNames = append(c.SubAgentSharedCustomStateNames, names...)
-	}
 }
 
 func WithMaxSteps(steps int) Option {
@@ -216,28 +170,6 @@ func WithToolMask(mask tools.Mask) Option {
 func WithSubAgents(agents ...*SubAgent) Option {
 	return func(c *Config) {
 		c.SubAgents = append(c.SubAgents, agents...)
-	}
-}
-
-func WithSubAgentsDir(dir string) Option {
-	return WithSubAgentsDirs(dir)
-}
-
-func WithSubAgentsDirs(dirs ...string) Option {
-	return func(c *Config) {
-		c.SubAgentsDirs = append(c.SubAgentsDirs, dirs...)
-	}
-}
-
-func WithSubAgentContextInjector(i SubAgentContextInjector) Option {
-	return func(c *Config) {
-		c.SubAgentContextInjector = i
-	}
-}
-
-func WithSubAgentTaskStreaming() Option {
-	return func(c *Config) {
-		c.EnableSubAgentTaskStreaming = true
 	}
 }
 
@@ -274,12 +206,6 @@ func WithFilesystemConfig(cfg *FilesystemConfig) (option Option) {
 	return option
 }
 
-func WithDisableSubAgent() Option {
-	return func(c *Config) {
-		c.DisableSubAgent = true
-	}
-}
-
 func WithDisableUploadDownload() Option {
 	return func(c *Config) {
 		if c.FilesystemConfig == nil {
@@ -298,15 +224,9 @@ func WithDisableExecute() Option {
 	}
 }
 
-func WithPatchToolCalls() Option {
+func WithEagerTools() Option {
 	return func(c *Config) {
-		c.EnablePatchToolCalls = true
-	}
-}
-
-func WithStreamToolCall() Option {
-	return func(c *Config) {
-		c.EnableStreamToolCall = true
+		c.EnableEagerTools = true
 	}
 }
 
@@ -335,12 +255,6 @@ func WithMiddleware(m middleware.Middleware) Option {
 	}
 }
 
-func WithHooks(hooks ...hook.Hooks) Option {
-	return func(c *Config) {
-		c.Hooks = append(c.Hooks, hooks...)
-	}
-}
-
 func WithDefaultCallbacks(handlers ...callbacks.Handler) Option {
 	return func(c *Config) {
 		for _, handler := range handlers {
@@ -357,49 +271,12 @@ func WithCheckpointStore(store compose.CheckPointStore) Option {
 	}
 }
 
-func WithInterruptBeforeNodes(nodes ...string) Option {
-	return func(c *Config) {
-		c.InterruptBeforeNodes = append(c.InterruptBeforeNodes, nodes...)
-	}
-}
-
-func WithInterruptAfterNodes(nodes ...string) Option {
-	return func(c *Config) {
-		c.InterruptAfterNodes = append(c.InterruptAfterNodes, nodes...)
-	}
-}
-
 func WithAllFeatures() (option Option) {
 	option = func(c *Config) {
 		if c.FilesystemConfig == nil {
 			c.FilesystemConfig = &FilesystemConfig{}
 		}
-		c.EnablePatchToolCalls = true
 		c.WebConfig = tools.DefaultWebConfig()
 	}
 	return option
-}
-
-func WithHITLConfig(cfg *HITLConfig) Option {
-	return func(c *Config) {
-		c.HITLConfig = cfg
-	}
-}
-
-func WithToolInfoRewriter(rewriter tools.ToolInfoRewriter) Option {
-	return func(c *Config) {
-		c.ToolInfoRewriter = rewriter
-	}
-}
-
-func WithToolNodePreHandler(handler ToolNodePreHandler) Option {
-	return func(c *Config) {
-		c.ToolNodePreHandler = handler
-	}
-}
-
-func WithToolNodePostHandler(handler ToolNodePostHandler) Option {
-	return func(c *Config) {
-		c.ToolNodePostHandler = handler
-	}
 }

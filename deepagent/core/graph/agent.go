@@ -71,10 +71,9 @@ func New(ctx context.Context, opts ...Option) (*DeepAgent, error) {
 	if cfg.MaxModelCalls < 0 {
 		return nil, errors.New("max model calls must be >= 0")
 	}
-	if !cfg.DisableSubAgent {
-		if err := loadSubAgents(ctx, &cfg); err != nil {
-			return nil, err
-		}
+	err := validateSubAgents(cfg.SubAgents)
+	if err != nil {
+		return nil, err
 	}
 	history := cfg.Conversation
 	if history == nil {

@@ -2,15 +2,15 @@ package graph
 
 import (
 	"context"
-	"strings"
-	"testing"
-
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
+
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"strings"
+	"testing"
 )
 
 type nativeToolMiddleware struct {

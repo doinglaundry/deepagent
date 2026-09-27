@@ -213,7 +213,7 @@ func TestBlockedRunResumesFromCheckpointOnNewThread(t *testing.T) {
 	checkpoints := &legacyParityMemoryCheckpoints{}
 	config := &RunConfig{Agent: deepagents.Config{
 		Model: chatModel, CheckpointStore: checkpoints,
-		HITLConfig: &deepagents.HITLConfig{NeedFollowUpTool: true},
+		ToolDescriptors: []deeptools.Descriptor{deeptools.Describe(deeptools.GetFollowUpTool())},
 	}}
 
 	firstEvents := make(chan Event, 64)
@@ -328,7 +328,7 @@ func TestRunBudgetsStopUnboundedToolLoop(t *testing.T) {
 			}}
 			events := make(chan Event, 64)
 			thread := New("thread-1", &RunConfig{Agent: deepagents.Config{
-				Model: chatModel, Tools: []toolpkg.BaseTool{legacyParityEchoTool{}},
+				Model: chatModel, ToolDescriptors: []deeptools.Descriptor{{Tool: legacyParityEchoTool{}}},
 				MaxSteps: test.maxSteps, MaxModelCalls: test.maxModelCalls,
 				CheckpointStore: &legacyParityMemoryCheckpoints{},
 			}}, events, ThreadOptions{})

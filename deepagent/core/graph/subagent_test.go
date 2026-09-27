@@ -2,18 +2,19 @@ package graph
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-
 	"eino-cli/deepagent/core/internal/conversation"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
+	"encoding/json"
+	"fmt"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
 )
 
 func TestChildAgent_DirectoryConfigurationReachesTaskGraph(t *testing.T) {
@@ -30,7 +31,11 @@ func TestChildAgent_DirectoryConfigurationReachesTaskGraph(t *testing.T) {
 		{schema.AssistantMessage("review done", nil)},
 		{schema.AssistantMessage("parent done", nil)},
 	}}
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, SubAgentsDirs: []string{root}}))
+	agents, err := LoadSubAgents(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, SubAgents: agents}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,12 +53,12 @@ func TestChildAgent_DirectoryConfigurationReachesTaskGraph(t *testing.T) {
 	if len(m.inputs) != 3 || len(m.inputs[1]) != 2 || m.inputs[1][0].Content != "review loaded configuration" || m.inputs[1][1].Content != "review task" {
 		t.Fatalf("loaded child config not used: %+v", m.inputs)
 	}
-	_, err = New(context.Background(), WithConfig(&Config{Model: &sequenceModel{}, SubAgentsDirs: []string{root}, SubAgents: []*SubAgent{{Name: "reviewer"}}}))
+	_, err = New(context.Background(), WithConfig(&Config{Model: &sequenceModel{}, SubAgents: append(agents, &SubAgent{Name: "reviewer"})}))
 	if err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("duplicate configured child accepted: %v", err)
 	}
 	directModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("direct", nil)}}}
-	out, err := NewChildRunner(Config{Model: directModel, SubAgentsDirs: []string{root}}).Run(context.Background(), tools.ChildRequest{Name: "reviewer", Prompt: "direct task"}, nil)
+	out, err := NewChildRunner(Config{Model: directModel, SubAgents: agents}).Run(context.Background(), tools.ChildRequest{Name: "reviewer", Prompt: "direct task"}, nil)
 	if err != nil || out.Content != "direct" || directModel.inputs[0][0].Content != "review loaded configuration" {
 		t.Fatalf("direct child runner did not load config: out=%v err=%v", out, err)
 	}
@@ -68,7 +73,7 @@ func TestChildAgent_TaskStreamingReturnsOnlyFinalAnswer(t *testing.T) {
 	}}
 	var chunks []string
 	tool := &countingTool{}
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, EnableSubAgentTaskStreaming: true, ToolDescriptors: []tools.Descriptor{{Tool: tool}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, SubAgents: []*SubAgent{{Name: "general-purpose"}}, ToolDescriptors: []tools.Descriptor{{Tool: tool}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
 		if chunk, ok := event.Data.(types.ToolOutputChunk); ok && chunk.Call.ID == "task-call" {
 			chunks = append(chunks, chunk.Content)
 		}
@@ -105,21 +110,15 @@ func TestChildAgent_NamedCapabilitiesAndContext(t *testing.T) {
 		// named child's disabled filesystem must prevent it from being assembled.
 		FilesystemConfig: &FilesystemConfig{},
 		SubAgents:        []*SubAgent{{Name: "reviewer", SystemPrompt: "review carefully"}},
-		SubAgentContextInjector: func(_ context.Context, name string) ([]*schema.Message, error) {
-			if name != "reviewer" {
-				t.Fatalf("injected context for %q", name)
-			}
-			return []*schema.Message{schema.UserMessage("selected context")}, nil
-		},
 	})
-	result, err := runner.Run(context.Background(), tools.ChildRequest{Name: "reviewer", Prompt: "review task"}, nil)
+	result, err := runner.Run(context.Background(), tools.ChildRequest{Name: "reviewer", Prompt: "selected context\nreview task"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Content != "reviewed" || len(m.inputs) != 1 || len(m.inputs[0]) != 3 {
+	if result.Content != "reviewed" || len(m.inputs) != 1 || len(m.inputs[0]) != 2 {
 		t.Fatalf("result=%v inputs=%v", result, m.inputs)
 	}
-	if m.inputs[0][0].Content != "review carefully" || m.inputs[0][1].Content != "selected context" || m.inputs[0][2].Content != "review task" {
+	if m.inputs[0][0].Content != "review carefully" || m.inputs[0][1].Content != "selected context\nreview task" {
 		t.Fatalf("child context=%v", m.inputs[0])
 	}
 }
@@ -138,7 +137,7 @@ func TestChildAgent_UsesSameGraphWithIndependentBudget(t *testing.T) {
 	}
 	model := &childModel{}
 	tool := &countingTool{}
-	runner := NewChildRunner(Config{Model: model, RunID: "parent-run", MaxModelCalls: 1, Conversation: parentHistory, ToolDescriptors: []tools.Descriptor{{Tool: tool}}})
+	runner := NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: model, RunID: "parent-run", MaxModelCalls: 1, Conversation: parentHistory, ToolDescriptors: []tools.Descriptor{{Tool: tool}}})
 	_, err := runner.Run(ctx, tools.ChildRequest{Name: "general-purpose", Prompt: "first child", MaxModelCalls: 1}, nil)
 	if err == nil || !strings.Contains(err.Error(), "maximum model calls") {
 		t.Fatalf("child budget not enforced: %v", err)
@@ -164,7 +163,7 @@ func TestChildAgent_TaskIsRegisteredOnParentGraph(t *testing.T) {
 		{schema.AssistantMessage("child result", nil)},
 		{schema.AssistantMessage("parent result", nil)},
 	}}
-	a, err := New(context.Background(), WithModel(m))
+	a, err := New(context.Background(), WithModel(m), WithSubAgents(&SubAgent{Name: "general-purpose"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,5 +182,159 @@ func TestChildAgent_TaskIsRegisteredOnParentGraph(t *testing.T) {
 	}
 	if got := m.inputs[2][len(m.inputs[2])-1]; got.Role != schema.Tool || got.Content != "child result" {
 		t.Fatalf("child output lost: %v", got)
+	}
+}
+
+type boundedChildRunner struct {
+	mu           sync.Mutex
+	active, peak int
+	started      chan string
+	release      chan struct{}
+}
+
+func (r *boundedChildRunner) Run(ctx context.Context, req tools.ChildRequest, _ types.ModelChunkSink) (*schema.Message, error) {
+	r.mu.Lock()
+	r.active++
+	if r.active > r.peak {
+		r.peak = r.active
+	}
+	r.mu.Unlock()
+	defer func() { r.mu.Lock(); r.active--; r.mu.Unlock() }()
+	r.started <- req.Prompt
+	select {
+	case <-r.release:
+		return schema.AssistantMessage(req.Prompt, nil), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestChildAgent_ConcurrencyLimitQueuesEveryTask(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	runner := &boundedChildRunner{started: make(chan string, 5), release: make(chan struct{}, 5)}
+	registry, err := tools.NewRegistry(ctx, []tools.Descriptor{{Tool: tools.NewTaskTool(runner), ParallelSafe: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := newToolExecutor("run", registry, 2, nil)
+	var calls []types.ToolCall
+	for _, i := range []int{4, 2, 0, 3, 1} {
+		calls = append(calls, types.ToolCall{ID: fmt.Sprint(i), Index: i, Name: "task", Arguments: fmt.Sprintf(`{"description":"task-%d"}`, i)})
+	}
+	done := make(chan struct {
+		results []types.ToolResult
+		err     error
+	}, 1)
+	go func() {
+		results, err := executor.executeBatch(ctx, calls, nil)
+		done <- struct {
+			results []types.ToolResult
+			err     error
+		}{results, err}
+	}()
+	seen := map[string]bool{}
+	for _, size := range []int{2, 2, 1} {
+		for range size {
+			select {
+			case name := <-runner.started:
+				if seen[name] {
+					t.Fatalf("duplicate task %s", name)
+				}
+				seen[name] = true
+			case <-ctx.Done():
+				t.Fatal("queued task was dropped or deadlocked")
+			}
+		}
+		for range size {
+			runner.release <- struct{}{}
+		}
+	}
+	select {
+	case out := <-done:
+		if out.err != nil || len(out.results) != 5 {
+			t.Fatalf("results=%v err=%v", out.results, out.err)
+		}
+		for i, result := range out.results {
+			if result.CallID != fmt.Sprint(i) || result.Content != fmt.Sprintf("task-%d", i) {
+				t.Fatalf("result order lost: %+v", out.results)
+			}
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if runner.peak != 2 || runner.active != 0 || len(seen) != 5 {
+		t.Fatalf("peak=%d active=%d seen=%v", runner.peak, runner.active, seen)
+	}
+}
+
+func writeSpec(t *testing.T, root, name, content string) {
+	t.Helper()
+	dir := filepath.Join(root, name)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SUBAGENT.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestLoadSubAgentsConfigurationAndOrdering(t *testing.T) {
+	root := t.TempDir()
+	writeSpec(t, root, "z", "name: reviewer\nsystem_prompt: review carefully\nmax_steps: 12\nread_only: true\nenable_filesystem: true\ntools: [read_file]\n")
+	writeSpec(t, root, "a", "system_prompt: analyze\n")
+	agents, err := LoadSubAgents(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 2 || agents[0].Name != "a" || agents[1].Name != "reviewer" {
+		t.Fatalf("agents=%+v", agents)
+	}
+	a := agents[1]
+	if a.SystemPrompt != "review carefully" || a.MaxSteps != 12 || !a.ReadOnly || !a.EnableFilesystem || a.EnableWeb {
+		t.Fatalf("config=%+v", a)
+	}
+	if !a.ToolMask(context.Background(), &schema.ToolInfo{Name: "read_file"}) || a.ToolMask(context.Background(), &schema.ToolInfo{Name: "write_file"}) {
+		t.Fatal("tool allowlist not applied")
+	}
+}
+func TestLoadSubAgentsRejectsInvalidAndEscapingSpecs(t *testing.T) {
+	for _, content := range []string{"system_prompt: x\nunknown: true\n", "system_prompt: x\nmax_steps: -1\n", "name: empty\n", "system_prompt: x\n---\nname: second\n", "system_prompt: x\ntools: [read_file, read_file]\n"} {
+		root := t.TempDir()
+		writeSpec(t, root, "bad", content)
+		if _, err := LoadSubAgents(context.Background(), root); err == nil {
+			t.Fatalf("accepted %q", content)
+		}
+	}
+	root, outside := t.TempDir(), t.TempDir()
+	writeSpec(t, outside, "external", "system_prompt: outside\n")
+	if err := os.Mkdir(filepath.Join(root, "escape"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "external", "SUBAGENT.yaml"), filepath.Join(root, "escape", "SUBAGENT.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSubAgents(context.Background(), root); err == nil {
+		t.Fatal("followed escaping config symlink")
+	}
+}
+
+func TestChildAgent_RequiresExplicitRegistration(t *testing.T) {
+	ctx := context.Background()
+	m := &sequenceModel{}
+	a, err := New(ctx, WithModel(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(ctx)
+	_, exists := a.registry.Lookup("task")
+	if exists {
+		t.Fatal("task registered without configured subagents")
+	}
+	runner := NewChildRunner(Config{Model: m})
+	_, err = runner.Run(ctx, tools.ChildRequest{Name: "general-purpose", Prompt: "work"}, nil)
+	if err == nil || m.calls != 0 {
+		t.Fatalf("unconfigured child executed: err=%v calls=%d", err, m.calls)
 	}
 }

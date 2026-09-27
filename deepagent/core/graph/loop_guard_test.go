@@ -20,7 +20,7 @@ func TestLoopGuardStopsRepeatedToolsAndIsRunLocal(t *testing.T) {
 			{schema.AssistantMessage("stopping loop", []schema.ToolCall{{ID: "second", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 		}}
 		tool := &countingTool{}
-		a, err := New(context.Background(), WithConfig(&Config{Model: m, EnableStreamToolCall: true, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.Descriptor{{Tool: tool, ParallelSafe: true}}}))
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, EnableEagerTools: true, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.Descriptor{{Tool: tool, ParallelSafe: true}}}))
 		if err != nil {
 			t.Fatal(err)
 		}

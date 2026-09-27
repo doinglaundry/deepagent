@@ -2,47 +2,60 @@ package graph
 
 import (
 	"context"
+	"eino-cli/deepagent/core/types"
+	"strings"
 	"testing"
 
 	"eino-cli/deepagent/core/tools"
-	"eino-cli/deepagent/core/types"
+
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestRun_LegacyPolicyGateDeniesWithoutExecution(t *testing.T) {
+func TestRun_ReadOnlyRegistryCannotExecuteUnclassifiedTool(t *testing.T) {
+	ctx := context.Background()
 	tool := &countingTool{}
-	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.Descriptor{{Tool: tool, ReturnDirect: true}}, HITLConfig: &HITLConfig{NeedFollowUpTool: true, ToolPolicyGates: map[string]tools.ToolPolicyGate{
-		"counter": {Policy: func(_ context.Context, info *tools.ApprovalInfo) (tools.ToolCallDecision, error) {
-			if info.ToolName != "counter" || info.ArgumentsInJSON != "{}" {
-				t.Fatalf("policy input=%+v", info)
-			}
-			return tools.ToolCallDecision{Action: tools.ToolCallDeny, Reason: "blocked"}, nil
-		}},
-	}}}))
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}, {schema.AssistantMessage("unavailable", nil)}}}
+	a, err := New(ctx, WithConfig(&Config{Model: m, ReadOnlyToolsOnly: true, ToolDescriptors: []tools.Descriptor{{Tool: tool}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")})
-	if err != nil {
+	defer a.Close(ctx)
+	if _, err = a.Run(ctx, []*schema.Message{schema.UserMessage("go")}); err != nil {
 		t.Fatal(err)
 	}
-	if tool.count.Load() != 0 || result.Content != "blocked" {
-		t.Fatalf("executed=%d result=%v", tool.count.Load(), result)
+	if tool.count.Load() != 0 {
+		t.Fatal("readonly run executed unclassified tool")
 	}
-	if _, ok := a.registry.Lookup("ask_user"); !ok {
-		t.Fatal("follow-up tool missing")
+	last := m.inputs[1][len(m.inputs[1])-1]
+	if last.Role != schema.Tool || !strings.Contains(last.Content, "unknown tool") {
+		t.Fatalf("model did not see unavailable tool: %+v", last)
 	}
 }
 
-func TestPolicy_ApprovalCannotOverrideGlobalDeny(t *testing.T) {
-	p := policyWithGates(tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
-		return tools.Decision{Action: tools.Deny, Reason: "global deny"}, nil
-	}), map[string]tools.ToolPolicyGate{"counter": {Policy: func(context.Context, *tools.ApprovalInfo) (tools.ToolCallDecision, error) {
-		return tools.ToolCallDecision{Action: string(tools.AskApproval)}, nil
-	}}})
-	decision, err := p.Decide(context.Background(), types.ToolCall{Name: "counter"}, tools.Descriptor{Tool: &countingTool{}})
-	if err != nil || decision.Action != tools.Deny {
-		t.Fatalf("decision=%+v err=%v", decision, err)
+func TestPolicy_DenyPreventsExecutionAndApproval(t *testing.T) {
+	for _, requiresApproval := range []bool{false, true} {
+		counter := &countingTool{}
+		m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
+		a, err := New(context.Background(), WithConfig(&Config{
+			Model:           m,
+			ToolDescriptors: []tools.Descriptor{{Tool: counter, RequiresApproval: requiresApproval, ReturnDirect: true}},
+			Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+				return tools.Decision{Action: tools.Deny, Reason: "blocked"}, nil
+			}),
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if counter.count.Load() != 0 || result.Content != "blocked" {
+			t.Fatalf("executed=%d result=%v", counter.count.Load(), result)
+		}
+		err = a.Close(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }

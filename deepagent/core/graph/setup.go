@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/tools"
@@ -44,7 +43,7 @@ func (a *DeepAgent) configureRun(ctx context.Context) (err error) {
 	a.middlewares = middlewares
 	a.registry = registry
 	a.model = chatModel
-	a.policy = a.buildPolicy()
+	a.policy = a.cfg.Policy
 	a.eager = a.canExecuteToolsEagerly(middlewares)
 	a.graphState = a.buildRuntimeState(middlewares)
 
@@ -83,9 +82,7 @@ func (a *DeepAgent) newRunMiddlewares(ctx context.Context, childConfig *Config) 
 		configured = append(configured, middleware.NewWeb(&webConfig))
 	}
 	configured = append(configured, childConfig.Middlewares...)
-	if childConfig.EnablePatchToolCalls {
-		configured = append(configured, middleware.NewPatchToolCalls())
-	}
+	configured = append(configured, middleware.NewPatchToolCalls())
 
 	middlewares = make([]middleware.Middleware, 0, len(configured))
 	for _, source := range configured {
@@ -118,54 +115,18 @@ func (a *DeepAgent) collectToolDescriptors(ctx context.Context, middlewares []mi
 			descriptors = append(descriptors, tools.Describe(item))
 		}
 	}
-	if childConfig.HITLConfig != nil && childConfig.HITLConfig.NeedFollowUpTool {
-		found, err := hasToolNamed(ctx, descriptors, "ask_user")
-		if err != nil {
-			return nil, err
+	if len(childConfig.SubAgents) > 0 {
+		names := make([]string, 0, len(childConfig.SubAgents))
+		for _, spec := range childConfig.SubAgents {
+			names = append(names, spec.Name)
 		}
-		if !found {
-			descriptors = append(descriptors, tools.Descriptor{Tool: tools.GetFollowUpTool(), ReadOnly: true})
-		}
+		task := tools.NewStreamingTaskTool(NewChildRunner(childConfig), names...)
+		descriptors = append(descriptors, tools.Descriptor{
+			Tool: task, ParallelSafe: true, ReadOnly: childConfig.ReadOnlyToolsOnly,
+		})
 	}
-	if !childConfig.DisableSubAgent {
-		found, err := hasToolNamed(ctx, descriptors, "task")
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			names := []string{"general-purpose"}
-			for _, spec := range childConfig.SubAgents {
-				if spec.Name != "general-purpose" {
-					names = append(names, spec.Name)
-				}
-			}
-			runner := NewChildRunner(childConfig)
-			task := tools.NewTaskTool(runner, names...)
-			if childConfig.EnableSubAgentTaskStreaming {
-				task = tools.NewStreamingTaskTool(runner, names...)
-			}
-			descriptors = append(descriptors, tools.Descriptor{
-				Tool: task, ParallelSafe: true, ReadOnly: childConfig.ReadOnlyToolsOnly,
-			})
-		}
-	}
-	return descriptors, nil
-}
 
-func hasToolNamed(ctx context.Context, descriptors []tools.Descriptor, name string) (bool, error) {
-	for _, descriptor := range descriptors {
-		if descriptor.Tool == nil {
-			continue
-		}
-		info, err := descriptor.Tool.Info(ctx)
-		if err != nil {
-			return false, err
-		}
-		if info != nil && info.Name == name {
-			return true, nil
-		}
-	}
-	return false, nil
+	return descriptors, nil
 }
 
 func (a *DeepAgent) buildToolRegistry(ctx context.Context, descriptors []tools.Descriptor) (*tools.Registry, error) {
@@ -173,12 +134,7 @@ func (a *DeepAgent) buildToolRegistry(ctx context.Context, descriptors []tools.D
 	if err != nil {
 		return nil, err
 	}
-	if a.cfg.ToolInfoRewriter != nil {
-		err = registry.RewriteInfo(ctx, a.cfg.ToolInfoRewriter)
-		if err != nil {
-			return nil, err
-		}
-	}
+
 	return registry.Filter(ctx, a.cfg.ReadOnlyToolsOnly, a.cfg.ToolMask)
 }
 
@@ -193,15 +149,8 @@ func (a *DeepAgent) bindModelTools(ctx context.Context, registry *tools.Registry
 	return a.cfg.Model.WithTools(infos)
 }
 
-func (a *DeepAgent) buildPolicy() tools.Policy {
-	if a.cfg.HITLConfig == nil || len(a.cfg.HITLConfig.ToolPolicyGates) == 0 {
-		return a.cfg.Policy
-	}
-	return policyWithGates(a.cfg.Policy, a.cfg.HITLConfig.ToolPolicyGates)
-}
-
 func (a *DeepAgent) canExecuteToolsEagerly(middlewares []middleware.Middleware) bool {
-	if !a.cfg.EnableStreamToolCall || a.cfg.ToolNodePreHandler != nil {
+	if !a.cfg.EnableEagerTools {
 		return false
 	}
 	for _, mw := range middlewares {
@@ -221,18 +170,7 @@ func (a *DeepAgent) buildRuntimeState(middlewares []middleware.Middleware) *type
 			state.RegisterStateful(mw.Name(), handler)
 		}
 	}
-	// Custom handlers override middleware defaults. Child-shared handlers are
-	// owned by the parent and must not be persisted in the child checkpoint.
-	for name, handler := range a.cfg.CustomGraphState {
-		if handler == nil {
-			continue
-		}
-		if a.cfg.Depth > 0 && slices.Contains(a.cfg.SubAgentSharedCustomStateNames, name) {
-			state.RegisterRuntimeOnlyStateful(name, handler)
-			continue
-		}
-		state.RegisterStateful(name, handler)
-	}
+
 	return state
 }
 

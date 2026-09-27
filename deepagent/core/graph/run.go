@@ -185,7 +185,6 @@ func (a *DeepAgent) execute(ctx context.Context, input []*schema.Message, resume
 	ctx = context.WithValue(ctx, "deep_agent", a)
 	ctx = types.NewStateContext(ctx, a.graphState)
 	defer func() {
-		err = errors.Join(err, a.cfg.Hooks.AfterAgent(ctx))
 		for i := len(a.middlewares) - 1; i >= 0; i-- {
 			if mw, ok := a.middlewares[i].(middleware.RunMiddleware); ok {
 				current := a.state
@@ -205,9 +204,6 @@ func (a *DeepAgent) execute(ctx context.Context, input []*schema.Message, resume
 				return nil, err
 			}
 		}
-	}
-	if err := a.cfg.Hooks.BeforeAgent(ctx); err != nil {
-		return nil, err
 	}
 	if a.cfg.CheckpointStore != nil && options.CheckpointID != "" && (options.WriteToCheckpointID == "" || options.WriteToCheckpointID == options.CheckpointID) {
 		ctx = context.WithValue(ctx, initialCheckpointKey{}, state)

@@ -105,11 +105,5 @@ func (a *DeepAgent) graphCompileOptions() []compose.GraphCompileOption {
 		store := checkpointer.New(a.cfg.CheckpointStore, a.cfg.ThreadID, a.runID, "core-graph-v1")
 		options = append(options, compose.WithCheckPointStore(store))
 	}
-	if len(a.cfg.InterruptBeforeNodes) > 0 {
-		options = append(options, compose.WithInterruptBeforeNodes(a.cfg.InterruptBeforeNodes))
-	}
-	if len(a.cfg.InterruptAfterNodes) > 0 {
-		options = append(options, compose.WithInterruptAfterNodes(a.cfg.InterruptAfterNodes))
-	}
 	return options
 }

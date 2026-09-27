@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 
-	hook "eino-cli/deepagent/core/hooks"
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/types"
 	"github.com/cloudwego/eino/components/model"
@@ -56,19 +55,11 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 	if err != nil {
 		return nil, err
 	}
-	initial := make([]*schema.Message, len(s.Consumed))
-	for i := range s.Consumed {
-		initial[i] = s.Consumed[i].Message
-	}
 	for _, mw := range a.middlewares {
 		request, err = mw.ModifyModelRequest(ctx, prompts, request, a.graphState)
 		if err != nil {
 			return nil, err
 		}
-	}
-	request, err = a.cfg.Hooks.BeforeModel(ctx, initial, request, a.graphState)
-	if err != nil {
-		return nil, err
 	}
 	err = a.event(ctx, s, "llm_requesting", "", request)
 	if err != nil {
@@ -93,26 +84,10 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 	if stream == nil {
 		return nil, fmt.Errorf("model returned nil stream")
 	}
-	// Hooks and middleware transfer ownership through the returned stream.
+	// Middleware transfers ownership through the returned stream.
 	// Close only the outermost reader: Eino wrappers close their source, and
 	// the underlying reader does not support repeated Close calls.
 	defer func() { stream.Close() }()
-	output, err := a.cfg.Hooks.AfterModel(ctx, hook.ModelOutput{Stream: stream, IsStream: true}, a.graphState)
-	if err != nil {
-		return nil, err
-	}
-	if output.IsStream {
-		if output.Stream == nil {
-			return nil, fmt.Errorf("model hook returned nil stream")
-		}
-		stream = output.Stream
-	} else {
-		if output.Message == nil {
-			return nil, fmt.Errorf("model hook returned nil message")
-		}
-		stream.Close()
-		stream = schema.StreamReaderFromArray([]*schema.Message{output.Message})
-	}
 	for _, mw := range a.middlewares {
 		next, modifyErr := mw.ModifyModelStreamResponse(ctx, stream, a.graphState)
 		if modifyErr != nil {

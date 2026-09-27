@@ -111,18 +111,24 @@ func TestCheckpoint_ParallelFencesRetainEveryCall(t *testing.T) {
 		})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, Parallelism: 2, InterruptBeforeNodes: []string{"tools"}, ToolDescriptors: []tools.Descriptor{{Tool: counter, ParallelSafe: true}}}
+	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, Parallelism: 2, ToolDescriptors: []tools.Descriptor{{Tool: counter, ParallelSafe: true}}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close(ctx)
+	first.emit = func(_ context.Context, event types.RuntimeEvent) error {
+		if event.Kind == "llm_end" {
+			first.Interrupt()
+		}
+		return nil
+	}
 	_, err = first.Run(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
 	if _, ok := compose.ExtractInterruptInfo(err); !ok || counter.count.Load() != 0 {
 		t.Fatalf("initial interrupt: %v", err)
 	}
 	cfg.Conversation = first.conversation
-	cfg.InterruptBeforeNodes = nil
+	cfg.Emit = nil
 	resumed, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)

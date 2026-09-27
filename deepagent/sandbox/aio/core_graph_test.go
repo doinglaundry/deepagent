@@ -49,9 +49,9 @@ func (m *sandboxGraphModel) Stream(_ context.Context, input []*schema.Message, _
 	var msg *schema.Message
 	switch {
 	case m.calls == 1:
-		msg = schema.AssistantMessage("", []schema.ToolCall{{ID: "read", Function: schema.FunctionCall{Name: "read_file", Arguments: `{"file_path":"a.txt"}`}}})
+		msg = schema.AssistantMessage("", []schema.ToolCall{{ID: "read", Function: schema.FunctionCall{Name: "read_file", Arguments: `{"path":"a.txt"}`}}})
 	case m.calls == 2 && !m.readOnly:
-		msg = schema.AssistantMessage("", []schema.ToolCall{{ID: "edit", Function: schema.FunctionCall{Name: "edit_file", Arguments: `{"path":"a.txt","old_string":"original","new_string":"updated"}`}}})
+		msg = schema.AssistantMessage("", []schema.ToolCall{{ID: "edit", Function: schema.FunctionCall{Name: "edit_file", Arguments: `{"path":"a.txt","old":"original","new":"updated"}`}}})
 	default:
 		msg = schema.AssistantMessage("done", nil)
 	}
@@ -106,7 +106,7 @@ func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := &sandboxGraphModel{readOnly: readOnly}
-			agent, err := graph.New(context.Background(), graph.WithConfig(&graph.Config{ThreadID: "thread", Model: m, Filesystem: files, DisableSubAgent: true, FilesystemConfig: &graph.FilesystemConfig{ReadOnly: readOnly}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
+			agent, err := graph.New(context.Background(), graph.WithConfig(&graph.Config{ThreadID: "thread", Model: m, Filesystem: files, FilesystemConfig: &graph.FilesystemConfig{ReadOnly: readOnly}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.Descriptor) (tools.Decision, error) {
 				return tools.Decision{Action: tools.Allow}, nil
 			})}))
 			if err != nil {

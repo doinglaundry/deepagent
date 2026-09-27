@@ -5,20 +5,13 @@ import (
 	"eino-cli/deepagent/core/backend"
 	canonical "eino-cli/deepagent/core/middleware"
 	deeptools "eino-cli/deepagent/core/tools"
+	"eino-cli/deepagent/core/types"
 	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
-
-type testBuilderMiddleware struct {
-	canonical.BaseMiddleware
-}
-
-func (m *testBuilderMiddleware) Name() string {
-	return "test_builder_middleware"
-}
 
 type testSkillLoader struct{}
 
@@ -94,30 +87,6 @@ func collectToolNames(t *testing.T, ctx context.Context, toolList []tool.BaseToo
 	return names
 }
 
-func TestWithConfigCopiesInput(t *testing.T) {
-	source := &Config{
-		FilesystemConfig:    &FilesystemConfig{ReadOnly: true},
-		InterruptAfterNodes: []string{"model"},
-		HITLConfig: &HITLConfig{
-			ToolPolicyGates: map[string]deeptools.ToolPolicyGate{"execute": {}},
-		},
-	}
-
-	configured := buildCreateConfig(WithConfig(source))
-	configured.InterruptAfterNodes[0] = "tools"
-	delete(configured.HITLConfig.ToolPolicyGates, "execute")
-
-	if source.InterruptAfterNodes[0] != "model" {
-		t.Fatalf("source InterruptAfterNodes was mutated: %+v", source.InterruptAfterNodes)
-	}
-	if _, exists := source.HITLConfig.ToolPolicyGates["execute"]; !exists {
-		t.Fatalf("source HITLConfig was mutated: %+v", source.HITLConfig)
-	}
-	if !configured.FilesystemConfig.ReadOnly {
-		t.Fatal("filesystem options were not copied")
-	}
-}
-
 func TestSelectBackendProvidesCommandExecution(t *testing.T) {
 	ctx := context.Background()
 	m := &publicModel{}
@@ -158,37 +127,9 @@ func TestFeatureConfigPresenceControlsEnablement(t *testing.T) {
 }
 
 func TestNew_RequiresModel(t *testing.T) {
-	_, err := New(context.Background(), WithContextManager(&testBuilderMiddleware{}))
+	_, err := New(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "model is required") {
 		t.Fatalf("expected model required error, got %v", err)
-	}
-}
-
-func TestCollectAllTools_ToolMaskRunsBeforeHITLWrapping(t *testing.T) {
-	ctx := context.Background()
-	config := &Config{
-		Tools: []tool.BaseTool{&fakeToolCounter{}},
-		ToolMask: func(_ context.Context, info *schema.ToolInfo) bool {
-			return info.Name != "counter"
-		},
-		HITLConfig: &HITLConfig{
-			ToolPolicyGates: map[string]deeptools.ToolPolicyGate{
-				"counter": {Policy: func(context.Context, *deeptools.ApprovalInfo) (deeptools.ToolCallDecision, error) {
-					return deeptools.ToolCallDecision{}, nil
-				}},
-			},
-		},
-	}
-
-	m := &publicModel{}
-	config.Model, config.DisableSubAgent = m, true
-	a, err := New(ctx, WithConfig(config))
-	if err != nil {
-		t.Fatalf("collectAllTools() error = %v", err)
-	}
-	defer a.Close(ctx)
-	if len(m.infos) != 0 {
-		t.Fatalf("expected masked tool to be removed before HITL wrapping, got %v", m.infos)
 	}
 }
 
@@ -202,11 +143,11 @@ func (*explicitReadOnlyTool) Info(context.Context) (*schema.ToolInfo, error) {
 func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T) {
 	ctx := context.Background()
 	config := &Config{
-		Tools:             []tool.BaseTool{&fakeToolCounter{}, &explicitReadOnlyTool{}},
+		ToolDescriptors:   []deeptools.Descriptor{{Tool: &fakeToolCounter{}}, {Tool: &explicitReadOnlyTool{}, ReadOnly: true}},
 		ReadOnlyToolsOnly: true,
 	}
 	m := &publicModel{}
-	config.Model, config.DisableSubAgent = m, true
+	config.Model = m
 	a, err := New(ctx, WithConfig(config))
 	if err != nil {
 		t.Fatal(err)
@@ -217,51 +158,6 @@ func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T
 	}
 }
 
-func TestCollectAllTools_ToolPolicyGateDeniesWithoutRunningTool(t *testing.T) {
-	ctx := context.Background()
-	counter := &fakeToolCounter{}
-	config := &Config{
-		Tools: []tool.BaseTool{counter},
-		HITLConfig: &HITLConfig{
-			ToolPolicyGates: map[string]deeptools.ToolPolicyGate{
-				"counter": {
-					Policy: func(context.Context, *deeptools.ApprovalInfo) (deeptools.ToolCallDecision, error) {
-						return deeptools.ToolCallDecision{Action: deeptools.ToolCallDeny, Reason: "blocked"}, nil
-					},
-					DenyFormatter: func(ctx context.Context, info *deeptools.ApprovalInfo, decision deeptools.ToolCallDecision) (string, error) {
-						return `{"denied":true,"reason":"` + decision.Reason + `"}`, nil
-					},
-				},
-			},
-		},
-	}
-
-	m := &publicModel{call: true}
-	config.Model, config.DisableSubAgent = m, true
-	a, err := New(ctx, WithConfig(config))
-	if err != nil {
-		t.Fatalf("collectAllTools() error = %v", err)
-	}
-	defer a.Close(ctx)
-	if len(m.infos) != 1 {
-		t.Fatalf("tools len = %d, want 1", len(m.infos))
-	}
-	_, err = a.Run(ctx, []*schema.Message{schema.UserMessage("go")})
-	if err != nil {
-		t.Fatalf("InvokableRun() error = %v", err)
-	}
-	if len(m.inputs) != 2 {
-		t.Fatalf("model calls=%d", len(m.inputs))
-	}
-	got := m.inputs[1][len(m.inputs[1])-1].Content
-	if got != `{"denied":true,"reason":"blocked"}` {
-		t.Fatalf("output = %q", got)
-	}
-	if counter.total != 0 {
-		t.Fatalf("counter total = %d, want 0", counter.total)
-	}
-}
-
 func containsString(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {
@@ -269,4 +165,57 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestWithConfigCopiesInput(t *testing.T) {
+	source := &Config{FilesystemConfig: &FilesystemConfig{ReadOnly: true}, Prompts: []*schema.Message{schema.SystemMessage("original")}}
+	configured := buildCreateConfig(WithConfig(source))
+	configured.Prompts[0] = schema.SystemMessage("changed")
+	configured.FilesystemConfig.ReadOnly = false
+	if source.Prompts[0].Content != "original" || !source.FilesystemConfig.ReadOnly {
+		t.Fatal("WithConfig mutated the source")
+	}
+}
+
+func TestToolMaskExcludesToolFromModel(t *testing.T) {
+	m := &publicModel{}
+	a, err := New(context.Background(), WithConfig(&Config{
+		Model:           m,
+		ToolDescriptors: []deeptools.Descriptor{{Tool: &fakeToolCounter{}}},
+		ToolMask:        func(_ context.Context, info *schema.ToolInfo) bool { return info.Name != "counter" },
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(context.Background())
+	if len(m.infos) != 0 {
+		t.Fatalf("masked tool exposed: %v", m.infos)
+	}
+}
+
+func TestToolPolicyDeniesWithoutRunningTool(t *testing.T) {
+	counter := &fakeToolCounter{}
+	m := &publicModel{call: true}
+	a, err := New(context.Background(), WithConfig(&Config{
+		Model:           m,
+		ToolDescriptors: []deeptools.Descriptor{{Tool: counter}},
+		Policy: deeptools.PolicyFunc(func(context.Context, types.ToolCall, deeptools.Descriptor) (deeptools.Decision, error) {
+			return deeptools.Decision{Action: deeptools.Deny, Reason: "blocked"}, nil
+		}),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(context.Background())
+	_, err = a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counter.total != 0 || len(m.inputs) != 2 {
+		t.Fatalf("executions=%d models=%d", counter.total, len(m.inputs))
+	}
+	last := m.inputs[1][len(m.inputs[1])-1]
+	if last.Role != schema.Tool || last.Content != "blocked" {
+		t.Fatalf("denial missing: %+v", last)
+	}
 }

@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"eino-cli/deepagent/core/graph"
-	hook "eino-cli/deepagent/core/hooks"
 	"eino-cli/deepagent/core/internal/conversation"
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/types"
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
@@ -49,15 +49,15 @@ func TestPublicEntryUsesCanonicalAgentAndContext(t *testing.T) {
 	m := &publicModel{}
 	var agent *DeepAgent
 	seen := false
-	hooks := hook.Hooks{BeforeModel: func(ctx context.Context, _, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
+	handler := (&callbacks.HandlerBuilder{}).OnStartFn(func(ctx context.Context, _ *callbacks.RunInfo, _ callbacks.CallbackInput) context.Context {
 		seen = true
 		if GetDeepAgent(ctx) != agent || GetWholeGraphState(ctx) != agent.GraphState() {
 			t.Error("public context lookup lost canonical agent")
 		}
-		return messages, nil
-	}}
+		return ctx
+	}).Build()
 	var err error
-	agent, err = New(ctx, WithModel(m), WithHooks(hooks))
+	agent, err = New(ctx, WithModel(m), WithDefaultCallbacks(handler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestPublicEntryUsesCanonicalAgentAndContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !seen {
-		t.Fatal("hook not called")
+		t.Fatal("callback not called")
 	}
 }
 func TestPublicResumeOptionsMergeWithoutMutatingCaller(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"eino-cli/deepagent/core/internal/conversation"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -80,5 +81,40 @@ func TestRun_FailedCompactionNeverPublishesSuccessOrCallsModel(t *testing.T) {
 	_, err = a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")})
 	if !errors.Is(err, want) || m.calls != 0 {
 		t.Fatalf("err=%v calls=%d", err, m.calls)
+	}
+}
+
+type paritySummaryModel struct{ sequenceModel }
+
+func (*paritySummaryModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+	return schema.AssistantMessage("retained summary", nil), nil
+}
+
+func TestRun_AutomaticThresholdCompactionRetainsRecentInput(t *testing.T) {
+	ctx := context.Background()
+	history := conversation.New("thread", nil, &conversation.SummaryCompaction{Model: &paritySummaryModel{}, TokenLimit: 1, KeepRecent: 4}, nil)
+	for range 8 {
+		if err := history.AddHistory(ctx, "old", schema.UserMessage("old user"), schema.AssistantMessage("old answer", nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
+	compacted := false
+	a, err := New(ctx, WithConfig(&Config{Model: m, Conversation: history, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+		if e.Kind == "context_compacted" {
+			compacted = true
+		}
+		return nil
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(ctx)
+	if _, err = a.Run(ctx, []*schema.Message{schema.UserMessage("newest")}); err != nil {
+		t.Fatal(err)
+	}
+	input := m.inputs[0]
+	if !compacted || len(input) > 7 || input[0].Content != "Earlier conversation summary:\nretained summary" || input[len(input)-1].Content != "newest" {
+		t.Fatalf("compaction lost recent input: %v", input)
 	}
 }

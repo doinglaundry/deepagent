@@ -21,9 +21,6 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 		return nil, fmt.Errorf("maximum child depth reached")
 	}
 	cfg := *r.config.Clone()
-	if err := loadSubAgents(ctx, &cfg); err != nil {
-		return nil, err
-	}
 	agents := cfg.SubAgents
 	cfg.ThreadID = ""
 	cfg.RunID = ""
@@ -39,11 +36,7 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 		checkpoint = executor.childCheckpoint(callID)
 		cfg.CheckpointStore = checkpoint
 		_, resuming, _ = checkpoint.Get(ctx, "child")
-		// Old child snapshots used the parent node address. Preserve it on
-		// resume; new tasks have a call-specific address for parallel approvals.
-		if checkpoint.addressed {
-			ctx = compose.AppendAddressSegment(ctx, compose.AddressSegmentTool, callID)
-		}
+		ctx = compose.AppendAddressSegment(ctx, compose.AddressSegmentTool, callID)
 	}
 	cfg.DrainInput = nil
 	cfg.Emit = nil
@@ -77,28 +70,8 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 			return nil
 		}
 	}
-	cfg.CustomGraphState = nil
-	parentGraphState := types.StateFromContext(ctx)
-	for _, name := range cfg.SubAgentSharedCustomStateNames {
-		state := r.config.CustomGraphState[name]
-		if state == nil {
-			continue
-		}
-		if parentGraphState != nil {
-			state = parentGraphState.GetStateful(name)
-		}
-		if state != nil {
-			if cfg.CustomGraphState == nil {
-				cfg.CustomGraphState = map[string]types.RunTimeStateful{}
-			}
-			cfg.CustomGraphState[name] = state
-		}
-	}
 	cfg.Callbacks = nil
-	cfg.Hooks = nil
-	cfg.DisableSubAgent = true
 	cfg.SubAgents = nil
-	cfg.SubAgentsDirs = nil
 	cfg.MaxModelCalls = request.MaxModelCalls
 	if cfg.MaxModelCalls <= 0 {
 		cfg.MaxModelCalls = 8
@@ -117,13 +90,19 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 		}
 		cfg.Middlewares = append(cfg.Middlewares, mw)
 	}
-	found := request.Name == "general-purpose" || request.Name == ""
+	if request.Name == "" {
+		request.Name = "general-purpose"
+		cfg.Name = request.Name
+	}
+	found := false
 	for _, spec := range agents {
 		if spec == nil || spec.Name != request.Name {
 			continue
 		}
 		found = true
-		cfg.Prompts = []*schema.Message{schema.SystemMessage(spec.SystemPrompt)}
+		if spec.SystemPrompt != "" {
+			cfg.Prompts = []*schema.Message{schema.SystemMessage(spec.SystemPrompt)}
+		}
 		cfg.ReadOnlyToolsOnly = cfg.ReadOnlyToolsOnly || spec.ReadOnly
 		if !spec.EnableFilesystem {
 			cfg.FilesystemConfig = nil
@@ -155,15 +134,6 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 	}
 	defer a.Close(context.Background())
 	var input []*schema.Message
-	if !resuming && r.config.SubAgentContextInjector != nil {
-		injected, err := r.config.SubAgentContextInjector(ctx, request.Name)
-		if err != nil {
-			return nil, err
-		}
-		for _, message := range injected {
-			input = append(input, CopyMessage(message))
-		}
-	}
 	if !resuming {
 		input = append(input, schema.UserMessage(request.Prompt))
 	}

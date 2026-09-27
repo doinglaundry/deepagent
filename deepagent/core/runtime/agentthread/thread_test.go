@@ -10,7 +10,6 @@ import (
 	"eino-cli/deepagent/core/graph"
 	"eino-cli/deepagent/core/tools"
 	"github.com/cloudwego/eino/components/model"
-	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -203,7 +202,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	history := &historyMemory{}
 	checkpoints := &checkpointMemory{}
 	m := &resumeModel{}
-	config := &RunConfig{Agent: graph.Config{Model: m, CheckpointStore: checkpoints, Tools: []einotool.BaseTool{tools.GetFollowUpTool()}}}
+	config := &RunConfig{Agent: graph.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []tools.Descriptor{{Tool: tools.GetFollowUpTool()}}}}
 	events := make(chan Event, 100)
 	first := New("thread", config, events, ThreadOptions{HistoryStore: history})
 	if err := first.Init(ctx); err != nil {

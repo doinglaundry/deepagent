@@ -2,14 +2,13 @@ package agentthread
 
 import (
 	"context"
-	"errors"
-	"testing"
-	"time"
-
 	"eino-cli/deepagent/core/graph"
 	"eino-cli/deepagent/core/tools"
-	einotool "github.com/cloudwego/eino/components/tool"
+	"errors"
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"testing"
+	"time"
 )
 
 func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
@@ -22,7 +21,7 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			if fail {
 				store.failure = failure
 			}
-			cfg := &RunConfig{Agent: graph.Config{Model: &resumeModel{}, CheckpointStore: store, Tools: []einotool.BaseTool{tools.GetFollowUpTool()}}}
+			cfg := &RunConfig{Agent: graph.Config{Model: &resumeModel{}, CheckpointStore: store, ToolDescriptors: []tools.Descriptor{{Tool: tools.GetFollowUpTool()}}}}
 			history := &historyMemory{}
 			events := make(chan Event, 64)
 			first := New("thread", cfg, events, ThreadOptions{HistoryStore: history})
@@ -89,6 +88,50 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			}
 			if sawError != fail {
 				t.Fatalf("failure event=%v want=%v", sawError, fail)
+			}
+		})
+	}
+}
+
+type unreadableCheckpoint struct {
+	compose.CheckPointStore
+	err error
+}
+
+func (s unreadableCheckpoint) Get(context.Context, string) ([]byte, bool, error) {
+	return nil, false, s.err
+}
+
+func TestThread_ResumeRejectsUnavailableCheckpointBeforeAcceptance(t *testing.T) {
+	failure := errors.New("store unavailable")
+	for _, tc := range []struct {
+		name  string
+		store compose.CheckPointStore
+		cause error
+	}{
+		{name: "unconfigured"},
+		{name: "missing", store: &checkpointMemory{}},
+		{name: "read failure", store: unreadableCheckpoint{err: failure}, cause: failure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			events := make(chan Event, 8)
+			model := &threadModel{}
+			thread := New("thread", &RunConfig{Agent: graph.Config{Model: model, CheckpointStore: tc.store}}, events, ThreadOptions{})
+			if err := thread.Init(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer thread.Close(ctx)
+			hookCalled := false
+			handle, err := thread.ResumeRun(ctx, "run", ResumeRunOptions{CheckpointID: "missing", OnRunStart: func(ctx context.Context, _ RunStartRequest) context.Context { hookCalled = true; return ctx }})
+			if err == nil || handle != nil {
+				t.Fatalf("resume accepted: handle=%v err=%v", handle, err)
+			}
+			if tc.cause != nil && !errors.Is(err, tc.cause) {
+				t.Fatalf("lost cause: %v", err)
+			}
+			if hookCalled || thread.ActiveRun() != nil || len(events) != 0 || model.calls != 0 {
+				t.Fatal("failed resume started execution or published acceptance")
 			}
 		})
 	}
