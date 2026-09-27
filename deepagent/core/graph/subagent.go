@@ -137,7 +137,7 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 	if !resuming {
 		input = append(input, schema.UserMessage(request.Prompt))
 	}
-	result, err := a.execute(ctx, input, nil, func(o *RunOptions) {
+	result, err := a.execute(ctx, input, func(o *RunOptions) {
 		if checkpoint != nil {
 			o.CheckpointID = "child"
 		}

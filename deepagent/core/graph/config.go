@@ -80,12 +80,6 @@ func WithCallbacks(handlers ...callbacks.Handler) RunOptionFunc {
 	return func(o *RunOptions) { o.composeOpts = append(o.composeOpts, compose.WithCallbacks(handlers...)) }
 }
 
-type ResumeOptions struct {
-	CheckpointID string
-	InterruptIDs []string
-	Data         map[string]any
-}
-
 func WithCheckpointID(id string) RunOptionFunc { return func(o *RunOptions) { o.CheckpointID = id } }
 func WithWriteToCheckpointID(id string) RunOptionFunc {
 	return func(o *RunOptions) { o.WriteToCheckpointID = id }

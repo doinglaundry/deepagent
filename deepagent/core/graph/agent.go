@@ -91,7 +91,7 @@ func New(ctx context.Context, opts ...Option) (*DeepAgent, error) {
 }
 
 func (a *DeepAgent) Run(ctx context.Context, input []*schema.Message, opts ...RunOptionFunc) (*schema.Message, error) {
-	return a.execute(ctx, input, nil, opts...)
+	return a.execute(ctx, input, opts...)
 }
 func (a *DeepAgent) Stream(ctx context.Context, input []*schema.Message, opts ...RunOptionFunc) (*schema.StreamReader[*schema.Message], error) {
 	raw, writer := schema.Pipe[*schema.Message](0)
@@ -124,7 +124,7 @@ func (a *DeepAgent) Stream(ctx context.Context, input []*schema.Message, opts ..
 			}
 		}
 	})
-	go func() { _, err := a.execute(streamCtx, input, nil, options...); done <- err }()
+	go func() { _, err := a.execute(streamCtx, input, options...); done <- err }()
 	go func() {
 		defer func() {
 			a.mu.Lock()

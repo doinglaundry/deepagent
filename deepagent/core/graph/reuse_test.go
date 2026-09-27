@@ -265,3 +265,64 @@ func TestRun_FailedStartClosesResourcesAndPreservesBothErrors(t *testing.T) {
 		t.Fatalf("double close: %d", mw.closed)
 	}
 }
+
+// Checkpoint reads must not hold the Agent mutex: Close needs it to cancel.
+type cancelableCheckpointRead struct {
+	entered chan struct{}
+}
+
+func (s *cancelableCheckpointRead) Get(ctx context.Context, _ string) ([]byte, bool, error) {
+	close(s.entered)
+	<-ctx.Done()
+	return nil, false, ctx.Err()
+}
+
+func (*cancelableCheckpointRead) Set(context.Context, string, []byte) error {
+	return nil
+}
+
+func TestRun_CloseCancelsCheckpointRead(t *testing.T) {
+	ctx := context.Background()
+	store := &cancelableCheckpointRead{entered: make(chan struct{})}
+	m := &sequenceModel{}
+	a, err := New(ctx, WithConfig(&Config{Model: m, CheckpointStore: store}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	finished := make(chan error, 1)
+	go func() {
+		_, runErr := a.Run(runCtx, nil, WithCheckpointID("saved"))
+		finished <- runErr
+	}()
+	select {
+	case <-store.entered:
+	case <-time.After(time.Second):
+		t.Fatal("checkpoint read did not start")
+	}
+	_, err = a.Run(ctx, nil)
+	if err == nil {
+		t.Fatal("second run entered during checkpoint read")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- a.Close(ctx) }()
+	select {
+	case err = <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked behind checkpoint read")
+	}
+	err = <-finished
+	if !errors.Is(err, context.Canceled) || m.calls != 0 {
+		t.Fatalf("err=%v model calls=%d", err, m.calls)
+	}
+	a.mu.Lock()
+	active := a.active
+	a.mu.Unlock()
+	if active {
+		t.Fatal("failed startup retained the execution claim")
+	}
+}
