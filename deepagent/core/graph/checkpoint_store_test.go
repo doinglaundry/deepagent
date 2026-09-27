@@ -11,7 +11,6 @@ import (
 	"errors"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
-	"io"
 	"strings"
 	"testing"
 )
@@ -37,10 +36,10 @@ func TestCheckpoint_ForceInitialSaveFailureDoesNotExecuteOrOverwriteOldSnapshot(
 
 func TestCheckpoint_FreshRunCreatesCursorAndFencesBeforeSideEffect(t *testing.T) {
 	for _, scenario := range []struct {
-		name             string
-		streaming, force bool
+		name  string
+		force bool
 	}{
-		{"Run", false, false}, {"Stream", true, false}, {"ForceRun", false, true}, {"ForceStream", true, true},
+		{"Run", false}, {"ForceRun", true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -67,27 +66,11 @@ func TestCheckpoint_FreshRunCreatesCursorAndFencesBeforeSideEffect(t *testing.T)
 				t.Fatal(err)
 			}
 			defer a.Close(ctx)
-			if scenario.streaming {
-				sr, err := a.Stream(ctx, []*schema.Message{schema.UserMessage("go")}, opts...)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer sr.Close()
-				for {
-					_, err = sr.Recv()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
-			} else {
-				_, err = a.Run(ctx, []*schema.Message{schema.UserMessage("go")}, opts...)
-				if err != nil {
-					t.Fatal(err)
-				}
+			_, err = a.Run(ctx, []*schema.Message{schema.UserMessage("go")}, opts...)
+			if err != nil {
+				t.Fatal(err)
 			}
+
 			if counter.count.Load() != 1 || m.calls != 2 || before != 1 || after != 1 || ended != 1 || len(store.fenced) == 0 {
 				t.Fatalf("lifecycle/fence: tools=%d models=%d before=%d after=%d end=%d fence=%d", counter.count.Load(), m.calls, before, after, ended, len(store.fenced))
 			}

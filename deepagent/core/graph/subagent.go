@@ -47,6 +47,13 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 			if event.Kind == "llm_requesting" {
 				chunks = nil
 			}
+			if event.Kind == "llm_token" {
+				message, ok := event.Data.(*schema.Message)
+				if ok {
+					chunks = append(chunks, CopyMessage(message))
+				}
+				return nil
+			}
 			if event.Kind != "llm_end" {
 				return nil
 			}
@@ -137,16 +144,11 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 	if !resuming {
 		input = append(input, schema.UserMessage(request.Prompt))
 	}
-	result, err := a.execute(ctx, input, func(o *RunOptions) {
+	result, err := a.Run(ctx, input, func(o *RunOptions) {
 		if checkpoint != nil {
 			o.CheckpointID = "child"
 		}
-		if emit != nil {
-			o.chunk = func(_ context.Context, message *schema.Message) error {
-				chunks = append(chunks, CopyMessage(message))
-				return nil
-			}
-		}
+
 	})
 	if checkpoint != nil {
 		if _, blocked := compose.ExtractInterruptInfo(err); blocked {

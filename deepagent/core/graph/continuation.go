@@ -66,12 +66,7 @@ func (a *DeepAgent) finishNode(ctx context.Context, s *types.RunState) (*schema.
 				}
 			}
 		}
-		if a.chunk != nil {
-			err := a.chunk(ctx, message)
-			if err != nil {
-				return nil, err
-			}
-		}
+
 	}
 	return message, nil
 }

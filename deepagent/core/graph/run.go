@@ -20,7 +20,7 @@ func (a *DeepAgent) execute(ctx context.Context, input []*schema.Message, opts .
 			opt(&options)
 		}
 	}
-	ctx, err = a.claimRun(ctx, options)
+	ctx, err = a.claimRun(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +34,6 @@ func (a *DeepAgent) execute(ctx context.Context, input []*schema.Message, opts .
 		a.cancel()
 		a.active = false
 		a.interrupt = nil
-		a.chunk = nil
 		close(a.done)
 		a.mu.Unlock()
 	}()
@@ -62,10 +61,10 @@ func (a *DeepAgent) execute(ctx context.Context, input []*schema.Message, opts .
 }
 
 // Reserve execution before storage or resource work, so Close can cancel and wait.
-func (a *DeepAgent) claimRun(ctx context.Context, options RunOptions) (context.Context, error) {
+func (a *DeepAgent) claimRun(ctx context.Context) (context.Context, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.closed || a.active || (a.streamDone != nil && options.streamDone != a.streamDone) {
+	if a.closed || a.active {
 		return ctx, errors.New("agent is closed or already running")
 	}
 	a.active = true
@@ -73,7 +72,6 @@ func (a *DeepAgent) claimRun(ctx context.Context, options RunOptions) (context.C
 	a.done = make(chan struct{})
 	ctx, a.cancel = context.WithCancel(ctx)
 	ctx, a.interrupt = compose.WithGraphInterrupt(ctx)
-	a.chunk = options.chunk
 	return ctx, nil
 }
 

@@ -140,12 +140,7 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 		if err != nil {
 			return nil, err
 		}
-		if a.chunk != nil {
-			err = a.chunk(ctx, chunk)
-			if err != nil {
-				return nil, err
-			}
-		}
+
 	}
 	err = ctx.Err()
 	if err != nil {

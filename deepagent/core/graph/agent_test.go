@@ -2,8 +2,9 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
+
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,47 +40,7 @@ func (m *sequenceModel) Stream(_ context.Context, input []*schema.Message, _ ...
 	}
 	return schema.StreamReaderFromArray(m.responses[index]), nil
 }
-func TestRun_StreamAndRunUseSameExecutionPath(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
-			m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("hel", nil), schema.AssistantMessage("lo", nil)}}}
-			a, err := New(context.Background(), WithConfig(&Config{Model: m}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var text string
-			if streaming {
-				sr, err := a.Stream(context.Background(), []*schema.Message{schema.UserMessage("input")})
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer sr.Close()
-				for {
-					chunk, err := sr.Recv()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						t.Fatal(err)
-					}
-					text += chunk.Content
-				}
-			} else {
-				message, err := a.Run(context.Background(), []*schema.Message{schema.UserMessage("input")})
-				if err != nil {
-					t.Fatal(err)
-				}
-				text = message.Content
-			}
-			if text != "hello" || m.calls != 1 {
-				t.Fatalf("text=%q calls=%d", text, m.calls)
-			}
-			if len(a.conversation.History(context.Background())) != 2 {
-				t.Fatal("missing input or assistant history")
-			}
-		})
-	}
-}
+
 func TestRun_ModelToolModel(t *testing.T) {
 	ctx := context.Background()
 	call := schema.ToolCall{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}
@@ -369,9 +330,39 @@ func (m *cancelModel) Stream(ctx context.Context, _ []*schema.Message, _ ...mode
 	close(m.stopped)
 	return nil, ctx.Err()
 }
-func TestRun_CancelAndConsumerCloseReleaseResources(t *testing.T) {
-	for _, consumerClose := range []bool{false, true} {
-		t.Run(fmt.Sprint(consumerClose), func(t *testing.T) {
+
+func TestRun_EmitsTokensAndReturnsFinalMessage(t *testing.T) {
+	ctx := context.Background()
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("hel", nil), schema.AssistantMessage("lo", nil)}}}
+	var text string
+	a, err := New(ctx, WithConfig(&Config{
+		Model: m,
+		Emit: func(_ context.Context, event types.RuntimeEvent) error {
+			if event.Kind == "llm_token" {
+				text += event.Data.(*schema.Message).Content
+			}
+			return nil
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(ctx)
+	result, err := a.Run(ctx, []*schema.Message{schema.UserMessage("go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "hello" || result.Content != text || m.calls != 1 {
+		t.Fatalf("tokens=%q result=%v calls=%d", text, result, m.calls)
+	}
+	if len(a.conversation.History(ctx)) != 2 {
+		t.Fatal("missing input or assistant history")
+	}
+}
+
+func TestRun_CancelAndAgentCloseReleaseResources(t *testing.T) {
+	for _, closeAgent := range []bool{false, true} {
+		t.Run(fmt.Sprint(closeAgent), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			m := &cancelModel{started: make(chan struct{}), stopped: make(chan struct{})}
@@ -379,25 +370,41 @@ func TestRun_CancelAndConsumerCloseReleaseResources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			stream, err := a.Stream(ctx, []*schema.Message{schema.UserMessage("wait")})
-			if err != nil {
-				t.Fatal(err)
-			}
-			<-m.started
-			if consumerClose {
-				stream.Close()
-			} else {
-				cancel()
-				defer stream.Close()
-			}
+			finished := make(chan error, 1)
+			go func() {
+				_, runErr := a.Run(ctx, []*schema.Message{schema.UserMessage("wait")})
+				finished <- runErr
+			}()
 			select {
-			case <-m.stopped:
+			case <-m.started:
 			case <-time.After(time.Second):
-				t.Fatal("model remained active after stream close/cancel")
+				t.Fatal("model did not start")
 			}
 			cleanup, cancelCleanup := context.WithTimeout(context.Background(), time.Second)
 			defer cancelCleanup()
-			if err := a.Close(cleanup); err != nil {
+			if closeAgent {
+				err = a.Close(cleanup)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				cancel()
+			}
+			select {
+			case err = <-finished:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancellation lost: %v", err)
+				}
+			case <-cleanup.Done():
+				t.Fatal("run did not stop")
+			}
+			select {
+			case <-m.stopped:
+			default:
+				t.Fatal("Run returned before model stopped")
+			}
+			err = a.Close(cleanup)
+			if err != nil {
 				t.Fatal(err)
 			}
 		})

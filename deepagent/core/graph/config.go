@@ -64,7 +64,6 @@ func WithConfig(source *Config) Option { return func(c *Config) { *c = *source.C
 func WithModel(m model.ToolCallingChatModel) Option { return func(c *Config) { c.Model = m } }
 
 type RunOptions struct {
-	streamDone          chan struct{}
 	InputMeta           []any
 	CheckpointID        string
 	WriteToCheckpointID string
@@ -72,7 +71,6 @@ type RunOptions struct {
 	ResumeInterruptIDs  []string
 	ResumeData          map[string]any
 	composeOpts         []compose.Option
-	chunk               types.ModelChunkSink
 }
 type RunOptionFunc func(*RunOptions)
 

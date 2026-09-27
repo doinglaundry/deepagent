@@ -3,9 +3,7 @@ package graph
 import (
 	"context"
 	"errors"
-	"io"
 	"sync"
-	"time"
 
 	"eino-cli/deepagent/core/internal/conversation"
 	"eino-cli/deepagent/core/middleware"
@@ -27,8 +25,6 @@ type DeepAgent struct {
 	policy            tools.Policy
 	eager             bool
 	started           bool
-	streamCancel      context.CancelFunc
-	streamDone        chan struct{}
 	middlewares       []middleware.Middleware
 	graphState        *types.GraphState
 	cfg               Config
@@ -46,7 +42,6 @@ type DeepAgent struct {
 	interrupt         func(...compose.GraphInterruptOption)
 	done              chan struct{}
 	state             *types.RunState
-	chunk             types.ModelChunkSink
 }
 
 func New(ctx context.Context, opts ...Option) (*DeepAgent, error) {
@@ -90,108 +85,27 @@ func New(ctx context.Context, opts ...Option) (*DeepAgent, error) {
 	return a, nil
 }
 
+func (a *DeepAgent) Name() string { return a.cfg.Name }
+
+func (a *DeepAgent) Depth() int { return a.cfg.Depth }
+
+func (a *DeepAgent) GraphState() *types.GraphState { return a.graphState }
+
 func (a *DeepAgent) Run(ctx context.Context, input []*schema.Message, opts ...RunOptionFunc) (*schema.Message, error) {
 	return a.execute(ctx, input, opts...)
-}
-func (a *DeepAgent) Stream(ctx context.Context, input []*schema.Message, opts ...RunOptionFunc) (*schema.StreamReader[*schema.Message], error) {
-	raw, writer := schema.Pipe[*schema.Message](0)
-	raw.SetAutomaticClose()
-	streamCtx, cancel := context.WithCancel(ctx)
-	a.mu.Lock()
-	if a.closed || a.active || a.streamDone != nil {
-		a.mu.Unlock()
-		cancel()
-		raw.Close()
-		writer.Close()
-		return nil, errors.New("agent is closed or already running")
-	}
-	streamDone := make(chan struct{})
-	a.streamDone = streamDone
-	a.streamCancel = cancel
-	a.mu.Unlock()
-	stopClose := context.AfterFunc(streamCtx, raw.Close)
-	chunks := make(chan *schema.Message)
-	done := make(chan error, 1)
-	options := append([]RunOptionFunc(nil), opts...)
-	options = append(options, func(o *RunOptions) {
-		o.streamDone = streamDone
-		o.chunk = func(ctx context.Context, message *schema.Message) error {
-			select {
-			case chunks <- message:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	})
-	go func() { _, err := a.execute(streamCtx, input, options...); done <- err }()
-	go func() {
-		defer func() {
-			a.mu.Lock()
-			writer.Close()
-			a.streamCancel = nil
-			a.streamDone = nil
-			close(streamDone)
-			a.mu.Unlock()
-		}()
-		defer cancel()
-		defer stopClose()
-		// This Eino version exposes consumer closure only through Send. A private
-		// nil probe detects Close even while the provider has produced no tokens.
-		// Conversion strips probes; consumers see only actual model/tool messages.
-		ticker := time.NewTicker(50 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case chunk := <-chunks:
-				if writer.Send(chunk, nil) {
-					cancel()
-					<-done
-					return
-				}
-			case err := <-done:
-				if err != nil {
-					writer.Send(nil, err)
-				}
-				return
-			case <-ticker.C:
-				if writer.Send(nil, nil) {
-					cancel()
-					<-done
-					return
-				}
-			case <-streamCtx.Done():
-				<-done
-				return
-			}
-		}
-	}()
-	return schema.StreamReaderWithConvert(raw, func(message *schema.Message) (*schema.Message, error) {
-		if message == nil {
-			return nil, schema.ErrNoValue
-		}
-		return message, nil
-	}), nil
 }
 func (a *DeepAgent) Close(ctx context.Context) error {
 	a.mu.Lock()
 	a.closed = true
-	if a.streamCancel != nil {
-		a.streamCancel()
-	}
 	var done chan struct{}
 	if a.active {
 		a.cancel()
 		done = a.done
 	}
-	streamDone := a.streamDone
 	a.mu.Unlock()
-	for _, completion := range []chan struct{}{done, streamDone} {
-		if completion == nil {
-			continue
-		}
+	if done != nil {
 		select {
-		case <-completion:
+		case <-done:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -209,8 +123,7 @@ func (a *DeepAgent) Interrupt(opts ...compose.GraphInterruptOption) bool {
 	a.interrupt = nil
 	return true
 }
-func (a *DeepAgent) Name() string { return a.cfg.Name }
-func (a *DeepAgent) Depth() int   { return a.cfg.Depth }
+
 func (a *DeepAgent) event(ctx context.Context, state *types.RunState, kind, callID string, data any) error {
 	a.eventMu.Lock()
 	defer a.eventMu.Unlock()
@@ -227,55 +140,4 @@ func (a *DeepAgent) event(ctx context.Context, state *types.RunState, kind, call
 		return nil
 	}
 	return a.emit(ctx, event)
-}
-
-func (a *DeepAgent) GraphState() *types.GraphState { return a.graphState }
-
-// GetGraphRunnable preserves the public Eino message-shaped interface. The
-// adapter only converts inputs/options; all four methods use this agent's graph.
-func (a *DeepAgent) GetGraphRunnable() compose.Runnable[[]*schema.Message, *schema.Message] {
-	return messageRunnable{agent: a}
-}
-
-type messageRunnable struct{ agent *DeepAgent }
-
-func (r messageRunnable) Invoke(ctx context.Context, input []*schema.Message, opts ...compose.Option) (*schema.Message, error) {
-	return r.agent.Run(ctx, input, func(o *RunOptions) { o.composeOpts = append(o.composeOpts, opts...) })
-}
-func (r messageRunnable) Stream(ctx context.Context, input []*schema.Message, opts ...compose.Option) (*schema.StreamReader[*schema.Message], error) {
-	return r.agent.Stream(ctx, input, func(o *RunOptions) { o.composeOpts = append(o.composeOpts, opts...) })
-}
-func (r messageRunnable) Collect(ctx context.Context, input *schema.StreamReader[[]*schema.Message], opts ...compose.Option) (*schema.Message, error) {
-	messages, err := collectInputs(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	return r.Invoke(ctx, messages, opts...)
-}
-func (r messageRunnable) Transform(ctx context.Context, input *schema.StreamReader[[]*schema.Message], opts ...compose.Option) (*schema.StreamReader[*schema.Message], error) {
-	messages, err := collectInputs(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	return r.Stream(ctx, messages, opts...)
-}
-func collectInputs(ctx context.Context, input *schema.StreamReader[[]*schema.Message]) ([]*schema.Message, error) {
-	if input == nil {
-		return nil, errors.New("input stream is nil")
-	}
-	defer input.Close()
-	var messages []*schema.Message
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		part, err := input.Recv()
-		if err == io.EOF {
-			return messages, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		messages = append(messages, part...)
-	}
 }
