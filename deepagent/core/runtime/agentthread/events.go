@@ -82,38 +82,17 @@ type PendingInputProcessingStartedPayload struct {
 	Inputs []*schema.Message
 }
 
-type LLMTokenChunk struct {
-	Text          string
-	ReasoningText string
-	LLMResponseID string
-}
+type LLMTokenChunk = types.LLMTokenChunk
 
-type LLMEnd struct {
-	modelcomp.CallbackOutput
-	LLMResponseID string
-}
+type LLMEnd = types.LLMEnd
 
 type TokenUsagePayload = types.Usage
 
-type ToolStartPayload struct {
-	Name   string
-	CallID string
-	Args   string
-}
+type ToolStartPayload = types.ToolStartPayload
 
-type ToolCallOutputChunkPayload struct {
-	Name   string
-	CallID string
-	Chunk  string
-}
+type ToolCallOutputChunkPayload = types.ToolCallOutputChunkPayload
 
-type ToolEndPayload struct {
-	Name            string
-	CallID          string
-	ToolStartTime   time.Time
-	ArgumentsInJSON string
-	Result          string
-}
+type ToolEndPayload = types.ToolEndPayload
 
 type RunEndPayload struct {
 	Usage        float64
@@ -122,7 +101,7 @@ type RunEndPayload struct {
 	InterruptID  string
 }
 
-type PlanStepStatus string
+type PlanStepStatus = string
 
 const (
 	PlanStepStatusPending    PlanStepStatus = "pending"
@@ -130,15 +109,9 @@ const (
 	PlanStepStatusCompleted  PlanStepStatus = "completed"
 )
 
-type PlanStep struct {
-	Step   string
-	Status PlanStepStatus
-}
+type PlanStep = types.PlanStep
 
-type PlanUpdatedPayload struct {
-	Explanation string
-	Plan        []PlanStep
-}
+type PlanUpdatedPayload = deeptools.PlanUpdate
 
 type ContextCompactedPayload = conversation.ContextCompactedPayload
 

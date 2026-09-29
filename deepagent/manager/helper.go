@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,7 +27,7 @@ func IDNextSharedID(ctx context.Context, counter cache.RedisClient) (int64, erro
 	return base + seq, nil
 }
 
-func createThread(req SubmitRequest, id int64, _ time.Time) *model.Thread {
+func createThread(req SubmitRequest, id int64) *model.Thread {
 	metadata := maps.Clone(req.Metadata)
 	if metadata == nil {
 		metadata = map[string]string{}
@@ -68,5 +67,3 @@ func cloneEvents(frames []OutputFrame) []OutputFrame {
 	}
 	return out
 }
-
-func messageIDMember(id int64) string { return strconv.FormatInt(id, 10) }

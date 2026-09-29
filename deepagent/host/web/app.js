@@ -137,6 +137,8 @@ async function poll() {
   try {
     const rows = await api('/api/threads/' + target + '/events?after=' + cursor);
     if (current !== generation) return;
+    const messages = $('messages');
+    const followBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight <= 48;
     rows.forEach(ev => {
       const sequence = BigInt(ev.sequence);
       if (sequence > cursor) cursor = sequence;
@@ -145,7 +147,7 @@ async function poll() {
       const e = document.createElement('div'); e.className = 'msg' + (ev.kind === 'input' ? ' user' : '');
       e.textContent = ev.text || ev.kind; $('messages').append(e);
     });
-    $('messages').scrollTop = $('messages').scrollHeight;
+    if (rows.length && followBottom) messages.scrollTop = messages.scrollHeight;
   } catch (error) { if (current === generation) report(error); }
   finally {
     if (current === generation) { polling = false; timer = setTimeout(poll, 500); }

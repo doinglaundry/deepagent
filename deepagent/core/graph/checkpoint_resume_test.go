@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/runtime/checkpointer"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
@@ -130,15 +131,16 @@ func TestRun_ResumeContinuesGraphAndModelBudgets(t *testing.T) {
 	}
 }
 
-func TestRun_ReusingAgentGeneratesDistinctRunIDs(t *testing.T) {
+func TestRun_NewAgentsGenerateDistinctRunIDs(t *testing.T) {
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("one", nil)}, {schema.AssistantMessage("two", nil)}}}
-	a, err := New(context.Background(), WithModel(m))
-	if err != nil {
-		t.Fatal(err)
-	}
 	var previous string
 	for range 2 {
-		if _, err := a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")}); err != nil {
+		a, err := New(context.Background(), WithModel(m))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")})
+		if err != nil {
 			t.Fatal(err)
 		}
 		if a.state.RunID == "" || a.state.RunID == previous {
@@ -156,7 +158,8 @@ func TestCheckpoint_AutomaticRunIdentityRestoresOnNewAgent(t *testing.T) {
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	cfg := Config{Model: m, ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
+	resource := &resourceMiddleware{name: "resource"}
+	cfg := Config{Model: m, Middlewares: []middleware.Middleware{resource}, ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +185,9 @@ func TestCheckpoint_AutomaticRunIdentityRestoresOnNewAgent(t *testing.T) {
 	out, err := restored.Run(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{Approved: true}}))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if resource.closed != 2 {
+		t.Fatalf("resume rebuilt resources: closed=%d", resource.closed)
 	}
 	if out.Content != "done" || restored.state.RunID != original || tool.count.Load() != 1 {
 		t.Fatalf("out=%v run=%q tool=%d", out, restored.state.RunID, tool.count.Load())
@@ -215,6 +221,12 @@ func TestCheckpoint_ForceNewRunDoesNotReuseSuspendedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := a.state.RunID
+	cfg := a.cfg
+	cfg.Conversation = a.conversation
+	a, err = New(ctx, WithConfig(&cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := a.Run(ctx, []*schema.Message{schema.UserMessage("new")}, WithCheckpointID("checkpoint"), WithForceNewRun())
 	if err != nil {
 		t.Fatal(err)

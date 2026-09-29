@@ -273,7 +273,7 @@ func (b *DockerFilesystem) ChangeDir(ctx context.Context, name string) error {
 func (b *DockerFilesystem) Delete(ctx context.Context, name string) (string, error) {
 	resolved, err := b.resolve(ctx, name)
 	if err != nil {
-		return "", err
+		return "", dockerFileError(ctx, err)
 	}
 	if resolved == b.root {
 		return "", ErrInvalidPath
@@ -281,7 +281,8 @@ func (b *DockerFilesystem) Delete(ctx context.Context, name string) (string, err
 	cmd := exec.CommandContext(ctx, "docker", "exec", b.containerID, "rm", "-f", "--", resolved)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("docker delete %s: %s: %w", name, strings.TrimSpace(string(output)), err)
+		deleteErr := fmt.Errorf("docker delete %s: %s: %w", name, strings.TrimSpace(string(output)), err)
+		return "", dockerFileError(ctx, deleteErr)
 	}
 	return "Deleted file " + name, nil
 }
@@ -293,6 +294,93 @@ func (b *DockerFilesystem) ApplyPatch(ctx context.Context, patch string) (string
 var _ Filesystem = (*DockerFilesystem)(nil)
 var _ CommandService = (*DockerFilesystem)(nil)
 var _ ToolFilesystem = (*DockerFilesystem)(nil)
+var _ patchFilesystem = (*DockerFilesystem)(nil)
+
+const (
+	dockerPatchNotFoundExitCode      = 44
+	dockerPatchAlreadyExistsExitCode = 73
+)
+
+func (b *DockerFilesystem) FileExists(ctx context.Context, name string) (bool, error) {
+	resolved, err := b.resolve(ctx, name)
+	if err != nil {
+		return false, dockerFileError(ctx, err)
+	}
+	provider, ok := b.sandbox.(interface {
+		FileExists(context.Context, string) (bool, error)
+	})
+	if ok {
+		exists, providerErr := provider.FileExists(ctx, resolved)
+		if providerErr != nil {
+			return false, dockerFileError(ctx, providerErr)
+		}
+		return exists, nil
+	}
+	cmd := exec.CommandContext(ctx, "docker", "exec", b.containerID, "python3", "-c", dockerPatchScript, "stat", b.root, resolved)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+	contextErr := ctx.Err()
+	if contextErr != nil {
+		return false, dockerFileError(ctx, fmt.Errorf("docker stat %s: %s: %w", name, strings.TrimSpace(string(output)), err))
+	}
+	exitErr := &exec.ExitError{}
+	isExitError := errors.As(err, &exitErr)
+	if isExitError {
+		code := exitErr.ExitCode()
+		if code == dockerPatchNotFoundExitCode {
+			return false, nil
+		}
+	}
+	existenceErr := fmt.Errorf("docker stat %s: %s: %w", name, strings.TrimSpace(string(output)), err)
+	return false, dockerFileError(ctx, existenceErr)
+}
+
+func (b *DockerFilesystem) CreateFileNoReplace(ctx context.Context, name, content string) (*WriteResult, error) {
+	resolved, err := b.resolve(ctx, name)
+	if err != nil {
+		return nil, dockerFileError(ctx, err)
+	}
+	provider, ok := b.sandbox.(interface {
+		CreateFileNoReplace(context.Context, string, string) error
+	})
+	if ok {
+		err = provider.CreateFileNoReplace(ctx, resolved, content)
+		if err != nil {
+			return nil, dockerFileError(ctx, err)
+		}
+		contextErr := ctx.Err()
+		if contextErr != nil {
+			return nil, contextErr
+		}
+		return &WriteResult{Path: name}, nil
+	}
+	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", b.containerID, "python3", "-c", dockerPatchScript, "create", b.root, resolved)
+	cmd.Stdin = strings.NewReader(content)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		contextErr := ctx.Err()
+		if contextErr != nil {
+			return nil, contextErr
+		}
+		return &WriteResult{Path: name}, nil
+	}
+	contextErr := ctx.Err()
+	if contextErr != nil {
+		return nil, dockerFileError(ctx, fmt.Errorf("docker create %s: %s: %w", name, strings.TrimSpace(string(output)), err))
+	}
+	exitErr := &exec.ExitError{}
+	isExitError := errors.As(err, &exitErr)
+	if isExitError {
+		code := exitErr.ExitCode()
+		if code == dockerPatchAlreadyExistsExitCode {
+			return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, name)
+		}
+	}
+	createErr := fmt.Errorf("docker create %s: %s: %w", name, strings.TrimSpace(string(output)), err)
+	return nil, dockerFileError(ctx, createErr)
+}
 
 // Older providers wrap transport failures as text. Retain their details while
 // preserving cancellation identity for the Graph's system-error boundary.
@@ -302,3 +390,47 @@ func dockerFileError(ctx context.Context, err error) error {
 	}
 	return err
 }
+
+// The AIO image runs Python. Keep all path traversal and no-replace installation
+// inside one process, anchored to directory descriptors in the container.
+const dockerPatchScript = `import os, secrets, shutil, sys
+operation, root, target = sys.argv[1:]
+relative = os.path.relpath(target, root)
+if relative == ".." or relative.startswith("../"):
+    raise ValueError("path escapes filesystem root")
+parts = relative.split("/")
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+fd = os.open(root, flags)
+temporary = None
+try:
+    for part in parts[:-1]:
+        if part in ("", "."):
+            continue
+        if operation == "create":
+            try:
+                os.mkdir(part, dir_fd=fd)
+            except FileExistsError:
+                pass
+        child = os.open(part, flags, dir_fd=fd)
+        os.close(fd)
+        fd = child
+    if operation == "stat":
+        os.stat(parts[-1], dir_fd=fd, follow_symlinks=False)
+    else:
+        candidate = ".patch-" + secrets.token_hex(16)
+        file = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=fd)
+        temporary = candidate
+        with os.fdopen(file, "wb") as output:
+            shutil.copyfileobj(sys.stdin.buffer, output)
+        os.link(temporary, parts[-1], src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+except FileNotFoundError:
+    if operation == "stat":
+        sys.exit(44)
+    raise
+except FileExistsError:
+    sys.exit(73)
+finally:
+    if temporary is not None:
+        os.unlink(temporary, dir_fd=fd)
+    os.close(fd)
+`

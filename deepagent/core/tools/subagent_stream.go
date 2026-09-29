@@ -16,7 +16,7 @@ func NewStreamingTaskTool(runner ChildRunner, names ...string) einotool.BaseTool
 	return &streamingTaskTool{&taskTool{runner: runner, names: append([]string(nil), names...)}}
 }
 func (t *streamingTaskTool) StreamableRun(ctx context.Context, raw string, _ ...einotool.Option) (*schema.StreamReader[string], error) {
-	request, err := parseChildRequest(raw)
+	request, err := t.parseChildRequest(raw)
 	if err != nil {
 		return nil, err
 	}

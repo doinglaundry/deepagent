@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
-	"github.com/google/uuid"
 	"sync"
 	"time"
 )
@@ -63,7 +62,7 @@ func (a *DeepAgent) savePending(ctx context.Context, id string, info *compose.In
 }
 
 // This private interrupt creates Eino's real execution cursor before prepare.
-// execute resumes it internally, within the same Run lifecycle.
+// Run resumes it internally, within the same lifecycle.
 type initialCheckpoint struct{}
 type initialCheckpointKey struct{}
 
@@ -134,9 +133,6 @@ func (a *DeepAgent) resolveRunID(ctx context.Context, options RunOptions) (strin
 		return a.cfg.RunID, nil
 	}
 	runID := a.runID
-	if a.started {
-		runID = uuid.NewString()
-	}
 	if options.CheckpointID == "" || a.cfg.CheckpointStore == nil || options.ForceNewRun {
 		return runID, nil
 	}

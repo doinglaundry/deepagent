@@ -35,7 +35,17 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 	}
 	defer a.Close(ctx)
 	for i, want := range []int64{10, 5} {
-		if _, err = a.Run(ctx, []*schema.Message{schema.UserMessage("go")}); err != nil {
+		if i > 0 {
+			cfg := a.cfg
+			cfg.Conversation = a.conversation
+			a, err = New(ctx, WithConfig(&cfg))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer a.Close(ctx)
+		}
+		_, err = a.Run(ctx, []*schema.Message{schema.UserMessage("go")})
+		if err != nil {
 			t.Fatal(err)
 		}
 		if a.state.Usage.TotalTokens != want {

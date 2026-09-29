@@ -251,7 +251,8 @@ func TestRun_FollowUpArgumentAliasesPreserveQuestionAndResume(t *testing.T) {
 			var observed *schema.Message
 			emit := func(_ context.Context, e types.RuntimeEvent) error {
 				if e.Kind == "llm_end" {
-					observed, _ = e.Data.(*schema.Message)
+					payload := e.Data.(types.LLMEnd)
+					observed = payload.Message
 				}
 				return nil
 			}

@@ -98,3 +98,83 @@ func TestWriteRejectsSymlinkDestination(t *testing.T) {
 		t.Fatalf("wrong error class: %v", err)
 	}
 }
+
+func TestUploadOperationsRejectUnsafeSessionIDsBeforeCreation(t *testing.T) {
+	setTestRoot(t)
+	for _, sessionID := range []string{".", "..", "../../outside", "nested/session", "/absolute"} {
+		_, err := Write(sessionID, "file.txt", strings.NewReader("x"))
+		if err == nil {
+			t.Errorf("Write(%q) succeeded", sessionID)
+		}
+		_, err = List(sessionID)
+		if err == nil {
+			t.Errorf("List(%q) succeeded", sessionID)
+		}
+		err = Delete(sessionID, "file.txt")
+		if err == nil {
+			t.Errorf("Delete(%q) succeeded", sessionID)
+		}
+	}
+	_, err := os.Stat(filepath.Join(config.RootDir(), ".eino-cli"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("unsafe IDs created the base directory: %v", err)
+	}
+}
+
+func TestUploadOperationsRejectSymlinkedAncestors(t *testing.T) {
+	setTestRoot(t)
+	outside := t.TempDir()
+	sessionDir := config.SessionTreeDir("t1")
+	err := os.MkdirAll(filepath.Dir(sessionDir), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Symlink(outside, sessionDir)
+	if err != nil {
+		t.Skipf("symlink unsupported on this filesystem: %v", err)
+	}
+
+	_, err = Write("t1", "file.txt", strings.NewReader("x"))
+	if err == nil {
+		t.Fatal("expected write through symlinked session to fail")
+	}
+	_, err = List("t1")
+	if err == nil {
+		t.Fatal("expected list through symlinked session to fail")
+	}
+	err = Delete("t1", "file.txt")
+	if err == nil {
+		t.Fatal("expected delete through symlinked session to fail")
+	}
+	_, err = os.Stat(filepath.Join(outside, "uploads"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("symlink target was modified: %v", err)
+	}
+}
+
+func TestUploadOperationsRejectSymlinkedUploadsDirectory(t *testing.T) {
+	setTestRoot(t)
+	outside := t.TempDir()
+	sessionDir := config.SessionTreeDir("t1")
+	err := os.MkdirAll(sessionDir, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Symlink(outside, config.SandboxUploadsDir("t1"))
+	if err != nil {
+		t.Skipf("symlink unsupported on this filesystem: %v", err)
+	}
+
+	_, err = Write("t1", "file.txt", strings.NewReader("x"))
+	if err == nil {
+		t.Fatal("expected write through symlinked uploads directory to fail")
+	}
+	_, err = List("t1")
+	if err == nil {
+		t.Fatal("expected list through symlinked uploads directory to fail")
+	}
+	err = Delete("t1", "file.txt")
+	if err == nil {
+		t.Fatal("expected delete through symlinked uploads directory to fail")
+	}
+}

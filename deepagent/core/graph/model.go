@@ -61,7 +61,7 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 			return nil, err
 		}
 	}
-	err = a.event(ctx, s, "llm_requesting", "", request)
+	err = a.event(ctx, s, "llm_requesting", "", types.LLMRequestingPayload{Messages: request})
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 		if a.eager {
 			for _, call := range ready {
 				started, err := a.executor.startEagerIfAllowed(ctx, call, func(ctx context.Context, call types.ToolCall, chunk string) error {
-					return a.event(ctx, s, "tool_call_output_chunk", call.ID, types.ToolOutputChunk{Call: call, Content: chunk})
+					return a.event(ctx, s, "tool_call_output_chunk", call.ID, types.ToolCallOutputChunkPayload{Name: call.Name, CallID: call.ID, Chunk: chunk})
 				})
 				if err != nil {
 					return nil, err
@@ -136,7 +136,7 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 				}
 			}
 		}
-		err = a.event(ctx, s, "llm_token", "", chunk)
+		err = a.event(ctx, s, "llm_token", "", types.LLMTokenChunk{Message: chunk, Text: chunk.Content, ReasoningText: chunk.ReasoningContent})
 		if err != nil {
 			return nil, err
 		}
@@ -190,7 +190,7 @@ func (a *DeepAgent) callModel(ctx context.Context, s *types.RunState) (*types.Ru
 		seen[call.ID] = true
 		s.Calls = append(s.Calls, types.ToolCallState{Call: types.ToolCall{ID: call.ID, Index: i, Name: call.Function.Name, Arguments: call.Function.Arguments}, Status: types.CallPending})
 	}
-	err = a.event(ctx, s, "llm_end", "", response)
+	err = a.event(ctx, s, "llm_end", "", types.LLMEnd{CallbackOutput: model.CallbackOutput{Message: response}})
 	if err != nil {
 		return nil, err
 	}

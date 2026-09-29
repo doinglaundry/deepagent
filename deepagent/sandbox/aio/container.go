@@ -74,7 +74,9 @@ func stopContainer(rt containerRuntime, idOrName string) error {
 	if rt == "" || idOrName == "" {
 		return nil
 	}
-	out, err := exec.Command(string(rt), "rm", "-f", idOrName).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, string(rt), "rm", "-f", idOrName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("aio: %s rm -f %s: %s: %w", rt, idOrName, strings.TrimSpace(string(out)), err)
 	}
@@ -82,12 +84,12 @@ func stopContainer(rt containerRuntime, idOrName string) error {
 }
 
 // discoverContainer returns the running container named "<prefix>-<sid>", if any.
-func discoverContainer(rt containerRuntime, prefix, sid string) (SandboxInfo, bool) {
+func discoverContainer(ctx context.Context, rt containerRuntime, prefix, sid string) (SandboxInfo, bool) {
 	if rt == "" {
 		return SandboxInfo{}, false
 	}
 	name := prefix + "-" + sid
-	out, err := exec.Command(string(rt), "inspect", name).Output()
+	out, err := exec.CommandContext(ctx, string(rt), "inspect", name).Output()
 	if err != nil {
 		return SandboxInfo{}, false
 	}
@@ -95,7 +97,7 @@ func discoverContainer(rt containerRuntime, prefix, sid string) (SandboxInfo, bo
 	if !ok {
 		return SandboxInfo{}, false
 	}
-	created, _ := parseInspectCreated(out)
+	created := parseInspectCreated(out)
 	return SandboxInfo{
 		SandboxID:     sid,
 		SandboxURL:    fmt.Sprintf("http://localhost:%d", port),
@@ -103,30 +105,6 @@ func discoverContainer(rt containerRuntime, prefix, sid string) (SandboxInfo, bo
 		ContainerID:   name,
 		CreatedAt:     created,
 	}, true
-}
-
-// listRunningContainers enumerates running containers named with the prefix.
-func listRunningContainers(rt containerRuntime, prefix string) []SandboxInfo {
-	if rt == "" {
-		return nil
-	}
-	out, err := exec.Command(string(rt), "ps", "--filter", "name="+prefix+"-", "--format", "{{.Names}}").Output()
-	if err != nil {
-		return nil
-	}
-	names := strings.Split(strings.TrimSpace(string(out)), "\n")
-	var infos []SandboxInfo
-	for _, n := range names {
-		n = strings.TrimSpace(n)
-		if n == "" {
-			continue
-		}
-		sid := strings.TrimPrefix(n, prefix+"-")
-		if info, ok := discoverContainer(rt, prefix, sid); ok {
-			infos = append(infos, info)
-		}
-	}
-	return infos
 }
 
 // parseInspectPort returns the first host port mapped to 8080/tcp.
@@ -153,18 +131,19 @@ func parseInspectPort(raw []byte) (int, bool) {
 }
 
 // parseInspectCreated returns the container creation time (zero on error).
-func parseInspectCreated(raw []byte) (time.Time, bool) {
+func parseInspectCreated(raw []byte) time.Time {
 	var arr []struct {
 		Created string `json:"Created"`
 	}
-	if err := json.Unmarshal(raw, &arr); err != nil || len(arr) == 0 {
-		return time.Time{}, false
+	err := json.Unmarshal(raw, &arr)
+	if err != nil || len(arr) == 0 {
+		return time.Time{}
 	}
 	t, err := time.Parse(time.RFC3339Nano, arr[0].Created)
 	if err != nil {
-		t, err = time.Parse(time.RFC3339, arr[0].Created)
+		t, _ = time.Parse(time.RFC3339, arr[0].Created)
 	}
-	return t, err == nil
+	return t
 }
 
 // waitReady polls /v1/ping until it 200s or ctx fires; /v1/ping is the image's only liveness probe.

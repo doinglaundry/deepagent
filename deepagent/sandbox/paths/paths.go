@@ -21,8 +21,20 @@ type MountMapping struct {
 	ReadOnly    bool
 }
 
+type ResolvedPath struct {
+	HostPath     string
+	RelativePath string
+	Mount        MountMapping
+	Mapped       bool
+}
+
 func BuildMountMappings(sessionID string) ([]MountMapping, error) {
-	if err := config.EnsureSessionDirs(sessionID); err != nil {
+	err := config.ValidateSessionID(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	err = config.EnsureSessionDirs(sessionID)
+	if err != nil {
 		return nil, err
 	}
 	prefixToHostPath := map[string]string{
@@ -50,14 +62,24 @@ func BuildMountMappings(sessionID string) ([]MountMapping, error) {
 }
 
 func GetSkillsHostPath() string {
-	skillsRoot := filepath.Join(config.RootDir(), "backend", "skills")
-	info, err := os.Stat(skillsRoot)
-	if err != nil || !info.IsDir() {
-		return ""
-	}
-	hostPath, err := filepath.Abs(skillsRoot)
+	root, err := config.OpenRootDir()
 	if err != nil {
 		return ""
 	}
-	return hostPath
+	defer root.Close()
+	relative := filepath.Join("backend", "skills")
+	info, err := root.Lstat(relative)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	skills, err := root.OpenRoot(relative)
+	if err != nil {
+		return ""
+	}
+	defer skills.Close()
+	opened, err := skills.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		return ""
+	}
+	return skills.Name()
 }

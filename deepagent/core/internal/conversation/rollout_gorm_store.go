@@ -9,10 +9,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const (
-	defaultHistoryTable = "agentthread_history"
-	defaultEventTable   = "agentthread_event"
-)
+const defaultHistoryTable = "agentthread_history"
 
 // GormHistoryRolloutStore stores HistoryRecord via GORM.
 type GormHistoryRolloutStore struct {

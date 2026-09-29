@@ -4,19 +4,72 @@ package threadhost
 
 import (
 	"context"
-	"eino-cli/deepagent/core/runtime/agentthread"
 	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
+	"eino-cli/deepagent/core/backend"
 	"eino-cli/deepagent/dal/model"
 	eventpkg "eino-cli/deepagent/protocol/event"
-	inputpkg "eino-cli/deepagent/protocol/input"
 	threadpkg "eino-cli/deepagent/thread"
 	modelpkg "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
+
+type filesystemCloseProbe struct {
+	backend.ToolFilesystem
+	closeCalls int
+}
+
+func (f *filesystemCloseProbe) Close(context.Context) error {
+	f.closeCalls++
+	return nil
+}
+
+type runtimeCloseProbe struct {
+	closeErr error
+}
+
+func (*runtimeCloseProbe) Init(context.Context) (*threadpkg.TransportThreadOutput, error) {
+	return nil, nil
+}
+
+func (*runtimeCloseProbe) PostMessage(context.Context, *threadpkg.TransportMessage) (*threadpkg.TransportPostMessageResult, error) {
+	return nil, nil
+}
+
+func (*runtimeCloseProbe) Interrupt(context.Context, threadpkg.TransportThreadInterruptRequest) error {
+	return nil
+}
+
+func (*runtimeCloseProbe) ActiveRun() *threadpkg.TransportActiveRun {
+	return nil
+}
+
+func (r *runtimeCloseProbe) Close(context.Context) error {
+	return r.closeErr
+}
+
+func TestFilesystemThreadDoesNotCloseFilesystemAfterRuntimeCloseFailure(t *testing.T) {
+	filesystem := &filesystemCloseProbe{}
+	cleanupCalls := 0
+	runtime := &runtimeCloseProbe{closeErr: errors.New("runtime close failed")}
+	thread := &filesystemThread{
+		ThreadRuntime: runtime,
+		filesystem:    filesystem,
+		cleanup: func() {
+			cleanupCalls++
+		},
+	}
+	err := thread.Close(context.Background())
+	if err == nil || !errors.Is(err, runtime.closeErr) {
+		t.Fatalf("close error=%v", err)
+	}
+	if filesystem.closeCalls != 0 || cleanupCalls != 0 {
+		t.Fatalf("filesystem close calls=%d cleanup calls=%d", filesystem.closeCalls, cleanupCalls)
+	}
+}
 
 type runtimeModel struct{}
 
@@ -103,40 +156,37 @@ func TestThreadHostCreatesCanonicalRuntimeWithoutFactory(t *testing.T) {
 	}
 }
 
-func TestBuildRunConfigCreatesRunLocalConfig(t *testing.T) {
+func TestBuildRunConfigCreatesRunLocalMiddlewares(t *testing.T) {
 	host := &ThreadHost{Runtime: RuntimeConfig{
 		Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default",
 	}}
 	info := &model.Thread{ThreadID: 42, SessionID: "session"}
-	first, err := host.buildRunConfig(context.Background(), info, "", nil, "")
+	cfg, err := host.buildRunConfig(info, host.Runtime.Models["default"], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := host.buildRunConfig(context.Background(), info, "", nil, inputpkg.UserMessageModeImplPlan)
-	if err != nil {
-		t.Fatal(err)
+	firstMiddlewares := cfg.MiddlewaresProvider(context.Background(), "first")
+	secondMiddlewares := cfg.MiddlewaresProvider(context.Background(), "second")
+	if len(firstMiddlewares) == 0 || len(secondMiddlewares) != len(firstMiddlewares) {
+		t.Fatal("each run must receive its middleware instances")
 	}
-	if first == second || first.Agent.FilesystemConfig == second.Agent.FilesystemConfig {
-		t.Fatal("run config must be rebuilt for every run")
-	}
-	if first.EnablePlan || !second.EnablePlan {
-		t.Fatalf("plan mode first=%v second=%v", first.EnablePlan, second.EnablePlan)
-	}
-	for _, cfg := range []*agentthread.RunConfig{first, second} {
-		found := false
-		for _, descriptor := range cfg.Agent.ToolDescriptors {
-			info, err := descriptor.Tool.Info(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			found = found || info.Name == "ask_user"
-		}
-		if !found {
-			t.Fatal("Web runs must expose ask_user")
-		}
-		if len(cfg.Agent.SubAgents) != 1 || cfg.Agent.SubAgents[0].Name != "general-purpose" {
-			t.Fatal("Web must explicitly configure its default child")
+	for i := range firstMiddlewares {
+		if firstMiddlewares[i] == secondMiddlewares[i] {
+			t.Fatal("mutable middleware must be created for each run")
 		}
 	}
-
+	found := false
+	for _, descriptor := range cfg.Agent.ToolDescriptors {
+		info, err := descriptor.Tool.Info(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		found = found || info.Name == "ask_user"
+	}
+	if !found {
+		t.Fatal("Web runs must expose ask_user")
+	}
+	if len(cfg.Agent.SubAgents) != 1 || cfg.Agent.SubAgents[0].Name != "general-purpose" {
+		t.Fatal("Web must explicitly configure its default child")
+	}
 }

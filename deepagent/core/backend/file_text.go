@@ -29,10 +29,11 @@ func ReadFileLines(content string, offset, limit *int) (window string) {
 	if actualOffset >= len(lines) {
 		return ""
 	}
-	end := actualOffset + actualLimit
-	if end > len(lines) {
-		end = len(lines)
+	remaining := len(lines) - actualOffset
+	if actualLimit > remaining {
+		actualLimit = remaining
 	}
+	end := actualOffset + actualLimit
 	return strings.Join(lines[actualOffset:end], "")
 }
 

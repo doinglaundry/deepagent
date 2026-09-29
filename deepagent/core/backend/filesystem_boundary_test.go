@@ -43,3 +43,14 @@ func TestWorkspace_PathAndSymlinkBoundaries(t *testing.T) {
 		t.Fatalf("in-root symlink should work: %q %v", contentText, err)
 	}
 }
+
+func TestReadFileLinesClampsMaxIntLimit(t *testing.T) {
+	content := "first\nsecond\nthird\n"
+	offset := 1
+	limit := int(^uint(0) >> 1)
+
+	got := ReadFileLines(content, &offset, &limit)
+	if got != "second\nthird\n" {
+		t.Fatalf("window = %q", got)
+	}
+}

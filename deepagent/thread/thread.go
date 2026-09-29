@@ -66,7 +66,6 @@ type Thread struct {
 	threadInfo ContextThreadIdentity
 	thread     *agentthread.DeepAgentThread
 
-	runConfig            func(context.Context, RunStartRequest) (*agentthread.RunConfig, error)
 	approvalRemember     ApprovalRememberer
 	runFinishedObserver  RunFinishedObserver
 	threadOutputObserver ThreadOutputObserver
@@ -77,17 +76,9 @@ type Thread struct {
 
 	outputBridge *threadOutputBridge
 
-	mu       sync.Mutex
-	claimCtx context.Context
-	closed   bool
-	compact  *compactOperation
-}
-
-type RunStartRequest struct {
-	RunID   string `json:"TurnID" yaml:"turnid"`
-	Mode    inputpkg.UserMessageMode
-	Message *TransportMessage
-	Resume  bool
+	mu      sync.Mutex
+	closed  bool
+	compact *compactOperation
 }
 
 type AdapterConfig struct {
@@ -101,7 +92,6 @@ type AdapterConfig struct {
 	// adapter config when left empty.
 	ThreadInfo ContextThreadIdentity
 
-	RunConfig            func(context.Context, RunStartRequest) (*agentthread.RunConfig, error) `json:"TurnConfig" yaml:"turnconfig"`
 	ApprovalRemember     ApprovalRememberer
 	RunFinishedObserver  RunFinishedObserver `json:"TurnFinishedObserver" yaml:"turnfinishedobserver"`
 	ThreadOutputObserver ThreadOutputObserver
@@ -134,7 +124,6 @@ func NewThread(cfg AdapterConfig) (*Thread, error) {
 		threadID:             threadID,
 		threadInfo:           threadInfo,
 		thread:               cfg.Thread,
-		runConfig:            cfg.RunConfig,
 		approvalRemember:     cfg.ApprovalRemember,
 		runFinishedObserver:  cfg.RunFinishedObserver,
 		threadOutputObserver: cfg.ThreadOutputObserver,
@@ -154,10 +143,12 @@ func (t *Thread) Init(ctx context.Context) (*TransportThreadOutput, error) {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.closed {
+		return nil, TransportErrThreadClosed
+	}
 	if t.outputBridge.output != nil {
 		return t.outputBridge.output, nil
 	}
-	t.claimCtx = ctx
 
 	t.startThreadOutputObserver(ctx)
 	return t.outputBridge.start(ctx, t), nil
@@ -169,7 +160,8 @@ func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (po
 	if message == nil {
 		return nil, fmt.Errorf("worker message is required")
 	}
-	if err := t.ensureOpen(); err != nil {
+	err = t.ensureOpen()
+	if err != nil {
 
 		return nil, err
 	}
@@ -180,7 +172,7 @@ func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (po
 		if err != nil {
 			return nil, err
 		}
-		opts := []agentthread.SubmitInputOption{}
+		opts := []agentthread.SubmitInputOption{agentthread.WithPlan(cmd.mode == inputpkg.UserMessageModeImplPlan)}
 		if cmd.message != nil && len(cmd.message.Metadata) > 0 {
 			opts = append(opts, agentthread.WithInputMeta(maps.Clone(cmd.message.Metadata)))
 		}
@@ -191,21 +183,12 @@ func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (po
 				MessageID: workerMessageID(cmd.message),
 			})
 		}))
-		if t.runConfig != nil {
-			opts = append(opts, agentthread.WithRunConfigProvider(func(ctx context.Context, req agentthread.RunStartRequest) (*agentthread.RunConfig, error) {
-				return t.buildRunConfig(ctx, req.RunID, cmd.message, cmd.mode, false)
-			}))
-		}
 		result, err := t.thread.SubmitInput(ctx, cmd.schema, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("submit input: %w", err)
 		}
 		if result == nil {
 			return nil, fmt.Errorf("submit input returned nil result")
-		}
-		if result.Started {
-
-			t.waitSubmittedRun(ctx, result.RunHandle)
 		}
 		return &TransportPostMessageResult{RunID: result.RunID}, nil
 	case MessageTypeResumeRun:
@@ -216,7 +199,8 @@ func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (po
 		return t.postResumeRun(ctx, cmd)
 	case MessageTypeCompact:
 		cmd := decodeCompactCommand(message)
-		if err := t.postCompact(ctx, cmd); err != nil {
+		err := t.postCompact(ctx, cmd)
+		if err != nil {
 			return nil, err
 		}
 		return &TransportPostMessageResult{RunID: cmd.runID}, nil
@@ -316,7 +300,9 @@ func (t *Thread) postResumeRun(ctx context.Context, cmd resumeRunCommand) (poste
 			resumeIDs = append(resumeIDs, answer.InterruptID)
 		}
 	}
+	enablePlan := cmd.mode == inputpkg.UserMessageModeImplPlan
 	opts := agentthread.ResumeRunOptions{
+		EnablePlan:         &enablePlan,
 		CheckpointID:       payload.CheckpointID,
 		ResumeInterruptIDs: resumeIDs,
 		ResumeData:         resumeData,
@@ -328,35 +314,11 @@ func (t *Thread) postResumeRun(ctx context.Context, cmd resumeRunCommand) (poste
 			})
 		},
 	}
-	if t.runConfig != nil {
-		opts.ConfigProvider = func(ctx context.Context, req agentthread.RunStartRequest) (*agentthread.RunConfig, error) {
-			return t.buildRunConfig(ctx, req.RunID, cmd.message, cmd.mode, true)
-		}
-	}
-	curRun, err := t.thread.ResumeRun(ctx, payload.RunID, opts)
+	_, err = t.thread.ResumeRun(ctx, payload.RunID, opts)
 	if err != nil {
 		return nil, fmt.Errorf("resume turn: %w", err)
 	}
-	t.waitSubmittedRun(ctx, curRun)
 	return &TransportPostMessageResult{RunID: payload.RunID}, nil
-}
-
-func (t *Thread) waitSubmittedRun(ctx context.Context, curRun *agentthread.RunHandle) {
-	if curRun == nil {
-
-		return
-	}
-	t.mu.Lock()
-	claimCtx := t.claimCtx
-	t.mu.Unlock()
-	if claimCtx == nil {
-		claimCtx = ctx
-	}
-	go func() {
-		if err := curRun.Wait(claimCtx); err != nil && claimCtx.Err() == nil {
-
-		}
-	}()
 }
 
 func (t *Thread) resumeData(ctx context.Context, payload inputpkg.ResumeRunPayload) (map[string]any, error) {
@@ -648,14 +610,8 @@ func (t *Thread) threadOutputObservation(item TransportThreadOutputItem) (Thread
 }
 
 func (t *Thread) callThreadOutputObserver(ctx context.Context, obs ThreadOutputObservation) {
-
 	defer func() {
-		{
-			_ = recover()
-		}
-		{
-		}
-
+		_ = recover()
 	}()
 	t.threadOutputObserver(ctx, obs)
 }
@@ -664,8 +620,7 @@ func (t *Thread) forwardAgentEvent(ctx context.Context, ev agentthread.Event) bo
 	usage := t.thread.ContextManager().ContextUsage()
 	item, err := threadOutputItem(t.sessionID, t.threadID, ev, &usage)
 	if err != nil {
-
-		return true
+		return t.outputBridge.deliver(ctx, t, TransportThreadOutputItem{Err: err})
 	}
 	if item == nil {
 		return true
@@ -687,7 +642,7 @@ func (t *Thread) emitAgentEvent(ctx context.Context, ev agentthread.Event) {
 	usage := t.thread.ContextManager().ContextUsage()
 	item, err := threadOutputItem(t.sessionID, t.threadID, ev, &usage)
 	if err != nil {
-
+		bridge.send(ctx, TransportThreadOutputItem{Err: err})
 		return
 	}
 	if item == nil {
@@ -699,13 +654,6 @@ func (t *Thread) emitAgentEvent(ctx context.Context, ev agentthread.Event) {
 
 func (t *Thread) eventID(runID string) string {
 	return fmt.Sprintf("evt_%s_%s_%d", t.threadID, runID, time.Now().UnixNano())
-}
-
-func (t *Thread) buildRunConfig(ctx context.Context, runID string, message *TransportMessage, mode inputpkg.UserMessageMode, resume bool) (*agentthread.RunConfig, error) {
-	if t == nil || t.runConfig == nil {
-		return nil, nil
-	}
-	return t.runConfig(ctx, RunStartRequest{RunID: runID, Mode: mode, Message: message, Resume: resume})
 }
 
 func (t *Thread) withThreadInfo(ctx context.Context) context.Context {
@@ -2104,10 +2052,7 @@ func senderTypeFromString(senderType string) eventpkg.SenderType {
 
 // output bridge
 
-const (
-	threadOutputBridgeBufferSize   = 4096
-	threadOutputDeliverWarnElapsed = 50 * time.Millisecond
-)
+const threadOutputBridgeBufferSize = 4096
 
 type threadOutputBridge struct {
 	agentEvents <-chan agentthread.Event
@@ -2127,11 +2072,11 @@ func (b *threadOutputBridge) start(ctx context.Context, runtime *Thread) *Transp
 	b.items = make(chan TransportThreadOutputItem, threadOutputBridgeBufferSize)
 	b.done = make(chan struct{})
 	b.finish = make(chan struct{})
-	bridgeCtx, cancel := context.WithCancel(ctx)
+	// Core emits terminal events after cancellation; Close owns bridge lifetime.
+	bridgeCtx := context.WithoutCancel(ctx)
 	go func(done chan struct{}) {
 		defer close(done)
 		defer close(b.items)
-		defer cancel()
 		runtime.runOutputBridge(bridgeCtx, b)
 	}(b.done)
 	b.output = &TransportThreadOutput{Items: b.items}
@@ -2179,15 +2124,8 @@ func (b *threadOutputBridge) deliver(ctx context.Context, runtime *Thread, item 
 	}
 	observation, observe := runtime.threadOutputObservation(item)
 
-	if item.Event != nil {
-		_ = string(item.Event.Type)
-	}
-
 	select {
 	case b.items <- item:
-		{
-		}
-
 		if observe {
 			runtime.enqueueThreadOutputObservation(ctx, observation)
 		}
@@ -2205,6 +2143,7 @@ const threadOutputObserverQueueSize = 256
 
 func cloneThreadOutputItem(item TransportThreadOutputItem) TransportThreadOutputItem {
 	return TransportThreadOutputItem{
+		Err:   item.Err,
 		Event: cloneWorkerEvent(item.Event),
 		Yield: cloneThreadYield(item.Yield),
 	}
@@ -2230,14 +2169,6 @@ func cloneThreadYield(yield *TransportThreadYield) *TransportThreadYield {
 		clone.Block = &block
 	}
 	return &clone
-}
-
-func cloneBoolPtr(in *bool) *bool {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	return &out
 }
 
 // output policy

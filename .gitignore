@@ -9,3 +9,4 @@
 
 # Shared storage/model credentials are local; commit only the example.
 /yaml/deepagent.yaml
+.DS_Store

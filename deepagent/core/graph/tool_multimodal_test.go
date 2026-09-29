@@ -37,7 +37,8 @@ func TestRun_EnhancedToolPreservesMultimodalHistoryAndState(t *testing.T) {
 	var completed types.ToolCallState
 	a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
 		if event.Kind == "tool_end" {
-			completed = event.Data.(types.ToolCallState)
+			payload := event.Data.(types.ToolEndPayload)
+			completed = types.ToolCallState{Call: types.ToolCall{ID: payload.CallID, Name: payload.Name, Arguments: payload.ArgumentsInJSON}, StartedAt: payload.ToolStartTime, Result: &types.ToolResult{CallID: payload.CallID, Content: payload.Result, MultiContent: payload.MultiContent}}
 		}
 		return nil
 	}}))
@@ -134,8 +135,9 @@ func TestRun_EnhancedStreamPreservesTextOrderAndImage(t *testing.T) {
 	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "image-call", Function: schema.FunctionCall{Name: "image_stream", Arguments: "{}"}}})}}}
 	var chunks []string
 	a, err := New(context.Background(), WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
-		if chunk, ok := event.Data.(types.ToolOutputChunk); ok {
-			chunks = append(chunks, chunk.Content)
+		chunk, ok := event.Data.(types.ToolCallOutputChunkPayload)
+		if ok {
+			chunks = append(chunks, chunk.Chunk)
 		}
 		return nil
 	}}))
@@ -172,8 +174,9 @@ func TestRun_EnhancedStreamPolicyAndReturnDirect(t *testing.T) {
 				}
 				return tools.Decision{Action: tools.Allow}, nil
 			}), Emit: func(_ context.Context, event types.RuntimeEvent) error {
-				if chunk, ok := event.Data.(types.ToolOutputChunk); ok {
-					chunks += chunk.Content
+				chunk, ok := event.Data.(types.ToolCallOutputChunkPayload)
+				if ok {
+					chunks += chunk.Chunk
 				}
 				return nil
 			}}))

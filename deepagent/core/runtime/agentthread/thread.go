@@ -102,6 +102,7 @@ type SubmitInputResult struct {
 }
 type submitInputOptions struct {
 	InputMeta      any
+	EnablePlan     *bool
 	ConfigProvider RunConfigProvider
 	OnRunStart     OnRunStartFunc
 }
@@ -109,6 +110,9 @@ type SubmitInputOption func(*submitInputOptions)
 
 func WithInputMeta(meta any) SubmitInputOption {
 	return func(o *submitInputOptions) { o.InputMeta = meta }
+}
+func WithPlan(enabled bool) SubmitInputOption {
+	return func(o *submitInputOptions) { o.EnablePlan = &enabled }
 }
 func WithRunConfigProvider(provider RunConfigProvider) SubmitInputOption {
 	return func(o *submitInputOptions) { o.ConfigProvider = provider }
@@ -132,6 +136,7 @@ type ResumeRunOptions struct {
 	CheckpointID        string
 	WriteToCheckpointID string
 	ForceNewRun         bool
+	EnablePlan          *bool
 	ResumeInterruptIDs  []string
 	ResumeData          map[string]any
 	ConfigProvider      RunConfigProvider
@@ -148,9 +153,14 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, message *schema.Messa
 			opt(&options)
 		}
 	}
-	input := Input{Message: graph.CopyMessage(message), Meta: options.InputMeta}
+	clonedMessage := graph.CopyMessage(message)
+	if clonedMessage == nil {
+		return nil, fmt.Errorf("failed to copy input message")
+	}
+	input := Input{Message: clonedMessage, Meta: options.InputMeta}
 	for {
-		if err := ctx.Err(); err != nil {
+		err := ctx.Err()
+		if err != nil {
 			return nil, err
 		}
 		t.mu.Lock()
@@ -162,7 +172,8 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, message *schema.Messa
 			t.mu.Unlock()
 			return nil, ErrThreadRunning
 		}
-		if current := t.current; current != nil {
+		current := t.current
+		if current != nil {
 			if !current.accepting {
 				done := current.done
 				t.mu.Unlock()
@@ -184,7 +195,7 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, message *schema.Messa
 			return nil, fmt.Errorf("empty run ID")
 		}
 		request := RunStartRequest{ThreadID: t.ThreadID, RunID: id, Input: input.Message, InputMeta: input.Meta}
-		r, runCtx, err := t.startRun(ctx, request, options.ConfigProvider, options.OnRunStart)
+		r, runCtx, err := t.startRun(ctx, request, options.ConfigProvider, options.OnRunStart, options.EnablePlan)
 		if err != nil {
 			t.mu.Unlock()
 			return nil, err
@@ -196,7 +207,7 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, message *schema.Messa
 		return &SubmitInputResult{RunID: id, RunHandle: &RunHandle{owner: t, run: r}, Started: true}, nil
 	}
 }
-func (t *DeepAgentThread) startRun(ctx context.Context, request RunStartRequest, provider RunConfigProvider, hook OnRunStartFunc) (*run, context.Context, error) {
+func (t *DeepAgentThread) startRun(ctx context.Context, request RunStartRequest, provider RunConfigProvider, hook OnRunStartFunc, enablePlan *bool) (*run, context.Context, error) {
 	cfg := *t.config
 	if provider != nil {
 		selected, err := provider(ctx, request)
@@ -207,6 +218,9 @@ func (t *DeepAgentThread) startRun(ctx context.Context, request RunStartRequest,
 			return nil, nil, fmt.Errorf("nil run config")
 		}
 		cfg = *selected
+	}
+	if enablePlan != nil {
+		cfg.EnablePlan = *enablePlan
 	}
 	if request.Resume != nil {
 		store := cfg.Agent.CheckpointStore
@@ -224,13 +238,15 @@ func (t *DeepAgentThread) startRun(ctx context.Context, request RunStartRequest,
 			return nil, nil, fmt.Errorf("resume checkpoint %q not found", request.Resume.CheckpointID)
 		}
 		if !request.Resume.ForceNewRun {
-			if err := checkpointer.ValidateResume(snapshot, request.Resume.ResumeInterruptIDs, request.Resume.ResumeData); err != nil {
+			err := checkpointer.ValidateResume(snapshot, request.Resume.ResumeInterruptIDs, request.Resume.ResumeData)
+			if err != nil {
 				return nil, nil, err
 			}
 		}
 	}
 	if hook != nil {
-		if updated := hook(ctx, request); updated != nil {
+		updated := hook(ctx, request)
+		if updated != nil {
 			ctx = updated
 		}
 	}
@@ -283,7 +299,7 @@ func (t *DeepAgentThread) ResumeRun(ctx context.Context, runID string, opts Resu
 	if t.current != nil || t.compacting {
 		return nil, ErrThreadRunning
 	}
-	r, runCtx, err := t.startRun(ctx, RunStartRequest{ThreadID: t.ThreadID, RunID: runID, Resume: &opts}, opts.ConfigProvider, opts.OnRunStart)
+	r, runCtx, err := t.startRun(ctx, RunStartRequest{ThreadID: t.ThreadID, RunID: runID, Resume: &opts}, opts.ConfigProvider, opts.OnRunStart, opts.EnablePlan)
 	if err != nil {
 		return nil, err
 	}
@@ -357,12 +373,14 @@ func (c *contextAdapter) RecordModelUsage(ctx context.Context, usage *model.Toke
 }
 
 func (c *contextAdapter) BuildRequest(ctx context.Context, prompts []*schema.Message) ([]*schema.Message, error) {
-	if builder, ok := c.ContextManager.(interface {
+	builder, ok := c.ContextManager.(interface {
 		BuildRequest(context.Context, []*schema.Message) ([]*schema.Message, error)
-	}); ok {
+	})
+	if ok {
 		return builder.BuildRequest(ctx, prompts)
 	}
-	if err := ctx.Err(); err != nil {
+	err := ctx.Err()
+	if err != nil {
 		return nil, err
 	}
 	return append(append([]*schema.Message(nil), prompts...), c.History(ctx)...), nil

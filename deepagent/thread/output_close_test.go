@@ -88,3 +88,60 @@ func TestThreadCloseTimeoutCanRetryWhileOutputDrains(t *testing.T) {
 		t.Fatal(retry.Err())
 	}
 }
+
+func TestThreadBridgeDrainsAfterLeaseCancellation(t *testing.T) {
+	leaseCtx, cancelLease := context.WithCancel(context.Background())
+	cancelLease()
+	bus := make(chan agentthread.Event)
+	core := agentthread.New("thread", &agentthread.RunConfig{}, bus, agentthread.ThreadOptions{})
+	adapter, err := NewThread(AdapterConfig{ThreadID: "thread", Thread: core, EventBus: bus})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Start the bridge directly to isolate its lifecycle from history reload.
+	output := adapter.outputBridge.start(leaseCtx, adapter)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	defer adapter.Close(ctx)
+	select {
+	case bus <- agentthread.Event{ThreadID: "thread", RunID: "run", Type: agentthread.EventRunEnd, Payload: agentthread.RunEndPayload{}}:
+	case <-ctx.Done():
+		t.Fatal("canceled lease stopped the bridge before Core finished")
+	}
+	err = adapter.Close(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for range output.Items {
+		n++
+	}
+	if n != 1 {
+		t.Fatalf("final events=%d", n)
+	}
+}
+
+func TestThreadOutputSurfacesConversionFailure(t *testing.T) {
+	bus := make(chan agentthread.Event, 1)
+	core := agentthread.New("thread", &agentthread.RunConfig{}, bus, agentthread.ThreadOptions{})
+	adapter, err := NewThread(AdapterConfig{ThreadID: "thread", Thread: core, EventBus: bus})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := adapter.Init(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	defer adapter.Close(ctx)
+	bus <- agentthread.Event{RunID: "run", Type: agentthread.EventToolStart, Payload: "invalid payload"}
+	select {
+	case item := <-output.Items:
+		if item.Err == nil {
+			t.Fatal("conversion failure was silently discarded")
+		}
+	case <-ctx.Done():
+		t.Fatal("missing conversion error")
+	}
+}

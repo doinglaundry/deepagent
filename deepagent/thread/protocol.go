@@ -74,6 +74,7 @@ type TransportThreadYield struct {
 }
 
 type TransportThreadOutputItem struct {
+	Err   error // Conversion or transport failure; this output must not be treated as a successful yield.
 	Event *TransportEvent
 	Yield *TransportThreadYield
 }

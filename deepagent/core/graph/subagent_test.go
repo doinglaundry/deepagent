@@ -75,8 +75,9 @@ func TestChildAgent_TaskStreamingReturnsOnlyFinalAnswer(t *testing.T) {
 	var chunks []string
 	tool := &countingTool{}
 	a, err := New(context.Background(), WithConfig(&Config{Model: m, SubAgents: []*SubAgent{{Name: "general-purpose"}}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
-		if chunk, ok := event.Data.(types.ToolOutputChunk); ok && chunk.Call.ID == "task-call" {
-			chunks = append(chunks, chunk.Content)
+		chunk, ok := event.Data.(types.ToolCallOutputChunkPayload)
+		if ok && chunk.CallID == "task-call" {
+			chunks = append(chunks, chunk.Chunk)
 		}
 		return nil
 	}}))

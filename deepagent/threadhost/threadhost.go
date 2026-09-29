@@ -222,32 +222,63 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 		var closeErr error
 		if thread != nil {
 			reason = initThreadFailedReason
-			closeErr = thread.Close(runCtx)
+			closeErr = w.closeThread(runCtx, thread)
+		}
+		if closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 		if runCtx.Err() != nil {
-			return errors.Join(err, closeErr, context.Cause(runCtx))
+			leaseErr := waitLease()
+			if leaseErr == nil {
+				leaseErr = context.Cause(runCtx)
+			}
+			return errors.Join(err, leaseErr)
 		}
 		releaseErr := w.releaseThread(runCtx, claim.Lease, reason, nil)
 		return errors.Join(err, closeErr, releaseErr)
 	}
 
+	active := thread.ActiveRun()
 	run := &threadRun{
 		host: w, ctx: runCtx, acceptDone: acceptCtx.Done(), claim: claim, thread: thread,
-		idleSince: time.Now(), wasActive: thread.ActiveRun() != nil,
+		idleSince: time.Now(), wasActive: active != nil,
 	}
-	result := run.run(output.Items)
-
-	closeErr := thread.Close(runCtx)
-	if runCtx.Err() != nil {
-		if leaseErr := waitLease(); leaseErr != nil {
-			return errors.Join(leaseErr, closeErr)
+	result, closeErr := run.run(output.Items)
+	if closeErr != nil {
+		var leaseErr error
+		if runCtx.Err() != nil {
+			leaseErr = waitLease()
+			if leaseErr == nil {
+				leaseErr = context.Cause(runCtx)
+			}
 		}
+		return errors.Join(result.err, closeErr, leaseErr)
+	}
+	if runCtx.Err() != nil {
+		leaseErr := waitLease()
+		if leaseErr == nil {
+			leaseErr = context.Cause(runCtx)
+		}
+		return errors.Join(result.err, leaseErr)
+	}
+	if result.outputFailed {
+		return result.err
 	}
 	if result.closeMessageID != 0 {
 		return errors.Join(closeErr, w.confirmThreadClose(runCtx, claim.Lease, result.closeMessageID))
 	}
 	releaseErr := w.releaseThread(runCtx, claim.Lease, result.releaseReason(closeErr), result.block)
 	return errors.Join(result.err, closeErr, releaseErr)
+}
+
+func (w *ThreadHost) closeThread(ctx context.Context, thread threadpkg.ThreadRuntime) error {
+	timeout := w.ShutdownInterruptDrainTimeout
+	if timeout <= 0 {
+		timeout = defaultShutdownInterruptDrain
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	return thread.Close(cleanupCtx)
 }
 
 func (w *ThreadHost) createRuntime(ctx context.Context, threadInfo *dalmodel.Thread) (thread threadpkg.ThreadRuntime, output *threadpkg.TransportThreadOutput, err error) {
@@ -468,6 +499,7 @@ type runResult struct {
 	err            error
 	block          *threadpkg.TransportPendingBlock
 	closeMessageID int64
+	outputFailed   bool
 }
 
 func (r runResult) releaseReason(closeErr error) string {
@@ -495,8 +527,9 @@ type threadRun struct {
 	wasActive  bool
 }
 
-func (c *threadRun) run(items <-chan threadpkg.TransportThreadOutputItem) (result runResult) {
+func (c *threadRun) run(items <-chan threadpkg.TransportThreadOutputItem) (result runResult, closeErr error) {
 	stop := make(chan struct{})
+	stopOutput := make(chan struct{})
 	activity := make(chan time.Time, 1)
 	inputResults := make(chan runResult, 1)
 	inputDone := make(chan struct{})
@@ -504,10 +537,26 @@ func (c *threadRun) run(items <-chan threadpkg.TransportThreadOutputItem) (resul
 	outputDone := make(chan runResult, 1)
 
 	go c.runInput(stop, activity, inputResults, inputDone)
-	go c.runOutput(stop, items, outputSignal, outputDone)
+	go c.runOutput(stopOutput, items, outputSignal, outputDone)
 	requested, input := c.wait(activity, inputResults, outputSignal, stop)
 	close(stop)
 	<-inputDone
+	// Close owns cleanup even if the caller's grace period expires. The output
+	// consumer stays alive until all producers stop, so terminal sends can finish.
+	closed := make(chan error, 1)
+	go func() { closed <- c.thread.Close(context.WithoutCancel(c.ctx)) }()
+	timer := time.NewTimer(c.host.ShutdownInterruptDrainTimeout)
+	defer timer.Stop()
+	select {
+	case closeErr = <-closed:
+		close(stopOutput)
+	case <-timer.C:
+		go func() {
+			<-closed
+			close(stopOutput)
+		}()
+		return requested, context.DeadlineExceeded
+	}
 	output := <-outputDone
 	if input.empty() {
 		select {
@@ -516,19 +565,22 @@ func (c *threadRun) run(items <-chan threadpkg.TransportThreadOutputItem) (resul
 		}
 	}
 
+	if output.outputFailed {
+		return output, closeErr
+	}
 	if input.closeMessageID != 0 || input.err != nil {
-		return input
+		return input, closeErr
 	}
 	if !output.empty() {
-		return output
+		return output, closeErr
 	}
 	if !input.empty() {
-		return input
+		return input, closeErr
 	}
 	if !requested.empty() {
-		return requested
+		return requested, closeErr
 	}
-	return runResult{reason: defaultReleaseReason}
+	return runResult{reason: defaultReleaseReason}, closeErr
 }
 
 func (c *threadRun) wait(activity <-chan time.Time, inputResults <-chan runResult, outputSignal <-chan struct{}, stop <-chan struct{}) (requested runResult, input runResult) {
@@ -885,13 +937,15 @@ func (c *threadRun) runOutput(stop <-chan struct{}, items <-chan threadpkg.Trans
 	defer func() { done <- result }()
 	for {
 		select {
-		case <-c.ctx.Done():
-			return
 		case <-stop:
 			c.drainOutput(items, signal, &result)
 			return
 		case item, ok := <-items:
 			if !ok {
+				select {
+				case signal <- struct{}{}:
+				default:
+				}
 				return
 			}
 			c.handleOutput(item, signal, &result)
@@ -915,13 +969,21 @@ func (c *threadRun) drainOutput(items <-chan threadpkg.TransportThreadOutputItem
 
 // handleOutput persists an event before recording the first runtime yield.
 func (c *threadRun) handleOutput(item threadpkg.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
-	if result.err != nil {
+	if result.outputFailed {
+		return
+	}
+	if item.Err != nil {
+		*result = runResult{reason: defaultErrorReleaseReason, err: item.Err, outputFailed: true}
+		select {
+		case signal <- struct{}{}:
+		default:
+		}
 		return
 	}
 	if item.Event != nil {
 		err := c.host.saveThreadOutput(c.ctx, c.claim.Thread.ThreadID, item.Event, c.claim.Lease.LeaseToken)
 		if err != nil {
-			*result = runResult{reason: defaultErrorReleaseReason, err: err}
+			*result = runResult{reason: defaultErrorReleaseReason, err: err, outputFailed: true}
 			select {
 			case signal <- struct{}{}:
 			default:

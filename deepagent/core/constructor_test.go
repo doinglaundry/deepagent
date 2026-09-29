@@ -3,7 +3,6 @@ package deepagents
 import (
 	"context"
 	"eino-cli/deepagent/core/backend"
-	canonical "eino-cli/deepagent/core/middleware"
 	deeptools "eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
 	"strings"
@@ -12,16 +11,6 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
-
-type testSkillLoader struct{}
-
-func (l *testSkillLoader) ListSkills(ctx context.Context) ([]*backend.SkillMetadata, error) {
-	return []*backend.SkillMetadata{{
-		Name:        "code_search",
-		Description: "search codebase",
-		Path:        "/skills/code_search/SKILL.md",
-	}}, nil
-}
 
 type fakeToolCounter struct{ total int }
 
@@ -34,57 +23,6 @@ func (t *fakeToolCounter) Info(context.Context) (*schema.ToolInfo, error) {
 func (t *fakeToolCounter) InvokableRun(_ context.Context, _ string, _ ...tool.Option) (string, error) {
 	t.total++
 	return "ok", nil
-}
-
-func findSkillMiddleware(t *testing.T, middlewares []canonical.Middleware) *canonical.SkillMiddleware {
-	t.Helper()
-
-	for _, mw := range middlewares {
-		if skillMiddleware, ok := mw.(*canonical.SkillMiddleware); ok {
-			return skillMiddleware
-		}
-	}
-	t.Fatalf("expected skill middleware to be present")
-	return nil
-}
-
-func newTestBackend(t *testing.T) *backend.LocalFilesystem {
-	t.Helper()
-	return mustLocalFilesystem(t, &backend.LocalFilesystemConfig{
-		RootDir:     t.TempDir(),
-		VirtualMode: true,
-	})
-}
-
-type testApplyPatchBackend struct {
-	*backend.LocalFilesystem
-}
-
-func newTestApplyPatchBackend(t *testing.T) *testApplyPatchBackend {
-	t.Helper()
-	return &testApplyPatchBackend{LocalFilesystem: newTestBackend(t)}
-}
-
-func (b *testApplyPatchBackend) SupportsApplyPatch() bool {
-	return true
-}
-
-func (b *testApplyPatchBackend) ApplyPatch(context.Context, string) (string, error) {
-	return "patched", nil
-}
-
-func collectToolNames(t *testing.T, ctx context.Context, toolList []tool.BaseTool) []string {
-	t.Helper()
-
-	names := make([]string, 0, len(toolList))
-	for _, tl := range toolList {
-		info, err := tl.Info(ctx)
-		if err != nil {
-			t.Fatalf("tool.Info() error = %v", err)
-		}
-		names = append(names, info.Name)
-	}
-	return names
 }
 
 func TestSelectBackendProvidesCommandExecution(t *testing.T) {
@@ -156,15 +94,6 @@ func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T
 	if len(m.infos) != 1 || m.infos[0].Name != "readonly_counter" {
 		t.Fatalf("read-only tools = %v", m.infos)
 	}
-}
-
-func containsString(items []string, want string) bool {
-	for _, item := range items {
-		if item == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestWithConfigCopiesInput(t *testing.T) {

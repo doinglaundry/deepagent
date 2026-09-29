@@ -21,7 +21,6 @@ import (
 	"eino-cli/deepagent/core/runtime/agentthread"
 	"eino-cli/deepagent/core/tools"
 	dalmodel "eino-cli/deepagent/dal/model"
-	inputpkg "eino-cli/deepagent/protocol/input"
 	memorypkg "eino-cli/deepagent/protocol/memory"
 	"eino-cli/deepagent/sandbox"
 	"eino-cli/deepagent/sandbox/aio"
@@ -35,7 +34,7 @@ import (
 const defaultEventBusSize = 256
 
 // RuntimeConfig contains process-owned values used to build each Thread and
-// each Run. A RunConfig is intentionally rebuilt for every submitted run.
+// each Run. Stable resources are resolved once when the Thread is created.
 type RuntimeConfig struct {
 	FilesystemKind         string
 	Docker                 config.SandboxConfig
@@ -128,7 +127,13 @@ func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.T
 		eventBuffer = defaultEventBusSize
 	}
 	events := make(chan agentthread.Event, eventBuffer)
-	deepThread := agentthread.New(threadID, nil, events, options)
+	runConfig, err := w.buildRunConfig(info, chatModel, filesystem)
+	if err != nil {
+		_ = filesystem.Close(context.WithoutCancel(ctx))
+		cleanup()
+		return nil, err
+	}
+	deepThread := agentthread.New(threadID, runConfig, events, options)
 	thread, err := threadpkg.NewThread(threadpkg.AdapterConfig{
 		SessionID: info.SessionID,
 		ThreadID:  threadID,
@@ -136,9 +141,6 @@ func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.T
 			ThreadID: threadID, SessionID: info.SessionID, UserID: info.UserID,
 		},
 		Thread: deepThread, EventBus: events,
-		RunConfig: func(runCtx context.Context, request threadpkg.RunStartRequest) (*agentthread.RunConfig, error) {
-			return w.buildRunConfig(runCtx, info, roleID, filesystem, request.Mode)
-		},
 		ApprovalRemember: w.Deps.ApprovalRemember,
 		InterruptResume:  w.Deps.InterruptResume,
 	})
@@ -157,23 +159,23 @@ type filesystemThread struct {
 }
 
 func (t *filesystemThread) Close(ctx context.Context) error {
-	err := errors.Join(t.ThreadRuntime.Close(ctx), t.filesystem.Close(context.WithoutCancel(ctx)))
+	err := t.ThreadRuntime.Close(ctx)
+	if err != nil {
+		return err
+	}
+	filesystemErr := t.filesystem.Close(ctx)
+	if filesystemErr != nil {
+		return filesystemErr
+	}
 	t.cleanup()
-	return err
+	return nil
 }
 
 func (w *ThreadHost) buildRunConfig(
-	ctx context.Context,
 	info *dalmodel.Thread,
-	roleID string,
+	chatModel modelpkg.ToolCallingChatModel,
 	filesystem backend.ToolFilesystem,
-	mode inputpkg.UserMessageMode,
 ) (*agentthread.RunConfig, error) {
-	modelName := w.modelName(roleID)
-	chatModel := w.Runtime.Models[modelName]
-	if chatModel == nil {
-		return nil, fmt.Errorf("model %q is unavailable", modelName)
-	}
 	agentConfig := deepagents.Config{
 		Model: chatModel, MaxSteps: w.Runtime.MaxSteps, MaxModelCalls: w.Runtime.MaxModelCalls,
 		CheckpointStore:  w.Deps.Checkpoint,
@@ -187,32 +189,34 @@ func (w *ThreadHost) buildRunConfig(
 	for _, item := range w.Deps.Tools {
 		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.Describe(item))
 	}
-	agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewProjectInstructions(filesystem))
-	if w.Deps.Collaboration != nil {
-		agentConfig.Middlewares = append(agentConfig.Middlewares, newCollaborationMiddleware(w.Deps.Collaboration, info))
-	}
-	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)
 	memoryService, err := w.memoryService(chatModel)
 	if err != nil {
 		return nil, err
 	}
-
-	if prompt != "" {
-		agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewBasePromptMiddleware(prompt))
-	}
-	if memoryService != nil {
-		agentConfig.Middlewares = append(agentConfig.Middlewares, longmemory.NewPrompt(memoryService, memoryScope(w.Runtime.MemoryUserID, info)))
-	}
-	runConfig := &agentthread.RunConfig{
-		Agent: agentConfig, EnablePlan: mode == inputpkg.UserMessageModeImplPlan,
+	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)
+	runConfig := &agentthread.RunConfig{Agent: agentConfig}
+	runConfig.MiddlewaresProvider = func(context.Context, string) []middleware.Middleware {
+		items := []middleware.Middleware{middleware.NewProjectInstructions(filesystem)}
+		if w.Deps.Collaboration != nil {
+			items = append(items, newCollaborationMiddleware(w.Deps.Collaboration, info))
+		}
+		if prompt != "" {
+			items = append(items, middleware.NewBasePromptMiddleware(prompt))
+		}
+		if memoryService != nil {
+			items = append(items, longmemory.NewPrompt(memoryService, memoryScope(w.Runtime.MemoryUserID, info)))
+		}
+		return items
 	}
 	if memoryService != nil {
 		runConfig.RunCompleted = func(doneCtx context.Context, threadID, _ string, _ modelpkg.ToolCallingChatModel, history []*schema.Message) {
-			if observeErr := memoryService.Observe(doneCtx, memoryScope(w.Runtime.MemoryUserID, info), threadID, history); observeErr != nil && !errors.Is(observeErr, memorypkg.ErrConflict) {
+			observeErr := memoryService.Observe(doneCtx, memoryScope(w.Runtime.MemoryUserID, info), threadID, history)
+			if observeErr != nil && !errors.Is(observeErr, memorypkg.ErrConflict) {
 				slog.ErrorContext(doneCtx, "extract long-term memory", "thread_id", threadID, "error", observeErr)
 				return
 			}
-			if consolidateErr := memoryService.Consolidate(doneCtx, memoryScope(w.Runtime.MemoryUserID, info)); consolidateErr != nil && !errors.Is(consolidateErr, memorypkg.ErrConflict) {
+			consolidateErr := memoryService.Consolidate(doneCtx, memoryScope(w.Runtime.MemoryUserID, info))
+			if consolidateErr != nil && !errors.Is(consolidateErr, memorypkg.ErrConflict) {
 				slog.ErrorContext(doneCtx, "consolidate long-term memory", "thread_id", threadID, "error", consolidateErr)
 			}
 		}
@@ -221,7 +225,8 @@ func (w *ThreadHost) buildRunConfig(
 }
 
 func (w *ThreadHost) modelName(roleID string) string {
-	if name := strings.TrimSpace(w.Runtime.RoleModels[roleID]); name != "" {
+	name := strings.TrimSpace(w.Runtime.RoleModels[roleID])
+	if name != "" {
 		return name
 	}
 	return w.Runtime.DefaultModel
@@ -242,7 +247,8 @@ func (w *ThreadHost) memoryService(chatModel modelpkg.ToolCallingChatModel) (lon
 }
 
 func memoryScope(configured string, info *dalmodel.Thread) string {
-	if value := strings.TrimSpace(configured); value != "" {
+	value := strings.TrimSpace(configured)
+	if value != "" {
 		return "user/" + value
 	}
 	if info.UserID > 0 {

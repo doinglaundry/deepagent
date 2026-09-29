@@ -72,13 +72,13 @@ func TestRun_ModelAndToolStreamsPreserveOrder(t *testing.T) {
 				t.Fatal("duplicate start")
 			}
 			start = i
-			state, ok := e.Data.(types.ToolCallState)
-			if !ok || state.Call.Name != "stream_tool" || state.Call.Arguments != "{}" || state.StartedAt.IsZero() {
+			state, ok := e.Data.(types.ToolStartPayload)
+			if !ok || state.Name != "stream_tool" || state.Args != "{}" || state.ToolStartTime.IsZero() {
 				t.Fatalf("missing start metadata: %+v", e)
 			}
 		case "tool_call_output_chunk":
-			chunk, ok := e.Data.(types.ToolOutputChunk)
-			if !ok || chunk.Call.Name != "stream_tool" || chunk.Call.ID != "call" || chunk.Content == "" {
+			chunk, ok := e.Data.(types.ToolCallOutputChunkPayload)
+			if !ok || chunk.Name != "stream_tool" || chunk.CallID != "call" || chunk.Chunk == "" {
 				t.Fatalf("missing chunk metadata: %+v", e)
 			}
 			if start < 0 || end >= 0 {
@@ -87,8 +87,8 @@ func TestRun_ModelAndToolStreamsPreserveOrder(t *testing.T) {
 			chunks++
 		case "tool_end":
 			end = i
-			state, ok := e.Data.(types.ToolCallState)
-			if !ok || state.Result == nil || state.Result.Content != "onetwo" || state.StartedAt.IsZero() || state.Call.Name != "stream_tool" {
+			state, ok := e.Data.(types.ToolEndPayload)
+			if !ok || state.Result != "onetwo" || state.ToolStartTime.IsZero() || state.Name != "stream_tool" {
 				t.Fatalf("missing end metadata: %+v", e)
 			}
 		}

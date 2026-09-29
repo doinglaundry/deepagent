@@ -78,8 +78,6 @@ type Sender struct {
 	SenderType SenderType `json:"sender_type"`
 	SenderID   string     `json:"sender_id"`
 }
-type payloadMeta struct{}
-
 type MessageEventPayload struct {
 	Status             string              `json:"status,omitempty"`
 	Parts              []MessagePart       `json:"parts,omitempty"`
@@ -99,16 +97,22 @@ type AssistantDeltaEventPayload struct {
 	ConsumedInputsMeta   []map[string]string `json:"consumed_inputs_meta,omitempty"`
 }
 type ToolCallEventPayload struct {
-	ToolCallID                             string `json:"tool_call_id,omitempty"`
-	ToolName                               string `json:"tool_name,omitempty"`
-	ArgumentsJSON, ResultJSON, OutputDelta *string
-	Status                                 string              `json:"status,omitempty"`
-	ElapsedMs                              *int64              `json:"elapsed_ms,omitempty"`
-	ContextUsage                           *ContextUsage       `json:"context_usage,omitempty"`
-	ConsumedMessageIDs                     []string            `json:"consumed_message_ids,omitempty"`
-	ConsumedInputsMeta                     []map[string]string `json:"consumed_inputs_meta,omitempty"`
+	ToolCallID         string              `json:"tool_call_id,omitempty"`
+	ToolName           string              `json:"tool_name,omitempty"`
+	ArgumentsJSON      *string             `json:"arguments_json,omitempty"`
+	ResultJSON         *string             `json:"result_json,omitempty"`
+	OutputDelta        *string             `json:"output_delta,omitempty"`
+	Status             string              `json:"status,omitempty"`
+	ElapsedMs          *int64              `json:"elapsed_ms,omitempty"`
+	ContextUsage       *ContextUsage       `json:"context_usage,omitempty"`
+	ConsumedMessageIDs []string            `json:"consumed_message_ids,omitempty"`
+	ConsumedInputsMeta []map[string]string `json:"consumed_inputs_meta,omitempty"`
 }
-type PlanItem struct{ ID, Content, Status string }
+type PlanItem struct {
+	ID      string `json:"id"`
+	Content string `json:"content"`
+	Status  string `json:"status"`
+}
 type PlanUpdatedEventPayload struct {
 	Explanation        *string             `json:"explanation,omitempty"`
 	Items              []*PlanItem         `json:"items,omitempty"`
@@ -191,9 +195,13 @@ type ContextCompactedEventPayload struct {
 	ConsumedInputsMeta []map[string]string `json:"consumed_inputs_meta,omitempty"`
 }
 type CompactInterruptedEventPayload struct {
-	Status, Kind, Reason, ControlMessageID, CutoffMessageID string
-	ConsumedMessageIDs                                      []string            `json:"consumed_message_ids,omitempty"`
-	ConsumedInputsMeta                                      []map[string]string `json:"consumed_inputs_meta,omitempty"`
+	Status             string              `json:"status,omitempty"`
+	Kind               string              `json:"kind,omitempty"`
+	Reason             string              `json:"reason,omitempty"`
+	ControlMessageID   string              `json:"control_message_id,omitempty"`
+	CutoffMessageID    string              `json:"cutoff_message_id,omitempty"`
+	ConsumedMessageIDs []string            `json:"consumed_message_ids,omitempty"`
+	ConsumedInputsMeta []map[string]string `json:"consumed_inputs_meta,omitempty"`
 }
 type RunFinishedEventPayload struct {
 	Status             string              `json:"status,omitempty"`

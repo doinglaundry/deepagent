@@ -72,6 +72,143 @@ func TestSandboxListDir(t *testing.T) {
 	}
 }
 
+func TestSandboxRejectsSymlinkEscapeForDirectOperations(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("outside"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Symlink(outside, filepath.Join(root, "escape"))
+	if err != nil {
+		t.Skipf("symlink unsupported on this filesystem: %v", err)
+	}
+
+	mappings := []sandboxpaths.MountMapping{{VirtualPath: "/mnt/workspace", HostPath: root}}
+	sb := newSandbox("test", "local:test", mappings)
+	ctx := context.Background()
+
+	_, err = sb.ReadFile(ctx, "/mnt/workspace/escape/secret.txt")
+	if err == nil {
+		t.Fatal("expected read through escaping symlink to fail")
+	}
+	err = sb.WriteFile(ctx, "/mnt/workspace/escape/new.txt", "pwn", false)
+	if err == nil {
+		t.Fatal("expected write through escaping symlink to fail")
+	}
+	err = sb.UpdateFile(ctx, "/mnt/workspace/escape/secret.txt", []byte("pwn"))
+	if err == nil {
+		t.Fatal("expected update through escaping symlink to fail")
+	}
+	_, err = sb.ListDir(ctx, "/mnt/workspace/escape", 2)
+	if err == nil {
+		t.Fatal("expected listing through escaping symlink to fail")
+	}
+
+	_, _, err = sb.Glob(ctx, "/mnt/workspace/escape", "*", sandbox.GlobOpts{})
+	if err == nil {
+		t.Fatal("glob followed escaping root")
+	}
+	_, _, err = sb.Grep(ctx, "/mnt/workspace/escape", "outside", sandbox.GrepOpts{})
+	if err == nil {
+		t.Fatal("grep followed escaping root")
+	}
+
+	data, err := os.ReadFile(filepath.Join(outside, "secret.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "outside" {
+		t.Fatalf("outside sentinel changed to %q", data)
+	}
+}
+
+func TestSandboxAllowsInRootSymlinkForDirectOperations(t *testing.T) {
+	root := t.TempDir()
+	err := os.Mkdir(filepath.Join(root, "inside"), 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Symlink("inside", filepath.Join(root, "alias"))
+	if err != nil {
+		t.Skipf("symlink unsupported on this filesystem: %v", err)
+	}
+
+	mappings := []sandboxpaths.MountMapping{{VirtualPath: "/mnt/workspace", HostPath: root}}
+	sb := newSandbox("test", "local:test", mappings)
+	ctx := context.Background()
+	err = sb.WriteFile(ctx, "/mnt/workspace/alias/note.txt", "hello", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := sb.ReadFile(ctx, "/mnt/workspace/alias/note.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "hello" {
+		t.Fatalf("want hello, got %q", got)
+	}
+	entries, err := sb.ListDir(ctx, "/mnt/workspace/alias", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected in-root symlink target to be listable")
+	}
+}
+
+func TestSandboxReadOnlyPolicyFollowsSymlinkAliases(t *testing.T) {
+	parent := t.TempDir()
+	writable := filepath.Join(parent, "writable")
+	readonly := filepath.Join(parent, "readonly")
+	err := os.Mkdir(writable, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Mkdir(readonly, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.WriteFile(filepath.Join(readonly, "target.txt"), []byte("keep"), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.Symlink("../readonly", filepath.Join(writable, "alias"))
+	if err != nil {
+		t.Skipf("symlink unsupported on this filesystem: %v", err)
+	}
+
+	mappings := []sandboxpaths.MountMapping{
+		{VirtualPath: "/mnt/workspace", HostPath: writable},
+		{VirtualPath: "/mnt/skills", HostPath: readonly, ReadOnly: true},
+	}
+	sb := newSandbox("test", "local:test", mappings)
+	ctx := context.Background()
+
+	err = sb.WriteFile(ctx, "/mnt/workspace/alias/target.txt", "changed", false)
+	if err == nil {
+		t.Fatal("expected aliased read-only write to fail")
+	}
+	var permissionErr *sandbox.PermissionError
+	if !errors.As(err, &permissionErr) {
+		t.Fatalf("want PermissionError, got %T", err)
+	}
+	err = sb.UpdateFile(ctx, "/mnt/workspace/alias/target.txt", []byte("changed"))
+	if err == nil {
+		t.Fatal("expected aliased read-only update to fail")
+	}
+	if !errors.As(err, &permissionErr) {
+		t.Fatalf("want PermissionError, got %T", err)
+	}
+	data, err := os.ReadFile(filepath.Join(readonly, "target.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "keep" {
+		t.Fatalf("read-only sentinel changed to %q", data)
+	}
+}
+
 func TestManagerReturnsStartupSandbox(t *testing.T) {
 	mgr, err := New("session-a")
 	if err != nil {
@@ -147,5 +284,36 @@ func TestBuildPathMappingsIncludesRepo(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected VirtualPathPrefixRepo mapping")
+	}
+}
+
+func TestSandboxRejectsReplacedMount(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	err := os.Mkdir(root, 0700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb := newSandbox("test", "local:test", []sandboxpaths.MountMapping{{VirtualPath: "/mnt/workspace", HostPath: root}})
+	err = os.Rename(root, root+"-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	err = os.Symlink(outside, root)
+	if err != nil {
+		t.Skip(err)
+	}
+	err = sb.WriteFile(context.Background(), "/mnt/workspace/new.txt", "escape", false)
+	if err == nil {
+		t.Fatal("write accepted replaced mount")
+	}
+	_, _, err = sb.Glob(context.Background(), "/mnt/workspace", "*", sandbox.GlobOpts{})
+	if err == nil {
+		t.Fatal("glob accepted replaced mount")
+	}
+	_, err = os.Stat(filepath.Join(outside, "new.txt"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("outside path touched: %v", err)
 	}
 }

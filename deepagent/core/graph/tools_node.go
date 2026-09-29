@@ -27,7 +27,7 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 		calls[i] = s.Calls[i].Call
 	}
 	err := a.executor.executeBatch(ctx, calls, func(ctx context.Context, call types.ToolCall, chunk string) error {
-		return a.event(ctx, s, "tool_call_output_chunk", call.ID, types.ToolOutputChunk{Call: call, Content: chunk})
+		return a.event(ctx, s, "tool_call_output_chunk", call.ID, types.ToolCallOutputChunkPayload{Name: call.Name, CallID: call.ID, Chunk: chunk})
 	})
 	a.executor.snapshot(s.Calls)
 	// A later call may interrupt this batch. Its first Eino snapshot must not
@@ -73,7 +73,7 @@ func (a *DeepAgent) callTools(ctx context.Context, s *types.RunState) (*types.Ru
 		if err != nil {
 			return nil, err
 		}
-		err = a.event(ctx, s, "tool_end", result.CallID, callState)
+		err = a.event(ctx, s, "tool_end", result.CallID, types.ToolEndPayload{MultiContent: result.MultiContent, Name: call.Name, CallID: call.ID, ArgumentsInJSON: call.Arguments, ToolStartTime: callState.StartedAt, Result: result.Content})
 		if err != nil {
 			return nil, err
 		}

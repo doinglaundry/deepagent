@@ -92,11 +92,8 @@ func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error
 		"timeout":    execTimeoutSeconds,
 	}
 	var data struct {
-		ShellSessionID string `json:"session_id"`
-		Command        string `json:"command"`
-		Status         string `json:"status"`
-		Output         string `json:"output"`
-		ExitCode       *int   `json:"exit_code"`
+		Output   string `json:"output"`
+		ExitCode *int   `json:"exit_code"`
 	}
 	if err := s.post(ctx, "/v1/shell/exec", body, &data); err != nil {
 		return "", sandbox.NewCommandError(err.Error(), cmd, -1)
@@ -115,7 +112,6 @@ func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error
 func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 	var data struct {
 		Content string `json:"content"`
-		File    string `json:"file"`
 	}
 	if err := s.post(ctx, "/v1/file/read", map[string]any{"file": path}, &data); err != nil {
 		return "", sandbox.NewFileError(err.Error(), path, "read")
@@ -178,7 +174,6 @@ func (s *Sandbox) ListDirInfo(ctx context.Context, path string, maxDepth int) ([
 		"max_depth":   maxDepth,
 	}
 	var data struct {
-		Path  string     `json:"path"`
 		Files []fileInfo `json:"files"`
 	}
 	if err := s.post(ctx, "/v1/file/list", body, &data); err != nil {
@@ -196,12 +191,10 @@ func (s *Sandbox) ListDirInfo(ctx context.Context, path string, maxDepth int) ([
 }
 
 type fileInfo struct {
-	Name        string `json:"name"`
 	Path        string `json:"path"`
 	IsDirectory bool   `json:"is_directory"`
 	IsSymlink   bool   `json:"is_symlink"`
 	Size        *int64 `json:"size"`
-	Extension   string `json:"extension"`
 }
 
 // Glob matches pattern under path; falls back to /v1/file/list for dirs.
@@ -212,7 +205,6 @@ func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.G
 	}
 	if !opts.IncludeDirs {
 		var data struct {
-			Path  string   `json:"path"`
 			Files []string `json:"files"`
 		}
 		body := map[string]any{"path": path, "glob": pattern}
@@ -304,7 +296,6 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.G
 		}
 		body := map[string]any{"file": file, "regex": regex}
 		var data struct {
-			File        string   `json:"file"`
 			Matches     []string `json:"matches"`
 			LineNumbers []int    `json:"line_numbers"`
 		}

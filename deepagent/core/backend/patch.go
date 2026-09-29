@@ -20,25 +20,63 @@ func ApplyWorkspacePatch(ctx context.Context, ws Filesystem, raw string) (string
 	if err != nil {
 		return "", err
 	}
+	patcher, ok := ws.(patchFilesystem)
+	if !ok {
+		return "", fmt.Errorf("filesystem does not support safe patch creation")
+	}
 	type change struct{ op, path, moveTo, content string }
 	changes := make([]change, 0, len(files))
+	resolvedSources := make(map[string]struct{}, len(files))
+	resolvedTargets := make(map[string]struct{}, len(files))
 	for _, file := range files {
-		if _, err := ws.Resolve(ctx, file.path, file.operation != "delete"); err != nil {
-			return "", err
+		source, resolveErr := ws.Resolve(ctx, file.path, file.operation != "delete")
+		if resolveErr != nil {
+			return "", resolveErr
 		}
+		_, repeated := resolvedSources[source]
+		if repeated {
+			return "", fmt.Errorf("patch repeats source file: %s", file.path)
+		}
+		resolvedSources[source] = struct{}{}
+		if file.operation != "add" {
+			sourceExists, existsErr := patcher.FileExists(ctx, source)
+			if existsErr != nil {
+				return "", existsErr
+			}
+			if !sourceExists {
+				return "", fmt.Errorf("patch source does not exist: %s", file.path)
+			}
+		}
+		target := source
 		if file.moveTo != "" {
-			if _, err := ws.Resolve(ctx, file.moveTo, true); err != nil {
-				return "", err
+			target, resolveErr = ws.Resolve(ctx, file.moveTo, true)
+			if resolveErr != nil {
+				return "", resolveErr
+			}
+			if source == target {
+				return "", fmt.Errorf("patch moves %s onto itself", file.path)
+			}
+		}
+		if file.operation == "add" || file.moveTo != "" {
+			_, repeatedTarget := resolvedTargets[target]
+			if repeatedTarget {
+				return "", fmt.Errorf("patch repeats destination: %s", target)
+			}
+			resolvedTargets[target] = struct{}{}
+			targetExists, targetErr := patcher.FileExists(ctx, target)
+			if targetErr != nil {
+				return "", targetErr
+			}
+			if targetExists {
+				targetName := file.path
+				if file.moveTo != "" {
+					targetName = file.moveTo
+				}
+				return "", fmt.Errorf("%w: patch destination already exists: %s", ErrAlreadyExists, targetName)
 			}
 		}
 		content := ""
-		if file.operation == "add" {
-			limit := 1
-			if _, readErr := ws.Read(ctx, file.path, nil, &limit); readErr == nil {
-				return "", fmt.Errorf("add target already exists: %s", file.path)
-			}
-		}
-		if file.operation == "update" || file.operation == "delete" {
+		if file.operation == "update" {
 			limit := 1 << 30
 			content, err = ws.Read(ctx, file.path, nil, &limit)
 			if err != nil {
@@ -70,12 +108,14 @@ func ApplyWorkspacePatch(ctx context.Context, ws Filesystem, raw string) (string
 	}
 	var results []string
 	for _, change := range changes {
-		if err := ctx.Err(); err != nil {
-			return "", err
+		contextErr := ctx.Err()
+		if contextErr != nil {
+			return "", contextErr
 		}
 		if change.op == "delete" {
-			if _, err := ws.Delete(ctx, change.path); err != nil {
-				return "", err
+			_, deleteErr := ws.Delete(ctx, change.path)
+			if deleteErr != nil {
+				return "", deleteErr
 			}
 			results = append(results, "D "+change.path)
 			continue
@@ -84,12 +124,22 @@ func ApplyWorkspacePatch(ctx context.Context, ws Filesystem, raw string) (string
 		if change.moveTo != "" {
 			target = change.moveTo
 		}
-		if _, err := ws.Write(ctx, target, change.content); err != nil {
+		var result *WriteResult
+		if change.op == "add" || change.moveTo != "" {
+			result, err = patcher.CreateFileNoReplace(ctx, target, change.content)
+		} else {
+			result, err = ws.Write(ctx, target, change.content)
+		}
+		if err != nil {
 			return "", err
 		}
+		if result != nil && result.Error != "" {
+			return "", fmt.Errorf("patch write %s: %s", target, result.Error)
+		}
 		if change.moveTo != "" {
-			if _, err := ws.Delete(ctx, change.path); err != nil {
-				return "", err
+			_, deleteErr := ws.Delete(ctx, change.path)
+			if deleteErr != nil {
+				return "", deleteErr
 			}
 		}
 		if change.op == "add" {

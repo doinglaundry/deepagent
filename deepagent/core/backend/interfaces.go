@@ -15,6 +15,14 @@ type Filesystem interface {
 	ApplyPatch(context.Context, string) (string, error)
 }
 
+// patchFilesystem provides the operations required to validate and commit a
+// patch without treating a content read as an existence check.
+type patchFilesystem interface {
+	Filesystem
+	FileExists(context.Context, string) (bool, error)
+	CreateFileNoReplace(context.Context, string, string) (*WriteResult, error)
+}
+
 // ToolFilesystem is the complete capability set exposed to one Agent thread.
 // Both local and Docker filesystems implement it; tools use the same interface.
 type ToolFilesystem interface {

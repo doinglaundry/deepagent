@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/tools"
@@ -135,5 +136,51 @@ func TestRun_ModelMiddlewareErrorStopsModel(t *testing.T) {
 	_, err = a.Run(context.Background(), []*schema.Message{schema.UserMessage("input")})
 	if !errors.Is(err, want) || m.calls != 0 {
 		t.Fatalf("err=%v calls=%d", err, m.calls)
+	}
+}
+
+func TestDuplicateStatefulMiddlewareNamesRejectedBeforeModelCall(t *testing.T) {
+	tests := []struct {
+		name        string
+		middlewares []middleware.Middleware
+	}{
+		{name: "circuit breaker", middlewares: []middleware.Middleware{&middleware.CircuitBreaker{}, &middleware.CircuitBreaker{}}},
+		{name: "loop guard", middlewares: []middleware.Middleware{middleware.NewLoopGuard(), middleware.NewLoopGuard()}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("unexpected", nil)}}}
+			_, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: tc.middlewares}))
+			if err == nil {
+				t.Fatal("duplicate stateful middleware name was accepted")
+			}
+			if !strings.Contains(err.Error(), "duplicate stateful middleware name") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if m.calls != 0 {
+				t.Fatalf("model calls=%d", m.calls)
+			}
+		})
+	}
+}
+
+func TestDuplicateStatelessMiddlewareNamesRemainSupported(t *testing.T) {
+	ctx := context.Background()
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
+	middlewares := []middleware.Middleware{
+		&orderedMiddleware{name: "shared", order: new([]string)},
+		&orderedMiddleware{name: "shared", order: new([]string)},
+	}
+	a, err := New(ctx, WithConfig(&Config{Model: m, Middlewares: middlewares}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(ctx)
+	result, err := a.Run(ctx, []*schema.Message{schema.UserMessage("input")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || result.Content != "done" || m.calls != 1 {
+		t.Fatalf("result=%v model calls=%d", result, m.calls)
 	}
 }

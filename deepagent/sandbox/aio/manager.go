@@ -4,16 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 
-	"golang.org/x/sync/singleflight"
 	"golang.org/x/sys/unix"
 
 	"eino-cli/deepagent/config"
@@ -29,22 +28,34 @@ type Manager struct {
 	log       *slog.Logger
 	sessionID string
 	sandboxID string
+	mounts    []sandboxpaths.MountMapping
 
 	mu           sync.Mutex
 	sandboxes    map[string]*Sandbox
 	infos        map[string]SandboxInfo
 	lastActivity map[string]time.Time
 	warmPool     map[string]warmEntry
+	closed       bool
 
-	sf       singleflight.Group
-	stopIdle chan struct{}
-	shutdown sync.Once
+	gate       chan struct{}
+	stopIdle   chan struct{}
+	operations sync.WaitGroup
+	shutdown   sync.Once
 }
+
+var errManagerShutdown = errors.New("aio manager is shut down")
 
 // New builds the aio Manager bound to sessionID and seeds the warm pool from orphans.
 func New(cfg *config.Config, sessionID string) (sandbox.SandboxManager, error) {
 	if sessionID == "" {
 		return nil, sandbox.ErrSessionIDRequired
+	}
+	err := config.ValidateSessionID(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("aio config is required")
 	}
 	m := &Manager{
 		cfg:          cfg,
@@ -57,6 +68,7 @@ func New(cfg *config.Config, sessionID string) (sandbox.SandboxManager, error) {
 		lastActivity: map[string]time.Time{},
 		warmPool:     map[string]warmEntry{},
 		stopIdle:     make(chan struct{}),
+		gate:         make(chan struct{}, 1),
 	}
 	if cfg.Sandbox.Use == "docker" {
 		if _, err := exec.LookPath("docker"); err != nil {
@@ -66,6 +78,15 @@ func New(cfg *config.Config, sessionID string) (sandbox.SandboxManager, error) {
 	}
 	if m.rt == "" {
 		return nil, fmt.Errorf("aio: no container runtime (docker / container CLI)")
+	}
+	if cfg.Sandbox.Use != "docker" {
+		m.mounts, err = sandboxpaths.BuildMountMappings(sessionID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, mount := range cfg.Sandbox.Mounts {
+		m.mounts = append(m.mounts, sandboxpaths.MountMapping{HostPath: mount.HostPath, VirtualPath: mount.ContainerPath, ReadOnly: mount.ReadOnly})
 	}
 	m.reconcileOrphans()
 	if cfg.Sandbox.IdleTimeout > 0 {
@@ -77,30 +98,56 @@ func New(cfg *config.Config, sessionID string) (sandbox.SandboxManager, error) {
 // Same sessionID hashes to the same sid in every process, so container names collide on purpose.
 func deriveSandboxID(sessionID string) string {
 	sum := sha256.Sum256([]byte(sessionID))
-	return hex.EncodeToString(sum[:])[:8]
+	return hex.EncodeToString(sum[:])
 }
 
 func (m *Manager) SessionID() string { return m.sessionID }
+
+func (m *Manager) isClosed() bool {
+	m.mu.Lock()
+	closed := m.closed
+	m.mu.Unlock()
+	return closed
+}
 
 func (m *Manager) GetSandboxIdBySessionId(ctx context.Context, sessionID string) (string, error) {
 	if sessionID != "" && sessionID != m.sessionID {
 		return "", fmt.Errorf("aio manager: session_id %q does not match %q", sessionID, m.sessionID)
 	}
-	v, err, _ := m.sf.Do(m.sessionID, func() (any, error) {
-		if cached, ok := m.reuse(); ok {
-			return cached, nil
-		}
-		return m.discoverOrCreate(ctx, m.sandboxID)
-	})
-	if err != nil {
-		return "", err
+	if m.isClosed() {
+		return "", errManagerShutdown
 	}
-	return v.(string), nil
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-m.stopIdle:
+		return "", errManagerShutdown
+	case m.gate <- struct{}{}:
+	}
+	defer func() { <-m.gate }()
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return "", errManagerShutdown
+	}
+	m.operations.Add(1)
+	m.mu.Unlock()
+	defer m.operations.Done()
+	runCtx, stop := m.contextWithShutdown(ctx)
+	defer stop()
+	cached, ok := m.reuse()
+	if ok {
+		return cached, nil
+	}
+	return m.discoverOrCreate(runCtx, m.sandboxID)
 }
 
 func (m *Manager) reuse() (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.closed {
+		return "", false
+	}
 	sid := m.sandboxID
 	if _, alive := m.sandboxes[sid]; alive {
 		m.lastActivity[sid] = time.Now()
@@ -116,14 +163,10 @@ func (m *Manager) reuse() (string, bool) {
 }
 
 func (m *Manager) attachLocked(sid string, info SandboxInfo) {
-	var mounts []sandboxpaths.MountMapping
-	if m.cfg.Sandbox.Use != "docker" {
-		mounts, _ = sandboxpaths.BuildMountMappings(m.sessionID)
+	if m.closed || sid != m.sandboxID {
+		return
 	}
-	for _, mount := range m.cfg.Sandbox.Mounts {
-		mounts = append(mounts, sandboxpaths.MountMapping{HostPath: mount.HostPath, VirtualPath: mount.ContainerPath, ReadOnly: mount.ReadOnly})
-	}
-	client := newSandbox(sid, m.sessionID, info.SandboxURL, mounts)
+	client := newSandbox(sid, m.sessionID, info.SandboxURL, m.mounts)
 	client.containerName = info.ContainerName
 	client.runtime = m.rt
 	m.sandboxes[sid] = client
@@ -132,45 +175,87 @@ func (m *Manager) attachLocked(sid string, info SandboxInfo) {
 }
 
 func (m *Manager) discoverOrCreate(ctx context.Context, sid string) (string, error) {
+	if sid != m.sandboxID {
+		return "", fmt.Errorf("aio manager: sandbox id %q is not owned by session", sid)
+	}
+	if m.isClosed() {
+		return "", errManagerShutdown
+	}
 	lockPath := filepath.Join(os.TempDir(), "eino-sandbox-"+sid+".lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
-		return "", err
+	for {
+		flockErr := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if flockErr == nil {
+			break
+		}
+		if !errors.Is(flockErr, unix.EWOULDBLOCK) {
+			return "", flockErr
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	defer func() { _ = unix.Flock(int(f.Fd()), unix.LOCK_UN) }()
 
-	if info, ok := discoverContainer(m.rt, m.cfg.Sandbox.ContainerPrefix, sid); ok {
+	if m.isClosed() {
+		return "", errManagerShutdown
+	}
+	info, ok := discoverContainer(ctx, m.rt, m.cfg.Sandbox.ContainerPrefix, sid)
+	if ok {
 		m.mu.Lock()
-		m.attachLocked(sid, info)
+		closed := m.closed
+		if !closed {
+			m.attachLocked(sid, info)
+		}
 		m.mu.Unlock()
+		if closed {
+			_ = stopContainer(m.rt, info.ContainerID)
+			return "", errManagerShutdown
+		}
 		return sid, nil
+	}
+	contextErr := ctx.Err()
+	if contextErr != nil {
+		return "", contextErr
 	}
 	return m.createSandbox(ctx, sid)
 }
 
 func (m *Manager) createSandbox(ctx context.Context, sid string) (string, error) {
-	m.mu.Lock()
-	m.evictUntilWithinReplicasLocked()
-	m.mu.Unlock()
+	closed := m.isClosed()
+	if closed {
+		return "", errManagerShutdown
+	}
+	runCtx := ctx
 
 	port, err := network.GetFreePort(8081)
 	if err != nil {
 		return "", err
 	}
 	name := m.cfg.Sandbox.ContainerPrefix + "-" + sid
-	cid, err := startContainer(ctx, containerSpec{
+	cid, err := startContainer(runCtx, containerSpec{
 		Runtime: m.rt,
 		Image:   m.cfg.Sandbox.Image,
 		Name:    name,
 		Port:    port,
-		Mounts:  m.buildMounts(ctx),
+		Mounts:  m.buildMounts(),
 		Env:     m.cfg.Sandbox.Environment,
 	})
 	if err != nil {
+		// Docker may have created the named container before the CLI was canceled.
+		// No ID is available on this path, so clean up only our known name.
+		if runCtx.Err() != nil {
+			_ = stopContainer(m.rt, name)
+		}
+		if m.isClosed() {
+			return "", errManagerShutdown
+		}
 		return "", err
 	}
 	info := SandboxInfo{
@@ -180,22 +265,53 @@ func (m *Manager) createSandbox(ctx context.Context, sid string) (string, error)
 		ContainerID:   cid,
 		CreatedAt:     time.Now(),
 	}
-	readyCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	readyCtx, cancel := context.WithTimeout(runCtx, 60*time.Second)
 	defer cancel()
-	if err := waitReady(readyCtx, info.SandboxURL); err != nil {
+	readyErr := waitReady(readyCtx, info.SandboxURL)
+	if readyErr != nil {
 		_ = stopContainer(m.rt, cid)
-		return "", fmt.Errorf("sandbox %s not ready: %w", sid, err)
+		if m.isClosed() {
+			return "", errManagerShutdown
+		}
+		return "", fmt.Errorf("sandbox %s not ready: %w", sid, readyErr)
 	}
 	m.mu.Lock()
-	m.attachLocked(sid, info)
+	closed = m.closed
+	if !closed {
+		m.attachLocked(sid, info)
+	}
 	m.mu.Unlock()
+	if closed {
+		_ = stopContainer(m.rt, cid)
+		return "", errManagerShutdown
+	}
 	return sid, nil
+}
+
+func (m *Manager) contextWithShutdown(ctx context.Context) (context.Context, func()) {
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-m.stopIdle:
+			cancel()
+		case <-done:
+		}
+	}()
+	stop := func() {
+		close(done)
+		cancel()
+	}
+	return runCtx, stop
 }
 
 // Get returns the live Sandbox for sid.
 func (m *Manager) Get(ctx context.Context, sid string) (sandbox.Sandbox, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.closed || sid != m.sandboxID {
+		return nil, sandbox.NewNotFoundError(sid)
+	}
 	s, ok := m.sandboxes[sid]
 	if !ok {
 		return nil, sandbox.NewNotFoundError(sid)
@@ -208,6 +324,9 @@ func (m *Manager) Get(ctx context.Context, sid string) (sandbox.Sandbox, error) 
 func (m *Manager) Release(ctx context.Context, sid string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.closed || sid != m.sandboxID {
+		return nil
+	}
 	info, ok := m.infos[sid]
 	if !ok {
 		return nil
@@ -239,14 +358,35 @@ func (m *Manager) Shutdown() {
 	m.shutdown.Do(func() {
 		close(m.stopIdle)
 		m.mu.Lock()
-		defer m.mu.Unlock()
+		m.closed = true
+		containerIDs := make([]string, 0, len(m.infos)+len(m.warmPool))
 		for sid, info := range m.infos {
-			_ = stopContainer(m.rt, info.ContainerID)
-			delete(m.infos, sid)
+			if sid == m.sandboxID {
+				containerIDs = append(containerIDs, info.ContainerID)
+			}
 		}
 		for sid, entry := range m.warmPool {
-			_ = stopContainer(m.rt, entry.info.ContainerID)
-			delete(m.warmPool, sid)
+			if sid == m.sandboxID {
+				containerIDs = append(containerIDs, entry.info.ContainerID)
+			}
+		}
+		m.sandboxes = map[string]*Sandbox{}
+		m.infos = map[string]SandboxInfo{}
+		m.lastActivity = map[string]time.Time{}
+		m.warmPool = map[string]warmEntry{}
+		m.mu.Unlock()
+		m.operations.Wait()
+		for _, containerID := range containerIDs {
+			var stopErr error
+			for attempt := 0; attempt < 3; attempt++ {
+				stopErr = stopContainer(m.rt, containerID)
+				if stopErr == nil {
+					break
+				}
+			}
+			if stopErr != nil {
+				m.log.Error("aio: container cleanup failed", "container_id", containerID, "error", stopErr)
+			}
 		}
 	})
 }
@@ -264,112 +404,62 @@ func (m *Manager) idleLoop() {
 	}
 }
 
-// cleanupIdle demotes active sandboxes past their TTL and stops over-aged warm ones.
+// Cleanup and acquisition share the same gate; container commands never hold mu.
 func (m *Manager) cleanupIdle() {
 	if m.cfg.Sandbox.IdleTimeout <= 0 {
 		return
 	}
-	cutoff := time.Now().Add(-m.cfg.Sandbox.IdleTimeout)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for sid, last := range m.lastActivity {
-		if last.Before(cutoff) {
-			info, ok := m.infos[sid]
-			if !ok {
-				continue
-			}
-			delete(m.sandboxes, sid)
-			delete(m.infos, sid)
-			delete(m.lastActivity, sid)
-			m.warmPool[sid] = warmEntry{info: info, releasedAt: time.Now()}
-		}
-	}
-	for sid, entry := range m.warmPool {
-		if entry.releasedAt.Before(cutoff) {
-			_ = stopContainer(m.rt, entry.info.ContainerID)
-			delete(m.warmPool, sid)
-		}
-	}
-}
-
-// evictUntilWithinReplicasLocked enforces cfg.Replicas; warm pool first, then oldest active.
-func (m *Manager) evictUntilWithinReplicasLocked() {
-	replicas := m.cfg.Sandbox.Replicas
-	if replicas <= 0 {
+	select {
+	case m.gate <- struct{}{}:
+	default:
 		return
 	}
-	for len(m.sandboxes)+len(m.warmPool) >= replicas {
-		if !m.evictOldestWarmLocked() {
-			if !m.evictOldestActiveLocked() {
-				return
-			}
-		}
+	defer func() { <-m.gate }()
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return
 	}
+	m.operations.Add(1)
+	defer m.operations.Done()
+	sid := m.sandboxID
+	cutoff := time.Now().Add(-m.cfg.Sandbox.IdleTimeout)
+	last, active := m.lastActivity[sid]
+	if active && last.Before(cutoff) {
+		m.warmPool[sid] = warmEntry{info: m.infos[sid], releasedAt: time.Now()}
+		delete(m.sandboxes, sid)
+		delete(m.infos, sid)
+		delete(m.lastActivity, sid)
+	}
+	entry, warm := m.warmPool[sid]
+	m.mu.Unlock()
+	if !warm || !entry.releasedAt.Before(cutoff) {
+		return
+	}
+	err := stopContainer(m.rt, entry.info.ContainerID)
+	if err != nil {
+		return
+	} // Keep failed removals for a later retry.
+	m.mu.Lock()
+	delete(m.warmPool, sid)
+	m.mu.Unlock()
 }
 
-func (m *Manager) evictOldestWarmLocked() bool {
-	if len(m.warmPool) == 0 {
-		return false
-	}
-	var oldestSid string
-	var oldestAt time.Time
-	for sid, entry := range m.warmPool {
-		if oldestSid == "" || entry.releasedAt.Before(oldestAt) {
-			oldestSid = sid
-			oldestAt = entry.releasedAt
-		}
-	}
-	_ = stopContainer(m.rt, m.warmPool[oldestSid].info.ContainerID)
-	delete(m.warmPool, oldestSid)
-	return true
-}
-
-func (m *Manager) evictOldestActiveLocked() bool {
-	if len(m.sandboxes) == 0 {
-		return false
-	}
-	type entry struct {
-		sid  string
-		last time.Time
-	}
-	all := make([]entry, 0, len(m.lastActivity))
-	for sid, last := range m.lastActivity {
-		all = append(all, entry{sid, last})
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].last.Before(all[j].last) })
-	victim := all[0].sid
-	info := m.infos[victim]
-	delete(m.sandboxes, victim)
-	delete(m.infos, victim)
-	delete(m.lastActivity, victim)
-	_ = stopContainer(m.rt, info.ContainerID)
-	return true
-}
-
-// reconcileOrphans seeds the warm pool with containers a previous process left behind.
+// Inspect only this manager's exact container; never import a shared prefix pool.
 func (m *Manager) reconcileOrphans() {
-	for _, info := range listRunningContainers(m.rt, m.cfg.Sandbox.ContainerPrefix) {
-		m.warmPool[info.SandboxID] = warmEntry{info: info, releasedAt: time.Now()}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	info, ok := discoverContainer(ctx, m.rt, m.cfg.Sandbox.ContainerPrefix, m.sandboxID)
+	if ok {
+		m.warmPool[m.sandboxID] = warmEntry{info: info, releasedAt: time.Now()}
 	}
 }
 
-// buildMounts assembles per-session mounts from sandboxpaths.BuildMountMappings.
-func (m *Manager) buildMounts(ctx context.Context) []mountSpec {
-	var mounts []sandboxpaths.MountMapping
-	if m.cfg.Sandbox.Use != "docker" {
-		var err error
-		mounts, err = sandboxpaths.BuildMountMappings(m.sessionID)
-		if err != nil {
-			m.log.Warn("aio: build mount mappings", "session_id", m.sessionID, "error", err)
-			return nil
-		}
-	}
-	out := make([]mountSpec, 0, len(mounts))
-	for _, mm := range mounts {
-		out = append(out, mountSpec{Host: mm.HostPath, Container: mm.VirtualPath, ReadOnly: mm.ReadOnly})
-	}
-	for _, mount := range m.cfg.Sandbox.Mounts {
-		out = append(out, mountSpec{Host: mount.HostPath, Container: mount.ContainerPath, ReadOnly: mount.ReadOnly})
+// buildMounts converts the validated session mounts to container arguments.
+func (m *Manager) buildMounts() []mountSpec {
+	out := make([]mountSpec, 0, len(m.mounts))
+	for _, mount := range m.mounts {
+		out = append(out, mountSpec{Host: mount.HostPath, Container: mount.VirtualPath, ReadOnly: mount.ReadOnly})
 	}
 	return out
 }

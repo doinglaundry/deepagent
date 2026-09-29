@@ -71,13 +71,12 @@ type applyPatchProbe struct {
 	patch string
 }
 
-func (p *applyPatchProbe) SupportsApplyPatch() bool { return true }
 func (p *applyPatchProbe) ApplyPatch(_ context.Context, patch string) (string, error) {
 	p.patch = patch
 	return "patched", nil
 }
 
-func TestApplyPatchIsExposedByCapableBackend(t *testing.T) {
+func TestApplyPatchDelegatesToFilesystem(t *testing.T) {
 	fs, err := backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
 	if err != nil {
 		t.Fatal(err)

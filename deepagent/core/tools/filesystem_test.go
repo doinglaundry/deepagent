@@ -4,6 +4,7 @@ import (
 	"context"
 	"eino-cli/deepagent/core/backend"
 	"eino-cli/deepagent/sandbox"
+	"encoding/json"
 	einotool "github.com/cloudwego/eino/components/tool"
 	"os"
 	"path/filepath"
@@ -99,6 +100,146 @@ func TestFilesystemPreservesWorkerReadAndExactEditContracts(t *testing.T) {
 	}
 	if _, err := read.InvokableRun(ctx, `{"path":"large.txt"}`); err == nil {
 		t.Fatal("oversized file accepted")
+	}
+}
+
+func TestFilesystemToolArgumentPresenceAndReplaceAll(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	b := mustLocalFilesystem(t, &backend.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
+	write := NewWriteFileTool(b).(einotool.InvokableTool)
+	edit := NewEditFileTool(b).(einotool.InvokableTool)
+	read := NewReadFileTool(b).(einotool.InvokableTool)
+	err := os.WriteFile(filepath.Join(root, "data.txt"), []byte("twice twice"), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range []string{
+		`{"path":"data.txt"}`,
+		`{"path":"data.txt","content":null}`,
+	} {
+		_, err = write.InvokableRun(ctx, args)
+		if err == nil {
+			t.Fatalf("accepted write arguments: %s", args)
+		}
+	}
+	result, err := read.InvokableRun(ctx, `{"path":"data.txt"}`)
+	if err != nil || result != "twice twice" {
+		t.Fatalf("invalid write changed file: %q %v", result, err)
+	}
+
+	for _, args := range []string{
+		`{"path":"data.txt","old":"twice"}`,
+		`{"path":"data.txt","old":"twice","new":null}`,
+	} {
+		_, err = edit.InvokableRun(ctx, args)
+		if err == nil {
+			t.Fatalf("accepted edit arguments: %s", args)
+		}
+	}
+	result, err = read.InvokableRun(ctx, `{"path":"data.txt"}`)
+	if err != nil || result != "twice twice" {
+		t.Fatalf("invalid edit changed file: %q %v", result, err)
+	}
+
+	_, err = write.InvokableRun(ctx, `{"path":"empty.txt","content":""}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = read.InvokableRun(ctx, `{"path":"empty.txt"}`)
+	if err != nil || result != "" {
+		t.Fatalf("explicit empty write failed: %q %v", result, err)
+	}
+
+	err = os.WriteFile(filepath.Join(root, "remove.txt"), []byte("remove me"), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = edit.InvokableRun(ctx, `{"path":"remove.txt","old":"remove","new":""}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = read.InvokableRun(ctx, `{"path":"remove.txt"}`)
+	if err != nil || result != " me" {
+		t.Fatalf("explicit empty edit failed: %q %v", result, err)
+	}
+
+	_, err = edit.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":false}`)
+	if err == nil {
+		t.Fatal("replace_all=false accepted ambiguous edit")
+	}
+	result, err = read.InvokableRun(ctx, `{"path":"data.txt"}`)
+	if err != nil || result != "twice twice" {
+		t.Fatalf("ambiguous edit changed file: %q %v", result, err)
+	}
+	_, err = edit.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":true}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = read.InvokableRun(ctx, `{"path":"data.txt"}`)
+	if err != nil || result != "once once" {
+		t.Fatalf("replace_all edit failed: %q %v", result, err)
+	}
+
+	info, err := edit.Info(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded struct {
+		Params map[string]struct {
+			Type     string `json:"Type"`
+			Required bool   `json:"Required"`
+		} `json:"params"`
+	}
+	err = json.Unmarshal(data, &encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaceAll, ok := encoded.Params["replace_all"]
+	if !ok || replaceAll.Type != "boolean" || replaceAll.Required {
+		t.Fatalf("replace_all schema = %+v", replaceAll)
+	}
+}
+
+type pathValidationFilesystem struct {
+	backend.Filesystem
+	calls int
+}
+
+func (f *pathValidationFilesystem) Write(context.Context, string, string) (*backend.WriteResult, error) {
+	f.calls++
+	return &backend.WriteResult{}, nil
+}
+
+func (f *pathValidationFilesystem) Edit(context.Context, string, string, string, bool) (*backend.EditResult, error) {
+	f.calls++
+	return &backend.EditResult{}, nil
+}
+
+func TestFileMutationRequiresPathBeforeBackendInvocation(t *testing.T) {
+	filesystem := &pathValidationFilesystem{}
+	for _, item := range []einotool.BaseTool{NewWriteFileTool(filesystem), NewEditFileTool(filesystem)} {
+		info, err := item.Info(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{"", `,"path":null`, `,"path":""`, `,"path":"  "`} {
+			t.Run(info.Name+path, func(t *testing.T) {
+				args := `{"content":"value","old":"old","new":"new"` + path + `}`
+				_, err := item.(einotool.InvokableTool).InvokableRun(context.Background(), args)
+				if err == nil || err.Error() != "path is required" {
+					t.Fatalf("path validation error = %v", err)
+				}
+			})
+		}
+	}
+	if filesystem.calls != 0 {
+		t.Fatalf("invalid paths reached backend %d times", filesystem.calls)
 	}
 }
 

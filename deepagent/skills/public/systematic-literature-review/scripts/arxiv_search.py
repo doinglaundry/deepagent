@@ -144,8 +144,6 @@ def _normalise_arxiv_id(raw_id: str) -> str:
 
 def _parse_entry(entry: Any) -> dict:
     """Turn one Atom <entry> element into a paper dict."""
-    import xml.etree.ElementTree as ET
-
     def _text(path: str) -> str:
         node = entry.find(path, NS_MAP)
         return (node.text or "").strip() if node is not None and node.text else ""
@@ -175,9 +173,6 @@ def _parse_entry(entry: Any) -> dict:
     # Abstract (<summary>) has ragged whitespace from arXiv's formatting.
     # Collapse internal whitespace to make downstream LLM consumption easier.
     abstract = " ".join(_text("atom:summary").split())
-
-    # Silence unused import warning; ET is only needed for type hints above.
-    del ET
 
     return {
         "id": arxiv_id,

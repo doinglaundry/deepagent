@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"eino-cli/deepagent/sandbox"
@@ -37,16 +36,22 @@ type Sandbox struct {
 	sandboxID string
 	sessionID string
 	mounts    []sandboxpaths.MountMapping
-	writtenMu sync.RWMutex
-	written   map[string]any
+	mountInfo map[string]os.FileInfo
 }
 
 func newSandbox(sessionID, sandboxID string, mounts []sandboxpaths.MountMapping) *Sandbox {
+	identities := make(map[string]os.FileInfo, len(mounts))
+	for _, mount := range mounts {
+		info, err := os.Lstat(mount.HostPath)
+		if err == nil && info.IsDir() {
+			identities[mount.HostPath] = info
+		}
+	}
 	return &Sandbox{
+		mountInfo: identities,
 		sandboxID: sandboxID,
 		sessionID: sessionID,
 		mounts:    append([]sandboxpaths.MountMapping(nil), mounts...),
-		written:   map[string]any{},
 	}
 }
 
@@ -153,11 +158,21 @@ func runShell(process *exec.Cmd) (stdout, stderr string, exitCode int, startErr 
 
 // ReadFile reads text from a virtual path and masks host paths in the returned content.
 func (s *Sandbox) ReadFile(ctx context.Context, virtualPath string) (string, error) {
-	hostPath, err := getHostPath(s.mounts, virtualPath)
+	resolved, err := resolveSandboxPath(s.mounts, virtualPath)
 	if err != nil {
 		return "", err
 	}
-	content, err := os.ReadFile(hostPath)
+	var content []byte
+	if resolved.Mapped {
+		root, rootErr := s.openMount(resolved.Mount)
+		if rootErr != nil {
+			return "", wrapFileError(rootErr, virtualPath, fileOperationRead)
+		}
+		defer root.Close()
+		content, err = root.ReadFile(resolved.RelativePath)
+	} else {
+		content, err = os.ReadFile(resolved.HostPath)
+	}
 	if err != nil {
 		return "", wrapFileError(err, virtualPath, fileOperationRead)
 	}
@@ -166,43 +181,73 @@ func (s *Sandbox) ReadFile(ctx context.Context, virtualPath string) (string, err
 
 // WriteFile writes text to a virtual path after translating virtual paths in content.
 func (s *Sandbox) WriteFile(ctx context.Context, virtualPath, content string, appendMode bool) error {
-	hostPath, err := s.prepareWritableHostPath(virtualPath, fileOperationWrite)
+	resolved, err := s.prepareWritableHostPath(virtualPath, fileOperationWrite)
 	if err != nil {
 		return err
 	}
 	contentWithHostPaths := replaceVirtualPathsWithHostPaths(s.mounts, content, fileContentText)
-	if err := writeTextFile(hostPath, contentWithHostPaths, appendMode); err != nil {
+	if resolved.Mapped {
+		root, rootErr := s.openMount(resolved.Mount)
+		if rootErr != nil {
+			return wrapFileError(rootErr, virtualPath, fileOperationWrite)
+		}
+		defer root.Close()
+		err = writeFileRoot(root, resolved.RelativePath, []byte(contentWithHostPaths), appendMode)
+	} else {
+		err = writeTextFile(resolved.HostPath, contentWithHostPaths, appendMode)
+	}
+	if err != nil {
 		return wrapFileError(err, virtualPath, fileOperationWrite)
 	}
 
-	s.recordWrittenHostPath(hostPath)
 	return nil
 }
 
-// UpdateFile overwrites binary content without text path translation or masking bookkeeping.
+// UpdateFile overwrites binary content without text path translation.
 func (s *Sandbox) UpdateFile(ctx context.Context, virtualPath string, content []byte) error {
-	hostPath, err := s.prepareWritableHostPath(virtualPath, fileOperationUpdate)
+	resolved, err := s.prepareWritableHostPath(virtualPath, fileOperationUpdate)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(hostPath, content, 0o644); err != nil {
+	if resolved.Mapped {
+		root, rootErr := s.openMount(resolved.Mount)
+		if rootErr != nil {
+			return wrapFileError(rootErr, virtualPath, fileOperationUpdate)
+		}
+		defer root.Close()
+		err = writeFileRoot(root, resolved.RelativePath, content, false)
+	} else {
+		err = os.WriteFile(resolved.HostPath, content, 0o644)
+	}
+	if err != nil {
 		return wrapFileError(err, virtualPath, fileOperationUpdate)
 	}
 	return nil
 }
 
-func (s *Sandbox) prepareWritableHostPath(virtualPath, operation string) (string, error) {
-	hostPath, err := getHostPath(s.mounts, virtualPath)
+func (s *Sandbox) prepareWritableHostPath(virtualPath, operation string) (sandboxpaths.ResolvedPath, error) {
+	resolved, err := resolveSandboxPath(s.mounts, virtualPath)
 	if err != nil {
-		return "", err
+		return sandboxpaths.ResolvedPath{}, err
 	}
-	if isReadOnlyPath(s.mounts, hostPath) {
-		return "", sandbox.NewPermissionError("read-only file system", virtualPath)
+	target := canonicalPath(resolved.HostPath)
+	if resolved.Mapped {
+		relative, relativeErr := filepath.Rel(canonicalPath(resolved.Mount.HostPath), target)
+		if relativeErr != nil || !filepath.IsLocal(relative) {
+			return sandboxpaths.ResolvedPath{}, sandbox.NewPermissionError("path escapes mount root", virtualPath)
+		}
+		resolved.RelativePath = relative
 	}
-	if err := os.MkdirAll(filepath.Dir(hostPath), 0o755); err != nil {
-		return "", wrapFileError(err, virtualPath, operation)
+	if isReadOnlyPath(s.mounts, target) {
+		return sandboxpaths.ResolvedPath{}, sandbox.NewPermissionError("read-only file system", virtualPath)
 	}
-	return hostPath, nil
+	if !resolved.Mapped {
+		err = os.MkdirAll(filepath.Dir(resolved.HostPath), 0o755)
+		if err != nil {
+			return sandboxpaths.ResolvedPath{}, wrapFileError(err, virtualPath, operation)
+		}
+	}
+	return resolved, nil
 }
 
 // ListDir returns virtual entries under a virtual path up to maxDepth.
@@ -210,11 +255,21 @@ func (s *Sandbox) ListDir(ctx context.Context, virtualPath string, maxDepth int)
 	if maxDepth <= 0 {
 		maxDepth = defaultListDepth
 	}
-	hostPath, err := getHostPath(s.mounts, virtualPath)
+	resolved, err := resolveSandboxPath(s.mounts, virtualPath)
 	if err != nil {
 		return nil, err
 	}
-	hostEntries, err := listDir(hostPath, maxDepth)
+	var hostEntries []string
+	if resolved.Mapped {
+		root, rootErr := s.openMount(resolved.Mount)
+		if rootErr != nil {
+			return nil, wrapFileError(rootErr, virtualPath, fileOperationList)
+		}
+		defer root.Close()
+		hostEntries, err = listDirRoot(root, resolved.RelativePath, maxDepth)
+	} else {
+		hostEntries, err = listDir(resolved.HostPath, maxDepth)
+	}
 	if err != nil {
 		return nil, wrapFileError(err, virtualPath, fileOperationList)
 	}
@@ -240,11 +295,30 @@ func (s *Sandbox) reverseListEntry(hostEntry string) string {
 
 // Glob returns virtual paths matching pattern under virtualPath.
 func (s *Sandbox) Glob(ctx context.Context, virtualPath, pattern string, opts sandbox.GlobOpts) ([]string, bool, error) {
-	hostPath, err := getHostPath(s.mounts, virtualPath)
+	resolved, err := resolveSandboxPath(s.mounts, virtualPath)
 	if err != nil {
 		return nil, false, err
 	}
-	hostMatches, truncated, err := search.FindGlobMatches(hostPath, pattern, search.GlobOpts{
+	var source fs.FS
+	if resolved.Mapped {
+		root, openErr := s.openMount(resolved.Mount)
+		if openErr != nil {
+			return nil, false, openErr
+		}
+		defer root.Close()
+		source, err = fs.Sub(root.FS(), filepath.ToSlash(resolved.RelativePath))
+		if err != nil {
+			return nil, false, err
+		}
+	} else {
+		root, openErr := os.OpenRoot(resolved.HostPath)
+		if openErr != nil {
+			return nil, false, openErr
+		}
+		defer root.Close()
+		source = root.FS()
+	}
+	hostMatches, truncated, err := search.FindGlobMatchesFS(source, resolved.HostPath, pattern, search.GlobOpts{
 		IncludeDirs: opts.IncludeDirs,
 		MaxResults:  opts.MaxResults,
 	})
@@ -256,11 +330,30 @@ func (s *Sandbox) Glob(ctx context.Context, virtualPath, pattern string, opts sa
 
 // Grep returns virtual path matches for pattern under virtualPath.
 func (s *Sandbox) Grep(ctx context.Context, virtualPath, pattern string, opts sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
-	hostPath, err := getHostPath(s.mounts, virtualPath)
+	resolved, err := resolveSandboxPath(s.mounts, virtualPath)
 	if err != nil {
 		return nil, false, err
 	}
-	hostMatches, truncated, err := search.FindGrepMatches(hostPath, pattern, search.GrepOpts{
+	var source fs.FS
+	if resolved.Mapped {
+		root, openErr := s.openMount(resolved.Mount)
+		if openErr != nil {
+			return nil, false, openErr
+		}
+		defer root.Close()
+		source, err = fs.Sub(root.FS(), filepath.ToSlash(resolved.RelativePath))
+		if err != nil {
+			return nil, false, err
+		}
+	} else {
+		root, openErr := os.OpenRoot(resolved.HostPath)
+		if openErr != nil {
+			return nil, false, openErr
+		}
+		defer root.Close()
+		source = root.FS()
+	}
+	hostMatches, truncated, err := search.FindGrepMatchesFS(source, resolved.HostPath, pattern, search.GrepOpts{
 		Glob:          opts.Glob,
 		Literal:       opts.Literal,
 		CaseSensitive: opts.CaseSensitive,
@@ -282,18 +375,83 @@ func writeTextFile(hostPath, content string, appendMode bool) error {
 	return err
 }
 
+// The policy-selected canonical path must not follow newly substituted symlinks.
+func writeFileRoot(root *os.Root, relative string, content []byte, appendMode bool) error {
+	parent, err := root.OpenRoot(".")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Close() }()
+	for _, component := range strings.Split(filepath.Dir(relative), string(filepath.Separator)) {
+		if component == "." {
+			continue
+		}
+		err = parent.Mkdir(component, 0755)
+		if err != nil && !os.IsExist(err) {
+			return err
+		}
+		expected, statErr := parent.Lstat(component)
+		if statErr != nil {
+			return statErr
+		}
+		if !expected.IsDir() {
+			return fmt.Errorf("write parent is not a directory: %s", component)
+		}
+		next, openErr := parent.OpenRoot(component)
+		if openErr != nil {
+			return openErr
+		}
+		actual, statErr := next.Stat(".")
+		if statErr != nil || !os.SameFile(expected, actual) {
+			_ = next.Close()
+			return fmt.Errorf("write parent changed: %s", component)
+		}
+		_ = parent.Close()
+		parent = next
+	}
+	name := filepath.Base(relative)
+	expected, err := parent.Lstat(name)
+	missing := os.IsNotExist(err)
+	if err != nil && !missing {
+		return err
+	}
+	if !missing && !expected.Mode().IsRegular() {
+		return fmt.Errorf("write target is not a regular file: %s", name)
+	}
+	flags := os.O_WRONLY
+	if missing {
+		flags |= os.O_CREATE | os.O_EXCL
+	}
+	if appendMode {
+		flags |= os.O_APPEND
+	}
+	file, err := parent.OpenFile(name, flags, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if !missing {
+		actual, statErr := file.Stat()
+		if statErr != nil || !os.SameFile(expected, actual) {
+			return fmt.Errorf("write target changed: %s", name)
+		}
+		if !appendMode {
+			err = file.Truncate(0)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	_, err = file.Write(content)
+	return err
+}
+
 func buildWriteFileFlag(appendMode bool) int {
 	flag := os.O_CREATE | os.O_WRONLY
 	if appendMode {
 		return flag | os.O_APPEND
 	}
 	return flag | os.O_TRUNC
-}
-
-func (s *Sandbox) recordWrittenHostPath(hostPath string) {
-	s.writtenMu.Lock()
-	s.written[hostPath] = struct{}{}
-	s.writtenMu.Unlock()
 }
 
 func (s *Sandbox) reverseHostPaths(hostPaths []string) []string {
@@ -332,4 +490,32 @@ func wrapFileError(err error, virtualPath, operation string) error {
 		return sandbox.NewPermissionError(err.Error(), virtualPath)
 	}
 	return sandbox.NewFileError(err.Error(), virtualPath, operation)
+}
+
+// Reopening a mount must still address the directory selected at construction.
+func (s *Sandbox) openMount(mount sandboxpaths.MountMapping) (*os.Root, error) {
+	expected := s.mountInfo[mount.HostPath]
+	if expected == nil {
+		return nil, fmt.Errorf("mount is not a directory: %s", mount.VirtualPath)
+	}
+	info, err := os.Lstat(mount.HostPath)
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(expected, info) || !info.IsDir() {
+		return nil, fmt.Errorf("mount was replaced: %s", mount.VirtualPath)
+	}
+	root, err := os.OpenRoot(mount.HostPath)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(expected, opened) {
+		_ = root.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("mount changed while opening: %s", mount.VirtualPath)
+	}
+	return root, nil
 }

@@ -12,7 +12,7 @@ import (
 )
 
 // configureRun binds one run's middleware, tools, model and state handlers
-// before compiling the graph with that run's checkpoint store.
+// independently of the checkpoint identity resolved when Run starts.
 func (a *DeepAgent) configureRun(ctx context.Context) (err error) {
 	childConfig := *a.cfg.Clone()
 	childConfig.RunID = a.runID
@@ -45,12 +45,12 @@ func (a *DeepAgent) configureRun(ctx context.Context) (err error) {
 	a.model = chatModel
 	a.policy = a.cfg.Policy
 	a.eager = a.canExecuteToolsEagerly(middlewares)
-	a.graphState = a.buildRuntimeState(middlewares)
-
-	err = a.buildGraph(ctx)
+	graphState, err := a.buildRuntimeState(middlewares)
 	if err != nil {
 		return err
 	}
+	a.graphState = graphState
+
 	a.resourcesOpen = true
 	return nil
 }
@@ -78,7 +78,6 @@ func (a *DeepAgent) newRunMiddlewares(ctx context.Context, childConfig *Config) 
 	}
 	if childConfig.WebConfig != nil {
 		webConfig := *childConfig.WebConfig
-		webConfig.ToolMask = tools.CombineMasks(webConfig.ToolMask, childConfig.ToolMask)
 		configured = append(configured, middleware.NewWeb(&webConfig))
 	}
 	configured = append(configured, childConfig.Middlewares...)
@@ -162,22 +161,28 @@ func (a *DeepAgent) canExecuteToolsEagerly(middlewares []middleware.Middleware) 
 	return true
 }
 
-func (a *DeepAgent) buildRuntimeState(middlewares []middleware.Middleware) *types.GraphState {
+func (a *DeepAgent) buildRuntimeState(middlewares []middleware.Middleware) (*types.GraphState, error) {
 	state := types.NewGraphState(nil)
 	for _, mw := range middlewares {
 		handler := mw.BuildStateHandler()
 		if handler != nil {
-			state.RegisterStateful(mw.Name(), handler)
+			name := mw.Name()
+			_, exists := state.StateHolder[name]
+			if exists {
+				return nil, fmt.Errorf("duplicate stateful middleware name %q", name)
+			}
+			state.RegisterStateful(name, handler)
 		}
 	}
 
-	return state
+	return state, nil
 }
 
 func closeMiddlewareResources(ctx context.Context, middlewares []middleware.Middleware) error {
 	var err error
 	for i := len(middlewares) - 1; i >= 0; i-- {
-		if closer, ok := middlewares[i].(middleware.ResourceCloser); ok {
+		closer, ok := middlewares[i].(middleware.ResourceCloser)
+		if ok {
 			err = errors.Join(err, closer.Close(ctx))
 		}
 	}
@@ -185,7 +190,8 @@ func closeMiddlewareResources(ctx context.Context, middlewares []middleware.Midd
 }
 func (a *DeepAgent) closeResources(ctx context.Context) error {
 	a.mu.Lock()
-	if closing := a.resourcesClosing; closing != nil {
+	closing := a.resourcesClosing
+	if closing != nil {
 		a.mu.Unlock()
 		select {
 		case <-closing:
@@ -202,7 +208,7 @@ func (a *DeepAgent) closeResources(ctx context.Context) error {
 		return nil
 	}
 	a.resourcesOpen = false
-	closing := make(chan struct{})
+	closing = make(chan struct{})
 	a.resourcesClosing = closing
 	middlewares := a.middlewares
 	a.mu.Unlock()

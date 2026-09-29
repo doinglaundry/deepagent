@@ -81,3 +81,48 @@ func TestEnsureSessionDirs_Idempotent(t *testing.T) {
 		t.Errorf("workspace not under %q", wantPrefix)
 	}
 }
+
+func TestEnsureSessionDirsRejectsUnsafeIDsBeforeCreation(t *testing.T) {
+	root := t.TempDir()
+	cleanup := SetRootDirForTest(root)
+	defer cleanup()
+
+	for _, sessionID := range []string{"", ".", "..", "../../outside", "nested/session", "/absolute"} {
+		err := EnsureSessionDirs(sessionID)
+		if err == nil {
+			t.Errorf("EnsureSessionDirs(%q) succeeded", sessionID)
+		}
+	}
+
+	_, err := os.Stat(filepath.Join(root, ".eino-cli"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("invalid IDs created the base directory: %v", err)
+	}
+}
+
+func TestEnsureSessionDirsRejectsSymlinkedSession(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	cleanup := SetRootDirForTest(root)
+	defer cleanup()
+
+	sessionsDir := filepath.Join(root, ".eino-cli", "sessions")
+	err := os.MkdirAll(sessionsDir, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionDir := filepath.Join(sessionsDir, "T1")
+	err = os.Symlink(outside, sessionDir)
+	if err != nil {
+		t.Skipf("symlink unsupported on this filesystem: %v", err)
+	}
+
+	err = EnsureSessionDirs("T1")
+	if err == nil {
+		t.Fatal("expected symlinked session to be rejected")
+	}
+	_, err = os.Stat(filepath.Join(outside, "workspace"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("symlink target was modified: %v", err)
+	}
+}

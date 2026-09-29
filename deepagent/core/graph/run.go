@@ -13,22 +13,20 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func (a *DeepAgent) execute(ctx context.Context, input []*schema.Message, opts ...RunOptionFunc) (result *schema.Message, err error) {
-	options := RunOptions{}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&options)
-		}
-	}
+// Run executes this agent once. Resume and subsequent turns require a new agent.
+func (a *DeepAgent) Run(ctx context.Context, input []*schema.Message, opts ...RunOptionFunc) (result *schema.Message, err error) {
 	ctx, err = a.claimRun(ctx)
 	if err != nil {
 		return nil, err
 	}
+	options := RunOptions{}
 	var state *types.RunState
 	initialCheckpointSaved := false
 	defer func() {
 		if state != nil {
 			err = a.finishRun(ctx, state, options, initialCheckpointSaved, err)
+		} else {
+			err = errors.Join(err, a.closeResources(ctx))
 		}
 		a.mu.Lock()
 		a.cancel()
@@ -38,10 +36,20 @@ func (a *DeepAgent) execute(ctx context.Context, input []*schema.Message, opts .
 		a.mu.Unlock()
 	}()
 
-	err = a.startRun(ctx, options)
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
+	}
+	a.runID, err = a.resolveRunID(ctx, options)
 	if err != nil {
 		return nil, err
 	}
+	err = a.buildGraph(ctx)
+	if err != nil {
+		return nil, err
+	}
+	a.executor = newToolExecutor(a.runID, a.tools, a.cfg.Parallelism, a.policy)
 	state = a.newRunState(input, options)
 	if len(options.ResumeInterruptIDs) > 0 {
 		ctx = compose.Resume(ctx, options.ResumeInterruptIDs...)
@@ -64,38 +72,15 @@ func (a *DeepAgent) execute(ctx context.Context, input []*schema.Message, opts .
 func (a *DeepAgent) claimRun(ctx context.Context) (context.Context, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.closed || a.active {
-		return ctx, errors.New("agent is closed or already running")
+	if a.closed || a.started {
+		return ctx, errors.New("agent is closed or has already run")
 	}
+	a.started = true
 	a.active = true
-	a.state = nil
 	a.done = make(chan struct{})
 	ctx, a.cancel = context.WithCancel(ctx)
 	ctx, a.interrupt = compose.WithGraphInterrupt(ctx)
 	return ctx, nil
-}
-
-func (a *DeepAgent) startRun(ctx context.Context, options RunOptions) error {
-	runID, err := a.resolveRunID(ctx, options)
-	if err != nil {
-		return err
-	}
-	rebuild := a.started || runID != a.runID
-	a.runID = runID
-	if rebuild {
-		err = a.closeResources(ctx)
-		if err != nil {
-			return err
-		}
-		err = a.configureRun(ctx)
-		if err != nil {
-			return err
-		}
-	}
-
-	a.started = true
-	a.executor = newToolExecutor(a.runID, a.tools, a.cfg.Parallelism, a.policy)
-	return nil
 }
 
 func (a *DeepAgent) newRunState(input []*schema.Message, options RunOptions) *types.RunState {

@@ -13,7 +13,6 @@ import (
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
-	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
@@ -52,7 +51,8 @@ func (r *run) execute(ctx context.Context) error {
 	cfg.DrainInput = r.owner.drainInput
 	cfg.Emit = func(ctx context.Context, e types.RuntimeEvent) error {
 		if e.Kind == "run_state_restored" {
-			if inputs, ok := e.Data.([]types.Input); ok {
+			inputs, ok := e.Data.([]types.Input)
+			if ok {
 				r.mu.Lock()
 				r.consumed = append([]Input(nil), inputs...)
 				r.mu.Unlock()
@@ -66,7 +66,7 @@ func (r *run) execute(ctx context.Context) error {
 		if e.Kind == string(EventLLMRequesting) {
 			r.modelResponseID = uuid.NewString()
 		}
-		payload := adaptPayload(e)
+		payload := e.Data
 		switch p := payload.(type) {
 		case LLMTokenChunk:
 			p.LLMResponseID = r.modelResponseID
@@ -263,43 +263,6 @@ func (r *run) emit(ctx context.Context, kind EventType, payload any) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-func adaptPayload(e types.RuntimeEvent) any {
-	switch value := e.Data.(type) {
-	case tools.PlanUpdate:
-		payload := PlanUpdatedPayload{Explanation: value.Explanation}
-		for _, step := range value.Plan {
-			payload.Plan = append(payload.Plan, PlanStep{Step: step.Step, Status: PlanStepStatus(step.Status)})
-		}
-		return payload
-	case types.ToolOutputChunk:
-		return ToolCallOutputChunkPayload{Name: value.Call.Name, CallID: value.Call.ID, Chunk: value.Content}
-	case types.ToolCallState:
-		if e.Kind == string(EventToolStart) {
-			return ToolStartPayload{Name: value.Call.Name, CallID: value.Call.ID, Args: value.Call.Arguments}
-		}
-		if e.Kind == string(EventToolEnd) && value.Result != nil {
-			return ToolEndPayload{Name: value.Call.Name, CallID: value.Call.ID, ArgumentsInJSON: value.Call.Arguments, ToolStartTime: value.StartedAt, Result: value.Result.Content}
-		}
-	case *schema.Message:
-		if e.Kind == string(EventLLMToken) {
-			return LLMTokenChunk{Text: value.Content, ReasoningText: value.ReasoningContent}
-		}
-		if e.Kind == string(EventLLMEnd) {
-			return LLMEnd{CallbackOutput: model.CallbackOutput{Message: value}}
-		}
-	case []*schema.Message:
-		if e.Kind == string(EventLLMRequesting) {
-			return LLMRequestingPayload{Messages: value}
-		}
-	case types.ToolResult:
-		return ToolEndPayload{CallID: value.CallID, Result: value.Content}
-	case string:
-		if e.Kind == string(EventToolCallOutputChunk) {
-			return ToolCallOutputChunkPayload{CallID: e.CallID, Chunk: value}
-		}
-	}
-	return e.Data
 }
 
 type RunHandle struct {

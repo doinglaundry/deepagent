@@ -7,26 +7,46 @@ import (
 )
 
 func GetHostPath(mappings []MountMapping, virtualPath string) (string, error) {
-	mount, relativePath := findMountForVirtualPath(mappings, virtualPath)
-	if mount == nil {
-		return virtualPath, nil
-	}
-	hostRoot, err := filepath.Abs(mount.HostPath)
+	resolved, err := ResolvePath(mappings, virtualPath)
 	if err != nil {
 		return "", err
 	}
+	return resolved.HostPath, nil
+}
+
+func ResolvePath(mappings []MountMapping, virtualPath string) (ResolvedPath, error) {
+	mount, relativePath := findMountForVirtualPath(mappings, virtualPath)
+	if mount == nil {
+		return ResolvedPath{HostPath: virtualPath}, nil
+	}
+	hostRoot, err := filepath.Abs(mount.HostPath)
+	if err != nil {
+		return ResolvedPath{}, err
+	}
+	relativePath = filepath.FromSlash(relativePath)
+	if relativePath == "" {
+		relativePath = "."
+	}
+	if !filepath.IsLocal(relativePath) {
+		return ResolvedPath{}, fmt.Errorf("path escapes mount root: %s", virtualPath)
+	}
 	hostPath := hostRoot
-	if relativePath != "" {
+	if relativePath != "." {
 		hostPath = filepath.Join(hostRoot, relativePath)
 	}
 	cleanedHostPath, err := filepath.Abs(hostPath)
 	if err != nil {
-		return "", err
+		return ResolvedPath{}, err
 	}
 	if !isUnder(cleanedHostPath, hostRoot) {
-		return "", fmt.Errorf("path escapes mount root: %s", virtualPath)
+		return ResolvedPath{}, fmt.Errorf("path escapes mount root: %s", virtualPath)
 	}
-	return cleanedHostPath, nil
+	return ResolvedPath{
+		HostPath:     cleanedHostPath,
+		RelativePath: relativePath,
+		Mount:        *mount,
+		Mapped:       true,
+	}, nil
 }
 
 func findMountForVirtualPath(mappings []MountMapping, virtualPath string) (*MountMapping, string) {

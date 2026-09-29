@@ -3,6 +3,8 @@ package backend
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -83,6 +85,7 @@ func (b *LocalFilesystem) Close(ctx context.Context) error { return b.commands.C
 var _ Filesystem = (*LocalFilesystem)(nil)
 var _ CommandService = (*LocalFilesystem)(nil)
 var _ ToolFilesystem = (*LocalFilesystem)(nil)
+var _ patchFilesystem = (*LocalFilesystem)(nil)
 
 func (b *LocalFilesystem) resolvePath(path string) (string, error) {
 	// 安全检查：禁止路径遍历
@@ -252,6 +255,21 @@ func (b *LocalFilesystem) Resolve(ctx context.Context, path string, write bool) 
 	}
 	return filepath.Join(b.rootDir, relative), nil
 }
+func (b *LocalFilesystem) FileExists(ctx context.Context, path string) (bool, error) {
+	root, relative, err := b.openRoot(ctx, path)
+	if err != nil {
+		return false, err
+	}
+	defer root.Close()
+	_, err = root.Lstat(relative)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
 func (b *LocalFilesystem) readBytes(ctx context.Context, path string) ([]byte, error) {
 	root, relative, err := b.openRoot(ctx, path)
 	if err != nil {
@@ -307,6 +325,45 @@ func (b *LocalFilesystem) Write(ctx context.Context, path, content string) (*Wri
 	}
 	return &WriteResult{Path: path}, nil
 }
+func (b *LocalFilesystem) CreateFileNoReplace(ctx context.Context, path, content string) (*WriteResult, error) {
+	root, relative, err := b.openRoot(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	err = root.MkdirAll(filepath.Dir(relative), 0755)
+	if err != nil {
+		return nil, err
+	}
+	parent, err := root.OpenRoot(filepath.Dir(relative))
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	root = parent
+	relative = filepath.Base(relative)
+	temporary := ".patch-" + rand.Text()
+	file, err := root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Remove(temporary)
+	_, writeErr := file.WriteString(content)
+	closeErr := file.Close()
+	err = errors.Join(writeErr, closeErr, ctx.Err())
+	if err != nil {
+		return nil, err
+	}
+	err = root.Link(temporary, relative)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, path)
+		}
+		return nil, err
+	}
+	return &WriteResult{Path: path}, nil
+}
+
 func (b *LocalFilesystem) Edit(ctx context.Context, path, old, new string, all bool) (*EditResult, error) {
 	if old == "" {
 		return nil, fmt.Errorf("old text is required")
@@ -527,5 +584,3 @@ func (b *LocalFilesystem) DownloadFiles(ctx context.Context, paths []string) ([]
 	}
 	return out, nil
 }
-
-var _ Filesystem = (*LocalFilesystem)(nil)

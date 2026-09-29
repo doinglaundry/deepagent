@@ -85,18 +85,19 @@ func (t *Transcript) Observe(_ context.Context, event types.RuntimeEvent) error 
 	var snapshot bool
 	switch event.Kind {
 	case "llm_requesting":
-		messages, _ = event.Data.([]*schema.Message)
+		payload, _ := event.Data.(types.LLMRequestingPayload)
+		messages = payload.Messages
 		snapshot = true
 	case "llm_end":
-		message, _ := event.Data.(*schema.Message)
-		messages = []*schema.Message{message}
+		payload, _ := event.Data.(types.LLMEnd)
+		messages = []*schema.Message{payload.Message}
 	case "tool_end":
-		state, ok := event.Data.(types.ToolCallState)
-		if ok && state.Result != nil {
-			messages = []*schema.Message{schema.ToolMessage(state.Result.Content, state.Call.ID)}
-			if len(state.Result.MultiContent) > 0 {
+		payload, ok := event.Data.(types.ToolEndPayload)
+		if ok {
+			messages = []*schema.Message{schema.ToolMessage(payload.Result, payload.CallID)}
+			if len(payload.MultiContent) > 0 {
 				messages[0].Content = ""
-				messages[0].UserInputMultiContent = state.Result.MultiContent
+				messages[0].UserInputMultiContent = payload.MultiContent
 			}
 		}
 	default:

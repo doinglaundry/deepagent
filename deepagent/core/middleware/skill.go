@@ -28,11 +28,16 @@ func (m *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*schema.Message, e
 		return nil, nil
 	}
 
-	skillMetaList, err := m.loader.ListSkills(ctx)
+	items, err := m.loader.ListSkills(ctx)
 	if err != nil {
 		return nil, err
 	}
-	skillMetaList = append([]*backend.SkillMetadata(nil), skillMetaList...)
+	skillMetaList := make([]*backend.SkillMetadata, 0, len(items))
+	for _, item := range items {
+		if item != nil && strings.TrimSpace(item.Name) != "" {
+			skillMetaList = append(skillMetaList, item)
+		}
+	}
 
 	sort.Slice(skillMetaList, func(i, j int) bool { return skillMetaList[i].Name < skillMetaList[j].Name })
 

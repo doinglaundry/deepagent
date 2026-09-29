@@ -77,6 +77,111 @@ func TestThread_SubmitAndAppendUseSameRun(t *testing.T) {
 		t.Fatalf("lost input identity: %v %v", inputs, meta)
 	}
 }
+func TestThread_SubmitInputRejectsInvalidMessageWhileIdle(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	history := &historyMemory{}
+	model := &threadModel{}
+	events := make(chan Event, 100)
+	thread := New("thread", &RunConfig{Agent: graph.Config{Model: model}}, events, ThreadOptions{HistoryStore: history})
+
+	unsupported := schema.UserMessage("unsupported")
+	unsupported.Extra = map[string]any{"value": func() {}}
+	cyclic := schema.UserMessage("cyclic")
+	cyclicExtra := map[string]any{}
+	cyclicExtra["self"] = cyclicExtra
+	cyclic.Extra = cyclicExtra
+	inputs := []struct {
+		name    string
+		message *schema.Message
+	}{
+		{name: "unsupported extra", message: unsupported},
+		{name: "cyclic extra", message: cyclic},
+	}
+
+	for _, input := range inputs {
+		t.Run(input.name, func(t *testing.T) {
+			result, err := thread.SubmitInput(ctx, input.message)
+			if err == nil {
+				t.Fatal("accepted message that could not be copied")
+			}
+			if result != nil {
+				t.Fatal("returned a run for a rejected message")
+			}
+			if thread.ActiveRun() != nil {
+				t.Fatal("started a run for a rejected message")
+			}
+			if model.calls != 0 {
+				t.Fatalf("model calls=%d", model.calls)
+			}
+			if len(history.records) != 0 {
+				t.Fatalf("history records=%d", len(history.records))
+			}
+			if len(events) != 0 {
+				t.Fatalf("events=%d", len(events))
+			}
+		})
+	}
+}
+func TestThread_SubmitInputRejectsInvalidMessageWhileActive(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	model := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
+	thread := New("thread", &RunConfig{Agent: graph.Config{Model: model}}, make(chan Event, 100), ThreadOptions{})
+	first, err := thread.SubmitInput(ctx, schema.UserMessage("first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-model.started:
+	case <-ctx.Done():
+		t.Fatalf("model did not start: %v", ctx.Err())
+	}
+
+	unsupported := schema.UserMessage("unsupported")
+	unsupported.Extra = map[string]any{"value": func() {}}
+	cyclic := schema.UserMessage("cyclic")
+	cyclicExtra := map[string]any{}
+	cyclicExtra["self"] = cyclicExtra
+	cyclic.Extra = cyclicExtra
+	inputs := []struct {
+		name    string
+		message *schema.Message
+	}{
+		{name: "unsupported extra", message: unsupported},
+		{name: "cyclic extra", message: cyclic},
+	}
+	for _, input := range inputs {
+		t.Run(input.name, func(t *testing.T) {
+			result, err := thread.SubmitInput(ctx, input.message)
+			if err == nil {
+				t.Fatal("accepted message that could not be copied")
+			}
+			if result != nil {
+				t.Fatal("returned a run for a rejected message")
+			}
+			thread.mu.Lock()
+			pending := len(thread.pending)
+			thread.mu.Unlock()
+			if pending != 0 {
+				t.Fatalf("pending inputs=%d", pending)
+			}
+		})
+	}
+
+	close(model.release)
+	err = first.RunHandle.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.calls != 1 {
+		t.Fatalf("model calls=%d", model.calls)
+	}
+	consumedInputs := first.RunHandle.ConsumedInputs()
+	if len(consumedInputs) != 1 || consumedInputs[0].Content != "first" {
+		t.Fatalf("consumed inputs=%v", consumedInputs)
+	}
+}
 func TestRun_NoEventsAfterActiveRunBecomesNil(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

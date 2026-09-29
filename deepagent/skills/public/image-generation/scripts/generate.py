@@ -36,7 +36,6 @@ def generate_image(
     with open(prompt_file, "r", encoding="utf-8") as f:
         prompt = f.read()
     parts = []
-    i = 0
     
     # Filter out invalid reference images
     valid_reference_images = []
@@ -50,7 +49,6 @@ def generate_image(
         print(f"Note: {len(reference_images) - len(valid_reference_images)} reference image(s) were skipped due to validation failure.")
     
     for reference_image in valid_reference_images:
-        i += 1
         with open(reference_image, "rb") as f:
             image_b64 = base64.b64encode(f.read()).decode("utf-8")
         parts.append(

@@ -10,10 +10,10 @@ import (
 	"testing"
 )
 
-type testLoader struct{ item *backend.SkillMetadata }
+type testLoader struct{ items []*backend.SkillMetadata }
 
 func (l testLoader) ListSkills(context.Context) ([]*backend.SkillMetadata, error) {
-	return []*backend.SkillMetadata{l.item}, nil
+	return l.items, nil
 }
 
 func TestActivateSkillLoadsInstructions(t *testing.T) {
@@ -21,7 +21,7 @@ func TestActivateSkillLoadsInstructions(t *testing.T) {
 	if err := os.WriteFile(path, []byte("follow these instructions"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	middleware := NewSkillMiddleware(testLoader{item: &backend.SkillMetadata{Name: "review", Description: "Review code", Path: path}})
+	middleware := NewSkillMiddleware(testLoader{items: []*backend.SkillMetadata{{Name: "review", Description: "Review code", Path: path}}})
 	prompt, err := middleware.BuildPrompt(context.Background())
 	if err != nil || len(prompt) != 1 || !strings.Contains(prompt[0].Content, "review") {
 		t.Fatalf("prompt = %+v, %v", prompt, err)
@@ -33,6 +33,27 @@ func TestActivateSkillLoadsInstructions(t *testing.T) {
 	output, err := items[0].(tool.InvokableTool).InvokableRun(context.Background(), `{"name":"review"}`)
 	if err != nil || !strings.Contains(output, "follow these instructions") {
 		t.Fatalf("activate_skill = %q, %v", output, err)
+	}
+}
+
+func TestBuildPromptIgnoresInvalidSkillMetadata(t *testing.T) {
+	items := []*backend.SkillMetadata{
+		nil,
+		{Name: " ", Description: "invalid skill"},
+		{Name: "review", Description: "Review code", Path: "/skills/review/SKILL.md"},
+		{Name: "build", Description: "Build code", Path: "/skills/build/SKILL.md"},
+	}
+	middleware := NewSkillMiddleware(testLoader{items: items})
+	prompt, err := middleware.BuildPrompt(context.Background())
+	if err != nil || len(prompt) != 1 || !strings.Contains(prompt[0].Content, "review") {
+		t.Fatalf("prompt = %+v, %v", prompt, err)
+	}
+	text := prompt[0].Content
+	if strings.Contains(text, "invalid skill") || strings.Index(text, "- build:") < 0 || strings.Index(text, "- build:") > strings.Index(text, "- review:") {
+		t.Fatalf("unexpected skill list: %s", text)
+	}
+	if items[0] != nil || items[1].Name != " " || items[2].Name != "review" || items[3].Name != "build" {
+		t.Fatalf("loader-owned slice was modified: %+v", items)
 	}
 }
 

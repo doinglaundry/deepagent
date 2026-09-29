@@ -349,7 +349,7 @@ func TestRun_EmitsTokensAndReturnsFinalMessage(t *testing.T) {
 		Model: m,
 		Emit: func(_ context.Context, event types.RuntimeEvent) error {
 			if event.Kind == "llm_token" {
-				text += event.Data.(*schema.Message).Content
+				text += event.Data.(types.LLMTokenChunk).Text
 			}
 			return nil
 		},

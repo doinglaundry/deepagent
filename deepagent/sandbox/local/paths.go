@@ -1,6 +1,7 @@
 package local
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -18,14 +19,22 @@ const (
 )
 
 func getHostPath(mappings []sandboxpaths.MountMapping, virtualPath string) (string, error) {
-	hostPath, err := sandboxpaths.GetHostPath(mappings, virtualPath)
+	resolved, err := resolveSandboxPath(mappings, virtualPath)
 	if err != nil {
-		if strings.Contains(err.Error(), "path escapes mount root") {
-			return "", sandbox.NewPermissionError("path escapes mount root", virtualPath)
-		}
 		return "", err
 	}
-	return hostPath, nil
+	return resolved.HostPath, nil
+}
+
+func resolveSandboxPath(mappings []sandboxpaths.MountMapping, virtualPath string) (sandboxpaths.ResolvedPath, error) {
+	resolved, err := sandboxpaths.ResolvePath(mappings, virtualPath)
+	if err != nil {
+		if strings.Contains(err.Error(), "path escapes mount root") {
+			return sandboxpaths.ResolvedPath{}, sandbox.NewPermissionError("path escapes mount root", virtualPath)
+		}
+		return sandboxpaths.ResolvedPath{}, err
+	}
+	return resolved, nil
 }
 
 func replaceVirtualPathsWithHostPaths(mappings []sandboxpaths.MountMapping, text string, textKind virtualPathTextKind) string {
@@ -80,28 +89,52 @@ func replaceVirtualPathsWithHostPaths(mappings []sandboxpaths.MountMapping, text
 }
 
 func isReadOnlyPath(mappings []sandboxpaths.MountMapping, hostPath string) bool {
-	cleanedHostPath, err := filepath.Abs(hostPath)
-	if err != nil {
-		cleanedHostPath = hostPath
-	}
+	cleanedHostPath := canonicalPath(hostPath)
 
 	readOnly := false
 	bestLen := -1
-	sep := string(filepath.Separator)
 	for i := range mappings {
-		hostRoot, err := filepath.Abs(mappings[i].HostPath)
-		if err != nil {
+		hostRoot := canonicalPath(mappings[i].HostPath)
+		if !isUnder(cleanedHostPath, hostRoot) {
 			continue
 		}
-		if cleanedHostPath != hostRoot && !strings.HasPrefix(cleanedHostPath, hostRoot+sep) {
-			continue
-		}
-		if len(hostRoot) > bestLen {
+		if len(hostRoot) > bestLen || (len(hostRoot) == bestLen && mappings[i].ReadOnly) {
 			readOnly = mappings[i].ReadOnly
 			bestLen = len(hostRoot)
 		}
 	}
 	return readOnly
+}
+
+func canonicalPath(path string) string {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	current := absPath
+	var suffix []string
+	for {
+		_, err = os.Lstat(current)
+		if err == nil {
+			resolved, resolveErr := filepath.EvalSymlinks(current)
+			if resolveErr != nil {
+				return absPath
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return resolved
+		}
+		if !os.IsNotExist(err) {
+			return absPath
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return absPath
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+	}
 }
 
 func isUnder(child, parent string) bool {

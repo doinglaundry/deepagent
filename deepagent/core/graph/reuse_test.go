@@ -99,35 +99,31 @@ func TestRun_ConcurrentRunsDoNotShareState(t *testing.T) {
 	}
 }
 
-func TestRun_ReusingAgentRecreatesMutableMiddleware(t *testing.T) {
-	guard := middleware.NewLoopGuard()
-	guard.HardLimit = 2
-	m := &sequenceModel{}
-	for range 2 {
-		m.responses = append(m.responses,
-			[]*schema.Message{schema.AssistantMessage("", []schema.ToolCall{{ID: "first", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
-			[]*schema.Message{schema.AssistantMessage("stopping loop", []schema.ToolCall{{ID: "second", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})})
-	}
-	tool := &countingTool{}
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}}))
+func TestRun_SecondRunRejectedWithoutSideEffects(t *testing.T) {
+	ctx := context.Background()
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
+	mw := &resourceMiddleware{name: "resource"}
+	a, err := New(ctx, WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{mw}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i <= 2; i++ {
-		out, err := a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if out.Content != "stopping loop" || int(tool.count.Load()) != i || m.calls != i*2 {
-			t.Fatalf("run=%d output=%v tool=%d model=%d", i, out, tool.count.Load(), m.calls)
-		}
+	_, err = a.Run(ctx, []*schema.Message{schema.UserMessage("first")})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(a.conversation.History(context.Background())) != 8 {
-		t.Fatal("reinitializing a run lost conversation history")
+	state := a.state
+	history := a.conversation.History(ctx)
+	optionsCalled := false
+	out, err := a.Run(ctx, []*schema.Message{schema.UserMessage("second")}, func(*RunOptions) { optionsCalled = true })
+	if err == nil || out != nil || optionsCalled || m.calls != 1 || mw.closed != 1 {
+		t.Fatalf("out=%v err=%v options=%v model=%d closed=%d", out, err, optionsCalled, m.calls, mw.closed)
+	}
+	if a.state != state || !reflect.DeepEqual(history, a.conversation.History(ctx)) {
+		t.Fatal("rejected run changed state or history")
 	}
 }
 
-func TestRun_ReusingAgentRebindsCommandTools(t *testing.T) {
+func TestRun_NewAgentsShareCallerOwnedFilesystem(t *testing.T) {
 	m := &sequenceModel{}
 	for range 2 {
 		m.responses = append(m.responses,
@@ -140,20 +136,25 @@ func TestRun_ReusingAgentRebindsCommandTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer filesystem.Close(context.Background())
-	a, err := New(context.Background(), WithConfig(&Config{Model: m, Filesystem: filesystem, FilesystemConfig: &FilesystemConfig{DisableApplyPatch: true}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
-		return tools.Decision{Action: tools.Allow}, nil
-	})}))
-	if err != nil {
-		t.Fatal(err)
-	}
 	for i := 0; i < 2; i++ {
-		if _, err := a.Run(context.Background(), []*schema.Message{schema.UserMessage("where")}); err != nil {
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, Filesystem: filesystem, FilesystemConfig: &FilesystemConfig{DisableApplyPatch: true}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
+			return tools.Decision{Action: tools.Allow}, nil
+		})}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = a.Run(context.Background(), []*schema.Message{schema.UserMessage("where")})
+		if err != nil {
 			t.Fatal(err)
 		}
 		history := a.conversation.History(context.Background())
 		result := history[len(history)-2]
 		if result.Role != schema.Tool || !strings.Contains(result.Content, "exit_code=0") || !strings.Contains(result.Content, root) {
 			t.Fatalf("run=%d result=%+v", i, result)
+		}
+		err = a.Close(context.Background())
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 }
@@ -258,7 +259,12 @@ func TestRun_FailedStartClosesResourcesAndPreservesBothErrors(t *testing.T) {
 	if !errors.Is(err, want) || !errors.Is(err, closeErr) || mw.closed != 1 {
 		t.Fatalf("err=%v closed=%d", err, mw.closed)
 	}
-	if err := a.Close(context.Background()); err != nil {
+	_, err = a.Run(context.Background(), nil)
+	if err == nil || mw.closed != 1 {
+		t.Fatalf("failed run allowed reuse: err=%v closed=%d", err, mw.closed)
+	}
+	err = a.Close(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 	if mw.closed != 1 {

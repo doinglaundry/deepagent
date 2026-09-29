@@ -48,7 +48,8 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 				chunks = nil
 			}
 			if event.Kind == "llm_token" {
-				message, ok := event.Data.(*schema.Message)
+				payload, ok := event.Data.(types.LLMTokenChunk)
+				message := payload.Message
 				if ok {
 					chunks = append(chunks, CopyMessage(message))
 				}
@@ -57,7 +58,8 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 			if event.Kind != "llm_end" {
 				return nil
 			}
-			message, ok := event.Data.(*schema.Message)
+			payload, ok := event.Data.(types.LLMEnd)
+			message := payload.Message
 			if !ok || len(message.ToolCalls) != 0 {
 				return nil
 			}

@@ -107,3 +107,25 @@ test('poll cursor preserves full int64 message identity', async () => {
   const requests = app.calls.filter(c => c.url.includes('/events?'));
   assert.equal(requests[1].url, '/api/threads/large-id/events?after=9007199254740993');
 });
+
+test('poll preserves reading position and only follows new messages near the bottom', async () => {
+  let rows = [];
+  const app = load(url => url.includes('/events?') ? {data: rows} : undefined);
+  await app.context.select('scroll'); await tick();
+  const messages = app.get('messages');
+  messages.clientHeight = 400;
+  messages.scrollHeight = 2000;
+  messages.scrollTop = 200;
+  await app.context.poll();
+  assert.equal(messages.scrollTop, 200, 'empty poll must not move the reader');
+  rows = [{sequence: '1', kind: 'assistant', text: 'new answer'}];
+  await app.context.poll();
+  assert.equal(messages.scrollTop, 200, 'new messages must not interrupt reading history');
+  messages.scrollTop = 1580;
+  rows = [];
+  await app.context.poll();
+  assert.equal(messages.scrollTop, 1580, 'empty poll must not snap to the bottom');
+  rows = [{sequence: '2', kind: 'assistant', text: 'next answer'}];
+  await app.context.poll();
+  assert.equal(messages.scrollTop, 2000, 'follow new messages when near the bottom');
+});

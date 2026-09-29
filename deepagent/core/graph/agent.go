@@ -79,7 +79,8 @@ func New(ctx context.Context, opts ...Option) (*DeepAgent, error) {
 	if a.runID == "" {
 		a.runID = uuid.NewString()
 	}
-	if err := a.configureRun(ctx); err != nil {
+	err = a.configureRun(ctx)
+	if err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -91,9 +92,6 @@ func (a *DeepAgent) Depth() int { return a.cfg.Depth }
 
 func (a *DeepAgent) GraphState() *types.GraphState { return a.graphState }
 
-func (a *DeepAgent) Run(ctx context.Context, input []*schema.Message, opts ...RunOptionFunc) (*schema.Message, error) {
-	return a.execute(ctx, input, opts...)
-}
 func (a *DeepAgent) Close(ctx context.Context) error {
 	a.mu.Lock()
 	a.closed = true
@@ -130,8 +128,10 @@ func (a *DeepAgent) event(ctx context.Context, state *types.RunState, kind, call
 	state.EventSeq++
 	event := types.RuntimeEvent{Sequence: state.EventSeq, Kind: kind, CallID: callID, Data: data}
 	for _, mw := range a.middlewares {
-		if observer, ok := mw.(middleware.EventObserver); ok {
-			if err := observer.Observe(ctx, event); err != nil {
+		observer, ok := mw.(middleware.EventObserver)
+		if ok {
+			err := observer.Observe(ctx, event)
+			if err != nil {
 				return err
 			}
 		}

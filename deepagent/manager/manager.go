@@ -52,7 +52,7 @@ func (c *Manager) Submit(ctx context.Context, req SubmitRequest) (ThreadMessageR
 		if err != nil {
 			return ThreadMessageResult{}, err
 		}
-		thread = createThread(req, threadID, time.Now())
+		thread = createThread(req, threadID)
 		if err = c.threads.Create(ctx, thread); err != nil {
 			return ThreadMessageResult{}, err
 		}

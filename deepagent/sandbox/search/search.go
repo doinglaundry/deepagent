@@ -75,22 +75,10 @@ func truncateLine(line string, maxChars int) string {
 	if len(line) <= maxChars {
 		return line
 	}
+	if maxChars < 3 {
+		return line[:maxChars]
+	}
 	return line[:maxChars-3] + "..."
-}
-
-// isBinary samples the first bytes for a NUL — same heuristic as file(1).
-func isBinary(path string, sampleSize int) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return true
-	}
-	defer f.Close()
-	buf := make([]byte, sampleSize)
-	n, err := f.Read(buf)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return true
-	}
-	return bytes.IndexByte(buf[:n], 0) >= 0
 }
 
 // FindGlobMatches walks root and returns paths matching pattern; truncated=hit cap.
@@ -99,7 +87,17 @@ func FindGlobMatches(root, pattern string, opts GlobOpts) ([]string, bool, error
 	if err != nil {
 		return nil, false, err
 	}
-	st, err := os.Stat(rootAbs)
+	directory, err := os.OpenRoot(rootAbs)
+	if err != nil {
+		return nil, false, err
+	}
+	defer directory.Close()
+	return FindGlobMatchesFS(directory.FS(), rootAbs, pattern, opts)
+}
+
+// FindGlobMatchesFS searches through an already-confined filesystem.
+func FindGlobMatchesFS(sourceFS fs.FS, rootAbs, pattern string, opts GlobOpts) ([]string, bool, error) {
+	st, err := fs.Stat(sourceFS, ".")
 	if err != nil {
 		return nil, false, err
 	}
@@ -118,12 +116,12 @@ func FindGlobMatches(root, pattern string, opts GlobOpts) ([]string, bool, error
 	)
 	stopErr := errors.New("stop")
 
-	walkErr := filepath.WalkDir(rootAbs, func(p string, d fs.DirEntry, err error) error {
+	walkErr := fs.WalkDir(sourceFS, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		name := d.Name()
-		if p == rootAbs {
+		if p == "." {
 			return nil
 		}
 		if ShouldIgnoreName(name) {
@@ -132,15 +130,12 @@ func FindGlobMatches(root, pattern string, opts GlobOpts) ([]string, bool, error
 			}
 			return nil
 		}
-		rel, err := filepath.Rel(rootAbs, p)
-		if err != nil {
-			return nil
-		}
+		rel := p
 		if d.IsDir() && !opts.IncludeDirs {
 			return nil
 		}
 		if PathMatches(pattern, rel) {
-			matches = append(matches, p)
+			matches = append(matches, filepath.Join(rootAbs, filepath.FromSlash(p)))
 			if len(matches) >= maxResults {
 				truncated = true
 				return stopErr
@@ -160,7 +155,17 @@ func FindGrepMatches(root, pattern string, opts GrepOpts) ([]GrepMatch, bool, er
 	if err != nil {
 		return nil, false, err
 	}
-	st, err := os.Stat(rootAbs)
+	directory, err := os.OpenRoot(rootAbs)
+	if err != nil {
+		return nil, false, err
+	}
+	defer directory.Close()
+	return FindGrepMatchesFS(directory.FS(), rootAbs, pattern, opts)
+}
+
+// FindGrepMatchesFS searches through an already-confined filesystem.
+func FindGrepMatchesFS(sourceFS fs.FS, rootAbs, pattern string, opts GrepOpts) ([]GrepMatch, bool, error) {
+	st, err := fs.Stat(sourceFS, ".")
 	if err != nil {
 		return nil, false, err
 	}
@@ -200,12 +205,12 @@ func FindGrepMatches(root, pattern string, opts GrepOpts) ([]GrepMatch, bool, er
 	)
 	stopErr := errors.New("stop")
 
-	walkErr := filepath.WalkDir(rootAbs, func(p string, d fs.DirEntry, err error) error {
+	walkErr := fs.WalkDir(sourceFS, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		name := d.Name()
-		if p == rootAbs {
+		if p == "." {
 			return nil
 		}
 		if ShouldIgnoreName(name) {
@@ -220,10 +225,7 @@ func FindGrepMatches(root, pattern string, opts GrepOpts) ([]GrepMatch, bool, er
 		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
-		rel, err := filepath.Rel(rootAbs, p)
-		if err != nil {
-			return nil
-		}
+		rel := p
 		if opts.Glob != "" && !PathMatches(opts.Glob, rel) {
 			return nil
 		}
@@ -231,13 +233,13 @@ func FindGrepMatches(root, pattern string, opts GrepOpts) ([]GrepMatch, bool, er
 		if err != nil {
 			return nil
 		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
 		if info.Size() > int64(maxFileSize) {
 			return nil
 		}
-		if isBinary(p, 8192) {
-			return nil
-		}
-		fileMatches, hit, err := scanFile(p, re, maxLineChars, lineSummaryLength, maxResults-len(matches))
+		fileMatches, hit, err := scanFile(sourceFS, p, filepath.Join(rootAbs, filepath.FromSlash(p)), re, maxLineChars, lineSummaryLength, maxResults-len(matches))
 		if err != nil {
 			return nil
 		}
@@ -255,18 +257,25 @@ func FindGrepMatches(root, pattern string, opts GrepOpts) ([]GrepMatch, bool, er
 }
 
 // scanFile reads path line-by-line via bufio.Reader (Scanner's buffer cap would break minified files).
-func scanFile(path string, re *regexp.Regexp, maxLineChars, lineSummaryLength, remaining int) ([]GrepMatch, bool, error) {
+func scanFile(source fs.FS, name, path string, re *regexp.Regexp, maxLineChars, lineSummaryLength, remaining int) ([]GrepMatch, bool, error) {
 	if remaining <= 0 {
 		return nil, true, nil
 	}
-	f, err := os.Open(path)
+	f, err := source.Open(name)
 	if err != nil {
 		return nil, false, err
 	}
 	defer f.Close()
 
 	out := make([]GrepMatch, 0, 8)
-	r := bufio.NewReader(f)
+	r := bufio.NewReaderSize(f, 8192)
+	sample, sampleErr := r.Peek(8192)
+	if sampleErr != nil && !errors.Is(sampleErr, io.EOF) {
+		return nil, false, sampleErr
+	}
+	if bytes.IndexByte(sample, 0) >= 0 {
+		return nil, false, nil
+	}
 
 	for lineNum := 1; ; lineNum++ {
 		line, err := r.ReadString('\n')

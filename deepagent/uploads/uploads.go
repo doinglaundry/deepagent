@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -20,17 +19,9 @@ var ErrPathTraversal = errors.New("path traversal detected")
 // ErrUnsafeFilename signals an empty / "." / ".." / overlong / backslash filename.
 var ErrUnsafeFilename = errors.New("unsafe filename")
 
-var safeSessionID = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
-
 // ValidateSessionID rejects session ids that would escape the sessions/ tree.
 func ValidateSessionID(sessionID string) error {
-	if sessionID == "" {
-		return fmt.Errorf("invalid session_id: empty")
-	}
-	if !safeSessionID.MatchString(sessionID) {
-		return fmt.Errorf("invalid session_id: %q", sessionID)
-	}
-	return nil
+	return config.ValidateSessionID(sessionID)
 }
 
 // NormalizeFilename strips the directory part and rejects traversal-shaped names.
@@ -74,11 +65,18 @@ func Write(sessionID, filename string, src io.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+	root, err := openUploadsRoot(sessionID, true)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	safe := filepath.Base(dest)
+	err = rejectUploadSymlink(root, safe)
+	if err != nil {
 		return "", err
 	}
 	flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC | osNoFollow()
-	f, err := os.OpenFile(dest, flag, 0o600)
+	f, err := root.OpenFile(safe, flag, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("uploads: open %s: %w", dest, err)
 	}
@@ -104,20 +102,33 @@ func List(sessionID string) ([]FileInfo, error) {
 		return nil, err
 	}
 	base := config.SandboxUploadsDir(sessionID)
-	entries, err := os.ReadDir(base)
+	root, err := openUploadsRoot(sessionID, false)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
+		return nil, err
+	}
+	defer root.Close()
+	directory, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	entries, err := directory.ReadDir(-1)
+	if err != nil {
 		return nil, err
 	}
 	var out []FileInfo
 	for _, e := range entries {
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		if !info.Mode().IsRegular() {
 			continue
 		}
 		out = append(out, FileInfo{
@@ -138,7 +149,16 @@ func Delete(sessionID, filename string) error {
 	if err != nil {
 		return err
 	}
-	info, err := os.Lstat(dest)
+	root, err := openUploadsRoot(sessionID, false)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	safe := filepath.Base(dest)
+	info, err := root.Lstat(safe)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -148,7 +168,61 @@ func Delete(sessionID, filename string) error {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return ErrUnsafeFilename
 	}
-	return os.Remove(dest)
+	return root.Remove(safe)
+}
+
+func openUploadsRoot(sessionID string, create bool) (*os.Root, error) {
+	if create {
+		err := config.EnsureSessionDirs(sessionID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sessionRoot, err := config.OpenSessionDir(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	info, err := sessionRoot.Lstat("uploads")
+	if err != nil {
+		_ = sessionRoot.Close()
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		_ = sessionRoot.Close()
+		return nil, fmt.Errorf("refusing symlinked uploads directory")
+	}
+	if !info.IsDir() {
+		_ = sessionRoot.Close()
+		return nil, fmt.Errorf("uploads path is not a directory")
+	}
+	root, err := sessionRoot.OpenRoot("uploads")
+	_ = sessionRoot.Close()
+	if err != nil {
+		return nil, err
+	}
+	openedInfo, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, openedInfo) {
+		_ = root.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("uploads directory changed while opening")
+	}
+	return root, nil
+}
+
+func rejectUploadSymlink(root *os.Root, filename string) error {
+	info, err := root.Lstat(filename)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return ErrUnsafeFilename
+	}
+	return nil
 }
 
 func guardTraversal(dest, base string) error {

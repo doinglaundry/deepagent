@@ -10,31 +10,53 @@ import (
 
 // listDir returns depth-limited absolute paths under path; dirs get a trailing "/".
 func listDir(path string, maxDepth int) ([]string, error) {
-	root, err := filepath.Abs(path)
+	rootPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	st, err := os.Stat(root)
+	info, err := os.Stat(rootPath)
 	if err != nil {
 		return nil, err
 	}
-	if !st.IsDir() {
+	if !info.IsDir() {
+		return nil, nil
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return listDirRoot(root, ".", maxDepth)
+}
+
+func listDirRoot(root *os.Root, relativePath string, maxDepth int) ([]string, error) {
+	info, err := root.Stat(relativePath)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
 		return nil, nil
 	}
 
 	var out []string
-	if err := traverse(root, root, 1, maxDepth, &out); err != nil {
+	err = traverse(root, relativePath, 1, maxDepth, &out)
+	if err != nil {
 		return nil, err
 	}
 	sort.Strings(out)
 	return out, nil
 }
 
-func traverse(root, current string, depth, maxDepth int, out *[]string) error {
+func traverse(root *os.Root, current string, depth, maxDepth int, out *[]string) error {
 	if depth > maxDepth {
 		return nil
 	}
-	entries, err := os.ReadDir(current)
+	directory, err := root.Open(current)
+	if err != nil {
+		return nil
+	}
+	defer directory.Close()
+	entries, err := directory.ReadDir(-1)
 	if err != nil {
 		return nil
 	}
@@ -49,7 +71,8 @@ func traverse(root, current string, depth, maxDepth int, out *[]string) error {
 		}
 		*out = append(*out, listed)
 		if descend && isDir && depth < maxDepth {
-			if err := traverse(root, full, depth+1, maxDepth, out); err != nil {
+			err = traverse(root, full, depth+1, maxDepth, out)
+			if err != nil {
 				return err
 			}
 		}
@@ -57,24 +80,20 @@ func traverse(root, current string, depth, maxDepth int, out *[]string) error {
 	return nil
 }
 
-func listEntry(root, full string) (listed string, isDir, descend, ok bool) {
-	info, err := os.Lstat(full)
+func listEntry(root *os.Root, full string) (listed string, isDir, descend, ok bool) {
+	info, err := root.Lstat(full)
 	if err != nil {
 		return "", false, false, false
 	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return full + dirSuffix(info), info.IsDir(), true, true
+	listed = filepath.Join(root.Name(), full)
+	if info.Mode()&os.ModeSymlink != 0 {
+		targetInfo, err := root.Stat(full)
+		if err != nil {
+			return "", false, false, false
+		}
+		return listed + dirSuffix(targetInfo), targetInfo.IsDir(), false, true
 	}
-
-	target, err := filepath.EvalSymlinks(full)
-	if err != nil || !isUnder(target, root) {
-		return "", false, false, false
-	}
-	targetInfo, err := os.Stat(target)
-	if err != nil {
-		return "", false, false, false
-	}
-	return target + dirSuffix(targetInfo), targetInfo.IsDir(), false, true
+	return listed + dirSuffix(info), info.IsDir(), true, true
 }
 
 func dirSuffix(info os.FileInfo) string {

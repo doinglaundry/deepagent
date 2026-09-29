@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"eino-cli/deepagent/core/backend"
 	"eino-cli/deepagent/core/tools"
@@ -137,6 +139,71 @@ func TestDockerFilesystemToolsUseProvider(t *testing.T) {
 		t.Fatalf("upload=%v %v", uploads, err)
 	}
 }
+
+func TestDockerFilesystemToolArgumentPresenceAndReplaceAll(t *testing.T) {
+	ctx := context.Background()
+	provider := &fileSandbox{files: map[string]string{
+		"/remote/data.txt":   "twice twice",
+		"/remote/remove.txt": "remove me",
+	}}
+	b, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := tools.NewWriteFileTool(b).(einotool.InvokableTool)
+	edit := tools.NewEditFileTool(b).(einotool.InvokableTool)
+
+	for _, args := range []string{
+		`{"path":"data.txt"}`,
+		`{"path":"data.txt","content":null}`,
+	} {
+		_, err = write.InvokableRun(ctx, args)
+		if err == nil {
+			t.Fatalf("accepted write arguments: %s", args)
+		}
+	}
+	if provider.files["/remote/data.txt"] != "twice twice" || provider.writes != 0 {
+		t.Fatalf("invalid write changed provider: files=%v writes=%d", provider.files, provider.writes)
+	}
+
+	for _, args := range []string{
+		`{"path":"data.txt","old":"twice"}`,
+		`{"path":"data.txt","old":"twice","new":null}`,
+	} {
+		_, err = edit.InvokableRun(ctx, args)
+		if err == nil {
+			t.Fatalf("accepted edit arguments: %s", args)
+		}
+	}
+	if provider.files["/remote/data.txt"] != "twice twice" || provider.writes != 0 {
+		t.Fatalf("invalid edit changed provider: files=%v writes=%d", provider.files, provider.writes)
+	}
+
+	_, err = write.InvokableRun(ctx, `{"path":"empty.txt","content":""}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, ok := provider.files["/remote/empty.txt"]
+	if err != nil || !ok || empty != "" {
+		t.Fatalf("explicit empty write failed: %q %v", empty, err)
+	}
+	_, err = edit.InvokableRun(ctx, `{"path":"remove.txt","old":"remove","new":""}`)
+	if err != nil || provider.files["/remote/remove.txt"] != " me" {
+		t.Fatalf("explicit empty edit failed: %q %v", provider.files["/remote/remove.txt"], err)
+	}
+
+	_, err = edit.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":false}`)
+	if err == nil {
+		t.Fatal("replace_all=false accepted ambiguous edit")
+	}
+	if provider.files["/remote/data.txt"] != "twice twice" {
+		t.Fatal("ambiguous edit changed provider")
+	}
+	_, err = edit.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":true}`)
+	if err != nil || provider.files["/remote/data.txt"] != "once once" {
+		t.Fatalf("replace_all edit failed: %q %v", provider.files["/remote/data.txt"], err)
+	}
+}
 func TestDockerFilesystemFailureDoesNotWriteOrUseHost(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{"/remote/a": "repeat repeat"}}
@@ -240,5 +307,121 @@ func TestDockerEditDoesNotWriteAfterReadCancellation(t *testing.T) {
 	}
 	if provider.writes != 0 || provider.files["/remote/a"] != "original" {
 		t.Fatal("edit wrote after canceled read")
+	}
+}
+
+type cancelingResolverSandbox struct {
+	*fileSandbox
+	cancel context.CancelFunc
+}
+
+func (s *cancelingResolverSandbox) ResolveContainerPath(_ context.Context, p string) (string, error) {
+	s.cancel()
+	return "", errors.New("resolver canceled")
+}
+
+func TestDockerFilesystemDeletePreservesResolverCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	provider := &cancelingResolverSandbox{
+		fileSandbox: &fileSandbox{files: map[string]string{}},
+		cancel:      cancel,
+	}
+	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = files.Delete(ctx, "a")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("delete lost resolver cancellation: %v", err)
+	}
+	if !strings.Contains(err.Error(), "resolver canceled") {
+		t.Fatalf("delete lost resolver diagnostic: %v", err)
+	}
+}
+
+func TestDockerFilesystemDeleteCancelsInFlightDockerCommand(t *testing.T) {
+	dockerDir := t.TempDir()
+	readyPath := filepath.Join(dockerDir, "ready")
+	dockerPath := filepath.Join(dockerDir, "docker")
+	script := "#!/bin/sh\n" +
+		"set -eu\n" +
+		"tmp=\"$DOCKER_READY_FILE.tmp\"\n" +
+		"printf '%s\\n' \"$$\" > \"$tmp\"\n" +
+		"mv \"$tmp\" \"$DOCKER_READY_FILE\"\n" +
+		"while :; do\n" +
+		"  kill -STOP $$\n" +
+		"done\n"
+	err := os.WriteFile(dockerPath, []byte(script), 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousPath := os.Getenv("PATH")
+	pathValue := dockerDir
+	if previousPath != "" {
+		pathValue += string(os.PathListSeparator) + previousPath
+	}
+	t.Setenv("PATH", pathValue)
+	t.Setenv("DOCKER_READY_FILE", readyPath)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	provider := &fileSandbox{files: map[string]string{}}
+	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultCh := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, deleteErr := files.Delete(ctx, "a")
+		resultCh <- deleteErr
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Error("docker delete did not stop during cleanup")
+		}
+	}()
+
+	ready := time.NewTicker(10 * time.Millisecond)
+	defer ready.Stop()
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	for {
+		_, statErr := os.Stat(readyPath)
+		if statErr == nil {
+			break
+		}
+		if !os.IsNotExist(statErr) {
+			t.Fatal(statErr)
+		}
+		select {
+		case earlyErr := <-resultCh:
+			t.Fatalf("docker delete exited before readiness: %v", earlyErr)
+		case <-ready.C:
+		case <-deadline.C:
+			cancel()
+			t.Fatal("fake docker did not become ready")
+		}
+	}
+	cancel()
+
+	resultDeadline := time.NewTimer(2 * time.Second)
+	defer resultDeadline.Stop()
+	var deleteErr error
+	select {
+	case deleteErr = <-resultCh:
+	case <-resultDeadline.C:
+		t.Fatal("canceled docker delete did not finish")
+	}
+	if !errors.Is(deleteErr, context.Canceled) {
+		t.Fatalf("delete lost command cancellation: %v", deleteErr)
+	}
+	if !strings.Contains(deleteErr.Error(), "docker delete a:") {
+		t.Fatalf("delete lost command diagnostic: %v", deleteErr)
 	}
 }
