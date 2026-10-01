@@ -59,3 +59,40 @@ func TestThreadAdapter_ApprovalPreservesCallIdentity(t *testing.T) {
 		t.Fatalf("approval identity lost: %+v", payload)
 	}
 }
+
+func TestThreadAdapter_RunEndPreservesOutcome(t *testing.T) {
+	for _, status := range []string{"finished", "blocked", "interrupted", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			end := agentthread.RunEndPayload{Status: status}
+			if status == "blocked" {
+				end.CheckpointID = "checkpoint"
+				end.InterruptID = "interrupt"
+			}
+			kind, value, err := agentEventPayloadForOutput(agentthread.Event{
+				Type: agentthread.EventRunEnd, RunID: "run", Payload: end,
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind != eventpkg.EventTypeRunStatus {
+				t.Fatalf("terminal outcome lost: kind=%q status=%q", kind, status)
+			}
+			raw, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload struct {
+				Status       string `json:"status"`
+				CheckpointID string `json:"checkpoint_id"`
+				InterruptID  string `json:"interrupt_id"`
+			}
+			err = json.Unmarshal(raw, &payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if payload.Status != status || payload.CheckpointID != end.CheckpointID || payload.InterruptID != end.InterruptID {
+				t.Fatalf("outcome=%s want=%+v", raw, end)
+			}
+		})
+	}
+}

@@ -15,7 +15,7 @@ func (c *Manager) Redis() cache.RedisClient { return c.redis }
 type Client interface {
 	Acquire(context.Context, AcquireRequest) (AcquireResult, error)
 	Renew(context.Context, int64, string, int64) (*Lease, error)
-	ReleaseThread(context.Context, int64, string, string, model.ThreadStatus) (*model.Thread, error)
+	ReleaseThread(context.Context, int64, string) (*model.Thread, error)
 	AckInput(context.Context, int64, string, string, []int64) ([]*model.Message, error)
 	ConfirmThreadClosed(context.Context, int64, string, int64) (*ThreadMessageResult, error)
 	SaveOutput(context.Context, int64, string, string, []OutputFrame) error

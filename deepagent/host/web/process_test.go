@@ -278,7 +278,35 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 				events = append(events, event)
 				switch event.Kind {
 				case protocol.EventBlocked:
-					return events, fmt.Errorf("waiting for input")
+					// A persisted prompt can precede resource cleanup and lease release.
+					// Resume only after the Manager has committed the blocked state.
+					for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+						request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/threads/"+threadID, nil)
+						if err != nil {
+							return events, err
+						}
+						response, err := client.Do(request)
+						if err != nil {
+							return events, err
+						}
+						var thread struct {
+							Status string `json:"status"`
+						}
+						err = json.NewDecoder(response.Body).Decode(&thread)
+						response.Body.Close()
+						if err != nil {
+							return events, err
+						}
+						if thread.Status == "blocked" {
+							return events, fmt.Errorf("waiting for input")
+						}
+						select {
+						case <-ctx.Done():
+							return events, ctx.Err()
+						case <-time.After(20 * time.Millisecond):
+						}
+					}
+					return events, fmt.Errorf("prompt was persisted but Thread did not become blocked")
 				case protocol.EventRunCompleted:
 					response, err := client.Get(baseURL + "/api/threads/" + threadID + "/events")
 					if err != nil {
@@ -317,29 +345,6 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 	}
 	if block.Block == nil {
 		t.Fatalf("no blocked event: %v err=%v", events, err)
-	}
-	blocked := false
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		response, getErr := client.Get(baseURL + "/api/threads/" + block.ThreadID)
-		if getErr != nil {
-			t.Fatal(getErr)
-		}
-		var thread struct {
-			Status string `json:"status"`
-		}
-		decodeErr := json.NewDecoder(response.Body).Decode(&thread)
-		response.Body.Close()
-		if decodeErr != nil {
-			t.Fatal(decodeErr)
-		}
-		if thread.Status == "blocked" {
-			blocked = true
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if !blocked {
-		t.Fatal("approval was persisted but Thread did not become blocked")
 	}
 	stop()
 	stop = start()

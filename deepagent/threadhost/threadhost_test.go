@@ -19,7 +19,6 @@ type managerProbe struct {
 	saved       []manager.OutputFrame
 	order       []string
 	released    bool
-	status      dalmodel.ThreadStatus
 	closed      bool
 	renews      int
 	releaseDone chan struct{}
@@ -39,11 +38,10 @@ func (m *managerProbe) Renew(_ context.Context, threadID int64, token string, _ 
 	return &manager.Lease{ThreadID: threadID, LeaseToken: token, LeaseUntil: time.Now().Add(time.Second)}, nil
 }
 
-func (m *managerProbe) ReleaseThread(_ context.Context, _ int64, _ string, _ string, status dalmodel.ThreadStatus) (*dalmodel.Thread, error) {
+func (m *managerProbe) ReleaseThread(_ context.Context, _ int64, _ string) (*dalmodel.Thread, error) {
 	m.mu.Lock()
 	m.released = true
 	m.order = append(m.order, "release")
-	m.status = status
 	if m.releaseDone != nil {
 		close(m.releaseDone)
 	}
@@ -334,13 +332,13 @@ func TestLeaseLossUsesIndependentRuntimeCloseContext(t *testing.T) {
 	}
 }
 
-func TestBlockedYieldReleasesThreadAsBlocked(t *testing.T) {
+func TestBlockedRunEndIsSavedBeforeRelease(t *testing.T) {
 	client := &managerProbe{}
 	runtime := &runtimeProbe{output: make(chan threadpkg.TransportThreadOutputItem, 1)}
-	runtime.output <- threadpkg.TransportThreadOutputItem{Yield: &threadpkg.TransportThreadYield{
-		Reason: "waiting for approval",
-		Block:  &threadpkg.TransportPendingBlock{RunID: "run-1", CheckpointID: "checkpoint-1", InterruptID: "interrupt-1"},
-	}}
+	runtime.output <- threadpkg.TransportThreadOutputItem{
+		Event: &threadpkg.TransportEvent{RunID: "run-1", Type: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint-1","interrupt_id":"interrupt-1"}`)},
+		Yield: &threadpkg.TransportThreadYield{Reason: "blocked"},
+	}
 	close(runtime.output)
 	host := &ThreadHost{
 		Config: Config{RenewInterval: time.Hour, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
@@ -349,13 +347,14 @@ func TestBlockedYieldReleasesThreadAsBlocked(t *testing.T) {
 			return runtime, nil
 		},
 	}
-	if err := host.RunThread(context.Background(), context.Background(), testClaim()); err != nil {
+	err := host.RunThread(context.Background(), context.Background(), testClaim())
+	if err != nil {
 		t.Fatal(err)
 	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if !client.released || client.status != dalmodel.ThreadStatusBlocked {
-		t.Fatalf("released=%v status=%q", client.released, client.status)
+	if !client.released || len(client.saved) != 1 || len(client.order) != 2 || client.order[0] != "save" || client.order[1] != "release" {
+		t.Fatalf("released=%v saved=%v order=%v", client.released, client.saved, client.order)
 	}
 }
 

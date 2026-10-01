@@ -61,16 +61,9 @@ type TransportEvent struct {
 	TS       time.Time
 }
 
-type TransportPendingBlock struct {
-	RunID        string
-	CheckpointID string
-	InterruptID  string
-}
-
 type TransportThreadYield struct {
 	Reason string
 	Err    error
-	Block  *TransportPendingBlock
 }
 
 type TransportThreadOutputItem struct {

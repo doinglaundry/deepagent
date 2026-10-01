@@ -20,6 +20,8 @@ const (
 	RunStatusStarted                 = "started"
 	RunStatusFinished                = "finished"
 	RunStatusInterrupted             = "interrupted"
+	RunStatusBlocked                 = "blocked"
+	RunStatusFailed                  = "failed"
 	RunStatusCompactStarted          = "compact_started"
 	RunStatusContextCompacted        = "context_compacted"
 	RunStatusCompactInterrupted      = "compact_interrupted"
@@ -204,6 +206,8 @@ type CompactInterruptedEventPayload struct {
 	ConsumedInputsMeta []map[string]string `json:"consumed_inputs_meta,omitempty"`
 }
 type RunFinishedEventPayload struct {
+	CheckpointID       string              `json:"checkpoint_id,omitempty"`
+	InterruptID        string              `json:"interrupt_id,omitempty"`
 	Status             string              `json:"status,omitempty"`
 	ContextUsage       *ContextUsage       `json:"context_usage,omitempty"`
 	ConsumedMessageIDs []string            `json:"consumed_message_ids,omitempty"`

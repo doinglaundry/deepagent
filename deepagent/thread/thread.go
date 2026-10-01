@@ -1029,16 +1029,23 @@ func agentEventPayloadForOutput(ev agentthread.Event, usage *agentthread.Context
 		if err != nil {
 			return "", nil, err
 		}
-		switch end.Status {
-		case "", "finished":
-			return eventpkg.EventTypeRunStatus, &eventpkg.RunFinishedEventPayload{Status: eventpkg.RunStatusFinished, ContextUsage: contextUsage}, nil
-		case "interrupted":
-			return eventpkg.EventTypeRunStatus, &eventpkg.RunFinishedEventPayload{Status: eventpkg.RunStatusInterrupted, ContextUsage: contextUsage}, nil
-		case "blocked", "failed":
-			return "", nil, nil
-		default:
-			return "", nil, fmt.Errorf("unknown run end status %q", end.Status)
+		status := end.Status
+		if status == "" {
+			status = eventpkg.RunStatusFinished
 		}
+		switch status {
+		case eventpkg.RunStatusBlocked:
+			if end.CheckpointID == "" || end.InterruptID == "" {
+				return "", nil, errors.New("blocked run lacks checkpoint or interrupt ID")
+			}
+		case eventpkg.RunStatusFinished, eventpkg.RunStatusInterrupted, eventpkg.RunStatusFailed:
+		default:
+			return "", nil, fmt.Errorf("unknown run end status %q", status)
+		}
+		return eventpkg.EventTypeRunStatus, &eventpkg.RunFinishedEventPayload{
+			Status: status, CheckpointID: end.CheckpointID, InterruptID: end.InterruptID,
+			ContextUsage: contextUsage,
+		}, nil
 	case agentthread.EventError:
 		out := convertErrorPayload(ev.Payload)
 		out.ContextUsage = contextUsage
@@ -1318,12 +1325,7 @@ func yieldFromAgentEvent(ev agentthread.Event) *TransportThreadYield {
 		case "interrupted":
 			return &TransportThreadYield{Reason: "interrupted"}
 		case "blocked":
-			if payload.CheckpointID == "" || payload.InterruptID == "" {
-				return &TransportThreadYield{Reason: "interrupted", Err: fmt.Errorf("blocked run lacks checkpoint or interrupt ID")}
-			}
-			return &TransportThreadYield{Reason: "blocked", Block: &TransportPendingBlock{
-				RunID: ev.RunID, CheckpointID: payload.CheckpointID, InterruptID: payload.InterruptID,
-			}}
+			return &TransportThreadYield{Reason: "blocked"}
 		default:
 			return &TransportThreadYield{Reason: "interrupted", Err: fmt.Errorf("unknown run end status %q", payload.Status)}
 		}
@@ -2164,10 +2166,6 @@ func cloneThreadYield(yield *TransportThreadYield) *TransportThreadYield {
 		return nil
 	}
 	clone := *yield
-	if yield.Block != nil {
-		block := *yield.Block
-		clone.Block = &block
-	}
 	return &clone
 }
 

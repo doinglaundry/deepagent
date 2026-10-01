@@ -36,8 +36,6 @@ const (
 	defaultAppendEventRetryDelay   = 100 * time.Millisecond
 	defaultReleaseReason           = "agent thread completed"
 	defaultErrorReleaseReason      = "agent thread failed"
-	buildThreadFailedReason        = "agent thread build failed"
-	initThreadFailedReason         = "agent thread init failed"
 	postMessageFailedReason        = "agent thread post message failed"
 	ackMessageFailedReason         = "agent thread ack failed"
 	controlInputFailedReason       = "agent thread control input failed"
@@ -218,10 +216,8 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 
 	thread, output, err := w.createRuntime(runCtx, claim.Thread)
 	if err != nil {
-		reason := buildThreadFailedReason
 		var closeErr error
 		if thread != nil {
-			reason = initThreadFailedReason
 			closeErr = w.closeThread(runCtx, thread)
 		}
 		if closeErr != nil {
@@ -234,7 +230,7 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 			}
 			return errors.Join(err, leaseErr)
 		}
-		releaseErr := w.releaseThread(runCtx, claim.Lease, reason, nil)
+		releaseErr := w.releaseThread(runCtx, claim.Lease)
 		return errors.Join(err, closeErr, releaseErr)
 	}
 
@@ -267,7 +263,7 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 	if result.closeMessageID != 0 {
 		return errors.Join(closeErr, w.confirmThreadClose(runCtx, claim.Lease, result.closeMessageID))
 	}
-	releaseErr := w.releaseThread(runCtx, claim.Lease, result.releaseReason(closeErr), result.block)
+	releaseErr := w.releaseThread(runCtx, claim.Lease)
 	return errors.Join(result.err, closeErr, releaseErr)
 }
 
@@ -348,21 +344,9 @@ func (w *ThreadHost) saveThreadOutput(ctx context.Context, threadID int64, event
 	return err
 }
 
-func (w *ThreadHost) releaseThread(ctx context.Context, lease *manager.Lease, reason string, block *threadpkg.TransportPendingBlock) (err error) {
-	if reason == "" {
-		reason = defaultReleaseReason
-	}
-	var releaseToStatus dalmodel.ThreadStatus
-	if block != nil {
-		releaseToStatus = dalmodel.ThreadStatusBlocked
-	}
-	_, err = w.Client.ReleaseThread(ctx, lease.ThreadID, lease.LeaseToken, reason, releaseToStatus)
-	if err = serialiser.WrapError(fmt.Sprintf("ReleaseThread thread_id=%d", lease.ThreadID), err); err != nil {
-
-		return err
-	}
-
-	return nil
+func (w *ThreadHost) releaseThread(ctx context.Context, lease *manager.Lease) error {
+	_, err := w.Client.ReleaseThread(ctx, lease.ThreadID, lease.LeaseToken)
+	return serialiser.WrapError(fmt.Sprintf("ReleaseThread thread_id=%d", lease.ThreadID), err)
 }
 
 func (w *ThreadHost) getRuntimeInterruptTimeout() time.Duration {
@@ -497,23 +481,12 @@ type CloseThreadControlPayload struct {
 type runResult struct {
 	reason         string
 	err            error
-	block          *threadpkg.TransportPendingBlock
 	closeMessageID int64
 	outputFailed   bool
 }
 
-func (r runResult) releaseReason(closeErr error) string {
-	if r.reason != "" {
-		return r.reason
-	}
-	if r.err != nil || closeErr != nil {
-		return defaultErrorReleaseReason
-	}
-	return defaultReleaseReason
-}
-
 func (r runResult) empty() bool {
-	return r.reason == "" && r.err == nil && r.block == nil && r.closeMessageID == 0
+	return r.reason == "" && r.err == nil && r.closeMessageID == 0
 }
 
 // threadRun owns only state that spans one claimed runtime execution.
@@ -998,7 +971,7 @@ func (c *threadRun) handleOutput(item threadpkg.TransportThreadOutputItem, signa
 	}
 
 	if result.empty() {
-		*result = runResult{reason: yield.Reason, err: yield.Err, block: yield.Block}
+		*result = runResult{reason: yield.Reason, err: yield.Err}
 	}
 	select {
 	case signal <- struct{}{}:

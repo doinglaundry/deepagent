@@ -30,6 +30,11 @@ type Thread struct {
 	Status     string    `gorm:"column:status"`
 	LeaseToken string    `gorm:"column:lease_token" json:"-" yaml:"lease_token"`
 
+	// The latest execution outcome is scoped to the lease that reported it.
+	RunID         string `gorm:"column:run_id"`
+	RunStatus     string `gorm:"column:run_status"`
+	RunLeaseToken string `gorm:"column:run_lease_token" json:"-" yaml:"-"`
+
 	Metadata map[string]string `gorm:"column:metadata_json;type:text;serializer:coordinator_json"`
 	Profile  *Profile          `gorm:"column:profile;type:text;serializer:coordinator_json"`
 }

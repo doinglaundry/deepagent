@@ -32,33 +32,29 @@ type ThreadMessageResult struct {
 }
 
 const (
-	defaultLeaseDuration         = time.Minute
-	maxLeaseDuration             = 30 * time.Minute
-	defaultFailureReleaseBackoff = 3 * time.Second
-	defaultScanLimit             = int32(50)
-	maxScanLimit                 = int32(100)
-	queuedMessageLimit           = 10
-	DefaultCancelInputReason     = "user_cancel"
-	DefaultCloseThreadReason     = "user_close"
+	defaultLeaseDuration     = time.Minute
+	maxLeaseDuration         = 30 * time.Minute
+	defaultScanLimit         = int32(50)
+	maxScanLimit             = int32(100)
+	queuedMessageLimit       = 10
+	DefaultCancelInputReason = "user_cancel"
+	DefaultCloseThreadReason = "user_close"
 )
 
-var defaultFailureReleaseReasons = map[string]struct{}{}
-
 var (
-	ErrThreadNotFound          = errors.New("thread not found")
-	ErrThreadClosed            = errors.New("thread is closing or closed")
-	ErrThreadNotRunnable       = errors.New("thread not runnable")
-	ErrThreadNotBlocked        = errors.New("thread is not blocked")
-	ErrThreadBlocked           = errors.New("thread is blocked")
-	ErrLeaseMismatch           = errors.New("lease mismatch")
-	ErrRedisUnavailable        = errors.New("redis unavailable")
-	ErrInvalidStatusTransition = errors.New("invalid status transition")
-	ErrInvalidCancel           = errors.New("invalid cancel")
-	ErrInvalidClose            = errors.New("invalid close")
-	ErrMessageNotFound         = errors.New("message not found")
-	InputErrMessageNotFound    = errors.New("input message not found")
-	ErrOutputUnavailable       = errors.New("output unavailable")
-	ErrRunIDRequired           = errors.New("run ID required")
+	ErrThreadNotFound       = errors.New("thread not found")
+	ErrThreadClosed         = errors.New("thread is closing or closed")
+	ErrThreadNotRunnable    = errors.New("thread not runnable")
+	ErrThreadNotBlocked     = errors.New("thread is not blocked")
+	ErrThreadBlocked        = errors.New("thread is blocked")
+	ErrLeaseMismatch        = errors.New("lease mismatch")
+	ErrRedisUnavailable     = errors.New("redis unavailable")
+	ErrInvalidCancel        = errors.New("invalid cancel")
+	ErrInvalidClose         = errors.New("invalid close")
+	ErrMessageNotFound      = errors.New("message not found")
+	InputErrMessageNotFound = errors.New("input message not found")
+	ErrOutputUnavailable    = errors.New("output unavailable")
+	ErrRunIDRequired        = errors.New("run ID required")
 )
 
 type CancelInputControlPayload struct {
