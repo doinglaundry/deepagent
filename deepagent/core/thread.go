@@ -23,7 +23,6 @@ type RunConfig struct {
 }
 type ThreadOptions struct {
 	ReplaceBootstrapPrompt bool
-	ContextManager         ContextManager
 	HistoryStore           HistoryRolloutStore
 	CompactionStrategy     CompactionStrategy
 	TokenCounter           TokenCounter
@@ -47,72 +46,49 @@ type Thread struct {
 	outputBridge         *threadOutputBridge
 	compact              *compactOperation
 
-	ThreadID      string
-	mu            sync.Mutex
-	current       *Run
-	inputRuns     map[string]*Run // MessageID -> original Run, guarded by mu.
-	pending       []Input
-	conversation  Conversation
-	events        chan Event
-	config        *RunConfig
-	runIDProvider RunIDProvider
-	closed        bool
+	ThreadID     string
+	mu           sync.Mutex
+	current      *Run
+	inputRuns    map[string]*Run // MessageID -> original Run, guarded by mu.
+	pending      []Input
+	conversation Conversation
+	events       chan Event
+	config       *RunConfig
+	closed       bool
 }
-type RunIDProvider func(context.Context, string, *Message) string
-type ThreadOption func(*Thread)
 
-func WithRunIDProvider(provider RunIDProvider) ThreadOption {
-	return func(t *Thread) {
-		if provider != nil {
-			t.runIDProvider = provider
-		}
-	}
-}
+// NewThread 创建内部状态并接管配置中的资源，不执行模型或加载历史。
 func NewThread(cfg ThreadConfig) (*Thread, error) {
-	threadID := cfg.ThreadID
-	if threadID == "" {
+	if cfg.ThreadID == "" {
 		return nil, fmt.Errorf("thread id is required")
 	}
 	events := cfg.Events
 	if events == nil {
 		events = make(chan Event, 256)
 	}
-	options := cfg.Options
-	opts := cfg.ThreadOptions
-	config := cfg.RunConfig.Clone()
-	var history Conversation
-	if options.ContextManager != nil {
-		var ok bool
-		history, ok = options.ContextManager.(Conversation)
-		if !ok {
-			history = &contextAdapter{ContextManager: options.ContextManager}
-		}
-	} else {
-		history = conversation.New(threadID, options.HistoryStore, options.CompactionStrategy, options.TokenCounter, conversation.WithContextWindow(options.ContextWindow), conversation.WithRecordID(options.HistoryRecordID), conversation.WithBootstrapPromptReplacement(options.ReplaceBootstrapPrompt))
-	}
-	threadInfo := cfg.ThreadInfo
-	if threadInfo.ThreadID == "" {
-		threadInfo.ThreadID = threadID
-	}
-	if threadInfo.SessionID == "" {
-		threadInfo.SessionID = cfg.SessionID
-	}
-	t := &Thread{
-		ThreadID: threadID, sessionID: cfg.SessionID, threadInfo: threadInfo,
-		conversation: history, events: events, config: config,
-		inputRuns:        make(map[string]*Run),
-		runIDProvider:    func(context.Context, string, *Message) string { return uuid.NewString() },
-		closeResources:   cfg.CloseResources,
-		approvalRemember: cfg.ApprovalRemember, runFinishedObserver: cfg.RunFinishedObserver,
-		threadOutputObserver: cfg.ThreadOutputObserver, interruptResume: cfg.InterruptResume,
-		outputBridge: &threadOutputBridge{agentEvents: events},
-	}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(t)
-		}
-	}
-	return t, nil
+	historyOptions := cfg.Options
+	history := conversation.New(
+		cfg.ThreadID, historyOptions.HistoryStore,
+		historyOptions.CompactionStrategy, historyOptions.TokenCounter,
+		conversation.WithContextWindow(historyOptions.ContextWindow),
+		conversation.WithRecordID(historyOptions.HistoryRecordID),
+		conversation.WithBootstrapPromptReplacement(historyOptions.ReplaceBootstrapPrompt),
+	)
+	return &Thread{
+		ThreadID:             cfg.ThreadID,
+		sessionID:            cfg.SessionID,
+		threadInfo:           ContextThreadIdentity{ThreadID: cfg.ThreadID, SessionID: cfg.SessionID, UserID: cfg.UserID},
+		conversation:         history,
+		events:               events,
+		config:               cfg.RunConfig.Clone(),
+		inputRuns:            make(map[string]*Run),
+		closeResources:       cfg.CloseResources,
+		approvalRemember:     cfg.ApprovalRemember,
+		runFinishedObserver:  cfg.RunFinishedObserver,
+		threadOutputObserver: cfg.ThreadOutputObserver,
+		interruptResume:      cfg.InterruptResume,
+		outputBridge:         &threadOutputBridge{agentEvents: events},
+	}, nil
 }
 func (t *Thread) InitHistory(ctx context.Context) error {
 	t.mu.Lock()
@@ -240,11 +216,7 @@ func (t *Thread) SubmitInput(ctx context.Context, message *schema.Message, opts 
 			t.mu.Unlock()
 			return result, nil
 		}
-		id := t.runIDProvider(ctx, t.ThreadID, input.Message)
-		if id == "" {
-			t.mu.Unlock()
-			return nil, fmt.Errorf("empty Run ID")
-		}
+		id := uuid.NewString()
 		request := RunStartRequest{ThreadID: t.ThreadID, RunID: id, Input: input.Message, InputMeta: input.Meta}
 		r, runCtx, err := t.startRun(ctx, request, options.ConfigProvider, options.OnRunStart, options.EnablePlan)
 		if err != nil {
@@ -392,36 +364,6 @@ func (t *Thread) CompactWithRunID(ctx context.Context, runID string) (*ContextCo
 	}
 	defer t.finishCompact(op)
 	return t.conversation.Compact(compactCtx, runID)
-}
-
-// contextAdapter retains caller-owned history/context behavior while adding
-// the Conversation Run counter required by the
-type contextAdapter struct {
-	ContextManager
-	usage conversation.UsageTracker
-}
-
-func (c *contextAdapter) RunUsage() types.Usage { return c.usage.RunUsage() }
-func (c *contextAdapter) RestoreRunUsage(ctx context.Context, usage types.Usage) error {
-	return c.usage.RestoreRunUsage(ctx, usage)
-}
-func (c *contextAdapter) RecordModelUsage(ctx context.Context, usage *model.TokenUsage) {
-	c.ContextManager.RecordModelUsage(ctx, usage)
-	c.usage.RecordRunUsage(usage)
-}
-
-func (c *contextAdapter) BuildRequest(ctx context.Context, prompts []*schema.Message) ([]*schema.Message, error) {
-	builder, ok := c.ContextManager.(interface {
-		BuildRequest(context.Context, []*schema.Message) ([]*schema.Message, error)
-	})
-	if ok {
-		return builder.BuildRequest(ctx, prompts)
-	}
-	err := ctx.Err()
-	if err != nil {
-		return nil, err
-	}
-	return append(append([]*schema.Message(nil), prompts...), c.History(ctx)...), nil
 }
 
 func (c *RunConfig) Clone() *RunConfig {

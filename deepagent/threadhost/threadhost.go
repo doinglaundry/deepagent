@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/helper/serialiser"
 	"eino-cli/deepagent/manager"
 )
@@ -144,7 +145,14 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 	runCtx, stopLease, waitLease := w.startLease(ctx, claim.Lease)
 	defer stopLease()
 
-	thread, output, err := w.createThread(runCtx, claim.Thread)
+	thread, err := w.createThread(runCtx, claim.Thread)
+	var output *deepagents.TransportThreadOutput
+	if err == nil {
+		output, err = thread.Init(runCtx)
+		if err != nil {
+			err = fmt.Errorf("Thread.Init thread_id=%d: %w", claim.Thread.ThreadID, err)
+		}
+	}
 	if err != nil {
 		err = fmt.Errorf("create Thread thread_id=%d: %w", claim.Thread.ThreadID, err)
 		var closeErr error

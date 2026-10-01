@@ -31,11 +31,15 @@ func TestThreadHostCanonicalRuntimeSubmitToYield(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	host := &ThreadHost{Runtime: RuntimeConfig{Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default"}}
-	runtime, output, err := host.createThread(ctx, &model.Thread{ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()}})
+	runtime, err := host.createThread(ctx, &model.Thread{ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer runtime.Close(context.Background())
+	output, err := runtime.Init(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	posted, err := runtime.PostMessage(ctx, &deepagents.TransportMessage{ID: "101", Type: deepagents.MessageTypeInput, Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`), Metadata: map[string]string{"source": "test"}})
 	if err != nil {
 		t.Fatal(err)
@@ -93,12 +97,17 @@ func TestThreadHostCreatesCanonicalRuntime(t *testing.T) {
 	host := &ThreadHost{Runtime: RuntimeConfig{
 		Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default",
 	}}
-	runtime, output, err := host.createThread(context.Background(), &model.Thread{ThreadID: 42, SessionID: "session"})
+	runtime, err := host.createThread(context.Background(), &model.Thread{ThreadID: 42, SessionID: "session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close(context.Background())
+	output, err := runtime.Init(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if output == nil || output.Items == nil {
-		t.Fatal("createThread must initialize the output stream")
+		t.Fatal("Thread.Init must initialize the output stream")
 	}
 	err = runtime.Close(context.Background())
 	if err != nil {
@@ -106,38 +115,68 @@ func TestThreadHostCreatesCanonicalRuntime(t *testing.T) {
 	}
 }
 
-func TestBuildRunConfigCreatesRunLocalMiddlewares(t *testing.T) {
+type configuredHostModel struct {
+	runtimeModel
+	inputs [][]*schema.Message
+	tools  []*schema.ToolInfo
+}
+
+func (m *configuredHostModel) WithTools(infos []*schema.ToolInfo) (modelpkg.ToolCallingChatModel, error) {
+	m.tools = infos
+	return m, nil
+}
+
+func (m *configuredHostModel) Stream(_ context.Context, input []*schema.Message, _ ...modelpkg.Option) (*schema.StreamReader[*schema.Message], error) {
+	m.inputs = append(m.inputs, input)
+	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("ok", nil)}), nil
+}
+
+func TestThreadHostBuildsPromptsAndToolsForEachRun(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	chatModel := &configuredHostModel{}
 	host := &ThreadHost{Runtime: RuntimeConfig{
-		Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default",
+		Models:       map[string]modelpkg.ToolCallingChatModel{"default": chatModel},
+		DefaultModel: "default", SystemPrompt: "host system prompt",
 	}}
-	info := &model.Thread{ThreadID: 42, SessionID: "session"}
-	cfg, err := host.buildRunConfig(info, host.Runtime.Models["default"], nil)
+	thread, err := host.createThread(ctx, &model.Thread{
+		ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: dir},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstMiddlewares := cfg.MiddlewaresProvider(context.Background(), "first")
-	secondMiddlewares := cfg.MiddlewaresProvider(context.Background(), "second")
-	if len(firstMiddlewares) == 0 || len(secondMiddlewares) != len(firstMiddlewares) {
-		t.Fatal("each run must receive its middleware instances")
-	}
-	for i := range firstMiddlewares {
-		if firstMiddlewares[i] == secondMiddlewares[i] {
-			t.Fatal("mutable middleware must be created for each run")
-		}
-	}
-	found := false
-	for _, descriptor := range cfg.Agent.ToolDescriptors {
-		info, err := descriptor.Tool.Info(context.Background())
+	defer thread.Close(context.Background())
+	for _, instruction := range []string{"first run instruction", "second run instruction"} {
+		err = os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("## Agent Working Discipline\n"+instruction), 0600)
 		if err != nil {
 			t.Fatal(err)
 		}
-		found = found || info.Name == "ask_user"
+		posted, err := thread.SubmitInput(ctx, schema.UserMessage("hello"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = posted.RunHandle.Wait(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var prompt strings.Builder
+		for _, message := range chatModel.inputs[len(chatModel.inputs)-1] {
+			if message.Role == schema.System {
+				prompt.WriteString(message.Content)
+			}
+		}
+		if !strings.Contains(prompt.String(), instruction) || !strings.Contains(prompt.String(), "host system prompt") {
+			t.Fatalf("Run lost current project or base instructions: %s", prompt.String())
+		}
 	}
-	if !found {
-		t.Fatal("Web runs must expose ask_user")
+	followUp, subagent := false, false
+	for _, info := range chatModel.tools {
+		followUp = followUp || info.Name == "ask_user"
+		subagent = subagent || (info.Name == "task" && strings.Contains(info.Desc, "general-purpose"))
 	}
-	if len(cfg.Agent.SubAgents) != 1 || cfg.Agent.SubAgents[0].Name != "general-purpose" {
-		t.Fatal("Web must explicitly configure its default child")
+	if len(chatModel.inputs) != 2 || !followUp || !subagent {
+		t.Fatalf("configured capabilities missing: runs=%d ask_user=%v subagent=%v", len(chatModel.inputs), followUp, subagent)
 	}
 }
 
@@ -147,11 +186,11 @@ func TestCreateThreadDockerAllocationFailure(t *testing.T) {
 		Models:         map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}},
 		DefaultModel:   "default",
 	}}
-	thread, output, err := host.createThread(context.Background(), &model.Thread{
+	thread, err := host.createThread(context.Background(), &model.Thread{
 		ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()},
 	})
-	if err == nil || thread != nil || output != nil {
-		t.Fatalf("expected allocation error without a Thread: thread=%v output=%v err=%v", thread, output, err)
+	if err == nil || thread != nil {
+		t.Fatalf("expected allocation error without a Thread: thread=%v err=%v", thread, err)
 	}
 }
 
@@ -199,18 +238,27 @@ esac
 			historyErr := errors.New("history unavailable")
 			switch scenario {
 			case "config_failure":
-				// A file cannot be used as a memory directory; config fails after allocation.
+				// Invalid memory configuration must fail before allocating a container.
+				memoryPath := filepath.Join(dir, "memory")
+				err = os.WriteFile(memoryPath, []byte("not a directory"), 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
 				host.Runtime.MemoryEnabled = true
-				host.Runtime.MemoryDir = logPath
+				host.Runtime.MemoryDir = memoryPath
 			case "init_failure":
 				host.Deps.History = failingHistoryStore{err: historyErr}
 			}
-			thread, output, err := host.createThread(context.Background(), &model.Thread{
+			thread, err := host.createThread(context.Background(), &model.Thread{
 				ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: dir},
 			})
 			if scenario == "config_failure" {
-				if err == nil || thread != nil || output != nil || cleanupCount() != 1 {
-					t.Fatalf("construction failure leaked resources: thread=%v output=%v err=%v", thread, output, err)
+				if err == nil || thread != nil {
+					t.Fatalf("expected configuration error without a Thread: thread=%v err=%v", thread, err)
+				}
+				_, dockerErr := os.Stat(logPath)
+				if !errors.Is(dockerErr, os.ErrNotExist) {
+					t.Fatal("invalid configuration allocated a Docker container")
 				}
 				return
 			}
@@ -218,6 +266,10 @@ esac
 				t.Fatalf("constructed Thread must retain resource ownership: %v", err)
 			}
 			defer thread.Close(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := thread.Init(context.Background())
 			if scenario == "init_failure" {
 				if !errors.Is(err, historyErr) || output != nil {
 					t.Fatalf("lost initialization failure: output=%v err=%v", output, err)

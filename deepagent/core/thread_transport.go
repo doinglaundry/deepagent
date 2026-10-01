@@ -60,11 +60,10 @@ type ThreadConfig struct {
 	CloseResources       func(context.Context) error
 	SessionID            string
 	ThreadID             string
-	ThreadInfo           ContextThreadIdentity
+	UserID               int64
 	RunConfig            *RunConfig
 	Events               chan Event
 	Options              ThreadOptions
-	ThreadOptions        []ThreadOption
 	ApprovalRemember     ApprovalRememberer
 	RunFinishedObserver  RunFinishedObserver
 	ThreadOutputObserver ThreadOutputObserver
