@@ -26,16 +26,14 @@ type SandboxConfig struct {
 }
 
 type ModelConfig struct {
-	Name                 string `json:"name"`
-	Provider             string `json:"provider"`
-	Model                string `json:"model"`
-	BaseURL              string `json:"base_url,omitempty"`
-	APIKey               string `json:"api_key,omitempty"`
-	TimeoutSeconds       int    `json:"timeout_seconds,omitempty"`
-	SupportsThinking     bool   `json:"supports_thinking,omitempty"`
-	ThinkingBudgetTokens int    `json:"thinking_budget_tokens,omitempty"`
-	SupportsVision       bool   `json:"supports_vision,omitempty"`
-	ReasoningEffort      string `json:"reasoning_effort,omitempty"`
+	Name            string `json:"name"`
+	Provider        string `json:"provider"`
+	Model           string `json:"model"`
+	BaseURL         string `json:"base_url,omitempty"`
+	APIKey          string `json:"api_key,omitempty"`
+	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
+	SupportsVision  bool   `json:"supports_vision,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type AgentConfig struct {

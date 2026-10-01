@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"eino-cli/deepagent/appconfig"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -21,12 +22,12 @@ func main() {
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	mcfg, err := deepmanager.LoadConfig(*config)
+	cfg, err := appconfig.Load(*config)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	m, err := deepmanager.Open(ctx, mcfg)
+	m, err := deepmanager.Open(ctx, cfg.Manager)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -1,4 +1,4 @@
-package worker
+package appconfig
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 	"eino-cli/deepagent/core/modelhub"
 )
 
-func TestLoadConfigExpandsEnvironmentAndValidatesModel(t *testing.T) {
+func TestLoadExpandsEnvironment(t *testing.T) {
 	t.Setenv("TEST_MYSQL_DSN", "user:pass@tcp(localhost:3306)/deepagent")
 	path := filepath.Join(t.TempDir(), "worker.yaml")
 	err := os.WriteFile(path, []byte(`
@@ -26,7 +26,7 @@ default_model: primary
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadConfig(path)
+	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,11 +55,52 @@ func TestConfigRequiresMemoryDirectoryWhenEnabled(t *testing.T) {
 
 func TestDockerWorkspaceRequiresImage(t *testing.T) {
 	base := Config{Manager: ManagerConfig{MySQLDSN: "dsn", RedisAddr: "redis"}, Models: []modelhub.Config{{Name: "primary"}}, DefaultModel: "primary", FilesystemKind: "docker"}
-	if err := base.Validate(); err == nil {
+	err := base.Validate()
+	if err == nil {
 		t.Fatal("Docker workspace without image accepted")
 	}
 	base.Docker = config.SandboxConfig{Image: "aio-image"}
-	if err := base.Validate(); err != nil {
+	err = base.Validate()
+	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadManagerOnlyAndPreservesEnvironmentValues(t *testing.T) {
+	password := "secret: # value\nnext-line"
+	t.Setenv("TEST_REDIS_PASSWORD", password)
+	path := filepath.Join(t.TempDir(), "web.yaml")
+	err := os.WriteFile(path, []byte(`manager:
+  mysql_dsn: test-dsn
+  redis_addr: localhost:6379
+  redis_password: "${TEST_REDIS_PASSWORD}"
+`), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Manager.RedisPassword != password {
+		t.Fatal("environment value changed during YAML decoding")
+	}
+	err = cfg.Validate()
+	if err == nil {
+		t.Fatal("worker accepted configuration without a model")
+	}
+}
+
+func TestLoadRejectsMissingManagerConnections(t *testing.T) {
+	for _, data := range []string{"{}", "manager:\n  mysql_dsn: test-dsn", "manager:\n  redis_addr: localhost:6379"} {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		err := os.WriteFile(path, []byte(data), 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = Load(path)
+		if err == nil {
+			t.Fatal("accepted missing manager connection")
+		}
 	}
 }

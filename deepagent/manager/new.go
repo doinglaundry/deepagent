@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"eino-cli/deepagent/dal/cache"
 	"eino-cli/deepagent/dal/db"
-	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -21,25 +19,19 @@ type Config struct {
 	RedisDB       int    `yaml:"redis_db"`
 }
 
-func LoadConfig(path string) (Config, error) {
-	var document struct {
-		Manager Config `yaml:"manager"`
+func (c Config) Validate() error {
+	if strings.TrimSpace(c.MySQLDSN) == "" || strings.TrimSpace(c.RedisAddr) == "" {
+		return errors.New("manager mysql_dsn and redis_addr are required")
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return Config{}, fmt.Errorf("read manager config: %w", err)
-	}
-	if err = yaml.Unmarshal([]byte(os.ExpandEnv(string(data))), &document); err != nil {
-		return Config{}, fmt.Errorf("parse manager config: %w", err)
-	}
-	if strings.TrimSpace(document.Manager.MySQLDSN) == "" || strings.TrimSpace(document.Manager.RedisAddr) == "" {
-		return Config{}, errors.New("manager mysql_dsn and redis_addr are required")
-	}
-	return document.Manager, nil
+	return nil
 }
 
 // Open owns the shared Manager storage connections and mailbox migration.
 func Open(ctx context.Context, cfg Config) (*Manager, error) {
+	err := cfg.Validate()
+	if err != nil {
+		return nil, err
+	}
 	client, err := db.NewSQL(ctx, cfg.MySQLDSN, cfg.MySQLReadDSN)
 	if err != nil {
 		return nil, fmt.Errorf("connect MySQL: %w", err)

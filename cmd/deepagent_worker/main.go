@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"eino-cli/deepagent/appconfig"
 	worker "eino-cli/deepagent/worker"
 	"flag"
 	"fmt"
@@ -18,7 +19,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "unexpected positional arguments")
 		os.Exit(2)
 	}
-	c, err := worker.LoadConfig(*config)
+	c, err := appconfig.Load(*config)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

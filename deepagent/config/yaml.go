@@ -119,8 +119,6 @@ func GetModels(entries []ModelEntry) map[string]*ModelConfig {
 			switch {
 			case strings.Contains(lower, "moonshot") || strings.Contains(lower, "kimi"):
 				modelCfg.Provider = "kimi"
-			case strings.Contains(lower, "anthropic") || strings.Contains(lower, "claude"):
-				modelCfg.Provider = "claude"
 			case strings.Contains(lower, "openai"):
 				modelCfg.Provider = "openai"
 			default:
