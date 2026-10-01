@@ -4,6 +4,7 @@ package threadhost
 
 import (
 	"context"
+	deepagents "eino-cli/deepagent/core"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +17,6 @@ import (
 	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/helper/serialiser"
 	"eino-cli/deepagent/manager"
-	threadpkg "eino-cli/deepagent/thread"
 )
 
 // 01 Core Types
@@ -89,23 +89,15 @@ type ThreadHost struct {
 	Client  manager.Client
 	Runtime RuntimeConfig
 	Deps    RuntimeDeps
-	// ThreadFactory is kept only for callers that provide a custom runtime.
-	// The normal Worker path constructs the DeepAgent runtime in ThreadHost.
-	ThreadFactory ThreadFactory
 }
-
-// ThreadFactory creates a thread-scoped runtime for one claimed Manager thread.
-type ThreadFactory func(ctx context.Context, threadInfo *dalmodel.Thread) (threadpkg.ThreadRuntime, error)
 
 var _ manager.Client = (*manager.Manager)(nil)
 
 var (
 	ErrMissingClient  = errors.New("agentworker/cloud: client is required")
-	ErrMissingRuntime = errors.New("agentworker/cloud: runtime config or thread factory is required")
-	// ErrMissingThreadFactory remains as a compatibility alias.
-	ErrMissingThreadFactory = ErrMissingRuntime
-	ErrMissingThread        = errors.New("agentworker/cloud: thread is required")
-	ErrMissingLease         = errors.New("agentworker/cloud: lease is required")
+	ErrMissingRuntime = errors.New("agentworker/cloud: runtime models are required")
+	ErrMissingThread  = errors.New("agentworker/cloud: thread is required")
+	ErrMissingLease   = errors.New("agentworker/cloud: lease is required")
 )
 
 func (w *ThreadHost) normalize() {
@@ -151,7 +143,7 @@ func (w *ThreadHost) Validate() error {
 	if w.Client == nil {
 		return ErrMissingClient
 	}
-	if w.ThreadFactory == nil && len(w.Runtime.Models) == 0 {
+	if len(w.Runtime.Models) == 0 {
 		return ErrMissingRuntime
 	}
 	return nil
@@ -164,7 +156,8 @@ func (w *ThreadHost) Run(ctx context.Context) (err error) {
 	if w != nil {
 		w.normalize()
 	}
-	if err = w.Validate(); err != nil {
+	err = w.Validate()
+	if err != nil {
 		return err
 	}
 	sem := make(chan struct{}, w.Concurrency)
@@ -179,7 +172,8 @@ func (w *ThreadHost) Run(ctx context.Context) (err error) {
 		claim, acquireErr := w.Client.Acquire(ctx, manager.AcquireRequest{LeaseMS: w.LeaseMS, ScanLimit: w.ScanLimit})
 		if acquireErr != nil || claim.Thread == nil {
 			<-sem
-			if err = sleepContext(ctx, w.ScanInterval); err != nil {
+			err = sleepContext(ctx, w.ScanInterval)
+			if err != nil {
 				return err
 			}
 			continue
@@ -198,7 +192,8 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 	if w != nil {
 		w.normalize()
 	}
-	if err = w.Validate(); err != nil {
+	err = w.Validate()
+	if err != nil {
 		return err
 	}
 	if claim == nil || claim.Thread == nil {
@@ -240,34 +235,10 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 		idleSince: time.Now(), wasActive: active != nil,
 	}
 	result, closeErr := run.run(output.Items)
-	if closeErr != nil {
-		var leaseErr error
-		if runCtx.Err() != nil {
-			leaseErr = waitLease()
-			if leaseErr == nil {
-				leaseErr = context.Cause(runCtx)
-			}
-		}
-		return errors.Join(result.err, closeErr, leaseErr)
-	}
-	if runCtx.Err() != nil {
-		leaseErr := waitLease()
-		if leaseErr == nil {
-			leaseErr = context.Cause(runCtx)
-		}
-		return errors.Join(result.err, leaseErr)
-	}
-	if result.outputFailed {
-		return result.err
-	}
-	if result.closeMessageID != 0 {
-		return errors.Join(closeErr, w.confirmThreadClose(runCtx, claim.Lease, result.closeMessageID))
-	}
-	releaseErr := w.releaseThread(runCtx, claim.Lease)
-	return errors.Join(result.err, closeErr, releaseErr)
+	return run.finish(result, closeErr, waitLease)
 }
 
-func (w *ThreadHost) closeThread(ctx context.Context, thread threadpkg.ThreadRuntime) error {
+func (w *ThreadHost) closeThread(ctx context.Context, thread *deepagents.Thread) error {
 	timeout := w.ShutdownInterruptDrainTimeout
 	if timeout <= 0 {
 		timeout = defaultShutdownInterruptDrain
@@ -277,14 +248,10 @@ func (w *ThreadHost) closeThread(ctx context.Context, thread threadpkg.ThreadRun
 	return thread.Close(cleanupCtx)
 }
 
-func (w *ThreadHost) createRuntime(ctx context.Context, threadInfo *dalmodel.Thread) (thread threadpkg.ThreadRuntime, output *threadpkg.TransportThreadOutput, err error) {
-	if w.ThreadFactory != nil {
-		thread, err = w.ThreadFactory(ctx, threadInfo)
-	} else {
-		thread, err = w.createDeepAgentThread(ctx, threadInfo)
-	}
+func (w *ThreadHost) createRuntime(ctx context.Context, threadInfo *dalmodel.Thread) (thread *deepagents.Thread, output *deepagents.TransportThreadOutput, err error) {
+	thread, err = w.createThread(ctx, threadInfo)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ThreadFactory thread_id=%d: %w", threadInfo.ThreadID, err)
+		return nil, nil, fmt.Errorf("create Thread thread_id=%d: %w", threadInfo.ThreadID, err)
 	}
 
 	output, err = thread.Init(ctx)
@@ -292,14 +259,14 @@ func (w *ThreadHost) createRuntime(ctx context.Context, threadInfo *dalmodel.Thr
 		return thread, nil, fmt.Errorf("Thread.Init thread_id=%d: %w", threadInfo.ThreadID, err)
 	}
 	if output == nil {
-		output = &threadpkg.TransportThreadOutput{}
+		output = &deepagents.TransportThreadOutput{}
 	}
 	return thread, output, nil
 }
 
 // 03 Lease / Ownership
 
-func (w *ThreadHost) saveThreadOutput(ctx context.Context, threadID int64, event *threadpkg.TransportEvent, leaseToken string) (resultErr error) {
+func (w *ThreadHost) saveThreadOutput(ctx context.Context, threadID int64, event *deepagents.TransportEvent, leaseToken string) (resultErr error) {
 	if event.ThreadID == "" {
 		event.ThreadID = fmt.Sprint(threadID)
 	}
@@ -370,7 +337,8 @@ func (w *ThreadHost) getRuntimeInterruptTimeoutForDrain(drain time.Duration) tim
 
 func (w *ThreadHost) confirmThreadClose(ctx context.Context, lease *manager.Lease, controlMessageID int64) (err error) {
 	_, err = w.Client.ConfirmThreadClosed(ctx, lease.ThreadID, lease.LeaseToken, controlMessageID)
-	if err = serialiser.WrapError(fmt.Sprintf("CompleteCloseThread thread_id=%d control_message_id=%d", lease.ThreadID, controlMessageID), err); err != nil {
+	err = serialiser.WrapError(fmt.Sprintf("CompleteCloseThread thread_id=%d control_message_id=%d", lease.ThreadID, controlMessageID), err)
+	if err != nil {
 		return err
 	}
 
@@ -495,12 +463,41 @@ type threadRun struct {
 	ctx        context.Context
 	acceptDone <-chan struct{}
 	claim      *manager.AcquireResult
-	thread     threadpkg.ThreadRuntime
+	thread     *deepagents.Thread
 	idleSince  time.Time
 	wasActive  bool
 }
 
-func (c *threadRun) run(items <-chan threadpkg.TransportThreadOutputItem) (result runResult, closeErr error) {
+// finish commits ownership changes only after output persistence and cleanup.
+func (c *threadRun) finish(result runResult, closeErr error, waitLease func() error) error {
+	if closeErr != nil {
+		var leaseErr error
+		if c.ctx.Err() != nil {
+			leaseErr = waitLease()
+			if leaseErr == nil {
+				leaseErr = context.Cause(c.ctx)
+			}
+		}
+		return errors.Join(result.err, closeErr, leaseErr)
+	}
+	if c.ctx.Err() != nil {
+		leaseErr := waitLease()
+		if leaseErr == nil {
+			leaseErr = context.Cause(c.ctx)
+		}
+		return errors.Join(result.err, leaseErr)
+	}
+	if result.outputFailed {
+		return result.err
+	}
+	if result.closeMessageID != 0 {
+		return errors.Join(closeErr, c.host.confirmThreadClose(c.ctx, c.claim.Lease, result.closeMessageID))
+	}
+	releaseErr := c.host.releaseThread(c.ctx, c.claim.Lease)
+	return errors.Join(result.err, closeErr, releaseErr)
+}
+
+func (c *threadRun) run(items <-chan deepagents.TransportThreadOutputItem) (result runResult, closeErr error) {
 	stop := make(chan struct{})
 	stopOutput := make(chan struct{})
 	activity := make(chan time.Time, 1)
@@ -566,8 +563,11 @@ func (c *threadRun) wait(activity <-chan time.Time, inputResults <-chan runResul
 			return c.drainShutdown(inputResults, outputSignal, stop), runResult{}
 		default:
 		}
-		if result := c.checkIdleRelease(activity); !result.empty() {
-			return result, runResult{}
+		{
+			result := c.checkIdleRelease(activity)
+			if !result.empty() {
+				return result, runResult{}
+			}
 		}
 
 		select {
@@ -618,8 +618,8 @@ func (c *threadRun) drainShutdown(inputResults <-chan runResult, outputSignal <-
 
 func (c *threadRun) interruptShutdownTimeout() {
 	interruptTimeout := c.host.getRuntimeInterruptTimeoutForDrain(c.host.ShutdownInterruptDrainTimeout)
-	_ = c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
-		Kind:    threadpkg.TransportThreadInterruptKindWorkerShutdownTimeout,
+	_ = c.thread.Interrupt(c.ctx, deepagents.TransportThreadInterruptRequest{
+		Kind:    deepagents.TransportThreadInterruptKindWorkerShutdownTimeout,
 		Reason:  defaultShutdownTimeoutReason,
 		Timeout: &interruptTimeout,
 	})
@@ -781,7 +781,7 @@ func (c *threadRun) deliverMessage(message *dalmodel.Message, pending *[]*dalmod
 		if c.ctx.Err() != nil {
 			return runResult{}
 		}
-		if errors.Is(err, threadpkg.TransportErrThreadClosed) {
+		if errors.Is(err, deepagents.TransportErrThreadClosed) {
 			return runResult{reason: defaultThreadClosedReason}
 		}
 		return runResult{reason: postMessageFailedReason, err: err}
@@ -805,15 +805,19 @@ func (c *threadRun) ackMessage(message *dalmodel.Message, triggerRunID string) (
 
 func (c *threadRun) handleCancel(message *dalmodel.Message, pending *[]*dalmodel.Message, stop <-chan struct{}) (result runResult) {
 	var payload CancelInputControlPayload
-	if err := json.Unmarshal(message.Payload, &payload); err != nil || payload.CutoffMessageID <= 0 {
-		if err == nil {
-			err = fmt.Errorf("cancel input control missing cutoff_message_id")
+	{
+		err := json.Unmarshal(message.Payload, &payload)
+		if err != nil || payload.CutoffMessageID <= 0 {
+			if err == nil {
+				err = fmt.Errorf("cancel input control missing cutoff_message_id")
+			}
+			*pending = nil
+			result = c.ackMessage(message, "")
+			if !result.empty() {
+				return result
+			}
+			return runResult{reason: controlInputFailedReason, err: err}
 		}
-		*pending = nil
-		if result = c.ackMessage(message, ""); !result.empty() {
-			return result
-		}
-		return runResult{reason: controlInputFailedReason, err: err}
 	}
 
 	*pending = dropCanceledMessages(*pending, payload.CutoffMessageID)
@@ -826,8 +830,8 @@ func (c *threadRun) handleCancel(message *dalmodel.Message, pending *[]*dalmodel
 		reason = "user_cancel"
 	}
 	interruptTimeout := c.host.getRuntimeInterruptTimeout()
-	err := c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
-		Kind:             threadpkg.TransportThreadInterruptKindCancelInput,
+	err := c.thread.Interrupt(c.ctx, deepagents.TransportThreadInterruptRequest{
+		Kind:             deepagents.TransportThreadInterruptKindCancelInput,
 		ControlMessageID: fmt.Sprint(message.MessageID),
 		CutoffMessageID:  fmt.Sprint(payload.CutoffMessageID),
 		Timeout:          &interruptTimeout,
@@ -862,8 +866,8 @@ func (c *threadRun) handleClose(message *dalmodel.Message, pending *[]*dalmodel.
 
 	if c.thread.ActiveRun() != nil {
 		interruptTimeout := c.host.getRuntimeInterruptTimeout()
-		_ = c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
-			Kind:             threadpkg.TransportThreadInterruptKindCloseThread,
+		_ = c.thread.Interrupt(c.ctx, deepagents.TransportThreadInterruptRequest{
+			Kind:             deepagents.TransportThreadInterruptKindCloseThread,
 			ControlMessageID: fmt.Sprint(message.MessageID),
 			Timeout:          &interruptTimeout,
 		})
@@ -905,7 +909,7 @@ func (c *threadRun) waitForInterrupt(stop <-chan struct{}) (timedOut bool, err e
 	}
 }
 
-func (c *threadRun) runOutput(stop <-chan struct{}, items <-chan threadpkg.TransportThreadOutputItem, signal chan<- struct{}, done chan<- runResult) {
+func (c *threadRun) runOutput(stop <-chan struct{}, items <-chan deepagents.TransportThreadOutputItem, signal chan<- struct{}, done chan<- runResult) {
 	result := runResult{}
 	defer func() { done <- result }()
 	for {
@@ -926,7 +930,7 @@ func (c *threadRun) runOutput(stop <-chan struct{}, items <-chan threadpkg.Trans
 	}
 }
 
-func (c *threadRun) drainOutput(items <-chan threadpkg.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
+func (c *threadRun) drainOutput(items <-chan deepagents.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
 	for {
 		select {
 		case item, ok := <-items:
@@ -941,7 +945,7 @@ func (c *threadRun) drainOutput(items <-chan threadpkg.TransportThreadOutputItem
 }
 
 // handleOutput persists an event before recording the first runtime yield.
-func (c *threadRun) handleOutput(item threadpkg.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
+func (c *threadRun) handleOutput(item deepagents.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
 	if result.outputFailed {
 		return
 	}
@@ -981,30 +985,30 @@ func (c *threadRun) handleOutput(item threadpkg.TransportThreadOutputItem, signa
 
 // 07 Manager <-> Runtime Protocol
 
-func ProtocolToWorkerMessage(message *dalmodel.Message) (result *threadpkg.TransportMessage) {
+func ProtocolToWorkerMessage(message *dalmodel.Message) (result *deepagents.TransportMessage) {
 	if message == nil {
 		return nil
 	}
-	return &threadpkg.TransportMessage{
+	return &deepagents.TransportMessage{
 		ID:       fmt.Sprint(message.MessageID),
 		Sender:   protocolSenderFromManager(message.Sender),
-		Type:     threadpkg.TransportMessageType(message.MessageType),
+		Type:     deepagents.TransportMessageType(message.MessageType),
 		Payload:  append([]byte(nil), message.Payload...),
 		Metadata: maps.Clone(message.Metadata),
 	}
 }
 
-func protocolSenderFromManager(sender *dalmodel.Sender) (result *threadpkg.TransportSender) {
+func protocolSenderFromManager(sender *dalmodel.Sender) (result *deepagents.TransportSender) {
 	if sender == nil {
 		return nil
 	}
-	return &threadpkg.TransportSender{
-		Type: threadpkg.TransportSenderType(strings.ToUpper(string(sender.Type))),
+	return &deepagents.TransportSender{
+		Type: deepagents.TransportSenderType(strings.ToUpper(string(sender.Type))),
 		ID:   sender.ID,
 	}
 }
 
-func ProtocolToOutputFrame(threadID int64, event *threadpkg.TransportEvent) (result *manager.OutputFrame) {
+func ProtocolToOutputFrame(threadID int64, event *deepagents.TransportEvent) (result *manager.OutputFrame) {
 	if event == nil {
 		return nil
 	}
@@ -1016,8 +1020,11 @@ func ProtocolToOutputFrame(threadID int64, event *threadpkg.TransportEvent) (res
 		Metadata:  maps.Clone(event.Metadata),
 	}
 	if event.ID != "" {
-		if id, err := strconv.ParseInt(strings.TrimSpace(event.ID), 10, 64); err == nil {
-			managerEvent.EventID = id
+		{
+			id, err := strconv.ParseInt(strings.TrimSpace(event.ID), 10, 64)
+			if err == nil {
+				managerEvent.EventID = id
+			}
 		}
 	}
 	if !event.TS.IsZero() {

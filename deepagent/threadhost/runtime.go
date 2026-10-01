@@ -4,6 +4,7 @@ package threadhost
 
 import (
 	"context"
+	deepagents "eino-cli/deepagent/core"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,16 +16,16 @@ import (
 
 	"eino-cli/deepagent/config"
 	"eino-cli/deepagent/core/backend"
-	deepagents "eino-cli/deepagent/core/graph"
+
 	longmemory "eino-cli/deepagent/core/memory"
 	"eino-cli/deepagent/core/middleware"
-	"eino-cli/deepagent/core/runtime/agentthread"
+
 	"eino-cli/deepagent/core/tools"
 	dalmodel "eino-cli/deepagent/dal/model"
 	memorypkg "eino-cli/deepagent/protocol/memory"
 	"eino-cli/deepagent/sandbox"
 	"eino-cli/deepagent/sandbox/aio"
-	threadpkg "eino-cli/deepagent/thread"
+
 	modelpkg "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
@@ -57,18 +58,18 @@ type RuntimeConfig struct {
 
 // RuntimeDeps are long-lived resources shared by Thread runtimes.
 type RuntimeDeps struct {
-	History          agentthread.HistoryRolloutStore
+	History          deepagents.HistoryRolloutStore
 	Checkpoint       compose.CheckPointStore
 	Tools            []tool.BaseTool
 	SkillLoader      backend.SkillLoader
 	MemoryStore      memorypkg.Store
 	Collaboration    CollaborationBackend
-	HistoryRecordID  agentthread.HistoryRecordIDProvider
-	ApprovalRemember threadpkg.ApprovalRememberer
-	InterruptResume  threadpkg.InterruptResumeDecoder
+	HistoryRecordID  deepagents.HistoryRecordIDProvider
+	ApprovalRemember deepagents.ApprovalRememberer
+	InterruptResume  deepagents.InterruptResumeDecoder
 }
 
-func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.Thread) (threadpkg.ThreadRuntime, error) {
+func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (*deepagents.Thread, error) {
 	if info == nil || info.ThreadID == 0 {
 		return nil, errors.New("threadhost: thread info is required")
 	}
@@ -112,12 +113,12 @@ func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.T
 		cleanup()
 		return nil, err
 	}
-	options := agentthread.ThreadOptions{
+	options := deepagents.ThreadOptions{
 		HistoryStore: w.Deps.History, ContextWindow: w.Runtime.ContextWindow,
 		HistoryRecordID: w.Deps.HistoryRecordID,
 	}
 	if w.Runtime.CompactThresholdTokens > 0 {
-		options.CompactionStrategy = &agentthread.SummaryCompaction{
+		options.CompactionStrategy = &deepagents.SummaryCompaction{
 			Model: chatModel, TokenLimit: w.Runtime.CompactThresholdTokens,
 			KeepRecent: w.Runtime.KeepRecentMessages,
 		}
@@ -126,56 +127,42 @@ func (w *ThreadHost) createDeepAgentThread(ctx context.Context, info *dalmodel.T
 	if eventBuffer <= 0 {
 		eventBuffer = defaultEventBusSize
 	}
-	events := make(chan agentthread.Event, eventBuffer)
+	events := make(chan deepagents.Event, eventBuffer)
 	runConfig, err := w.buildRunConfig(info, chatModel, filesystem)
 	if err != nil {
 		_ = filesystem.Close(context.WithoutCancel(ctx))
 		cleanup()
 		return nil, err
 	}
-	deepThread := agentthread.New(threadID, runConfig, events, options)
-	thread, err := threadpkg.NewThread(threadpkg.AdapterConfig{
-		SessionID: info.SessionID,
-		ThreadID:  threadID,
-		ThreadInfo: threadpkg.ContextThreadIdentity{
-			ThreadID: threadID, SessionID: info.SessionID, UserID: info.UserID,
-		},
-		Thread: deepThread, EventBus: events,
+	thread, err := deepagents.NewThread(deepagents.ThreadConfig{
+		SessionID:  info.SessionID,
+		ThreadID:   threadID,
+		ThreadInfo: deepagents.ContextThreadIdentity{ThreadID: threadID, SessionID: info.SessionID, UserID: info.UserID},
+		RunConfig:  runConfig, Events: events, Options: options,
 		ApprovalRemember: w.Deps.ApprovalRemember,
 		InterruptResume:  w.Deps.InterruptResume,
+		CloseResources: func(closeCtx context.Context) error {
+			closeErr := filesystem.Close(closeCtx)
+			if closeErr != nil {
+				return closeErr
+			}
+			cleanup()
+			return nil
+		},
 	})
 	if err != nil {
 		_ = filesystem.Close(context.WithoutCancel(ctx))
 		cleanup()
 		return nil, err
 	}
-	return &filesystemThread{ThreadRuntime: thread, filesystem: filesystem, cleanup: cleanup}, nil
-}
-
-type filesystemThread struct {
-	threadpkg.ThreadRuntime
-	filesystem backend.ToolFilesystem
-	cleanup    func()
-}
-
-func (t *filesystemThread) Close(ctx context.Context) error {
-	err := t.ThreadRuntime.Close(ctx)
-	if err != nil {
-		return err
-	}
-	filesystemErr := t.filesystem.Close(ctx)
-	if filesystemErr != nil {
-		return filesystemErr
-	}
-	t.cleanup()
-	return nil
+	return thread, nil
 }
 
 func (w *ThreadHost) buildRunConfig(
 	info *dalmodel.Thread,
 	chatModel modelpkg.ToolCallingChatModel,
 	filesystem backend.ToolFilesystem,
-) (*agentthread.RunConfig, error) {
+) (*deepagents.RunConfig, error) {
 	agentConfig := deepagents.Config{
 		Model: chatModel, MaxSteps: w.Runtime.MaxSteps, MaxModelCalls: w.Runtime.MaxModelCalls,
 		CheckpointStore:  w.Deps.Checkpoint,
@@ -194,7 +181,7 @@ func (w *ThreadHost) buildRunConfig(
 		return nil, err
 	}
 	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)
-	runConfig := &agentthread.RunConfig{Agent: agentConfig}
+	runConfig := &deepagents.RunConfig{Agent: agentConfig}
 	runConfig.MiddlewaresProvider = func(context.Context, string) []middleware.Middleware {
 		items := []middleware.Middleware{middleware.NewProjectInstructions(filesystem)}
 		if w.Deps.Collaboration != nil {

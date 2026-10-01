@@ -33,7 +33,7 @@ func TestSelectBackendProvidesCommandExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer filesystem.Close(ctx)
-	a, err := New(ctx, WithModel(m), WithFilesystem(filesystem))
+	a, err := NewRun(ctx, WithModel(m), WithFilesystem(filesystem))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestFeatureConfigPresenceControlsEnablement(t *testing.T) {
 }
 
 func TestNew_RequiresModel(t *testing.T) {
-	_, err := New(context.Background())
+	_, err := NewRun(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "model is required") {
 		t.Fatalf("expected model required error, got %v", err)
 	}
@@ -86,7 +86,7 @@ func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T
 	}
 	m := &publicModel{}
 	config.Model = m
-	a, err := New(ctx, WithConfig(config))
+	a, err := NewRun(ctx, WithConfig(config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestWithConfigCopiesInput(t *testing.T) {
 
 func TestToolMaskExcludesToolFromModel(t *testing.T) {
 	m := &publicModel{}
-	a, err := New(context.Background(), WithConfig(&Config{
+	a, err := NewRun(context.Background(), WithConfig(&Config{
 		Model:           m,
 		ToolDescriptors: []deeptools.ToolDescriptor{{Tool: &fakeToolCounter{}}},
 		ToolMask:        func(_ context.Context, info *schema.ToolInfo) bool { return info.Name != "counter" },
@@ -125,7 +125,7 @@ func TestToolMaskExcludesToolFromModel(t *testing.T) {
 func TestToolPolicyDeniesWithoutRunningTool(t *testing.T) {
 	counter := &fakeToolCounter{}
 	m := &publicModel{call: true}
-	a, err := New(context.Background(), WithConfig(&Config{
+	a, err := NewRun(context.Background(), WithConfig(&Config{
 		Model:           m,
 		ToolDescriptors: []deeptools.ToolDescriptor{{Tool: counter}},
 		Policy: deeptools.PolicyFunc(func(context.Context, types.ToolCall, deeptools.ToolDescriptor) (deeptools.Decision, error) {
@@ -136,7 +136,7 @@ func TestToolPolicyDeniesWithoutRunningTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close(context.Background())
-	_, err = a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	_, err = a.Execute(context.Background(), []*schema.Message{schema.UserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}

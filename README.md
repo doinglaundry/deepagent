@@ -88,7 +88,7 @@ go run ./cmd/deepagent_web \
 ```mermaid
 flowchart TB
     Browser[浏览器] -->|HTTP| Web
-    Web -->|SSE| Browser
+    Web -->|HTTP 输出轮询| Browser
 
     subgraph WebProcess[Web 进程]
         Web[Web Server] --> WM[Manager]
@@ -97,11 +97,9 @@ flowchart TB
     subgraph WorkerProcess[Worker 进程：可运行多个]
         Worker[Worker 启动与装配] --> Host[ThreadHost]
         Host -->|领取 / 续租 / 确认输入 / 保存输出| RM[Manager]
-        Host --> Adapter[Thread 协议适配器]
-        Adapter --> Thread[DeepAgentThread]
-        Thread --> Run
-        Run --> Agent[DeepAgent]
-        Agent --> Graph[Eino Graph]
+        Host --> Thread[Thread：会话与输入]
+        Thread --> Run[Run：一次执行]
+        Run --> Graph[Eino Graph]
     end
 
     WM --> MySQL[(MySQL)]
@@ -126,25 +124,23 @@ ThreadHost                         获取租约，创建运行环境
     ↓
 Thread.PostMessage                 解码 Input / Resume / Compact
     ↓
-DeepAgentThread.SubmitInput         追加到当前 Run，或创建新 Run
+Thread.SubmitInput / ResumeRun      追加输入，或创建本次 Run
     ↓
-run.execute                        创建本次 DeepAgent
-    ↓
-DeepAgent.Run                      执行一次
+Run.Execute                        模型、工具、取消、恢复与清理
     ↓
 Eino Graph                         模型与工具循环
 ```
 
 | 对象 | 管理什么 | 生命周期 |
 | --- | --- | --- |
-| Manager | Thread 调度、消息状态、输出存储 | 进程 |
+| Manager | Thread 调度、租约、输入投递、输出和 Run 结果 | 进程 |
 | ThreadHost | 领取、续租、投递、保存输出和释放 | 进程 / 一次领取 |
-| Thread | 外部协议、审批恢复和输出转换 | 一次运行环境 |
-| DeepAgentThread | Conversation、pending input、当前 Run | 一次运行环境 |
-| Run | 执行 ID、输入归属、取消和等待 | 一次执行 |
-| DeepAgent | 模型、工具、middleware 和 Graph | 每个 Run 新建，单次执行 |
+| Thread | 历史、待处理输入、当前 Run、外部协议和环境清理 | 一次领取，可先后执行多个 Run |
+| Run | 执行 ID、Graph、模型、工具、取消、恢复与完成 | 一次执行；恢复沿用原 RunID |
 
-基础配置在创建 Thread 时组装；可变 middleware 每个 Run 独立创建。历史和 checkpoint 使新的运行环境能够继续已有会话。
+同一个 Thread 同时只执行一个 Run。输入归属与结束判断使用同一把锁；最后事件交付后才清除当前 Run，并让 Wait 返回。可变 middleware 每个 Run 独立创建。
+
+Thread 直接拥有协议转换与执行生命周期；Run 直接拥有 Eino Runnable，不再经过独立的 DeepAgentThread、DeepAgent 或 filesystemThread 包装对象。内部子代理直接使用同一种 Run。
 
 ### Eino Graph
 
@@ -178,7 +174,7 @@ Graph 事件
     → Run 补充执行身份
     → Thread 转换外部协议
     → ThreadHost 调用 Manager.SaveOutput
-    → Web SSE
+    → Web 读取已持久化输出
 
 工具需要审批
     → Eino Interrupt
@@ -188,11 +184,11 @@ Graph 事件
 用户回复审批
     → Manager.Resume
     → ThreadHost 领取
-    → DeepAgentThread.ResumeRun
-    → 新 DeepAgent 从 Graph 中断位置继续
+    → Thread.ResumeRun
+    → 新 Run 对象沿用原执行身份，从 Graph 中断位置继续
 ```
 
-ThreadHost 先处理输出保存，再处理 Yield 和租约释放。完整结果与流式增量的持久化策略不同，不能把 SSE 当作完整历史存储。
+ThreadHost 先处理输出保存，再处理 Yield 和租约释放。完整结果与流式增量的持久化策略不同，完整历史以存储中的消息为准。
 
 ### 状态与租约
 
@@ -221,7 +217,7 @@ Run:     started → blocked → started → finished / interrupted / failed
 | 命令 | `execute`、`shell`、`await_shell`、`read_lints` | 本地或 Docker 命令服务 |
 | 交互 | `ask_user`、`update_plan` | 中断问答 / Plan middleware |
 | 技能 | `activate_skill` | Skill loader / middleware |
-| 内部子代理 | `task` | ChildRunner → DeepAgent → Graph |
+| 内部子代理 | `task` | ChildRunner → Run → Graph |
 | 跨 Thread 协作 | `spawn_task`、`send_message`、`wait_message`、`close_task` | ThreadHost → Manager |
 | 网络 | `read_url`、`web_search` | Web 配置启用 |
 | MCP | 服务发现返回的工具 | MCP client → ToolSet |
@@ -300,7 +296,7 @@ memory_lease_ttl: 30s
 - Web 搜索需要配置搜索服务；页面读取与搜索使用各自的工具。
 - MCP 当前连接 HTTP 服务；stdio 服务需要额外的 HTTP bridge。
 - Skills 按需激活，内置技能资源位于 `deepagent/skills/public/`。
-- 长期记忆在 Run 完成后提取和整理；模型执行仍复用 DeepAgent。作用域优先使用 `memory_user_id`，其次 UserID，再其次 SessionID。
+- 长期记忆在 Run 完成后提取和整理；模型执行仍复用 Run。作用域优先使用 `memory_user_id`，其次 UserID，再其次 SessionID。
 
 ### 存储与部署边界
 
@@ -324,26 +320,29 @@ Core 另有文件 checkpoint 实现，但当前 Worker 没有通过 YAML 选择 
 
 | 顺序 | 文件 | 重点入口 |
 | --- | --- | --- |
-| 1 | [manager/manager.go](deepagent/manager/manager.go) | `Submit`、`Acquire`、`SaveOutput` |
+| 1 | [manager/input.go](deepagent/manager/input.go)、[manager/thread.go](deepagent/manager/thread.go)、[manager/output.go](deepagent/manager/output.go) | `Submit`、`Acquire`、`SaveOutput` |
 | 2 | [threadhost/threadhost.go](deepagent/threadhost/threadhost.go) | `Run`、`RunThread` |
-| 3 | [threadhost/runtime.go](deepagent/threadhost/runtime.go) | `createDeepAgentThread`、`buildRunConfig` |
-| 4 | [thread/thread.go](deepagent/thread/thread.go) | `PostMessage` |
-| 5 | [agentthread/thread.go](deepagent/core/runtime/agentthread/thread.go) | `SubmitInput`、`ResumeRun` |
-| 6 | [agentthread/run.go](deepagent/core/runtime/agentthread/run.go) | `execute`、`executeRun` |
-| 7 | [graph/run.go](deepagent/core/graph/run.go) | `DeepAgent.Run` |
-| 8 | [graph/graph.go](deepagent/core/graph/graph.go) | `buildGraph`、节点与分支 |
+| 3 | [threadhost/runtime.go](deepagent/threadhost/runtime.go) | `createThread`、`buildRunConfig` |
+| 4 | [core/thread_transport.go](deepagent/core/thread_transport.go) | `PostMessage`、外部协议和输出转换 |
+| 5 | [core/thread.go](deepagent/core/thread.go) | `SubmitInput`、`ResumeRun`、输入归属 |
+| 6 | [core/run.go](deepagent/core/run.go) | `Run`、`NewRun`、唯一完成边界 |
+| 7 | [core/run_graph.go](deepagent/core/run_graph.go) | `Run.Execute` |
+| 8 | [core/graph.go](deepagent/core/graph.go) | `buildGraph`、节点与分支 |
+| 9 | [core/thread_run.go](deepagent/core/thread_run.go) | `executeRun`、终态和中断事件 |
 
 ```text
 cmd/                         Web / Worker 入口
 deepagent/
-├── host/web/               页面、HTTP、SSE
+├── host/web/               页面、HTTP、输出轮询
 ├── worker/                 进程启动与资源装配
 ├── manager/                消息与调度
 ├── threadhost/             租约与执行宿主
-├── thread/                 外部协议适配
 ├── core/
-│   ├── graph/              Agent 与 Eino Graph
-│   ├── runtime/agentthread/ Thread / Run 生命周期
+│   ├── thread.go           一个 Thread，管理历史和多个 Run
+│   ├── thread_transport.go 外部协议与输出转换
+│   ├── run.go              一个 Run，管理执行生命周期
+│   ├── run_graph.go        Run.Execute
+│   ├── graph.go            Eino Graph 构建与分支
 │   ├── runtime/checkpointer/ Eino snapshot 与恢复
 │   ├── internal/conversation/ 历史、压缩、usage
 │   ├── tools/              工具定义

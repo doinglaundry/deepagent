@@ -4,72 +4,18 @@ package threadhost
 
 import (
 	"context"
+	deepagents "eino-cli/deepagent/core"
 	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
-	"eino-cli/deepagent/core/backend"
 	"eino-cli/deepagent/dal/model"
 	eventpkg "eino-cli/deepagent/protocol/event"
-	threadpkg "eino-cli/deepagent/thread"
+
 	modelpkg "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
-
-type filesystemCloseProbe struct {
-	backend.ToolFilesystem
-	closeCalls int
-}
-
-func (f *filesystemCloseProbe) Close(context.Context) error {
-	f.closeCalls++
-	return nil
-}
-
-type runtimeCloseProbe struct {
-	closeErr error
-}
-
-func (*runtimeCloseProbe) Init(context.Context) (*threadpkg.TransportThreadOutput, error) {
-	return nil, nil
-}
-
-func (*runtimeCloseProbe) PostMessage(context.Context, *threadpkg.TransportMessage) (*threadpkg.TransportPostMessageResult, error) {
-	return nil, nil
-}
-
-func (*runtimeCloseProbe) Interrupt(context.Context, threadpkg.TransportThreadInterruptRequest) error {
-	return nil
-}
-
-func (*runtimeCloseProbe) ActiveRun() *threadpkg.TransportActiveRun {
-	return nil
-}
-
-func (r *runtimeCloseProbe) Close(context.Context) error {
-	return r.closeErr
-}
-
-func TestFilesystemThreadDoesNotCloseFilesystemAfterRuntimeCloseFailure(t *testing.T) {
-	filesystem := &filesystemCloseProbe{}
-	cleanupCalls := 0
-	runtime := &runtimeCloseProbe{closeErr: errors.New("runtime close failed")}
-	thread := &filesystemThread{
-		ThreadRuntime: runtime,
-		filesystem:    filesystem,
-		cleanup: func() {
-			cleanupCalls++
-		},
-	}
-	err := thread.Close(context.Background())
-	if err == nil || !errors.Is(err, runtime.closeErr) {
-		t.Fatalf("close error=%v", err)
-	}
-	if filesystem.closeCalls != 0 || cleanupCalls != 0 {
-		t.Fatalf("filesystem close calls=%d cleanup calls=%d", filesystem.closeCalls, cleanupCalls)
-	}
-}
 
 type runtimeModel struct{}
 
@@ -81,7 +27,7 @@ func TestThreadHostCanonicalRuntimeSubmitToYield(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	host := &ThreadHost{Runtime: RuntimeConfig{Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default"}}
-	runtime, err := host.createDeepAgentThread(ctx, &model.Thread{ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()}})
+	runtime, err := host.createThread(ctx, &model.Thread{ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +36,7 @@ func TestThreadHostCanonicalRuntimeSubmitToYield(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer runtime.Close(context.Background())
-	posted, err := runtime.PostMessage(ctx, &threadpkg.TransportMessage{ID: "101", Type: threadpkg.MessageTypeInput, Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`), Metadata: map[string]string{"source": "test"}})
+	posted, err := runtime.PostMessage(ctx, &deepagents.TransportMessage{ID: "101", Type: deepagents.MessageTypeInput, Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`), Metadata: map[string]string{"source": "test"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +59,11 @@ func TestThreadHostCanonicalRuntimeSubmitToYield(t *testing.T) {
 				}
 				if string(item.Event.Type) == eventpkg.EventTypeAssistantMessage.String() {
 					var payload eventpkg.MessageEventPayload
-					if err := json.Unmarshal(item.Event.Payload, &payload); err != nil {
-						t.Fatal(err)
+					{
+						err := json.Unmarshal(item.Event.Payload, &payload)
+						if err != nil {
+							t.Fatal(err)
+						}
 					}
 					if len(payload.Parts) == 0 {
 						t.Fatal("assistant message missing content")
@@ -140,18 +89,20 @@ func (*runtimeModel) Stream(context.Context, []*schema.Message, ...modelpkg.Opti
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("ok", nil)}), nil
 }
 
-func TestThreadHostCreatesCanonicalRuntimeWithoutFactory(t *testing.T) {
+func TestThreadHostCreatesCanonicalRuntime(t *testing.T) {
 	host := &ThreadHost{Runtime: RuntimeConfig{
 		Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default",
 	}}
-	runtime, err := host.createDeepAgentThread(context.Background(), &model.Thread{ThreadID: 42, SessionID: "session"})
+	runtime, err := host.createThread(context.Background(), &model.Thread{ThreadID: 42, SessionID: "session"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = runtime.Init(context.Background()); err != nil {
+	_, err = runtime.Init(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = runtime.Close(context.Background()); err != nil {
+	err = runtime.Close(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 }

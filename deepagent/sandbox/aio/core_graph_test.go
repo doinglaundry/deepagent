@@ -2,6 +2,7 @@ package aio
 
 import (
 	"context"
+	deepagents "eino-cli/deepagent/core"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 	"time"
 
 	"eino-cli/deepagent/core/backend"
-	"eino-cli/deepagent/core/graph"
+
 	"eino-cli/deepagent/core/tools"
 	"eino-cli/deepagent/core/types"
 	"github.com/cloudwego/eino/components/model"
@@ -72,10 +73,13 @@ func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 					Content string `json:"content"`
 					Append  bool   `json:"append"`
 				}
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Error(err)
-					http.Error(w, "bad JSON", 400)
-					return
+				{
+					err := json.NewDecoder(r.Body).Decode(&body)
+					if err != nil {
+						t.Error(err)
+						http.Error(w, "bad JSON", 400)
+						return
+					}
 				}
 				if r.Method != http.MethodPost || body.File != "/virtual/a.txt" {
 					t.Errorf("request=%s %s file=%s", r.Method, r.URL.Path, body.File)
@@ -106,14 +110,14 @@ func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := &sandboxGraphModel{readOnly: readOnly}
-			agent, err := graph.New(context.Background(), graph.WithConfig(&graph.Config{ThreadID: "thread", Model: m, Filesystem: files, FilesystemConfig: &graph.FilesystemConfig{ReadOnly: readOnly}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
+			agent, err := deepagents.NewRun(context.Background(), deepagents.WithConfig(&deepagents.Config{ThreadID: "thread", Model: m, Filesystem: files, FilesystemConfig: &deepagents.FilesystemConfig{ReadOnly: readOnly}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
 				return tools.Decision{Action: tools.Allow}, nil
 			})}))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer agent.Close(context.Background())
-			result, err := agent.Run(context.Background(), []*schema.Message{schema.UserMessage("inspect file")})
+			result, err := agent.Execute(context.Background(), []*schema.Message{schema.UserMessage("inspect file")})
 			if err != nil || result.Content != "done" {
 				t.Fatalf("result=%v err=%v", result, err)
 			}

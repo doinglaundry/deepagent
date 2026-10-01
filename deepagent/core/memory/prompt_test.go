@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"eino-cli/deepagent/core/graph"
+	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/tools"
 	"github.com/cloudwego/eino/components/model"
@@ -53,13 +53,16 @@ func TestMemoryPrompt_ReadsCurrentScopeBeforeEachModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &promptModel{}
-	agent, err := graph.New(ctx, graph.WithConfig(&graph.Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
+	agent, err := deepagents.NewRun(ctx, deepagents.WithConfig(&deepagents.Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Close(ctx)
-	if _, err := agent.Run(ctx, []*schema.Message{schema.UserMessage("go")}); err != nil {
-		t.Fatal(err)
+	{
+		_, err := agent.Execute(ctx, []*schema.Message{schema.UserMessage("go")})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if service.reads != 2 || len(m.inputs) != 2 {
 		t.Fatalf("reads=%d model=%d", service.reads, len(m.inputs))
@@ -83,12 +86,12 @@ func TestMemoryPrompt_ReadFailurePreventsModel(t *testing.T) {
 	want := errors.New("memory store unavailable")
 	service := &promptService{err: want}
 	m := &promptModel{}
-	a, err := graph.New(context.Background(), graph.WithConfig(&graph.Config{Model: m, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
+	a, err := deepagents.NewRun(context.Background(), deepagents.WithConfig(&deepagents.Config{Model: m, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close(context.Background())
-	_, err = a.Run(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	_, err = a.Execute(context.Background(), []*schema.Message{schema.UserMessage("go")})
 	if !errors.Is(err, want) || len(m.inputs) != 0 {
 		t.Fatalf("err=%v model=%d", err, len(m.inputs))
 	}

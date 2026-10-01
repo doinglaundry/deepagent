@@ -2,14 +2,16 @@ package threadhost
 
 import (
 	"context"
+	deepagents "eino-cli/deepagent/core"
 	"errors"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	"sync"
 	"testing"
 	"time"
 
 	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/manager"
-	threadpkg "eino-cli/deepagent/thread"
 )
 
 type managerProbe struct {
@@ -73,76 +75,62 @@ func (m *managerProbe) SaveOutput(_ context.Context, _ int64, _ string, _ string
 	return nil
 }
 
-type runtimeProbe struct {
-	mu                sync.Mutex
-	output            chan threadpkg.TransportThreadOutputItem
-	active            *threadpkg.TransportActiveRun
-	closed            chan struct{}
-	initialized       chan struct{}
-	activeNilObserved chan struct{}
-	closeStarted      chan struct{}
-	closeGate         chan struct{}
-	closeErr          error
-	closeOutput       bool
-	closeContextErr   chan error
+// Only the model and Manager I/O are substituted; the execution Thread is real.
+func newHostThread(t *testing.T, chatModel model.ToolCallingChatModel, closeResources func(context.Context) error) *deepagents.Thread {
+	t.Helper()
+	if chatModel == nil {
+		chatModel = &runtimeModel{}
+	}
+	thread, err := deepagents.NewThread(deepagents.ThreadConfig{
+		ThreadID: "1", CloseResources: closeResources,
+		RunConfig: &deepagents.RunConfig{Agent: deepagents.Config{Model: chatModel}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = thread.Init(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = thread.Close(ctx)
+	})
+	return thread
 }
 
-func (r *runtimeProbe) Init(context.Context) (*threadpkg.TransportThreadOutput, error) {
-	if r.initialized != nil {
-		close(r.initialized)
-	}
-	return &threadpkg.TransportThreadOutput{Items: r.output}, nil
+type pausedHostModel struct {
+	runtimeModel
+	started chan struct{}
+	release chan struct{}
 }
 
-func (*runtimeProbe) PostMessage(context.Context, *threadpkg.TransportMessage) (*threadpkg.TransportPostMessageResult, error) {
-	return nil, nil
+func (m *pausedHostModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return m, nil
 }
-
-func (*runtimeProbe) Interrupt(context.Context, threadpkg.TransportThreadInterruptRequest) error {
-	return nil
+func (m *pausedHostModel) Stream(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	close(m.started)
+	select {
+	case <-m.release:
+		return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("answer", nil)}), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
-func (r *runtimeProbe) ActiveRun() *threadpkg.TransportActiveRun {
-	r.mu.Lock()
-	active := r.active
-	activeNilObserved := r.activeNilObserved
-	r.mu.Unlock()
-	if active == nil && activeNilObserved != nil {
-		select {
-		case activeNilObserved <- struct{}{}:
-		default:
-		}
+func startPausedRun(t *testing.T, thread *deepagents.Thread, chatModel *pausedHostModel) *deepagents.RunHandle {
+	t.Helper()
+	posted, err := thread.SubmitInput(context.Background(), schema.UserMessage("hello"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	return active
+	select {
+	case <-chatModel.started:
+	case <-time.After(time.Second):
+		t.Fatal("model never started")
+	}
+	return posted.RunHandle
 }
-func (r *runtimeProbe) setActive(active *threadpkg.TransportActiveRun) {
-	r.mu.Lock()
-	r.active = active
-	r.mu.Unlock()
-}
-func (r *runtimeProbe) Close(ctx context.Context) error {
-	if r.closeStarted != nil {
-		close(r.closeStarted)
-	}
-	if r.closeGate != nil {
-		<-r.closeGate
-	}
-	if r.closeOutput {
-		select {
-		case r.output <- threadpkg.TransportThreadOutputItem{Event: &threadpkg.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("final during close")}}:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		close(r.output)
-	}
-	if r.closeContextErr != nil {
-		r.closeContextErr <- ctx.Err()
-	}
-	if r.closed != nil {
-		close(r.closed)
-	}
-	return r.closeErr
-}
-
 func testClaim() *manager.AcquireResult {
 	return &manager.AcquireResult{
 		Thread: &dalmodel.Thread{ThreadID: 1},
@@ -150,22 +138,34 @@ func testClaim() *manager.AcquireResult {
 	}
 }
 
-func TestThreadHost_PersistsEventBeforeYield(t *testing.T) {
-	client := &managerProbe{}
-	runtime := &runtimeProbe{output: make(chan threadpkg.TransportThreadOutputItem, 2)}
-	runtime.output <- threadpkg.TransportThreadOutputItem{Event: &threadpkg.TransportEvent{
-		RunID: "run-1", Type: "text", Payload: []byte("answer"),
-	}}
-	runtime.output <- threadpkg.TransportThreadOutputItem{Yield: &threadpkg.TransportThreadYield{Reason: "done"}}
-	close(runtime.output)
-	host := &ThreadHost{
+// Feed the Host output boundary directly for malformed and precisely ordered
+// output cases. Thread initialization, active Run and resource cleanup are real.
+func runTestThread(host *ThreadHost, thread *deepagents.Thread, ctx, acceptCtx context.Context, claim *manager.AcquireResult, items <-chan deepagents.TransportThreadOutputItem) error {
+	host.normalize()
+	runCtx, stopLease, waitLease := host.startLease(ctx, claim.Lease)
+	defer stopLease()
+	run := &threadRun{
+		host: host, ctx: runCtx, acceptDone: acceptCtx.Done(), claim: claim, thread: thread,
+		idleSince: time.Now(), wasActive: thread.ActiveRun() != nil,
+	}
+	result, closeErr := run.run(items)
+	return run.finish(result, closeErr, waitLease)
+}
+func testHost(client *managerProbe) *ThreadHost {
+	return &ThreadHost{
 		Config: Config{RenewInterval: time.Hour, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
 		Client: client,
-		ThreadFactory: func(context.Context, *dalmodel.Thread) (threadpkg.ThreadRuntime, error) {
-			return runtime, nil
-		},
 	}
-	if err := host.RunThread(context.Background(), context.Background(), testClaim()); err != nil {
+}
+func TestThreadHost_PersistsEventBeforeYield(t *testing.T) {
+	client := &managerProbe{}
+	thread := newHostThread(t, nil, nil)
+	output := make(chan deepagents.TransportThreadOutputItem, 2)
+	output <- deepagents.TransportThreadOutputItem{Event: &deepagents.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("answer")}}
+	output <- deepagents.TransportThreadOutputItem{Yield: &deepagents.TransportThreadYield{Reason: "done"}}
+	close(output)
+	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), testClaim(), output)
+	if err != nil {
 		t.Fatal(err)
 	}
 	client.mu.Lock()
@@ -174,63 +174,51 @@ func TestThreadHost_PersistsEventBeforeYield(t *testing.T) {
 		t.Fatalf("saved=%d released=%v order=%v", len(client.saved), client.released, client.order)
 	}
 }
-
 func TestThreadHost_ShutdownWaitsForDelayedFinalOutput(t *testing.T) {
-	client := &managerProbe{releaseDone: make(chan struct{})}
-	runtime := &runtimeProbe{
-		output:            make(chan threadpkg.TransportThreadOutputItem, 1),
-		active:            &threadpkg.TransportActiveRun{RunID: "run-1"},
-		initialized:       make(chan struct{}),
-		activeNilObserved: make(chan struct{}, 1),
-		closeStarted:      make(chan struct{}),
-		closeGate:         make(chan struct{}),
-	}
-	host := &ThreadHost{
-		Config: Config{
-			RenewInterval:        time.Hour,
-			MessagePollInterval:  time.Millisecond,
-			IdleTimeout:          time.Hour,
-			ShutdownDrainTimeout: time.Second,
-		},
-		Client: client,
-		ThreadFactory: func(context.Context, *dalmodel.Thread) (threadpkg.ThreadRuntime, error) {
-			return runtime, nil
-		},
-	}
-	acceptCtx, cancelAccept := context.WithCancel(context.Background())
+	client := &managerProbe{}
+	closing := make(chan struct{})
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	defer release()
+	chatModel := &pausedHostModel{started: make(chan struct{}), release: make(chan struct{})}
+	thread := newHostThread(t, chatModel, func(context.Context) error {
+		close(closing)
+		<-gate
+		return nil
+	})
+	handle := startPausedRun(t, thread, chatModel)
+	output := make(chan deepagents.TransportThreadOutputItem)
+	host := testHost(client)
+	host.ShutdownDrainTimeout = time.Second
+	acceptCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
-	go func() {
-		done <- host.RunThread(context.Background(), acceptCtx, testClaim())
-	}()
-	select {
-	case <-runtime.initialized:
-	case <-time.After(time.Second):
-		t.Fatal("runtime was not initialized")
-	}
-	runtime.setActive(nil)
-	cancelAccept()
-	select {
-	case <-runtime.activeNilObserved:
-	case <-time.After(time.Second):
-		t.Fatal("shutdown did not inspect the inactive run")
-	}
-	select {
-	case <-runtime.closeStarted:
-	case <-time.After(100 * time.Millisecond):
-	}
-	runtime.output <- threadpkg.TransportThreadOutputItem{
-		Event: &threadpkg.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("final")},
-		Yield: &threadpkg.TransportThreadYield{Reason: "finished"},
-	}
-	select {
-	case <-runtime.closeStarted:
-	case <-time.After(time.Second):
-		t.Fatal("runtime close did not start after final output")
-	}
-	close(runtime.closeGate)
-	err := <-done
+	go func() { done <- runTestThread(host, thread, context.Background(), acceptCtx, testClaim(), output) }()
+	close(chatModel.release)
+	ctx, stop := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stop()
+	err := handle.Wait(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case <-closing:
+	case <-ctx.Done():
+		t.Fatal("Thread resource cleanup never started")
+	}
+	output <- deepagents.TransportThreadOutputItem{
+		Event: &deepagents.TransportEvent{RunID: handle.RunID(), Type: "text", Payload: []byte("final")},
+		Yield: &deepagents.TransportThreadYield{Reason: "finished"},
+	}
+	release()
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("Host did not finish")
 	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -238,26 +226,14 @@ func TestThreadHost_ShutdownWaitsForDelayedFinalOutput(t *testing.T) {
 		t.Fatalf("saved=%d released=%v", len(client.saved), client.released)
 	}
 }
-
 func TestThreadHost_CloseFailureDoesNotConfirmOrRelease(t *testing.T) {
 	client := &managerProbe{}
-	runtime := &runtimeProbe{
-		output:   make(chan threadpkg.TransportThreadOutputItem),
-		closeErr: errors.New("close failed"),
-	}
+	failure := errors.New("close failed")
+	thread := newHostThread(t, nil, func(context.Context) error { return failure })
 	claim := testClaim()
-	claim.PendingMessages = []*dalmodel.Message{{
-		MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread,
-	}}
-	host := &ThreadHost{
-		Config: Config{RenewInterval: time.Hour, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
-		Client: client,
-		ThreadFactory: func(context.Context, *dalmodel.Thread) (threadpkg.ThreadRuntime, error) {
-			return runtime, nil
-		},
-	}
-	err := host.RunThread(context.Background(), context.Background(), claim)
-	if err == nil || !errors.Is(err, runtime.closeErr) {
+	claim.PendingMessages = []*dalmodel.Message{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread}}
+	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), claim, make(chan deepagents.TransportThreadOutputItem))
+	if !errors.Is(err, failure) {
 		t.Fatalf("close error=%v", err)
 	}
 	client.mu.Lock()
@@ -266,29 +242,28 @@ func TestThreadHost_CloseFailureDoesNotConfirmOrRelease(t *testing.T) {
 		t.Fatalf("closed=%v released=%v", client.closed, client.released)
 	}
 }
-
 func TestLeaseLossPreventsRelease(t *testing.T) {
 	client := &managerProbe{renewErr: errors.New("lease lost")}
-	runtime := &runtimeProbe{
-		output: make(chan threadpkg.TransportThreadOutputItem),
-		active: &threadpkg.TransportActiveRun{RunID: "run-1"},
-		closed: make(chan struct{}),
-	}
-	host := &ThreadHost{
-		Config: Config{LeaseMS: 30, RenewInterval: time.Millisecond, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
-		Client: client,
-		ThreadFactory: func(context.Context, *dalmodel.Thread) (threadpkg.ThreadRuntime, error) {
-			return runtime, nil
-		},
-	}
-	err := host.RunThread(context.Background(), context.Background(), testClaim())
-	if err == nil {
-		t.Fatal("expected lease loss")
+	closed := make(chan error, 1)
+	chatModel := &pausedHostModel{started: make(chan struct{})}
+	thread := newHostThread(t, chatModel, func(ctx context.Context) error {
+		closed <- ctx.Err()
+		return nil
+	})
+	startPausedRun(t, thread, chatModel)
+	host := testHost(client)
+	host.RenewInterval = time.Millisecond
+	err := runTestThread(host, thread, context.Background(), context.Background(), testClaim(), make(chan deepagents.TransportThreadOutputItem))
+	if !errors.Is(err, client.renewErr) {
+		t.Fatalf("lease error=%v", err)
 	}
 	select {
-	case <-runtime.closed:
+	case closeErr := <-closed:
+		if closeErr != nil {
+			t.Fatalf("cleanup context canceled: %v", closeErr)
+		}
 	case <-time.After(time.Second):
-		t.Fatal("runtime was not closed")
+		t.Fatal("Thread resources not closed")
 	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -296,58 +271,16 @@ func TestLeaseLossPreventsRelease(t *testing.T) {
 		t.Fatalf("released=%v renews=%d", client.released, client.renews)
 	}
 }
-
-func TestLeaseLossUsesIndependentRuntimeCloseContext(t *testing.T) {
-	client := &managerProbe{renewErr: errors.New("lease lost")}
-	closeContextErr := make(chan error, 1)
-	runtime := &runtimeProbe{
-		output:          make(chan threadpkg.TransportThreadOutputItem),
-		active:          &threadpkg.TransportActiveRun{RunID: "run-1"},
-		closed:          make(chan struct{}),
-		closeContextErr: closeContextErr,
-	}
-	host := &ThreadHost{
-		Config: Config{LeaseMS: 30, RenewInterval: time.Millisecond, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
-		Client: client,
-		ThreadFactory: func(context.Context, *dalmodel.Thread) (threadpkg.ThreadRuntime, error) {
-			return runtime, nil
-		},
-	}
-	err := host.RunThread(context.Background(), context.Background(), testClaim())
-	if err == nil {
-		t.Fatal("expected lease loss")
-	}
-	select {
-	case closeErr := <-closeContextErr:
-		if closeErr != nil {
-			t.Fatalf("runtime close context was canceled: %v", closeErr)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("runtime close was not called")
-	}
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if client.released {
-		t.Fatal("released lease after lease loss")
-	}
-}
-
 func TestBlockedRunEndIsSavedBeforeRelease(t *testing.T) {
 	client := &managerProbe{}
-	runtime := &runtimeProbe{output: make(chan threadpkg.TransportThreadOutputItem, 1)}
-	runtime.output <- threadpkg.TransportThreadOutputItem{
-		Event: &threadpkg.TransportEvent{RunID: "run-1", Type: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint-1","interrupt_id":"interrupt-1"}`)},
-		Yield: &threadpkg.TransportThreadYield{Reason: "blocked"},
+	thread := newHostThread(t, nil, nil)
+	output := make(chan deepagents.TransportThreadOutputItem, 1)
+	output <- deepagents.TransportThreadOutputItem{
+		Event: &deepagents.TransportEvent{RunID: "run-1", Type: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint-1","interrupt_id":"interrupt-1"}`)},
+		Yield: &deepagents.TransportThreadYield{Reason: "blocked"},
 	}
-	close(runtime.output)
-	host := &ThreadHost{
-		Config: Config{RenewInterval: time.Hour, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
-		Client: client,
-		ThreadFactory: func(context.Context, *dalmodel.Thread) (threadpkg.ThreadRuntime, error) {
-			return runtime, nil
-		},
-	}
-	err := host.RunThread(context.Background(), context.Background(), testClaim())
+	close(output)
+	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), testClaim(), output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,22 +290,13 @@ func TestBlockedRunEndIsSavedBeforeRelease(t *testing.T) {
 		t.Fatalf("released=%v saved=%v order=%v", client.released, client.saved, client.order)
 	}
 }
-
 func TestCloseControlConfirmsThreadClosed(t *testing.T) {
 	client := &managerProbe{}
-	runtime := &runtimeProbe{output: make(chan threadpkg.TransportThreadOutputItem)}
+	thread := newHostThread(t, nil, nil)
 	claim := testClaim()
-	claim.PendingMessages = []*dalmodel.Message{{
-		MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread, Payload: []byte(`{"reason":"done"}`),
-	}}
-	host := &ThreadHost{
-		Config: Config{RenewInterval: time.Hour, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
-		Client: client,
-		ThreadFactory: func(context.Context, *dalmodel.Thread) (threadpkg.ThreadRuntime, error) {
-			return runtime, nil
-		},
-	}
-	if err := host.RunThread(context.Background(), context.Background(), claim); err != nil {
+	claim.PendingMessages = []*dalmodel.Message{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread, Payload: []byte(`{"reason":"done"}`)}}
+	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), claim, make(chan deepagents.TransportThreadOutputItem))
+	if err != nil {
 		t.Fatal(err)
 	}
 	client.mu.Lock()
@@ -381,7 +305,6 @@ func TestCloseControlConfirmsThreadClosed(t *testing.T) {
 		t.Fatalf("closed=%v released=%v", client.closed, client.released)
 	}
 }
-
 func TestThreadHost_DrainsOutputProducedDuringClose(t *testing.T) {
 	for _, failSave := range []bool{false, true} {
 		t.Run(map[bool]string{false: "save", true: "save failure"}[failSave], func(t *testing.T) {
@@ -389,15 +312,19 @@ func TestThreadHost_DrainsOutputProducedDuringClose(t *testing.T) {
 			if failSave {
 				client.saveErr = errors.New("storage unavailable")
 			}
-			runtime := &runtimeProbe{output: make(chan threadpkg.TransportThreadOutputItem), closeOutput: true}
+			output := make(chan deepagents.TransportThreadOutputItem)
+			thread := newHostThread(t, nil, func(context.Context) error {
+				output <- deepagents.TransportThreadOutputItem{Event: &deepagents.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("final during close")}}
+				close(output)
+				return nil
+			})
 			claim := testClaim()
 			claim.PendingMessages = []*dalmodel.Message{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread}}
-			host := &ThreadHost{
-				Config:        Config{RenewInterval: time.Hour, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour, ShutdownInterruptDrainTimeout: 500 * time.Millisecond},
-				Client:        client,
-				ThreadFactory: func(context.Context, *dalmodel.Thread) (threadpkg.ThreadRuntime, error) { return runtime, nil },
-			}
-			err := host.RunThread(context.Background(), context.Background(), claim)
+			host := testHost(client)
+			host.ShutdownInterruptDrainTimeout = 500 * time.Millisecond
+			err := runTestThread(host, thread, context.Background(), context.Background(), claim, output)
+			client.mu.Lock()
+			defer client.mu.Unlock()
 			if failSave {
 				if !errors.Is(err, client.saveErr) || client.closed || client.released {
 					t.Fatalf("error=%v closed=%v released=%v", err, client.closed, client.released)
@@ -410,46 +337,50 @@ func TestThreadHost_DrainsOutputProducedDuringClose(t *testing.T) {
 		})
 	}
 }
-
-func TestThreadHost_CloseTimeoutKeepsDrainingUntilRuntimeStops(t *testing.T) {
+func TestThreadHost_CloseTimeoutKeepsDrainingUntilThreadStops(t *testing.T) {
 	client := &managerProbe{}
-	runtime := &runtimeProbe{output: make(chan threadpkg.TransportThreadOutputItem), closeOutput: true, closeGate: make(chan struct{}), closed: make(chan struct{})}
+	output := make(chan deepagents.TransportThreadOutputItem)
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	defer release()
+	closed := make(chan struct{})
+	thread := newHostThread(t, nil, func(context.Context) error {
+		<-gate
+		output <- deepagents.TransportThreadOutputItem{Event: &deepagents.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("final during close")}}
+		close(output)
+		close(closed)
+		return nil
+	})
 	claim := testClaim()
 	claim.PendingMessages = []*dalmodel.Message{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread}}
-	host := &ThreadHost{
-		Config:        Config{RenewInterval: time.Hour, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour, ShutdownInterruptDrainTimeout: 10 * time.Millisecond},
-		Client:        client,
-		ThreadFactory: func(context.Context, *dalmodel.Thread) (threadpkg.ThreadRuntime, error) { return runtime, nil },
-	}
-	err := host.RunThread(context.Background(), context.Background(), claim)
-	close(runtime.closeGate)
+	host := testHost(client)
+	host.ShutdownInterruptDrainTimeout = 10 * time.Millisecond
+	err := runTestThread(host, thread, context.Background(), context.Background(), claim, output)
+	release()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("close error=%v", err)
 	}
 	select {
-	case <-runtime.closed:
+	case <-closed:
 	case <-time.After(time.Second):
 		t.Fatal("late terminal send blocked after host timeout")
 	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if client.closed || client.released {
-		t.Fatal("released ownership before runtime stopped")
+		t.Fatal("released ownership before Thread stopped")
 	}
 }
-
 func TestThreadHost_OutputConversionFailurePreventsRelease(t *testing.T) {
 	expected := errors.New("event conversion failed")
-	runtime := &runtimeProbe{output: make(chan threadpkg.TransportThreadOutputItem, 1)}
-	runtime.output <- threadpkg.TransportThreadOutputItem{Err: expected}
-	close(runtime.output)
+	output := make(chan deepagents.TransportThreadOutputItem, 1)
+	output <- deepagents.TransportThreadOutputItem{Err: expected}
+	close(output)
 	client := &managerProbe{}
-	host := &ThreadHost{
-		Config:        Config{RenewInterval: time.Hour, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
-		Client:        client,
-		ThreadFactory: func(context.Context, *dalmodel.Thread) (threadpkg.ThreadRuntime, error) { return runtime, nil },
-	}
-	err := host.RunThread(context.Background(), context.Background(), testClaim())
+	thread := newHostThread(t, nil, nil)
+	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), testClaim(), output)
+	client.mu.Lock()
+	defer client.mu.Unlock()
 	if !errors.Is(err, expected) || client.closed || client.released {
 		t.Fatalf("error=%v closed=%v released=%v", err, client.closed, client.released)
 	}

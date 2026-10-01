@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"eino-cli/deepagent/core/graph"
 	"eino-cli/deepagent/core/internal/conversation"
 	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/core/types"
@@ -47,26 +46,27 @@ func (m *publicModel) Stream(_ context.Context, input []*schema.Message, _ ...mo
 func TestPublicEntryUsesCanonicalAgentAndContext(t *testing.T) {
 	ctx := context.Background()
 	m := &publicModel{}
-	var agent *DeepAgent
+	var agent *Run
 	seen := false
 	handler := (&callbacks.HandlerBuilder{}).OnStartFn(func(ctx context.Context, _ *callbacks.RunInfo, _ callbacks.CallbackInput) context.Context {
 		seen = true
-		if GetDeepAgent(ctx) != agent || GetWholeGraphState(ctx) != agent.GraphState() {
+		if GetRun(ctx) != agent || GetWholeGraphState(ctx) != agent.GraphState() {
 			t.Error("public context lookup lost canonical agent")
 		}
 		return ctx
 	}).Build()
 	var err error
-	agent, err = New(ctx, WithModel(m), WithDefaultCallbacks(handler))
+	agent, err = NewRun(ctx, WithModel(m), WithDefaultCallbacks(handler))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer agent.Close(ctx)
-	var canonical *graph.DeepAgent = agent
+	var canonical *Run = agent
 	if canonical != agent {
 		t.Fatal("extra agent wrapper")
 	}
-	if _, err = agent.Run(ctx, []*schema.Message{schema.UserMessage("go")}); err != nil {
+	_, err = agent.Execute(ctx, []*schema.Message{schema.UserMessage("go")})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if !seen {
@@ -104,12 +104,13 @@ func TestPublicConversationDoesNotDuplicateHistory(t *testing.T) {
 	m := &publicModel{call: true}
 	mw := &promptContractMiddleware{}
 	history := conversation.New("", nil, nil, nil)
-	a, err := New(ctx, WithConfig(&Config{Model: m, Conversation: history}), WithMiddleware(mw), WithTools(&fakeToolCounter{}))
+	a, err := NewRun(ctx, WithConfig(&Config{Model: m, Conversation: history}), WithMiddleware(mw), WithTools(&fakeToolCounter{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close(ctx)
-	if _, err = a.Run(ctx, []*schema.Message{schema.UserMessage("go")}); err != nil {
+	_, err = a.Execute(ctx, []*schema.Message{schema.UserMessage("go")})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(history.History(ctx)) != 4 {

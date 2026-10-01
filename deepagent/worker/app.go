@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/backend"
 	"fmt"
 	"strconv"
@@ -9,9 +10,9 @@ import (
 	"eino-cli/deepagent/core/checkpoint"
 	"eino-cli/deepagent/core/mcp"
 	"eino-cli/deepagent/core/modelhub"
-	"eino-cli/deepagent/core/runtime/agentthread"
+
 	"eino-cli/deepagent/manager"
-	threadpkg "eino-cli/deepagent/thread"
+
 	"eino-cli/deepagent/threadhost"
 	modelpkg "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -19,8 +20,11 @@ import (
 
 // Run owns process-wide resources and starts the canonical distributed Worker.
 func Run(ctx context.Context, cfg Config) error {
-	if err := cfg.Validate(); err != nil {
-		return err
+	{
+		err := cfg.Validate()
+		if err != nil {
+			return err
+		}
 	}
 	coordinator, err := manager.Open(ctx, cfg.Manager)
 	if err != nil {
@@ -51,14 +55,15 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("initialize checkpoints: %w", err)
 	}
-	history := agentthread.NewGormHistoryRolloutStore(sqlDB, cfg.HistoryTable,
+	history := deepagents.NewGormHistoryRolloutStore(sqlDB, cfg.HistoryTable,
 		func(idCtx context.Context, _, _ string) int64 {
 			id, _ := manager.IDNextSharedID(idCtx, redisClient)
 			return id
 		},
-		agentthread.NewRedisSeqGenerator(redisClient, "deepagent:history:seq"),
+		deepagents.NewRedisSeqGenerator(redisClient, "deepagent:history:seq"),
 	)
-	if err = history.AutoMigrate(ctx); err != nil {
+	err = history.AutoMigrate(ctx)
+	if err != nil {
 		return fmt.Errorf("migrate thread history: %w", err)
 	}
 
@@ -78,8 +83,11 @@ func Run(ctx context.Context, cfg Config) error {
 			History: history, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
 			MemoryStore: coordinator, Collaboration: coordinator,
 			HistoryRecordID: func(idCtx context.Context, _, _ string, message *schema.Message) int64 {
-				if id, parseErr := strconv.ParseInt(threadpkg.MessageID(message), 10, 64); parseErr == nil && id > 0 {
-					return id
+				{
+					id, parseErr := strconv.ParseInt(deepagents.MessageID(message), 10, 64)
+					if parseErr == nil && id > 0 {
+						return id
+					}
 				}
 				id, _ := manager.IDNextSharedID(idCtx, redisClient)
 				return id

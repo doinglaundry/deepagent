@@ -2,8 +2,6 @@ package manager
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,29 +9,17 @@ import (
 	"time"
 
 	memorypkg "eino-cli/deepagent/protocol/memory"
+
 	"github.com/google/uuid"
 	redispkg "github.com/redis/go-redis/v9"
 )
 
+// Memory methods persist shared artifacts and fence writes with renewable Redis leases.
 const memoryIndexKey = "deepagent:memory:index"
 
-func memoryKey(kind, key string) string {
-	sum := sha256.Sum256([]byte(key))
-	return "deepagent:memory:" + kind + ":" + hex.EncodeToString(sum[:])
-}
-
-func validMemoryRequest(key string, ttl time.Duration) error {
-	if strings.TrimSpace(key) == "" {
-		return errors.New("memory key is required")
-	}
-	if ttl <= 0 {
-		return errors.New("memory lease duration must be positive")
-	}
-	return nil
-}
-
 func (c *Manager) ClaimMemory(ctx context.Context, key, _ string, ttl time.Duration) (memorypkg.Lease, error) {
-	if err := validMemoryRequest(key, ttl); err != nil {
+	err := validMemoryRequest(key, ttl)
+	if err != nil {
 		return memorypkg.Lease{}, err
 	}
 	lease := memorypkg.Lease{Key: key, Token: uuid.NewString(), ExpiresAt: time.Now().Add(ttl)}
@@ -49,7 +35,8 @@ func (c *Manager) ClaimMemory(ctx context.Context, key, _ string, ttl time.Durat
 }
 
 func (c *Manager) RenewMemory(ctx context.Context, lease memorypkg.Lease, ttl time.Duration) (memorypkg.Lease, error) {
-	if err := validMemoryRequest(lease.Key, ttl); err != nil || lease.Token == "" {
+	err := validMemoryRequest(lease.Key, ttl)
+	if err != nil || lease.Token == "" {
 		if err != nil {
 			return memorypkg.Lease{}, err
 		}
@@ -106,7 +93,8 @@ func (c *Manager) GetMemory(ctx context.Context, key string) (memorypkg.Artifact
 		return memorypkg.Artifact{}, err
 	}
 	var artifact memorypkg.Artifact
-	if err = json.Unmarshal(raw, &artifact); err != nil {
+	err = json.Unmarshal(raw, &artifact)
+	if err != nil {
 		return memorypkg.Artifact{}, fmt.Errorf("decode memory artifact: %w", err)
 	}
 	return artifact, nil

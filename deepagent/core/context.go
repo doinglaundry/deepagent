@@ -5,13 +5,13 @@ import (
 	"eino-cli/deepagent/core/types"
 )
 
-// GetDeepAgent 从上下文中获取当前 DeepAgent。
-func GetDeepAgent(ctx context.Context) *DeepAgent {
-	ins := ctx.Value("deep_agent")
+// GetRun 从上下文中获取当前 Run。
+func GetRun(ctx context.Context) *Run {
+	ins := ctx.Value("run")
 	if ins == nil {
 		return nil
 	}
-	agent, ok := ins.(*DeepAgent)
+	agent, ok := ins.(*Run)
 	if !ok {
 		return nil
 	}
@@ -20,7 +20,7 @@ func GetDeepAgent(ctx context.Context) *DeepAgent {
 
 // GetWholeGraphState 获取当前 Agent 的完整图状态。
 func GetWholeGraphState(ctx context.Context) *types.GraphState {
-	a := GetDeepAgent(ctx)
+	a := GetRun(ctx)
 	if a == nil {
 		return nil
 	}
