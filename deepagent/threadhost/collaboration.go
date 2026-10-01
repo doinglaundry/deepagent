@@ -183,21 +183,23 @@ func (m *collaborationMiddleware) observe(ctx context.Context, threadID, message
 	if input == nil {
 		return collaborationWaitResult{}, false, manager.ErrMessageNotFound
 	}
-	switch input.Status {
-	case model.MessageStatusCompleted:
-		return collaborationWaitResult{State: "completed", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
-	case model.MessageStatusCanceled:
+	if input.Status == model.MessageStatusCanceled {
 		return collaborationWaitResult{State: "cancelled"}, true, nil
-	case model.MessageStatusInterrupted:
-		return collaborationWaitResult{State: "interrupted", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
 	}
-	if threads.Thread != nil {
-		switch threads.Thread.Status {
-		case model.ThreadStatusBlocked:
-			return collaborationWaitResult{State: "blocked", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
-		case model.ThreadStatusClosed:
-			return collaborationWaitResult{State: "closed", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
+	run := messages.Runs[input.TriggerRunID]
+	if run != nil {
+		switch run.Status {
+		case eventpkg.RunStatusFinished:
+			return collaborationWaitResult{State: "completed", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
+		case eventpkg.RunStatusInterrupted, eventpkg.RunStatusFailed:
+			return collaborationWaitResult{State: "interrupted", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
 		}
+	}
+	if threads.Thread != nil && threads.Thread.Status == model.ThreadStatusClosed {
+		return collaborationWaitResult{State: "closed", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
+	}
+	if (run != nil && run.Status == eventpkg.RunStatusBlocked) || (input.TriggerRunID == "" && threads.Thread != nil && threads.Thread.LastRun != nil && threads.Thread.LastRun.Status == eventpkg.RunStatusBlocked) {
+		return collaborationWaitResult{State: "blocked", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
 	}
 	return collaborationWaitResult{State: "waiting"}, false, nil
 }
@@ -218,7 +220,8 @@ func (m *collaborationMiddleware) close(ctx context.Context, input *collaboratio
 	if target == m.current.ThreadID {
 		return "", errors.New("cannot close the current thread")
 	}
-	if _, err = m.manager.Close(ctx, target, strings.TrimSpace(input.Reason)); err != nil {
+	_, err = m.manager.Close(ctx, target, strings.TrimSpace(input.Reason))
+	if err != nil {
 		return "", err
 	}
 	return collaborationJSON(map[string]any{"closed": true})

@@ -88,6 +88,9 @@ func (a *DeepAgent) newRunState(input []*schema.Message, options RunOptions) *ty
 	for i, message := range input {
 		if message != nil {
 			entry := types.Input{Message: message}
+			if i < len(options.InputIDs) {
+				entry.MessageID = options.InputIDs[i]
+			}
 			if i < len(options.InputMeta) {
 				entry.Meta = options.InputMeta[i]
 			}

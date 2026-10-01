@@ -49,8 +49,11 @@ func TestThread_SubmitAndAppendUseSameRun(t *testing.T) {
 	model := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
 	events := make(chan Event, 100)
 	thread := New("thread", &RunConfig{Agent: graph.Config{Model: model}}, events, ThreadOptions{})
-	if err := thread.Init(ctx); err != nil {
-		t.Fatal(err)
+	{
+		err := thread.Init(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	first, err := thread.SubmitInput(ctx, schema.UserMessage("first"), WithInputMeta("id-1"))
 	if err != nil {
@@ -65,8 +68,11 @@ func TestThread_SubmitAndAppendUseSameRun(t *testing.T) {
 		t.Fatal("append assigned to different run")
 	}
 	close(model.release)
-	if err := first.RunHandle.Wait(ctx); err != nil {
-		t.Fatal(err)
+	{
+		err := first.RunHandle.Wait(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if model.calls != 2 {
 		t.Fatalf("calls=%d", model.calls)
@@ -195,8 +201,11 @@ func TestRun_NoEventsAfterActiveRunBecomesNil(t *testing.T) {
 		select {
 		case event := <-events:
 			if event.Type == EventRunEnd {
-				if err := result.RunHandle.Wait(ctx); err != nil {
-					t.Fatal(err)
+				{
+					err := result.RunHandle.Wait(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
 				}
 				if thread.ActiveRun() != nil {
 					t.Fatal("still active after Wait")
@@ -229,11 +238,17 @@ func TestThread_InputAcceptedAtFinishBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := first.RunHandle.Wait(ctx); err != nil {
-			t.Fatal(err)
+		{
+			err := first.RunHandle.Wait(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
-		if err := second.RunHandle.Wait(ctx); err != nil {
-			t.Fatal(err)
+		{
+			err := second.RunHandle.Wait(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 		found := false
 		for _, input := range second.RunHandle.ConsumedInputs() {
@@ -310,15 +325,21 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	config := &RunConfig{Agent: graph.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []tools.ToolDescriptor{{Tool: tools.GetFollowUpTool()}}}}
 	events := make(chan Event, 100)
 	first := New("thread", config, events, ThreadOptions{HistoryStore: history})
-	if err := first.Init(ctx); err != nil {
-		t.Fatal(err)
+	{
+		err := first.Init(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	started, err := first.SubmitInput(ctx, schema.UserMessage("ask me"), WithInputMeta(map[string]string{"MessageID": "9007199254740993", "Sender": "user"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := started.RunHandle.Wait(ctx); err != nil {
-		t.Fatal(err)
+	{
+		err := started.RunHandle.Wait(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	var question FollowUpRequestedPayload
 	for len(events) > 0 {
@@ -331,8 +352,11 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 		t.Fatalf("missing follow-up: %+v", question)
 	}
 	restored := New("thread", config, events, ThreadOptions{HistoryStore: history})
-	if err := restored.Init(ctx); err != nil {
-		t.Fatal(err)
+	{
+		err := restored.Init(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	hookCalled := false
 	bad, badErr := restored.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{"wrong-interrupt": &tools.FollowUpInfo{UserAnswer: "a"}}, OnRunStart: func(ctx context.Context, _ RunStartRequest) context.Context { hookCalled = true; return ctx }})
@@ -347,8 +371,11 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := handle.Wait(ctx); err != nil {
-		t.Fatal(err)
+	{
+		err := handle.Wait(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	meta := handle.ConsumedInputsMeta()
 	if len(meta) != 1 {
@@ -362,8 +389,11 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 		t.Fatalf("resume restarted model or lost tool answer: calls=%d inputs=%v", m.calls, m.inputs)
 	}
 	replay := New("thread", config, events, ThreadOptions{HistoryStore: history})
-	if err := replay.Init(ctx); err != nil {
-		t.Fatal(err)
+	{
+		err := replay.Init(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	handle, err = replay.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &tools.FollowUpInfo{UserAnswer: "a"}}})
 	if err == nil {
@@ -372,5 +402,144 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	}
 	if handle != nil || replay.ActiveRun() != nil || m.calls != 2 {
 		t.Fatal("rejected resume performed work")
+	}
+}
+
+func TestThread_RedeliveryWithSameMessageIDDoesNotCallModelAgain(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	m := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
+	thread := New("thread", &RunConfig{Agent: graph.Config{Model: m}}, make(chan Event, 100), ThreadOptions{})
+	err := thread.Init(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := thread.SubmitInput(ctx, schema.UserMessage("first"), WithMessageID("same"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-m.started
+	_, err = thread.SubmitInput(ctx, schema.UserMessage("first"), WithMessageID("same"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(m.release)
+	err = first.RunHandle.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.calls != 1 || len(first.RunHandle.ConsumedInputs()) != 1 {
+		t.Fatalf("redelivery repeated model work: calls=%d inputs=%v", m.calls, first.RunHandle.ConsumedInputs())
+	}
+	late, err := thread.SubmitInput(ctx, schema.UserMessage("first"), WithMessageID("same"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = late.RunHandle.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if late.Started || late.RunID != first.RunID || m.calls != 1 {
+		t.Fatalf("late redelivery started another Run: result=%+v calls=%d", late, m.calls)
+	}
+}
+
+type resumedInputModel struct {
+	resumeModel
+	started chan struct{}
+	release chan struct{}
+}
+
+func (m *resumedInputModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return m, nil
+}
+func (m *resumedInputModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	stream, err := m.resumeModel.Stream(ctx, input, opts...)
+	if m.calls == 2 {
+		close(m.started)
+		select {
+		case <-m.release:
+		case <-ctx.Done():
+			stream.Close()
+			return nil, ctx.Err()
+		}
+	}
+	return stream, err
+}
+
+func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	m := &resumedInputModel{started: make(chan struct{}), release: make(chan struct{})}
+	checkpoints := &checkpointMemory{}
+	history := &historyMemory{}
+	cfg := &RunConfig{Agent: graph.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []tools.ToolDescriptor{{Tool: tools.GetFollowUpTool()}}}}
+	events := make(chan Event, 100)
+	first := New("thread", cfg, events, ThreadOptions{HistoryStore: history})
+	err := first.Init(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := first.SubmitInput(ctx, schema.UserMessage("ask me"), WithMessageID("original"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = started.RunHandle.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var question FollowUpRequestedPayload
+	for len(events) > 0 {
+		event := <-events
+		if event.Type == EventFollowUpRequested {
+			question = event.Payload.(FollowUpRequestedPayload)
+		}
+	}
+	restored := New("thread", cfg, events, ThreadOptions{HistoryStore: history})
+	err = restored.Init(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := restored.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &tools.FollowUpInfo{UserAnswer: "a"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-m.started
+	_, err = restored.SubmitInput(ctx, schema.UserMessage("ask me"), WithMessageID("original"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = restored.SubmitInput(ctx, schema.UserMessage("follow-up"), WithMessageID("follow-up"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(m.release)
+	err = handle.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := handle.ConsumedInputs()
+	if m.calls != 3 || len(inputs) != 2 || inputs[1].Content != "follow-up" {
+		t.Fatalf("calls=%d inputs=%v", m.calls, inputs)
+	}
+	count := 0
+	for _, message := range m.inputs[2] {
+		if message.Role == schema.User && message.Content == "ask me" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("restored input repeated in model history: %v", m.inputs[2])
+	}
+	late, err := restored.SubmitInput(ctx, schema.UserMessage("ask me"), WithMessageID("original"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = late.RunHandle.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if late.Started || late.RunID != started.RunID || m.calls != 3 {
+		t.Fatalf("completed resume lost input ownership: result=%+v calls=%d", late, m.calls)
 	}
 }

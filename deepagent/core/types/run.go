@@ -9,8 +9,30 @@ import (
 
 // Input keeps the original multimodal message and its caller-owned identity metadata.
 type Input struct {
-	Message *schema.Message
-	Meta    any
+	MessageID string
+	Message   *schema.Message
+	Meta      any
+}
+
+// AppendInputs keeps delivery identity stable across checkpoint restoration.
+// Anonymous inputs have no identity and are always appended.
+func AppendInputs(existing []Input, incoming ...Input) []Input {
+	seen := make(map[string]bool, len(existing))
+	for _, input := range existing {
+		if input.MessageID != "" {
+			seen[input.MessageID] = true
+		}
+	}
+	for _, input := range incoming {
+		if input.MessageID != "" && seen[input.MessageID] {
+			continue
+		}
+		existing = append(existing, input)
+		if input.MessageID != "" {
+			seen[input.MessageID] = true
+		}
+	}
+	return existing
 }
 
 type Phase string

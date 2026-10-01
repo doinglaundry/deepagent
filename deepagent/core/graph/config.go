@@ -64,6 +64,7 @@ func WithConfig(source *Config) Option { return func(c *Config) { *c = *source.C
 func WithModel(m model.ToolCallingChatModel) Option { return func(c *Config) { c.Model = m } }
 
 type RunOptions struct {
+	InputIDs            []string
 	InputMeta           []any
 	CheckpointID        string
 	WriteToCheckpointID string
@@ -95,6 +96,10 @@ func WithResumeData(data map[string]any) RunOptionFunc {
 			o.ResumeData[id] = value
 		}
 	}
+}
+
+func WithInputIDs(ids ...string) RunOptionFunc {
+	return func(o *RunOptions) { o.InputIDs = append([]string(nil), ids...) }
 }
 
 func WithInputMetadata(meta ...any) RunOptionFunc {

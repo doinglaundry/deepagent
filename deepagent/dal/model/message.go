@@ -19,9 +19,7 @@ const (
 	ControlMessageTypeCancelInput = "control.cancel_input"
 	ControlMessageTypeCloseThread = "control.close_thread"
 	MessageStatusPending          = "pending"
-	MessageStatusAcked            = "acked"
-	MessageStatusCompleted        = "completed"
-	MessageStatusInterrupted      = "interrupted"
+	MessageStatusAccepted         = "accepted"
 	MessageStatusCanceled         = "canceled"
 )
 
@@ -40,14 +38,14 @@ type Sender struct {
 type Message struct {
 	OutputKey    *string           `gorm:"column:output_key;size:255;uniqueIndex:idx_message_output,priority:2"`
 	MessageID    int64             `gorm:"column:message_id;primaryKey"`
-	ThreadID     int64             `gorm:"column:thread_id;uniqueIndex:idx_message_output,priority:1"`
+	ThreadID     int64             `gorm:"column:thread_id;uniqueIndex:idx_message_output,priority:1;index:idx_message_delivery,priority:1"`
 	CreatedAt    time.Time         `gorm:"column:created_at"`
 	Sender       *Sender           `gorm:"embedded"`
 	MessageType  string            `gorm:"column:message_type"`
-	Status       string            `gorm:"column:status"`
+	Status       string            `gorm:"column:status;size:32;index:idx_message_delivery,priority:2"`
 	Payload      []byte            `gorm:"column:payload;type:mediumblob"`
 	Metadata     map[string]string `gorm:"column:metadata_json;type:text;serializer:coordinator_json"`
-	TriggerRunID string            `gorm:"column:trigger_turn_id"`
+	TriggerRunID string            `gorm:"column:trigger_turn_id;size:191;index"`
 }
 
 func (Message) TableName() (name string) { return "message" }
@@ -79,10 +77,15 @@ type MessageFilter struct {
 	Desc            bool
 	Offset          int
 	Limit           int
+	PriorityFirst   bool
+	PriorityOnly    bool
 	Primary         bool
 }
 
 func (f *MessageFilter) DBFilter(query *gorm.DB) *gorm.DB {
+	if f.PriorityOnly {
+		query = query.Where("message_type = ? OR message_type LIKE ?", "resume_run", ControlMessageTypePrefix+"%")
+	}
 	if f.InputOnly {
 		query = query.Where("output_key IS NULL AND message_type NOT LIKE ?", ControlMessageTypePrefix+"%")
 	}
@@ -120,6 +123,9 @@ func (f *MessageFilter) Page(query *gorm.DB) *gorm.DB {
 	order := "message_id ASC"
 	if f.Desc {
 		order = "message_id DESC"
+	}
+	if f.PriorityFirst {
+		order = "CASE WHEN message_type = 'resume_run' OR message_type LIKE 'control.%' THEN 0 ELSE 1 END, CASE WHEN message_type = 'resume_run' OR message_type LIKE 'control.%' THEN message_id END DESC, message_id ASC"
 	}
 	if f.Offset > 0 {
 		query = query.Offset(f.Offset)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	dalmodel "eino-cli/deepagent/dal/model"
 	eventpkg "eino-cli/deepagent/protocol/event"
 	"github.com/google/uuid"
-	redispkg "github.com/redis/go-redis/v9"
 )
 
 func TestToolCallOutputRoutingFromPublicPayload(t *testing.T) {
@@ -82,26 +80,26 @@ func releaseTestManager(t *testing.T) (*Manager, *dalmodel.Thread) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	thread := &dalmodel.Thread{ThreadID: id, Status: dalmodel.ThreadStatusRunning, LeaseToken: uuid.NewString()}
+	thread := &dalmodel.Thread{ThreadID: id, Status: dalmodel.ThreadStatusOpen, LeaseToken: uuid.NewString()}
 	err = manager.threads.Create(ctx, thread)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Create omits ready_until; install the lease explicitly for this fixture.
-	thread.ReadyUntil = time.Now().Add(time.Minute)
-	_, err = manager.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{id}}, map[string]any{"ready_until": thread.ReadyUntil})
+	until := time.Now().Add(time.Minute)
+	thread.LeaseUntil = &until
+	_, err = manager.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{id}}, map[string]any{"lease_until": until})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		client.DB(ctx, true).Where("thread_id = ?", id).Delete(&dalmodel.Message{})
 		client.DB(ctx, true).Where("thread_id = ?", id).Delete(&dalmodel.Thread{})
-		_, _ = counter.Del(ctx, RedisPendingInputKey(id), RedisAcceptedInputKey(id))
+		client.DB(ctx, true).Where("thread_id = ?", id).Delete(&dalmodel.RunRecord{})
 	})
 	return manager, thread
 }
 
-func TestManager_ReleaseUsesSavedOutcome(t *testing.T) {
+func TestManager_ReleaseKeepsRunOutcomeSeparate(t *testing.T) {
 	for _, status := range []string{"finished", "blocked", "interrupted", "failed"} {
 		t.Run(status, func(t *testing.T) {
 			manager, thread := releaseTestManager(t)
@@ -122,13 +120,10 @@ func TestManager_ReleaseUsesSavedOutcome(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := dalmodel.ThreadStatusIdle
-			if status == "blocked" {
-				want = dalmodel.ThreadStatusBlocked
+			if released.Status != dalmodel.ThreadStatusOpen || released.LeaseToken != "" || released.LastRunID != "run" || released.LastRun.Status != status {
+				t.Fatalf("released=%+v outcome=%+v", released, released.LastRun)
 			}
-			if released.Status != want || released.LeaseToken != "" || released.RunID != "run" || released.RunStatus != status {
-				t.Fatalf("released=%+v want status=%q outcome=%q", released, want, status)
-			}
+
 		})
 	}
 }
@@ -164,7 +159,7 @@ func TestManager_ReleaseIgnoresOutcomeFromPreviousLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if released.Status != dalmodel.ThreadStatusReady {
+	if released.Status != dalmodel.ThreadStatusOpen {
 		t.Fatalf("old blocked outcome affected new lease: %+v", released)
 	}
 }
@@ -189,7 +184,7 @@ func TestManager_RunOutcomeRejectsStaleRunAndMissingCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rows[0].RunID != "new-run" || rows[0].RunStatus != "started" {
+	if rows[0].LastRunID != "new-run" || rows[0].LastRun.Status != "started" {
 		t.Fatalf("invalid event changed outcome: %+v", rows[0])
 	}
 }
@@ -213,103 +208,8 @@ func TestManager_ReleasePreservesClosingAndRejectsLostLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if released.Status != dalmodel.ThreadStatusClosing || released.LeaseToken != "" || released.ReadyUntil.IsZero() {
+	if released.Status != dalmodel.ThreadStatusClosing || released.LeaseToken != "" || released.LeaseUntil != nil {
 		t.Fatalf("closing lost: %+v", released)
-	}
-}
-
-type queueGate struct {
-	dalcache.RedisClient
-	operation string
-	entered   chan struct{}
-	proceed   chan struct{}
-	once      sync.Once
-}
-
-func (g *queueGate) wait(ctx context.Context, operation string) error {
-	if operation != g.operation {
-		return nil
-	}
-	g.once.Do(func() { close(g.entered) })
-	select {
-	case <-g.proceed:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-func (g *queueGate) ZRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	err := g.wait(ctx, "read")
-	if err != nil {
-		return nil, err
-	}
-	return g.RedisClient.ZRange(ctx, key, start, stop)
-}
-func (g *queueGate) ZAdd(ctx context.Context, key string, members []redispkg.Z) (int64, error) {
-	err := g.wait(ctx, "enqueue")
-	if err != nil {
-		return 0, err
-	}
-	return g.RedisClient.ZAdd(ctx, key, members)
-}
-
-func TestManager_SubmitAndReleaseShareThreadLock(t *testing.T) {
-	for _, first := range []string{"release", "submit"} {
-		t.Run(first, func(t *testing.T) {
-			manager, thread := releaseTestManager(t)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			operation := "read"
-			if first == "submit" {
-				operation = "enqueue"
-			}
-			gate := &queueGate{RedisClient: manager.redis, operation: operation, entered: make(chan struct{}), proceed: make(chan struct{})}
-			manager.redis = gate
-			submit := func() error {
-				_, err := manager.Submit(ctx, SubmitRequest{ThreadID: thread.ThreadID, Input: &InputMessage{MessageType: "input", Payload: []byte(`{}`)}})
-				return err
-			}
-			release := func() error {
-				_, err := manager.ReleaseThread(ctx, thread.ThreadID, thread.LeaseToken)
-				return err
-			}
-			firstCall, secondCall := release, submit
-			if first == "submit" {
-				firstCall, secondCall = submit, release
-			}
-			firstDone, secondDone := make(chan error, 1), make(chan error, 1)
-			go func() { firstDone <- firstCall() }()
-			select {
-			case <-gate.entered:
-			case <-ctx.Done():
-				t.Fatal("first operation did not reach queue")
-			}
-			go func() { secondDone <- secondCall() }()
-			select {
-			case err := <-secondDone:
-				close(gate.proceed)
-				t.Fatalf("second operation bypassed Thread lock: %v", err)
-			case <-time.After(50 * time.Millisecond):
-			}
-			close(gate.proceed)
-			for _, done := range []chan error{firstDone, secondDone} {
-				err := <-done
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			rows, err := manager.threads.Get(ctx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}, Primary: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if rows[0].Status != dalmodel.ThreadStatusReady || rows[0].LeaseToken != "" {
-				t.Fatalf("input not scheduled: %+v", rows[0])
-			}
-			pending, err := manager.readQueuedMessages(ctx, thread.ThreadID, false)
-			if err != nil || len(pending) != 1 {
-				t.Fatalf("pending=%v error=%v", pending, err)
-			}
-		})
 	}
 }
 
@@ -319,8 +219,8 @@ func TestManager_RunOutcomeIncludesCompactionAndStartupFailure(t *testing.T) {
 	steps := []struct{ run, status, want string }{
 		{"first", "started", "started"},
 		{"first", "finished", "finished"},
-		{"compact", "compact_started", "compact_started"},
-		{"compact", "context_compacted", "compact_started"},
+		{"compact", "compact_started", "started"},
+		{"compact", "context_compacted", "started"},
 		{"compact", "finished", "finished"},
 		{"startup-failure", "failed", "failed"},
 		{"second", "started", "started"},
@@ -341,35 +241,8 @@ func TestManager_RunOutcomeIncludesCompactionAndStartupFailure(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if rows[0].RunID != step.run || rows[0].RunStatus != step.want {
+		if rows[0].LastRunID != step.run || rows[0].LastRun.Status != step.want {
 			t.Fatalf("step=%+v outcome=%+v", step, rows[0])
 		}
-	}
-}
-
-type uncertainEnqueue struct{ dalcache.RedisClient }
-
-func (r uncertainEnqueue) ZAdd(ctx context.Context, key string, values []redispkg.Z) (int64, error) {
-	count, err := r.RedisClient.ZAdd(ctx, key, values)
-	if err != nil {
-		return count, err
-	}
-	return count, errors.New("enqueue response lost")
-}
-func TestManager_SubmitRollsBackUncertainEnqueue(t *testing.T) {
-	manager, thread := releaseTestManager(t)
-	ctx := context.Background()
-	manager.redis = uncertainEnqueue{manager.redis}
-	_, err := manager.Submit(ctx, SubmitRequest{ThreadID: thread.ThreadID, Input: &InputMessage{MessageType: "input", Payload: []byte(`{}`)}})
-	if err == nil {
-		t.Fatal("enqueue error was ignored")
-	}
-	pending, err := manager.readQueuedMessages(ctx, thread.ThreadID, false)
-	if err != nil || len(pending) != 0 {
-		t.Fatalf("rollback left queue entries: %v %v", pending, err)
-	}
-	messages, err := manager.messages.Get(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{thread.ThreadID}, Primary: true})
-	if err != nil || len(messages) != 0 {
-		t.Fatalf("rollback left messages: %v %v", messages, err)
 	}
 }

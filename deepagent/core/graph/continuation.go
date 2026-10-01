@@ -38,7 +38,12 @@ func (a *DeepAgent) continueRun(ctx context.Context, s *types.RunState) (*types.
 			return nil, fmt.Errorf("drain input returned continuation without input")
 		}
 		if len(inputs) > 0 {
-			s.Consumed = append(s.Consumed, inputs...)
+			before := len(s.Consumed)
+			s.Consumed = types.AppendInputs(s.Consumed, inputs...)
+			if len(s.Consumed) == before {
+				s.Phase = types.PhaseCompleted
+				return s, nil
+			}
 			s.Calls = nil
 			s.Phase = types.PhasePreparing
 			return s, nil

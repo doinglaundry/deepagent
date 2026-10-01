@@ -9,17 +9,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"strconv"
 	"time"
 
+	inputpkg "eino-cli/deepagent/protocol/input"
 	"github.com/google/uuid"
-	redispkg "github.com/redis/go-redis/v9"
 )
 
 type Manager struct {
 	threads                 *daldb.ThreadDAO
 	messages                *daldb.MessageDAO
+	runs                    *daldb.RunDAO
 	redis                   dalcache.RedisClient
 	db                      *daldb.MySQLClient
 	stream                  *StreamStreamOut
@@ -30,20 +30,15 @@ func (c *Manager) Submit(ctx context.Context, req SubmitRequest) (result ThreadM
 	if req.ThreadID != 0 && req.Input == nil {
 		return result, errors.New("input is required")
 	}
-	var queued *dalmodel.Message
 	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
 		var thread *dalmodel.Thread
 		if req.ThreadID != 0 {
-			// Submit and ReleaseThread decide scheduling under the same row lock.
-			rows, err := c.threads.Get(txCtx, &dalmodel.ThreadFilter{IDs: []int64{req.ThreadID}, Primary: true, ForUpdate: true})
+			var err error
+			thread, err = c.lockThread(txCtx, req.ThreadID)
 			if err != nil {
 				return err
 			}
-			if len(rows) == 0 {
-				return ErrThreadNotFound
-			}
-			thread = rows[0]
-			if thread.Status == dalmodel.ThreadStatusClosing || thread.Status == dalmodel.ThreadStatusClosed {
+			if thread.Status != dalmodel.ThreadStatusOpen {
 				return ErrThreadClosed
 			}
 		} else {
@@ -61,123 +56,66 @@ func (c *Manager) Submit(ctx context.Context, req SubmitRequest) (result ThreadM
 		if req.Input == nil {
 			return nil
 		}
-
-		id, err := IDNextSharedID(txCtx, c.redis)
+		message, err := c.createInput(txCtx, thread.ThreadID, req.Input)
 		if err != nil {
 			return err
 		}
-		metadata := maps.Clone(req.Input.Metadata)
-		if metadata == nil {
-			metadata = map[string]string{}
-		}
-		message := &dalmodel.Message{
-			MessageID: id, ThreadID: thread.ThreadID,
-			Sender:      &dalmodel.Sender{Type: dalmodel.RecordNormalizeSenderType(req.Input.SenderType), ID: req.Input.SenderID},
-			MessageType: req.Input.MessageType, Status: dalmodel.MessageStatusPending,
-			Payload: append([]byte(nil), req.Input.Payload...), Metadata: metadata, CreatedAt: time.Now(),
-		}
-		err = c.messages.Create(txCtx, message)
-		if err != nil {
-			return err
-		}
-		queued = message
-		_, err = c.redis.ZAdd(txCtx, RedisPendingInputKey(thread.ThreadID), []redispkg.Z{{Score: float64(id), Member: strconv.FormatInt(id, 10)}})
-		if err != nil {
-			return err
-		}
+		thread.PendingInputs++
 		result.Message = message
-
-		now := time.Now()
-		switch thread.Status {
-		case dalmodel.ThreadStatusIdle, dalmodel.ThreadStatusReady:
-			if thread.Status == dalmodel.ThreadStatusIdle || thread.ReadyUntil.After(now) {
-				_, err = c.threads.Update(txCtx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{
-					"status": dalmodel.ThreadStatusReady, "ready_until": now,
-				})
-				if err != nil {
-					return err
-				}
-				thread.Status = dalmodel.ThreadStatusReady
-				thread.ReadyUntil = now
-			}
-		case dalmodel.ThreadStatusRunning, dalmodel.ThreadStatusBlocked:
-		default:
-			return fmt.Errorf("wake thread %d conflict: unexpected status %q", thread.ThreadID, thread.Status)
-		}
 		return nil
 	})
 	if err != nil {
-		if queued != nil {
-			// Redis is outside the SQL transaction; remove this new entry on rollback.
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			_, cleanupErr := c.redis.ZRem(cleanupCtx, RedisPendingInputKey(queued.ThreadID), strconv.FormatInt(queued.MessageID, 10))
-			err = errors.Join(err, cleanupErr)
-		}
 		return ThreadMessageResult{}, err
 	}
 	return result, nil
 }
 
-// Acquire 拉取当前线程的新输入，或扫描领取一个可运行线程。
+// Acquire fetches input for an owned Thread, or leases a Thread with durable work.
 func (c *Manager) Acquire(ctx context.Context, req AcquireRequest) (result AcquireResult, err error) {
 	now := time.Now()
-
-	if req.ThreadID != 0 {
-		if req.LeaseToken == "" {
-			return AcquireResult{}, ErrLeaseMismatch
-		}
-		rows, err := c.threads.Get(ctx, &dalmodel.ThreadFilter{IDs: []int64{req.ThreadID}, Primary: true})
-		if err != nil {
-			return AcquireResult{}, err
-		}
-		if len(rows) == 0 {
-			return AcquireResult{}, daldb.MySQLErrRecordNotFound
-		}
-		thread := rows[0]
-		if thread.LeaseToken != req.LeaseToken || !thread.ReadyUntil.After(now) ||
-			(thread.Status != dalmodel.ThreadStatusRunning && thread.Status != dalmodel.ThreadStatusClosing) {
-			return AcquireResult{}, ErrLeaseMismatch
-		}
-		messages, err := c.readQueuedMessages(ctx, req.ThreadID, false)
-		return AcquireResult{PendingMessages: messages, ServerTimeMS: now.UnixMilli()}, err
-	}
-
-	err = c.db.Transaction(ctx, func(txCtx context.Context) (txErr error) {
-		rows, err := c.threads.Get(txCtx, &dalmodel.ThreadFilter{RunnableUntil: &now, Primary: true, ForUpdate: true, Limit: 1})
-		if err != nil {
-			return err
-		}
-		if len(rows) == 0 {
-			return ErrThreadNotRunnable
-		}
-
-		thread := rows[0]
-		lease := &Lease{ThreadID: thread.ThreadID, LeaseToken: uuid.NewString(), LeaseUntil: now.Add(normalizeLeaseDuration(req.LeaseMS))}
-		values := map[string]any{"lease_token": lease.LeaseToken, "ready_until": lease.LeaseUntil}
-		if thread.Status == dalmodel.ThreadStatusReady {
-			values["status"] = dalmodel.ThreadStatusRunning
-		}
-		if _, err = c.threads.Update(txCtx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, values); err != nil {
-			return err
-		}
-		if thread.Status == dalmodel.ThreadStatusRunning {
-			if err = c.recoverAcceptedInputs(txCtx, thread); err != nil {
+	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
+		var thread *dalmodel.Thread
+		if req.ThreadID != 0 {
+			var err error
+			thread, err = c.lockThread(txCtx, req.ThreadID)
+			if err != nil {
 				return err
 			}
+			now = time.Now()
+			if !thread.OwnsLease(req.LeaseToken, now) {
+				return ErrLeaseMismatch
+			}
+		} else {
+			rows, err := c.threads.Get(txCtx, &dalmodel.ThreadFilter{RunnableUntil: &now, Primary: true, ForUpdate: true, Limit: 1})
+			if err != nil {
+				return err
+			}
+			if len(rows) == 0 {
+				return ErrThreadNotRunnable
+			}
+			thread = rows[0]
+			err = c.recoverAcceptedInputs(txCtx, thread)
+			if err != nil {
+				return err
+			}
+			now = time.Now()
+			until := now.Add(normalizeLeaseDuration(req.LeaseMS))
+			token := uuid.NewString()
+			_, err = c.threads.Update(txCtx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_token": token, "lease_until": until})
+			if err != nil {
+				return err
+			}
+			thread.LeaseToken, thread.LeaseUntil = token, &until
+			result.Thread = thread
+			result.Lease = &Lease{ThreadID: thread.ThreadID, LeaseToken: token, LeaseUntil: until}
 		}
-		messages, err := c.readQueuedMessages(txCtx, thread.ThreadID, false)
-		if err != nil {
-			return err
-		}
-
-		thread.LeaseToken = lease.LeaseToken
-		thread.ReadyUntil = lease.LeaseUntil
-		if thread.Status == dalmodel.ThreadStatusReady {
-			thread.Status = dalmodel.ThreadStatusRunning
-		}
-		result = AcquireResult{Thread: thread, Lease: lease, PendingMessages: messages, ServerTimeMS: now.UnixMilli()}
-		return nil
+		blocked := thread.LastRun != nil && thread.LastRun.Status == eventpkg.RunStatusBlocked
+		messages, err := c.messages.Get(txCtx, &dalmodel.MessageFilter{
+			ThreadIDs: []int64{thread.ThreadID}, Statuses: []string{dalmodel.MessageStatusPending},
+			Primary: true, PriorityFirst: true, PriorityOnly: blocked, Limit: queuedMessageLimit,
+		})
+		result.PendingMessages, result.ServerTimeMS = messages, now.UnixMilli()
+		return err
 	})
 	if errors.Is(err, ErrThreadNotRunnable) {
 		return AcquireResult{}, nil
@@ -186,29 +124,20 @@ func (c *Manager) Acquire(ctx context.Context, req AcquireRequest) (result Acqui
 }
 
 func (c *Manager) Renew(ctx context.Context, threadID int64, leaseToken string, leaseMS int64) (lease *Lease, err error) {
-	now := time.Now()
-	lease = &Lease{
-		ThreadID:   threadID,
-		LeaseToken: leaseToken,
-		LeaseUntil: now.Add(normalizeLeaseDuration(leaseMS)),
-	}
-	changed, err := c.threads.Update(ctx, &dalmodel.ThreadFilter{
-
-		IDs:          []int64{threadID},
-		Statuses:     []string{dalmodel.ThreadStatusRunning, dalmodel.ThreadStatusClosing},
-		LeaseTokens:  []string{leaseToken},
-		LeaseValidAt: &now,
-	},
-		map[string]any{
-			"ready_until": lease.LeaseUntil,
-		})
-	if err != nil {
-		return nil, err
-	}
-	if !changed {
-		return nil, ErrLeaseMismatch
-	}
-	return lease, nil
+	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
+		thread, err := c.lockThread(txCtx, threadID)
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		if !thread.OwnsLease(leaseToken, now) {
+			return ErrLeaseMismatch
+		}
+		lease = &Lease{ThreadID: threadID, LeaseToken: leaseToken, LeaseUntil: now.Add(normalizeLeaseDuration(leaseMS))}
+		_, err = c.threads.Update(txCtx, &dalmodel.ThreadFilter{IDs: []int64{threadID}}, map[string]any{"lease_until": lease.LeaseUntil})
+		return err
+	})
+	return lease, err
 }
 
 // ListThreads 查询 Thread；传 ThreadID 查单个，传 SessionID 查列表。
@@ -275,7 +204,24 @@ func (c *Manager) ListMessages(ctx context.Context, req ListMessagesRequest) (re
 		return result, err
 	}
 	result.Messages, err = c.messages.Get(ctx, filter)
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	ids := make([]string, 0, len(result.Messages))
+	for _, message := range result.Messages {
+		ids = append(ids, message.TriggerRunID)
+	}
+	// A session query may span multiple Threads; RunIDs are globally unique.
+	var rows []*dalmodel.RunRecord
+	err = c.db.DB(ctx, true).Where("run_id IN ?", ids).Find(&rows).Error
+	if err != nil {
+		return result, err
+	}
+	result.Runs = make(map[string]*dalmodel.RunRecord, len(rows))
+	for _, run := range rows {
+		result.Runs[run.RunID] = run
+	}
+	return result, nil
 }
 
 func (c *Manager) findMessage(ctx context.Context, threadID, messageID int64) (message *dalmodel.Message, err error) {
@@ -292,559 +238,433 @@ func (c *Manager) findMessage(ctx context.Context, threadID, messageID int64) (m
 	return messages[0], nil
 }
 
-func (c *Manager) recoverAcceptedInputs(ctx context.Context, thread *dalmodel.Thread) (err error) {
-	accepted, err := c.readQueuedMessages(ctx, thread.ThreadID, true)
-	if err != nil || len(accepted) == 0 {
+// Recovery requeues unfinished delivery; blocked Runs wait for their current answer.
+func (c *Manager) recoverAcceptedInputs(ctx context.Context, thread *dalmodel.Thread) error {
+	messages, err := c.messages.Get(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{thread.ThreadID}, Statuses: []string{dalmodel.MessageStatusPending, dalmodel.MessageStatusAccepted}, Primary: true})
+	if err != nil {
 		return err
 	}
-
-	acceptedKey := RedisAcceptedInputKey(thread.ThreadID)
-	pendingKey := RedisPendingInputKey(thread.ThreadID)
-	for _, message := range accepted {
-		member := strconv.FormatInt(message.MessageID, 10)
-		if message.IsControl() ||
-			message.Status == dalmodel.MessageStatusCanceled ||
-			message.Status == dalmodel.MessageStatusCompleted ||
-			message.Status == dalmodel.MessageStatusInterrupted {
-			_, err = c.redis.ZRem(ctx, acceptedKey, member)
-			if err != nil {
-				return err
-			}
+	runIDs := make([]string, 0, len(messages))
+	for _, message := range messages {
+		runIDs = append(runIDs, message.TriggerRunID)
+	}
+	runs, err := c.runs.Get(ctx, thread.ThreadID, runIDs)
+	if err != nil {
+		return err
+	}
+	// Only the answer for the latest interrupt is recoverable. Older answers
+	// remain accepted history when the same Run blocks again.
+	resumeRuns := make(map[string]bool)
+	for _, message := range messages {
+		run := runs[message.TriggerRunID]
+		if message.MessageType != inputpkg.MessageTypeResume || run == nil || run.Ended() {
 			continue
 		}
-
-		_, err = c.messages.Update(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{thread.ThreadID}, IDs: []int64{message.MessageID}}, map[string]any{"status": dalmodel.MessageStatusPending})
+		var answer inputpkg.ResumeRunPayload
+		err = json.Unmarshal(message.Payload, &answer)
 		if err != nil {
 			return err
 		}
-		_, err = c.redis.ZAdd(ctx, pendingKey, []redispkg.Z{{Score: float64(message.MessageID), Member: member}})
-		if err != nil {
-			return err
-		}
-		_, err = c.redis.ZRem(ctx, acceptedKey, member)
-		if err != nil {
-			return err
+		if answer.InterruptID == run.InterruptID {
+			resumeRuns[run.RunID] = true
 		}
 	}
-	return nil
-}
-
-func (c *Manager) Resume(ctx context.Context, threadID int64, resumeMessageInput *InputMessage) (result ThreadMessageResult, err error) {
-	rows, err := c.threads.Get(ctx, &dalmodel.ThreadFilter{IDs: []int64{threadID}, Primary: true})
-	if err != nil {
-		return result, err
-	}
-	if len(rows) == 0 {
-		return result, ErrThreadNotFound
-	}
-	thread := rows[0]
-	if thread.Status != dalmodel.ThreadStatusBlocked {
-		return result, ErrThreadNotBlocked
-	}
-
-	now := time.Now()
-	metadata := maps.Clone(thread.Metadata)
-	if metadata == nil {
-		metadata = map[string]string{}
-	}
-
-	var resumeMessage *dalmodel.Message
-	if resumeMessageInput != nil {
-		messageID, err := IDNextSharedID(ctx, c.redis)
-		if err != nil {
-			return result, err
+	for _, message := range messages {
+		if message.Status != dalmodel.MessageStatusAccepted || message.IsControl() {
+			continue
 		}
-		messageMetadata := maps.Clone(resumeMessageInput.Metadata)
-		if messageMetadata == nil {
-			messageMetadata = map[string]string{}
+		run := runs[message.TriggerRunID]
+		if run.Ended() {
+			continue
 		}
-		resumeMessage = &dalmodel.Message{
-			MessageID:   messageID,
-			ThreadID:    threadID,
-			Sender:      &dalmodel.Sender{Type: dalmodel.RecordNormalizeSenderType(resumeMessageInput.SenderType), ID: resumeMessageInput.SenderID},
-			MessageType: resumeMessageInput.MessageType,
-			Status:      dalmodel.MessageStatusPending,
-			Payload:     []byte(string(resumeMessageInput.Payload)),
-			Metadata:    messageMetadata,
-			CreatedAt:   now,
-		}
-		if err = c.messages.Create(ctx, resumeMessage); err != nil {
-			return result, err
-		}
-		if c.redis == nil {
-			return result, ErrRedisUnavailable
-		}
-		member := strconv.FormatInt(resumeMessage.MessageID, 10)
-		_, err = c.redis.ZAdd(ctx, RedisPendingInputKey(resumeMessage.ThreadID), []redispkg.Z{{Score: -float64(resumeMessage.MessageID), Member: member}})
-		if err != nil {
-			return result, err
-		}
-	}
-
-	status := dalmodel.ThreadStatusReady
-	var readyAt any = now
-	if resumeMessage == nil {
-		pending, err := c.readQueuedMessages(ctx, threadID, false)
-		if err != nil {
-			return result, err
-		}
-		if len(pending) == 0 {
-			status = dalmodel.ThreadStatusIdle
-			readyAt = nil
-		}
-	}
-
-	changed, err := c.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{threadID}, Statuses: []string{dalmodel.ThreadStatusBlocked}}, map[string]any{
-		"status": status, "ready_until": readyAt, "metadata_json": metadata, "lease_token": "",
-	})
-	if err != nil {
-		if resumeMessage != nil && c.redis != nil {
-			_, _ = c.redis.ZRem(ctx, RedisPendingInputKey(threadID), strconv.FormatInt(resumeMessage.MessageID, 10))
-		}
-		return result, err
-	}
-	if !changed {
-		return result, ErrThreadNotBlocked
-	}
-
-	rows, err = c.threads.Get(ctx, &dalmodel.ThreadFilter{IDs: []int64{threadID}, Primary: true})
-	if err != nil {
-		return result, err
-	}
-	if len(rows) == 0 {
-		return result, daldb.MySQLErrRecordNotFound
-	}
-	return ThreadMessageResult{Thread: rows[0], Message: resumeMessage}, nil
-}
-
-func (c *Manager) ReleaseThread(ctx context.Context, threadID int64, leaseToken string) (thread *dalmodel.Thread, err error) {
-	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
-		rows, err := c.threads.Get(txCtx, &dalmodel.ThreadFilter{IDs: []int64{threadID}, Primary: true, ForUpdate: true})
-		if err != nil {
-			return err
-		}
-		if len(rows) == 0 {
-			return ErrThreadNotFound
-		}
-		thread = rows[0]
-		if leaseToken == "" || thread.LeaseToken != leaseToken || !thread.ReadyUntil.After(time.Now()) {
-			return ErrLeaseMismatch
-		}
-
-		nextStatus := thread.Status
-		switch thread.Status {
-		case dalmodel.ThreadStatusClosing:
-			// A close request takes precedence over the execution outcome.
-		case dalmodel.ThreadStatusRunning:
-			nextStatus = dalmodel.ThreadStatusBlocked
-			if thread.RunLeaseToken != leaseToken || thread.RunStatus != eventpkg.RunStatusBlocked {
-				pending, err := c.readQueuedMessages(txCtx, threadID, false)
+		if resumeRuns[message.TriggerRunID] {
+			if message.MessageType == inputpkg.MessageTypeResume {
+				var answer inputpkg.ResumeRunPayload
+				err = json.Unmarshal(message.Payload, &answer)
 				if err != nil {
 					return err
 				}
-				nextStatus = dalmodel.ThreadStatusIdle
-				if len(pending) > 0 {
-					nextStatus = dalmodel.ThreadStatusReady
+				if answer.InterruptID != run.InterruptID {
+					continue
 				}
 			}
-		default:
-			return ErrLeaseMismatch
+		} else if run != nil && run.Status == eventpkg.RunStatusBlocked {
+			continue
 		}
-
-		now := time.Now()
-		var readyUntil any
-		if nextStatus == dalmodel.ThreadStatusReady || nextStatus == dalmodel.ThreadStatusClosing {
-			readyUntil = now
+		runID := ""
+		if message.MessageType == inputpkg.MessageTypeResume {
+			runID = message.TriggerRunID
 		}
-		changed, err := c.threads.Update(txCtx, &dalmodel.ThreadFilter{
-			IDs: []int64{threadID}, LeaseTokens: []string{leaseToken}, LeaseValidAt: &now,
-		}, map[string]any{"status": nextStatus, "ready_until": readyUntil, "lease_token": ""})
+		_, err = c.messages.Update(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{thread.ThreadID}, IDs: []int64{message.MessageID}}, map[string]any{"status": dalmodel.MessageStatusPending, "trigger_turn_id": runID})
 		if err != nil {
 			return err
 		}
-		if !changed {
-			return ErrLeaseMismatch
+	}
+	// Resume restores the existing checkpoint. Ordinary crashed execution is
+	// redelivered into a new Run, with the old outcome retained for history.
+	resumed := make([]string, 0, len(resumeRuns))
+	for id := range resumeRuns {
+		resumed = append(resumed, id)
+	}
+	err = c.runs.InterruptStarted(ctx, thread.ThreadID, resumed)
+	if err != nil {
+		return err
+	}
+	if thread.LastRun != nil && thread.LastRun.Status == eventpkg.RunStatusStarted && !resumeRuns[thread.LastRunID] {
+		thread.LastRun.Status = eventpkg.RunStatusInterrupted
+	}
+
+	return nil
+}
+
+func (c *Manager) Resume(ctx context.Context, threadID int64, input *InputMessage) (result ThreadMessageResult, err error) {
+	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
+		thread, err := c.lockThread(txCtx, threadID)
+		if err != nil {
+			return err
 		}
-		thread.Status = nextStatus
-		thread.LeaseToken = ""
-		thread.ReadyUntil = time.Time{}
-		if readyUntil != nil {
-			thread.ReadyUntil = now
+		if thread.Status != dalmodel.ThreadStatusOpen {
+			return ErrThreadClosed
 		}
+		run := thread.LastRun
+		if run == nil || run.Status != eventpkg.RunStatusBlocked {
+			return ErrThreadNotBlocked
+		}
+		result.Thread = thread
+		if input == nil {
+			run.Status = eventpkg.RunStatusInterrupted
+			return c.runs.Save(txCtx, run)
+		}
+		var resume inputpkg.ResumeRunPayload
+		err = json.Unmarshal(input.Payload, &resume)
+		if err != nil {
+			return err
+		}
+		err = resume.Validate()
+		if err != nil {
+			return err
+		}
+		if input.MessageType != inputpkg.MessageTypeResume || resume.RunID != run.RunID || resume.CheckpointID != run.CheckpointID || resume.InterruptID != run.InterruptID {
+			return ErrThreadNotBlocked
+		}
+		// Queue the answer during cleanup; never clear a live Worker's lease.
+		var count int64
+		err = c.db.DB(txCtx, true).Model(&dalmodel.Message{}).Where("thread_id = ? AND message_type = ? AND status = ?", threadID, inputpkg.MessageTypeResume, dalmodel.MessageStatusPending).Count(&count).Error
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			return errors.New("resume is already queued")
+		}
+		message, err := c.createInput(txCtx, threadID, input)
+		if err != nil {
+			return err
+		}
+		thread.PendingInputs++
+		result.Message = message
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return ThreadMessageResult{}, err
 	}
-	return thread, nil
+	return result, nil
 }
 
-func (c *Manager) AckInput(ctx context.Context, threadID int64, leaseToken, runID string, acceptedMessageIDs []int64) (delivered []*dalmodel.Message, err error) {
-	if c.redis == nil {
-		return nil, ErrRedisUnavailable
-	}
-	if len(acceptedMessageIDs) == 0 {
-		return nil, nil
-	}
-
-	err = c.db.Transaction(ctx, func(txCtx context.Context) (txErr error) {
-		rows, txErr := c.threads.Get(txCtx, &dalmodel.ThreadFilter{IDs: []int64{threadID}, Primary: true, ForUpdate: true})
-		if txErr != nil {
-			return txErr
+// ReleaseThread relinquishes ownership. It does not change lifecycle or execution.
+func (c *Manager) ReleaseThread(ctx context.Context, threadID int64, leaseToken string) (thread *dalmodel.Thread, err error) {
+	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
+		var err error
+		thread, err = c.lockThread(txCtx, threadID)
+		if err != nil {
+			return err
 		}
-		if len(rows) == 0 {
-			return ErrThreadNotFound
-		}
-		thread := rows[0]
-		if thread.LeaseToken != leaseToken || !thread.ReadyUntil.After(time.Now()) || (thread.Status != dalmodel.ThreadStatusRunning && thread.Status != dalmodel.ThreadStatusClosing) {
+		if !thread.OwnsLease(leaseToken, time.Now()) {
 			return ErrLeaseMismatch
 		}
-
-		messages, txErr := c.messages.Get(txCtx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: acceptedMessageIDs, Primary: true})
-		if txErr != nil {
-			return txErr
+		_, err = c.threads.Update(txCtx, &dalmodel.ThreadFilter{IDs: []int64{threadID}}, map[string]any{"lease_token": "", "lease_until": nil})
+		if err != nil {
+			return err
 		}
-		byID := make(map[int64]*dalmodel.Message, len(messages))
-		for _, message := range messages {
-			byID[message.MessageID] = message
-		}
+		thread.LeaseToken, thread.LeaseUntil = "", nil
+		return nil
+	})
+	return thread, err
+}
 
-		members := make([]any, 0, len(acceptedMessageIDs))
-		accepted := make([]redispkg.Z, 0, len(acceptedMessageIDs))
-		for _, id := range acceptedMessageIDs {
-			message := byID[id]
-			if message == nil {
-				return fmt.Errorf("%w: message_id=%d", InputErrMessageNotFound, id)
+func (c *Manager) AckInput(ctx context.Context, threadID int64, leaseToken, runID string, ids []int64) (delivered []*dalmodel.Message, err error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
+		thread, err := c.lockThread(txCtx, threadID)
+		if err != nil {
+			return err
+		}
+		if !thread.OwnsLease(leaseToken, time.Now()) {
+			return ErrLeaseMismatch
+		}
+		messages, err := c.messages.Get(txCtx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: ids, Primary: true})
+		if err != nil {
+			return err
+		}
+		if len(messages) != len(ids) {
+			return InputErrMessageNotFound
+		}
+		if runID != "" {
+			err = c.ensureRun(txCtx, thread, runID)
+			if err != nil {
+				return err
 			}
-			if message.Status == dalmodel.MessageStatusPending && runID != "" {
+		}
+		for _, message := range messages {
+			if message.Status == dalmodel.MessageStatusCanceled {
+				continue
+			}
+			if message.OutputKey != nil {
+				return InputErrMessageNotFound
+			}
+			if message.Status == dalmodel.MessageStatusAccepted && message.TriggerRunID != "" && message.TriggerRunID != runID {
+				return errors.New("input belongs to another Run")
+			}
+			message.Status = dalmodel.MessageStatusAccepted
+			if runID != "" {
 				message.TriggerRunID = runID
 			}
+			_, err = c.messages.Update(txCtx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: []int64{message.MessageID}}, map[string]any{"status": message.Status, "trigger_turn_id": message.TriggerRunID})
+			if err != nil {
+				return err
+			}
 			delivered = append(delivered, message)
-			member := strconv.FormatInt(id, 10)
-			members = append(members, member)
-			accepted = append(accepted, redispkg.Z{Score: float64(id), Member: member})
 		}
-
-		values := map[string]any{"status": dalmodel.MessageStatusAcked}
-		if runID != "" {
-			values["trigger_turn_id"] = runID
-		}
-		_, txErr = c.messages.Update(txCtx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: acceptedMessageIDs, Statuses: []string{dalmodel.MessageStatusPending, dalmodel.MessageStatusAcked}}, values)
-		if txErr != nil {
-			return txErr
-		}
-		if _, txErr = c.redis.ZAdd(txCtx, RedisAcceptedInputKey(threadID), accepted); txErr != nil {
-			return txErr
-		}
-		_, txErr = c.redis.ZRem(txCtx, RedisPendingInputKey(threadID), members...)
-		return txErr
+		return nil
 	})
 	return delivered, err
 }
 
-func (c *Manager) cancelQueuedInputsUntil(ctx context.Context, threadID int64, cancelUntilMessageID int64) (err error) {
-	if c.redis == nil {
-		return ErrRedisUnavailable
-	}
-	members, err := c.redis.ZRange(ctx, RedisPendingInputKey(threadID), 0, -1)
-	if err != nil || len(members) == 0 {
-		return err
-	}
-
-	ids := make([]int64, 0, len(members))
-	for _, member := range members {
-		id, parseErr := strconv.ParseInt(member, 10, 64)
-		if parseErr != nil {
-			return parseErr
-		}
-		if id <= cancelUntilMessageID {
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) == 0 {
-		return nil
-	}
-
-	messages, err := c.messages.Get(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: ids, Statuses: []string{dalmodel.MessageStatusPending}, Primary: true})
+func (c *Manager) cancelQueuedInputsUntil(ctx context.Context, threadID int64, cutoff int64) error {
+	messages, err := c.messages.Get(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, InputOnly: true, Statuses: []string{dalmodel.MessageStatusPending}, Primary: true})
 	if err != nil {
 		return err
 	}
-	ids = ids[:0]
-	membersToRemove := make([]any, 0, len(messages))
+	ids := make([]int64, 0, len(messages))
 	for _, message := range messages {
-		if !message.IsControl() {
+		if message.MessageID <= cutoff {
 			ids = append(ids, message.MessageID)
-			membersToRemove = append(membersToRemove, strconv.FormatInt(message.MessageID, 10))
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	if _, err = c.messages.Update(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: ids, Statuses: []string{dalmodel.MessageStatusPending}}, map[string]any{"status": dalmodel.MessageStatusCanceled}); err != nil {
-		return err
-	}
-	_, err = c.redis.ZRem(ctx, RedisPendingInputKey(threadID), membersToRemove...)
-	return err
-}
-
-func (c *Manager) enqueueControlMessage(ctx context.Context, message *dalmodel.Message) (err error) {
-	if c.redis == nil {
-		return ErrRedisUnavailable
-	}
-	if err = c.messages.Create(ctx, message); err != nil {
-		return err
-	}
-	member := strconv.FormatInt(message.MessageID, 10)
-	_, err = c.redis.ZAdd(ctx, RedisPendingInputKey(message.ThreadID), []redispkg.Z{{Score: -float64(message.MessageID), Member: member}})
+	_, err = c.messages.Update(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: ids}, map[string]any{"status": dalmodel.MessageStatusCanceled})
 	return err
 }
 
 func (c *Manager) Cancel(ctx context.Context, threadID int64, reason string, cutoffMessageID *int64) (result *ThreadMessageResult, err error) {
-	rows, err := c.threads.Get(ctx, &dalmodel.ThreadFilter{IDs: []int64{threadID}, Primary: true})
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, ErrThreadNotFound
-	}
-	thread := rows[0]
-	if thread.Status == dalmodel.ThreadStatusClosing || thread.Status == dalmodel.ThreadStatusClosed {
-		return nil, ErrThreadClosed
-	}
-	if thread.Status == dalmodel.ThreadStatusBlocked {
-		return nil, ErrThreadBlocked
-	}
-	if reason == "" {
-		reason = DefaultCancelInputReason
-	}
-
-	var cancelUntilMessageID int64
-	if cutoffMessageID != nil {
-		cancelUntilMessageID = *cutoffMessageID
-		if cancelUntilMessageID <= 0 {
-			return nil, fmt.Errorf("%w: cutoff_message_id must be positive", ErrInvalidCancel)
-		}
-		message, err := c.findMessage(ctx, threadID, cancelUntilMessageID)
+	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
+		ctx = txCtx
+		thread, err := c.lockThread(ctx, threadID)
 		if err != nil {
-			return nil, fmt.Errorf("%w: cutoff_message_id=%d", ErrInvalidCancel, cancelUntilMessageID)
+			return err
 		}
-		if message.IsControl() {
-			return nil, fmt.Errorf("%w: cutoff_message_id=%d is control message", ErrInvalidCancel, cancelUntilMessageID)
+		if thread.Status == dalmodel.ThreadStatusClosing || thread.Status == dalmodel.ThreadStatusClosed {
+			return ErrThreadClosed
 		}
-	} else {
-		messages, err := c.messages.Get(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, InputOnly: true, Primary: true, Desc: true, Limit: 1})
-		if err != nil {
-			return nil, err
+		if thread.LastRun != nil && thread.LastRun.Status == eventpkg.RunStatusBlocked {
+			return ErrThreadBlocked
 		}
-		if len(messages) > 0 {
-			cancelUntilMessageID = messages[0].MessageID
+		if reason == "" {
+			reason = DefaultCancelInputReason
 		}
-	}
-	if cancelUntilMessageID == 0 {
-		return &ThreadMessageResult{Thread: thread}, nil
-	}
-	if err = c.cancelQueuedInputsUntil(ctx, threadID, cancelUntilMessageID); err != nil {
-		return nil, err
-	}
 
-	messageID, err := IDNextSharedID(ctx, c.redis)
-	if err != nil {
-		return nil, err
-	}
-	requestID := strconv.FormatInt(messageID, 10)
-	metadata := map[string]string{"control_type": dalmodel.ControlTypeCancelInput, "request_id": requestID, "cutoff_message_id": strconv.FormatInt(cancelUntilMessageID, 10)}
-	if reason != "" {
-		metadata["reason"] = reason
-	}
-	payload, err := json.Marshal(CancelInputControlPayload{ControlType: dalmodel.ControlTypeCancelInput, RequestID: requestID, ThreadID: threadID, CutoffMessageID: cancelUntilMessageID, Reason: reason})
-	if err != nil {
-		return nil, err
-	}
-	controlMessage := &dalmodel.Message{
-		MessageID:   messageID,
-		ThreadID:    threadID,
-		Sender:      &dalmodel.Sender{Type: dalmodel.SenderTypeSystem, ID: dalmodel.RecordAgentManagerSenderID},
-		MessageType: dalmodel.ControlMessageTypeCancelInput, Status: dalmodel.MessageStatusPending,
-		Payload:   payload,
-		Metadata:  metadata,
-		CreatedAt: time.Now(),
-	}
-	if err = c.enqueueControlMessage(ctx, controlMessage); err != nil {
-		return nil, err
-	}
-
-	if thread.Status == dalmodel.ThreadStatusIdle {
-		now := time.Now()
-		changed, err := c.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}, Statuses: []string{dalmodel.ThreadStatusIdle}}, map[string]any{"status": dalmodel.ThreadStatusReady, "ready_until": now})
+		var cancelUntilMessageID int64
+		if cutoffMessageID != nil {
+			cancelUntilMessageID = *cutoffMessageID
+			if cancelUntilMessageID <= 0 {
+				return fmt.Errorf("%w: cutoff_message_id must be positive", ErrInvalidCancel)
+			}
+			message, err := c.findMessage(ctx, threadID, cancelUntilMessageID)
+			if err != nil {
+				return fmt.Errorf("%w: cutoff_message_id=%d", ErrInvalidCancel, cancelUntilMessageID)
+			}
+			if message.IsControl() {
+				return fmt.Errorf("%w: cutoff_message_id=%d is control message", ErrInvalidCancel, cancelUntilMessageID)
+			}
+		} else {
+			messages, err := c.messages.Get(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, InputOnly: true, Primary: true, Desc: true, Limit: 1})
+			if err != nil {
+				return err
+			}
+			if len(messages) > 0 {
+				cancelUntilMessageID = messages[0].MessageID
+			}
+		}
+		if cancelUntilMessageID == 0 {
+			result = &ThreadMessageResult{Thread: thread}
+			return nil
+		}
+		err = c.cancelQueuedInputsUntil(ctx, threadID, cancelUntilMessageID)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if changed {
-			thread.Status = dalmodel.ThreadStatusReady
-			thread.ReadyUntil = now
+
+		messageID, err := IDNextSharedID(ctx, c.redis)
+		if err != nil {
+			return err
 		}
-	}
-	return &ThreadMessageResult{Thread: thread, Message: controlMessage}, nil
+		requestID := strconv.FormatInt(messageID, 10)
+		metadata := map[string]string{"control_type": dalmodel.ControlTypeCancelInput, "request_id": requestID, "cutoff_message_id": strconv.FormatInt(cancelUntilMessageID, 10)}
+		if reason != "" {
+			metadata["reason"] = reason
+		}
+		payload, err := json.Marshal(CancelInputControlPayload{ControlType: dalmodel.ControlTypeCancelInput, RequestID: requestID, ThreadID: threadID, CutoffMessageID: cancelUntilMessageID, Reason: reason})
+		if err != nil {
+			return err
+		}
+		controlMessage := &dalmodel.Message{
+			MessageID:   messageID,
+			ThreadID:    threadID,
+			Sender:      &dalmodel.Sender{Type: dalmodel.SenderTypeSystem, ID: dalmodel.RecordAgentManagerSenderID},
+			MessageType: dalmodel.ControlMessageTypeCancelInput, Status: dalmodel.MessageStatusPending,
+			Payload:   payload,
+			Metadata:  metadata,
+			CreatedAt: time.Now(),
+		}
+		err = c.messages.Create(ctx, controlMessage)
+		if err != nil {
+			return err
+		}
+
+		thread.PendingInputs++
+		result = &ThreadMessageResult{Thread: thread, Message: controlMessage}
+		return nil
+	})
+	return result, err
 }
 
 func (c *Manager) Close(ctx context.Context, threadID int64, reason string) (result *ThreadMessageResult, err error) {
-	rows, err := c.threads.Get(ctx, &dalmodel.ThreadFilter{IDs: []int64{threadID}, Primary: true})
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, ErrThreadNotFound
-	}
-	thread := rows[0]
-	if reason == "" {
-		reason = DefaultCloseThreadReason
-	}
-
-	switch thread.Status {
-	case dalmodel.ThreadStatusClosed:
-		return &ThreadMessageResult{Thread: thread}, nil
-	case dalmodel.ThreadStatusIdle, dalmodel.ThreadStatusReady, dalmodel.ThreadStatusBlocked:
-		changed, err := c.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{threadID}, Statuses: []string{thread.Status}}, map[string]any{"status": dalmodel.ThreadStatusClosed, "ready_until": nil, "lease_token": ""})
+	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
+		ctx = txCtx
+		thread, err := c.lockThread(ctx, threadID)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if !changed {
-			return nil, ErrInvalidClose
+		if reason == "" {
+			reason = DefaultCloseThreadReason
 		}
-		thread.Status = dalmodel.ThreadStatusClosed
-		thread.ReadyUntil = time.Time{}
-		thread.LeaseToken = ""
-		if c.redis != nil {
-			_ = c.cancelQueuedInputsUntil(ctx, threadID, int64(1<<63-1))
-		}
-		return &ThreadMessageResult{Thread: thread}, nil
-	case dalmodel.ThreadStatusRunning, dalmodel.ThreadStatusClosing:
-	default:
-		return nil, ErrInvalidClose
-	}
 
-	if c.redis == nil {
-		return nil, ErrRedisUnavailable
-	}
-	if thread.Status == dalmodel.ThreadStatusRunning {
-		now := time.Now()
-		readyUntil := now
-		if thread.ReadyUntil.After(now) {
-			readyUntil = thread.ReadyUntil
+		if thread.Status == dalmodel.ThreadStatusClosed {
+			result = &ThreadMessageResult{Thread: thread}
+			return nil
 		}
-		changed, err := c.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{threadID}, Statuses: []string{dalmodel.ThreadStatusRunning}}, map[string]any{"status": dalmodel.ThreadStatusClosing, "ready_until": readyUntil})
+		// With no owner, there are no live resources to drain.
+		if thread.LeaseToken == "" && thread.Status == dalmodel.ThreadStatusOpen {
+			err = c.cancelQueuedInputsUntil(ctx, threadID, int64(1<<63-1))
+			if err != nil {
+				return err
+			}
+			_, err = c.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{threadID}}, map[string]any{"status": dalmodel.ThreadStatusClosed, "lease_until": nil})
+			if err != nil {
+				return err
+			}
+			thread.Status, thread.LeaseUntil = dalmodel.ThreadStatusClosed, nil
+			result = &ThreadMessageResult{Thread: thread}
+			return nil
+		}
+		_, err = c.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{threadID}}, map[string]any{"status": dalmodel.ThreadStatusClosing})
 		if err != nil {
-			return nil, err
-		}
-		if !changed {
-			return nil, ErrInvalidClose
+			return err
 		}
 		thread.Status = dalmodel.ThreadStatusClosing
-		thread.ReadyUntil = readyUntil
-	}
-	if err = c.cancelQueuedInputsUntil(ctx, threadID, int64(1<<63-1)); err != nil {
-		return nil, err
-	}
 
-	pending, err := c.readQueuedMessages(ctx, threadID, false)
-	if err != nil {
-		return nil, err
-	}
-	for _, message := range pending {
-		if message.Status == dalmodel.MessageStatusPending && message.IsCloseControl() {
-			return &ThreadMessageResult{Thread: thread, Message: message}, nil
+		err = c.cancelQueuedInputsUntil(ctx, threadID, int64(1<<63-1))
+		if err != nil {
+			return err
 		}
-	}
 
-	messageID, err := IDNextSharedID(ctx, c.redis)
-	if err != nil {
-		return nil, err
-	}
-	requestID := strconv.FormatInt(messageID, 10)
-	metadata := map[string]string{"control_type": dalmodel.ControlTypeCloseThread, "request_id": requestID}
-	if reason != "" {
-		metadata["reason"] = reason
-	}
-	payload, err := json.Marshal(CloseThreadControlPayload{ControlType: dalmodel.ControlTypeCloseThread, RequestID: requestID, ThreadID: threadID, Reason: reason})
-	if err != nil {
-		return nil, err
-	}
-	controlMessage := &dalmodel.Message{
-		MessageID:   messageID,
-		ThreadID:    threadID,
-		Sender:      &dalmodel.Sender{Type: dalmodel.SenderTypeSystem, ID: dalmodel.RecordAgentManagerSenderID},
-		MessageType: dalmodel.ControlMessageTypeCloseThread,
-		Status:      dalmodel.MessageStatusPending,
-		Payload:     payload,
-		Metadata:    metadata,
-		CreatedAt:   time.Now(),
-	}
-	if err = c.enqueueControlMessage(ctx, controlMessage); err != nil {
-		return nil, err
-	}
-	return &ThreadMessageResult{Thread: thread, Message: controlMessage}, nil
+		pending, err := c.messages.Get(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, Statuses: []string{dalmodel.MessageStatusPending}, Primary: true, PriorityFirst: true})
+		if err != nil {
+			return err
+		}
+		for _, message := range pending {
+			if message.Status == dalmodel.MessageStatusPending && message.IsCloseControl() {
+				result = &ThreadMessageResult{Thread: thread, Message: message}
+				return nil
+			}
+		}
+
+		messageID, err := IDNextSharedID(ctx, c.redis)
+		if err != nil {
+			return err
+		}
+		requestID := strconv.FormatInt(messageID, 10)
+		metadata := map[string]string{"control_type": dalmodel.ControlTypeCloseThread, "request_id": requestID}
+		if reason != "" {
+			metadata["reason"] = reason
+		}
+		payload, err := json.Marshal(CloseThreadControlPayload{ControlType: dalmodel.ControlTypeCloseThread, RequestID: requestID, ThreadID: threadID, Reason: reason})
+		if err != nil {
+			return err
+		}
+		controlMessage := &dalmodel.Message{
+			MessageID:   messageID,
+			ThreadID:    threadID,
+			Sender:      &dalmodel.Sender{Type: dalmodel.SenderTypeSystem, ID: dalmodel.RecordAgentManagerSenderID},
+			MessageType: dalmodel.ControlMessageTypeCloseThread,
+			Status:      dalmodel.MessageStatusPending,
+			Payload:     payload,
+			Metadata:    metadata,
+			CreatedAt:   time.Now(),
+		}
+		err = c.messages.Create(ctx, controlMessage)
+		if err != nil {
+			return err
+		}
+		result = &ThreadMessageResult{Thread: thread, Message: controlMessage}
+		return nil
+	})
+	return result, err
 }
 
 func (c *Manager) ConfirmThreadClosed(ctx context.Context, threadID int64, leaseToken string, controlMessageID int64) (result *ThreadMessageResult, err error) {
 	if controlMessageID <= 0 {
-		return nil, fmt.Errorf("%w: control_message_id must be positive", ErrInvalidClose)
+		return nil, ErrInvalidClose
 	}
-
-	rows, err := c.threads.Get(ctx, &dalmodel.ThreadFilter{IDs: []int64{threadID}, Primary: true})
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, ErrThreadNotFound
-	}
-	thread := rows[0]
-
-	controlMessage, err := c.findMessage(ctx, threadID, controlMessageID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: control_message_id=%d", ErrInvalidClose, controlMessageID)
-	}
-	if !controlMessage.IsCloseControl() {
-		return nil, fmt.Errorf("%w: control_message_id=%d is not close control", ErrInvalidClose, controlMessageID)
-	}
-
-	if thread.Status != dalmodel.ThreadStatusClosed {
-		if thread.Status != dalmodel.ThreadStatusClosing {
-			return nil, ErrInvalidClose
-		}
-		now := time.Now()
-		if thread.LeaseToken != leaseToken || thread.ReadyUntil.IsZero() || thread.ReadyUntil.Before(now) {
-			return nil, ErrLeaseMismatch
-		}
-		changed, err := c.threads.Update(ctx, &dalmodel.ThreadFilter{
-			IDs:          []int64{threadID},
-			Statuses:     []string{dalmodel.ThreadStatusClosing},
-			LeaseTokens:  []string{leaseToken},
-			LeaseValidAt: &now,
-		}, map[string]any{"status": dalmodel.ThreadStatusClosed, "ready_until": nil, "lease_token": ""})
+	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
+		thread, err := c.lockThread(txCtx, threadID)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if !changed {
-			return nil, ErrLeaseMismatch
+		message, err := c.findMessage(txCtx, threadID, controlMessageID)
+		if err != nil {
+			return err
 		}
-		thread.Status = dalmodel.ThreadStatusClosed
-		thread.ReadyUntil = time.Time{}
-		thread.LeaseToken = ""
-	}
-
-	_, _ = c.messages.Update(ctx, &dalmodel.MessageFilter{
-		ThreadIDs: []int64{threadID}, IDs: []int64{controlMessageID}, Statuses: []string{dalmodel.MessageStatusPending},
-	}, map[string]any{"status": dalmodel.MessageStatusAcked})
-	if c.redis != nil {
-		_, _ = c.redis.ZRem(ctx, RedisPendingInputKey(threadID), strconv.FormatInt(controlMessageID, 10))
-	}
-	return &ThreadMessageResult{Thread: thread, Message: controlMessage}, nil
+		if !message.IsCloseControl() {
+			return ErrInvalidClose
+		}
+		if thread.Status != dalmodel.ThreadStatusClosed {
+			if thread.Status != dalmodel.ThreadStatusClosing {
+				return ErrInvalidClose
+			}
+			if !thread.OwnsLease(leaseToken, time.Now()) {
+				return ErrLeaseMismatch
+			}
+			_, err = c.threads.Update(txCtx, &dalmodel.ThreadFilter{IDs: []int64{threadID}}, map[string]any{"status": dalmodel.ThreadStatusClosed, "lease_until": nil, "lease_token": ""})
+			if err != nil {
+				return err
+			}
+			thread.Status, thread.LeaseToken, thread.LeaseUntil = dalmodel.ThreadStatusClosed, "", nil
+		}
+		_, err = c.messages.Update(txCtx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: []int64{controlMessageID}}, map[string]any{"status": dalmodel.MessageStatusAccepted})
+		if err != nil {
+			return err
+		}
+		message.Status = dalmodel.MessageStatusAccepted
+		result = &ThreadMessageResult{Thread: thread, Message: message}
+		return nil
+	})
+	return result, err
 }
 
-// saveOutput 保存模型输出并向客户端投递实时事件。
-// 入参：ctx 为调用上下文；request 包含线程 ID、许可、RunID 和输出事件。
-// 出参：err 表示许可、事件格式、数据库、Redis 或实时通道错误。
-// 主要逻辑：事务内校验许可；按规则表更新输入状态或保存历史消息；事务外推送实时事件。
 func (c *Manager) SaveOutput(ctx context.Context, threadID int64, leaseToken, runID string, frames []OutputFrame) (err error) {
 	if len(frames) == 0 {
 		return nil
@@ -859,11 +679,10 @@ func (c *Manager) SaveOutput(ctx context.Context, threadID int64, leaseToken, ru
 			return ErrThreadNotFound
 		}
 		owner := threads[0]
-		if leaseToken == "" || owner.LeaseToken != leaseToken || !owner.ReadyUntil.After(time.Now()) || (owner.Status != dalmodel.ThreadStatusRunning && owner.Status != dalmodel.ThreadStatusClosing) {
+		if !owner.OwnsLease(leaseToken, time.Now()) {
 			return ErrLeaseMismatch
 		}
 
-		runStatusChanged := false
 		for i := range outputs {
 			output := &outputs[i]
 			originalID, txErr := c.prepareOutput(txCtx, output, threadID, runID, owner.SessionID)
@@ -874,15 +693,14 @@ func (c *Manager) SaveOutput(ctx context.Context, threadID int64, leaseToken, ru
 			if txErr != nil {
 				return txErr
 			}
-			changed, txErr := recordRunStatus(owner, output, payload)
+			txErr = c.saveRunStatus(txCtx, owner, output, payload)
 			if txErr != nil {
 				return txErr
 			}
-			runStatusChanged = runStatusChanged || changed
 			rule := outputEventRuleFor(output.EventType, payload)
 			switch rule.action {
 			case outputActionUpdateInput:
-				txErr = c.updateInputExecution(txCtx, threadID, output, payload, rule)
+				txErr = c.updateInputExecution(txCtx, threadID, output, payload)
 			case outputActionSaveMessage:
 				txErr = c.saveOutputMessage(txCtx, threadID, output, payload, originalID, rule)
 			}
@@ -890,15 +708,7 @@ func (c *Manager) SaveOutput(ctx context.Context, threadID int64, leaseToken, ru
 				return txErr
 			}
 		}
-		if runStatusChanged {
-			_, txErr = c.threads.Update(txCtx, &dalmodel.ThreadFilter{IDs: []int64{threadID}}, map[string]any{
-				"run_id": owner.RunID, "run_status": owner.RunStatus, "run_lease_token": leaseToken,
-			})
-			if txErr != nil {
-				return txErr
-			}
-		}
-		if !owner.ReadyUntil.After(time.Now()) {
+		if !owner.OwnsLease(leaseToken, time.Now()) {
 			return ErrLeaseMismatch
 		}
 		return nil
@@ -932,7 +742,7 @@ func (c *Manager) prepareOutput(ctx context.Context, output *OutputFrame, thread
 	return originalID, err
 }
 
-func (c *Manager) updateInputExecution(ctx context.Context, threadID int64, output *OutputFrame, payload outputPayload, rule outputEventRule) (err error) {
+func (c *Manager) updateInputExecution(ctx context.Context, threadID int64, output *OutputFrame, payload outputPayload) (err error) {
 	ids := make([]int64, 0, len(payload.ConsumedMessageIDs))
 	for _, raw := range payload.ConsumedMessageIDs {
 		id, parseErr := strconv.ParseInt(raw, 10, 64)
@@ -944,24 +754,22 @@ func (c *Manager) updateInputExecution(ctx context.Context, threadID int64, outp
 	if len(ids) == 0 {
 		return nil
 	}
-	values := map[string]any{"trigger_turn_id": output.RunID}
-	if rule.messageStatus != "" {
-		values["status"] = rule.messageStatus
-	}
-	_, err = c.messages.Update(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: ids}, values)
+	values := map[string]any{"trigger_turn_id": output.RunID, "status": dalmodel.MessageStatusAccepted}
+	_, err = c.messages.Update(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: ids, Statuses: []string{dalmodel.MessageStatusPending, dalmodel.MessageStatusAccepted}}, values)
 	return err
 }
 
 func (c *Manager) saveOutputMessage(ctx context.Context, threadID int64, output *OutputFrame, payload outputPayload, originalID int64, rule outputEventRule) (err error) {
 	key := outputMessageKey(output, payload, originalID, rule)
 	if rule.messageType == "tool" {
-		if err = c.mergeToolOutput(ctx, threadID, key, output); err != nil {
+		err = c.mergeToolOutput(ctx, threadID, key, output)
+		if err != nil {
 			return err
 		}
 	}
 	return c.messages.Create(ctx, &dalmodel.Message{
 		MessageID: output.EventID, ThreadID: threadID, Sender: &dalmodel.Sender{Type: rule.sender, ID: "model"},
-		MessageType: rule.messageType, Status: dalmodel.MessageStatusAcked, Payload: output.Payload,
+		MessageType: rule.messageType, Payload: output.Payload,
 		Metadata: output.Metadata, TriggerRunID: output.RunID, CreatedAt: output.CreatedAt, OutputKey: &key,
 	})
 }
@@ -975,10 +783,12 @@ func (c *Manager) mergeToolOutput(ctx context.Context, threadID int64, key strin
 		return err
 	}
 	var before, after eventpkg.ToolCallEventPayload
-	if err = json.Unmarshal(previous[0].Payload, &before); err != nil {
+	err = json.Unmarshal(previous[0].Payload, &before)
+	if err != nil {
 		return err
 	}
-	if err = json.Unmarshal(output.Payload, &after); err != nil {
+	err = json.Unmarshal(output.Payload, &after)
+	if err != nil {
 		return err
 	}
 	if after.ArgumentsJSON == nil {
@@ -989,55 +799,4 @@ func (c *Manager) mergeToolOutput(ctx context.Context, threadID int64, key strin
 	}
 	output.Payload, err = json.Marshal(after)
 	return err
-}
-
-// readQueuedMessages 按 Redis 队列顺序读取消息，并清理 pending 队列中的终态残留。
-func (s *Manager) readQueuedMessages(ctx context.Context, threadID int64, accepted bool) (messages []*dalmodel.Message, err error) {
-	if s.redis == nil {
-		return nil, ErrRedisUnavailable
-	}
-	key := RedisPendingInputKey(threadID)
-	if accepted {
-		key = RedisAcceptedInputKey(threadID)
-	}
-	members, err := s.redis.ZRange(ctx, key, 0, -1)
-	if err != nil || len(members) == 0 {
-		return nil, err
-	}
-	ids := make([]int64, 0, len(members))
-	for _, member := range members {
-		id, err := strconv.ParseInt(member, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-
-	rows, err := s.messages.Get(ctx, &dalmodel.MessageFilter{ThreadIDs: []int64{threadID}, IDs: ids, Primary: true})
-	if err != nil {
-		return nil, err
-	}
-	byID := make(map[int64]*dalmodel.Message, len(rows))
-	for _, msg := range rows {
-		byID[msg.MessageID] = msg
-	}
-
-	residues := make([]any, 0)
-	for _, id := range ids {
-		msg := byID[id]
-		if msg == nil {
-			return nil, fmt.Errorf("%w: message_id=%d", InputErrMessageNotFound, id)
-		}
-		if !accepted && msg.Status != dalmodel.MessageStatusPending {
-			residues = append(residues, strconv.FormatInt(id, 10))
-			continue
-		}
-		if accepted || len(messages) < queuedMessageLimit {
-			messages = append(messages, msg)
-		}
-	}
-	if len(residues) > 0 {
-		_, err = s.redis.ZRem(ctx, key, residues...)
-	}
-	return messages, err
 }

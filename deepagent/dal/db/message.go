@@ -11,7 +11,6 @@ const (
 	MessageTypeControl    = "control"
 	MessageTypeOutput     = "output"
 	MessageStatusPending  = model.MessageStatusPending
-	MessageStatusAccepted = model.MessageStatusAcked
-	MessageStatusFinished = model.MessageStatusCompleted
+	MessageStatusAccepted = model.MessageStatusAccepted
 	MessageStatusCanceled = model.MessageStatusCanceled
 )

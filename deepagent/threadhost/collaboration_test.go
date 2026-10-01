@@ -25,7 +25,7 @@ func (f *collaborationBackendFake) Submit(_ context.Context, req manager.SubmitR
 		id = 42
 	}
 	return manager.ThreadMessageResult{
-		Thread:  &model.Thread{ThreadID: id, SessionID: req.SessionID, UserID: req.UserID, Status: model.ThreadStatusReady},
+		Thread:  &model.Thread{ThreadID: id, SessionID: req.SessionID, UserID: req.UserID, Status: model.ThreadStatusOpen},
 		Message: &db.Message{MessageID: 99, ThreadID: id},
 	}, nil
 }
@@ -41,9 +41,9 @@ func (f *collaborationBackendFake) ListMessages(context.Context, manager.ListMes
 func TestCollaborationWaitReadsCanonicalMessageState(t *testing.T) {
 	payload, _ := json.Marshal(map[string]any{"parts": []map[string]string{{"type": "text", "text": "review complete"}}})
 	backend := &collaborationBackendFake{
-		threads: manager.ListThreadsResult{Thread: &model.Thread{ThreadID: 42, Status: model.ThreadStatusIdle}},
-		messages: manager.ListMessagesResult{Messages: []*model.Message{
-			{MessageID: 99, ThreadID: 42, Status: model.MessageStatusCompleted, TriggerRunID: "run-1"},
+		threads: manager.ListThreadsResult{Thread: &model.Thread{ThreadID: 42, Status: model.ThreadStatusOpen}},
+		messages: manager.ListMessagesResult{Runs: map[string]*model.RunRecord{"run-1": {RunID: "run-1", Status: "finished"}}, Messages: []*model.Message{
+			{MessageID: 99, ThreadID: 42, Status: model.MessageStatusAccepted, TriggerRunID: "run-1"},
 			{MessageID: 100, ThreadID: 42, MessageType: "assistant", TriggerRunID: "run-1", Payload: payload},
 		}},
 	}
@@ -75,7 +75,8 @@ func runCollaborationTool(t *testing.T, middleware *collaborationMiddleware, nam
 			t.Fatal(err)
 		}
 		var result map[string]any
-		if err = json.Unmarshal([]byte(output), &result); err != nil {
+		err = json.Unmarshal([]byte(output), &result)
+		if err != nil {
 			t.Fatalf("decode %s output %q: %v", name, output, err)
 		}
 		return result
@@ -94,7 +95,8 @@ func TestCollaborationToolsUseCanonicalManagerBoundary(t *testing.T) {
 	if spawn["thread_id"] != "42" || len(backend.submits) != 1 || backend.submits[0].ThreadID != 0 {
 		t.Fatalf("spawn result=%v requests=%+v", spawn, backend.submits)
 	}
-	if got := backend.submits[0].Metadata["parent_thread_id"]; got != "7" {
+	got := backend.submits[0].Metadata["parent_thread_id"]
+	if got != "7" {
 		t.Fatalf("parent_thread_id=%q", got)
 	}
 

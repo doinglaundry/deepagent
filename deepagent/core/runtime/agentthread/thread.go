@@ -36,6 +36,7 @@ type DeepAgentThread struct {
 	ThreadID      string
 	mu            sync.Mutex
 	current       *run
+	inputRuns     map[string]*run // MessageID -> original Run, guarded by mu.
 	pending       []Input
 	conversation  graph.Conversation
 	events        chan Event
@@ -69,7 +70,7 @@ func New(threadID string, cfg *RunConfig, events chan Event, options ThreadOptio
 	} else {
 		history = conversation.New(threadID, options.HistoryStore, options.CompactionStrategy, options.TokenCounter, conversation.WithContextWindow(options.ContextWindow), conversation.WithRecordID(options.HistoryRecordID), conversation.WithBootstrapPromptReplacement(options.ReplaceBootstrapPrompt))
 	}
-	t := &DeepAgentThread{ThreadID: threadID, conversation: history, events: events, config: config, runIDProvider: func(context.Context, string, *Message) string { return uuid.NewString() }}
+	t := &DeepAgentThread{ThreadID: threadID, conversation: history, events: events, config: config, inputRuns: make(map[string]*run), runIDProvider: func(context.Context, string, *Message) string { return uuid.NewString() }}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(t)
@@ -101,12 +102,17 @@ type SubmitInputResult struct {
 	Started   bool
 }
 type submitInputOptions struct {
+	MessageID      string
 	InputMeta      any
 	EnablePlan     *bool
 	ConfigProvider RunConfigProvider
 	OnRunStart     OnRunStartFunc
 }
 type SubmitInputOption func(*submitInputOptions)
+
+func WithMessageID(id string) SubmitInputOption {
+	return func(o *submitInputOptions) { o.MessageID = id }
+}
 
 func WithInputMeta(meta any) SubmitInputOption {
 	return func(o *submitInputOptions) { o.InputMeta = meta }
@@ -157,7 +163,7 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, message *schema.Messa
 	if clonedMessage == nil {
 		return nil, fmt.Errorf("failed to copy input message")
 	}
-	input := Input{Message: clonedMessage, Meta: options.InputMeta}
+	input := Input{MessageID: options.MessageID, Message: clonedMessage, Meta: options.InputMeta}
 	for {
 		err := ctx.Err()
 		if err != nil {
@@ -172,6 +178,12 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, message *schema.Messa
 			t.mu.Unlock()
 			return nil, ErrThreadRunning
 		}
+		previous := t.inputRuns[input.MessageID]
+		if previous != nil {
+			result := &SubmitInputResult{RunID: previous.id, RunHandle: &RunHandle{owner: t, run: previous}}
+			t.mu.Unlock()
+			return result, nil
+		}
 		current := t.current
 		if current != nil {
 			if !current.accepting {
@@ -185,6 +197,9 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, message *schema.Messa
 				}
 			}
 			t.pending = append(t.pending, input)
+			if input.MessageID != "" {
+				t.inputRuns[input.MessageID] = current
+			}
 			result := &SubmitInputResult{RunID: current.id, RunHandle: &RunHandle{owner: t, run: current}}
 			t.mu.Unlock()
 			return result, nil
@@ -201,6 +216,9 @@ func (t *DeepAgentThread) SubmitInput(ctx context.Context, message *schema.Messa
 			return nil, err
 		}
 		r.consumed = []Input{input}
+		if input.MessageID != "" {
+			t.inputRuns[input.MessageID] = r
+		}
 		t.current = r
 		t.mu.Unlock()
 		go t.executeRun(runCtx, r)
@@ -267,9 +285,14 @@ func (t *DeepAgentThread) drainInput(_ context.Context, runID string) ([]types.I
 	inputs := t.pending
 	t.pending = nil
 	t.current.mu.Lock()
-	t.current.consumed = append(t.current.consumed, inputs...)
+	before := len(t.current.consumed)
+	t.current.consumed = types.AppendInputs(t.current.consumed, inputs...)
+	inputs = t.current.consumed[before:]
 	t.current.mu.Unlock()
-	return inputs, true, nil
+	if len(inputs) == 0 {
+		t.current.accepting = false
+	}
+	return inputs, len(inputs) > 0, nil
 }
 func (t *DeepAgentThread) DrainInput(ctx context.Context) []*schema.Message {
 	t.mu.Lock()

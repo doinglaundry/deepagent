@@ -53,9 +53,16 @@ func (r *run) execute(ctx context.Context) error {
 		if e.Kind == "run_state_restored" {
 			inputs, ok := e.Data.([]types.Input)
 			if ok {
+				r.owner.mu.Lock()
 				r.mu.Lock()
 				r.consumed = append([]Input(nil), inputs...)
+				for _, input := range inputs {
+					if input.MessageID != "" {
+						r.owner.inputRuns[input.MessageID] = r
+					}
+				}
 				r.mu.Unlock()
+				r.owner.mu.Unlock()
 			}
 			return nil
 		}
@@ -94,14 +101,19 @@ func (r *run) execute(ctx context.Context) error {
 	if len(messages) > 0 {
 		first = messages[0]
 	}
-	if err := r.emit(ctx, EventRunStart, RunStartPayload{Input: first}); err != nil {
-		return err
+	{
+		err := r.emit(ctx, EventRunStart, RunStartPayload{Input: first})
+		if err != nil {
+			return err
+		}
 	}
 	var metadata []any
+	var ids []string
 	for _, input := range inputs {
 		metadata = append(metadata, input.Meta)
+		ids = append(ids, input.MessageID)
 	}
-	options := []graph.RunOptionFunc{graph.WithInputMetadata(metadata...)}
+	options := []graph.RunOptionFunc{graph.WithInputMetadata(metadata...), graph.WithInputIDs(ids...)}
 	if cfg.CheckpointStore != nil {
 		options = append(options, graph.WithCheckpointID(r.id))
 	}
@@ -168,7 +180,9 @@ func (t *DeepAgentThread) executeRun(ctx context.Context, r *run) {
 	r.accepting = false
 	r.mu.Lock()
 	pending := t.pending
-	r.consumed = append(r.consumed, pending...)
+	before := len(r.consumed)
+	r.consumed = types.AppendInputs(r.consumed, pending...)
+	pending = r.consumed[before:]
 	t.pending = nil
 	r.mu.Unlock()
 	t.mu.Unlock()
@@ -176,42 +190,57 @@ func (t *DeepAgentThread) executeRun(ctx context.Context, r *run) {
 	// the terminal events. Keep the run active until its event consumer accepts
 	// them; Wait must not report completion ahead of this boundary.
 	terminalCtx := context.WithoutCancel(ctx)
-	if _, interrupted := compose.ExtractInterruptInfo(err); interrupted && len(pending) > 0 {
-		saveCtx, cancel := context.WithTimeout(terminalCtx, 10*time.Second)
-		saveErr := checkpointer.AppendInputs(saveCtx, r.config.Agent.CheckpointStore, r.checkpointID(), t.ThreadID, r.id, pending)
-		cancel()
-		if saveErr != nil {
-			err = fmt.Errorf("persist pending checkpoint inputs: %w", saveErr)
+	{
+		_, interrupted := compose.ExtractInterruptInfo(err)
+		if interrupted && len(pending) > 0 {
+			saveCtx, cancel := context.WithTimeout(terminalCtx, 10*time.Second)
+			saveErr := checkpointer.AppendInputs(saveCtx, r.config.Agent.CheckpointStore, r.checkpointID(), t.ThreadID, r.id, pending)
+			cancel()
+			if saveErr != nil {
+				err = fmt.Errorf("persist pending checkpoint inputs: %w", saveErr)
+			}
 		}
 	}
-	if _, interrupted := compose.ExtractInterruptInfo(err); !interrupted && len(pending) > 0 {
-		saveCtx, cancel := context.WithTimeout(terminalCtx, 10*time.Second)
-		for _, input := range pending {
-			if saveErr := t.conversation.AddHistory(saveCtx, r.id, input.Message); saveErr != nil {
-				err = errors.Join(err, saveErr)
-				break
+	{
+		_, interrupted := compose.ExtractInterruptInfo(err)
+		if !interrupted && len(pending) > 0 {
+			saveCtx, cancel := context.WithTimeout(terminalCtx, 10*time.Second)
+			for _, input := range pending {
+				{
+					saveErr := t.conversation.AddHistory(saveCtx, r.id, input.Message)
+					if saveErr != nil {
+						err = errors.Join(err, saveErr)
+						break
+					}
+				}
+				{
+					emitErr := r.emit(saveCtx, EventInputConsumed, input)
+					if emitErr != nil {
+						err = errors.Join(err, emitErr)
+						break
+					}
+				}
 			}
-			if emitErr := r.emit(saveCtx, EventInputConsumed, input); emitErr != nil {
-				err = errors.Join(err, emitErr)
-				break
-			}
+			cancel()
 		}
-		cancel()
 	}
 	end := RunEndPayload{Status: "finished"}
-	if info, interrupted := compose.ExtractInterruptInfo(err); interrupted {
-		end.Status = "blocked"
-		end.CheckpointID = r.checkpointID()
-		for _, interrupt := range info.InterruptContexts {
-			if interrupt != nil && interrupt.ID != "" {
-				end.InterruptID = interrupt.ID
-				break
+	{
+		info, interrupted := compose.ExtractInterruptInfo(err)
+		if interrupted {
+			end.Status = "blocked"
+			end.CheckpointID = r.checkpointID()
+			for _, interrupt := range info.InterruptContexts {
+				if interrupt != nil && interrupt.ID != "" {
+					end.InterruptID = interrupt.ID
+					break
+				}
 			}
+			if request != nil {
+				end.Status = "interrupted"
+			}
+			err = r.emitBlocked(terminalCtx, info)
 		}
-		if request != nil {
-			end.Status = "interrupted"
-		}
-		err = r.emitBlocked(terminalCtx, info)
 	}
 	if timedOut && err == nil {
 		end.Status = "interrupted"
@@ -229,8 +258,11 @@ func (t *DeepAgentThread) executeRun(ctx context.Context, r *run) {
 		}
 		_ = r.emit(terminalCtx, EventError, ErrorPayload{Message: err.Error(), Cancelled: errors.Is(err, context.Canceled)})
 	}
-	if finalErr := r.emit(terminalCtx, EventRunEnd, end); err == nil {
-		err = finalErr
+	{
+		finalErr := r.emit(terminalCtx, EventRunEnd, end)
+		if err == nil {
+			err = finalErr
+		}
 	}
 	r.cancel(err)
 	t.mu.Lock()
@@ -336,8 +368,11 @@ func (r *run) emitBlocked(ctx context.Context, info *compose.InterruptInfo) erro
 		if request.Timeout != nil {
 			payload.TimeoutMS = request.Timeout.Milliseconds()
 		}
-		if err := r.emit(ctx, EventInterrupted, payload); err != nil {
-			return err
+		{
+			err := r.emit(ctx, EventInterrupted, payload)
+			if err != nil {
+				return err
+			}
 		}
 		return r.emit(ctx, EventInterruptInfo, info)
 	}
@@ -346,36 +381,54 @@ func (r *run) emitBlocked(ctx context.Context, info *compose.InterruptInfo) erro
 		for _, interrupt := range info.InterruptContexts {
 			items = append(items, interruptBatchItem(interrupt))
 		}
-		if err := r.emit(ctx, EventInterruptBatchRequested, InterruptBatchPayload{CheckpointID: checkpointID, Items: items}); err != nil {
-			return err
+		{
+			err := r.emit(ctx, EventInterruptBatchRequested, InterruptBatchPayload{CheckpointID: checkpointID, Items: items})
+			if err != nil {
+				return err
+			}
 		}
 		return r.emit(ctx, EventInterruptInfo, info)
 	}
 	for _, interrupt := range info.InterruptContexts {
 		if interrupt == nil {
-			if err := r.emit(ctx, EventInterrupted, InterruptedPayload{Source: "custom", CheckpointID: checkpointID}); err != nil {
-				return err
+			{
+				err := r.emit(ctx, EventInterrupted, InterruptedPayload{Source: "custom", CheckpointID: checkpointID})
+				if err != nil {
+					return err
+				}
 			}
 			continue
 		}
 		switch data := interrupt.Info.(type) {
 		case *tools.ApprovalInfo:
-			if err := r.emit(ctx, EventApproveRequested, ApprovalRequiredPayload{InterruptID: interrupt.ID, CheckpointID: checkpointID, ApprovalInfo: data}); err != nil {
-				return err
+			{
+				err := r.emit(ctx, EventApproveRequested, ApprovalRequiredPayload{InterruptID: interrupt.ID, CheckpointID: checkpointID, ApprovalInfo: data})
+				if err != nil {
+					return err
+				}
 			}
 		case *tools.FollowUpInfo:
-			if err := r.emit(ctx, EventFollowUpRequested, FollowUpRequestedPayload{InterruptID: interrupt.ID, CheckpointID: checkpointID, Info: data}); err != nil {
-				return err
+			{
+				err := r.emit(ctx, EventFollowUpRequested, FollowUpRequestedPayload{InterruptID: interrupt.ID, CheckpointID: checkpointID, Info: data})
+				if err != nil {
+					return err
+				}
 			}
 		default:
-			if err := r.emit(ctx, EventInterrupted, InterruptedPayload{Source: "custom", InterruptID: interrupt.ID, CheckpointID: checkpointID, InfoType: fmt.Sprintf("%T", data), Info: data}); err != nil {
-				return err
+			{
+				err := r.emit(ctx, EventInterrupted, InterruptedPayload{Source: "custom", InterruptID: interrupt.ID, CheckpointID: checkpointID, InfoType: fmt.Sprintf("%T", data), Info: data})
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
 	if len(info.InterruptContexts) == 0 {
-		if err := r.emit(ctx, EventInterrupted, InterruptedPayload{Source: "external", CheckpointID: checkpointID}); err != nil {
-			return err
+		{
+			err := r.emit(ctx, EventInterrupted, InterruptedPayload{Source: "external", CheckpointID: checkpointID})
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return r.emit(ctx, EventInterruptInfo, info)

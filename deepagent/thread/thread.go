@@ -134,11 +134,17 @@ func NewThread(cfg AdapterConfig) (*Thread, error) {
 
 func (t *Thread) Init(ctx context.Context) (*TransportThreadOutput, error) {
 	ctx = t.withThreadInfo(ctx)
-	if err := t.ensureOpen(); err != nil {
-		return nil, err
+	{
+		err := t.ensureOpen()
+		if err != nil {
+			return nil, err
+		}
 	}
-	if err := t.thread.Init(ctx); err != nil {
-		return nil, err
+	{
+		err := t.thread.Init(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	t.mu.Lock()
@@ -172,7 +178,7 @@ func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (po
 		if err != nil {
 			return nil, err
 		}
-		opts := []agentthread.SubmitInputOption{agentthread.WithPlan(cmd.mode == inputpkg.UserMessageModeImplPlan)}
+		opts := []agentthread.SubmitInputOption{agentthread.WithMessageID(workerMessageID(cmd.message)), agentthread.WithPlan(cmd.mode == inputpkg.UserMessageModeImplPlan)}
 		if cmd.message != nil && len(cmd.message.Metadata) > 0 {
 			opts = append(opts, agentthread.WithInputMeta(maps.Clone(cmd.message.Metadata)))
 		}
@@ -228,10 +234,13 @@ func (t *Thread) ActiveRun() *TransportActiveRun {
 	if t == nil || t.thread == nil {
 		return nil
 	}
-	if compact := t.activeCompact(); compact != nil {
-		return &TransportActiveRun{
-			RunID:              compact.runID,
-			ConsumedMessageIDs: append([]string(nil), compact.consumedMessageIDs...),
+	{
+		compact := t.activeCompact()
+		if compact != nil {
+			return &TransportActiveRun{
+				RunID:              compact.runID,
+				ConsumedMessageIDs: append([]string(nil), compact.consumedMessageIDs...),
+			}
 		}
 	}
 	curRun := t.thread.ActiveRun()
@@ -411,10 +420,13 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 			})
 			return nil
 		}
-		if req, ok := t.compactInterruptRequest(op); ok {
+		{
+			req, ok := t.compactInterruptRequest(op)
+			if ok {
 
-			t.emitCompactInterruptedEvent(context.WithoutCancel(ctx), op, req)
-			return nil
+				t.emitCompactInterruptedEvent(context.WithoutCancel(ctx), op, req)
+				return nil
+			}
 		}
 
 		t.emitAgentEvent(context.WithoutCancel(ctx), agentthread.Event{
@@ -1013,8 +1025,11 @@ func agentEventPayloadForOutput(ev agentthread.Event, usage *agentthread.Context
 		if isExternalInterrupt(payload) {
 			return eventpkg.EventTypeRunStatus, &eventpkg.ErrorEventPayload{Status: eventpkg.RunStatusInterrupted, Message: interruptedMessage(payload), ContextUsage: contextUsage}, nil
 		}
-		if info, ok := payload.Info.(*coretypes.RequestUserInputInfo); ok {
-			return eventpkg.EventTypeInputRequired, planInputRequiredPayload(payload, info), nil
+		{
+			info, ok := payload.Info.(*coretypes.RequestUserInputInfo)
+			if ok {
+				return eventpkg.EventTypeInputRequired, planInputRequiredPayload(payload, info), nil
+			}
 		}
 		if isRecoverableRuntimeInterrupt(payload) {
 			out, err := interruptRequiredPayload(payload)
@@ -1253,8 +1268,11 @@ func convertErrorPayload(payload any) *eventpkg.ErrorEventPayload {
 
 func interruptedMessage(payload agentthread.InterruptedPayload) string {
 	if payload.Source == "external" && payload.Metadata["kind"] == string(TransportThreadInterruptKindWorkerShutdownTimeout) {
-		if reason := strings.TrimSpace(payload.Metadata["reason"]); reason != "" {
-			return reason
+		{
+			reason := strings.TrimSpace(payload.Metadata["reason"])
+			if reason != "" {
+				return reason
+			}
 		}
 		return "worker shutdown timeout"
 	}
@@ -1373,11 +1391,17 @@ func parseUserMessage(message *TransportMessage) (inputpkg.UserMessage, error) {
 		return inputpkg.UserMessage{}, fmt.Errorf("message is required")
 	}
 	var input inputpkg.UserMessage
-	if err := json.Unmarshal(message.Payload, &input); err != nil {
-		return inputpkg.UserMessage{}, fmt.Errorf("unmarshal user message: %w", err)
+	{
+		err := json.Unmarshal(message.Payload, &input)
+		if err != nil {
+			return inputpkg.UserMessage{}, fmt.Errorf("unmarshal user message: %w", err)
+		}
 	}
-	if err := input.Validate(); err != nil {
-		return inputpkg.UserMessage{}, err
+	{
+		err := input.Validate()
+		if err != nil {
+			return inputpkg.UserMessage{}, err
+		}
 	}
 	return input, nil
 }
@@ -1437,11 +1461,17 @@ func attributeFromMessage(msg *schemapkg.Message) MessageAttribute {
 	if msg == nil || msg.Extra == nil {
 		return MessageAttribute{}
 	}
-	if attr, ok := attributeFromExtraValue(msg.Extra[einoMessageAttributeExtraKey]); ok {
-		return attr
+	{
+		attr, ok := attributeFromExtraValue(msg.Extra[einoMessageAttributeExtraKey])
+		if ok {
+			return attr
+		}
 	}
-	if messageID, ok := stringIDFromAny(msg.Extra[legacyMessageIDExtraKey]); ok {
-		return MessageAttribute{MessageID: messageID}
+	{
+		messageID, ok := stringIDFromAny(msg.Extra[legacyMessageIDExtraKey])
+		if ok {
+			return MessageAttribute{MessageID: messageID}
+		}
 	}
 	return MessageAttribute{}
 }
@@ -1482,14 +1512,23 @@ func attributeFromExtraValue(raw any) (MessageAttribute, bool) {
 		return attr, !attr.empty()
 	case map[string]any:
 		attr := MessageAttribute{}
-		if messageID, ok := stringIDFromAny(v["message_id"]); ok {
-			attr.MessageID = messageID
+		{
+			messageID, ok := stringIDFromAny(v["message_id"])
+			if ok {
+				attr.MessageID = messageID
+			}
 		}
-		if senderID, ok := stringIDFromAny(v["sender_id"]); ok {
-			attr.SenderID = senderID
+		{
+			senderID, ok := stringIDFromAny(v["sender_id"])
+			if ok {
+				attr.SenderID = senderID
+			}
 		}
-		if senderType, ok := stringIDFromAny(v["sender_type"]); ok {
-			attr.SenderType = senderType
+		{
+			senderType, ok := stringIDFromAny(v["sender_type"])
+			if ok {
+				attr.SenderType = senderType
+			}
 		}
 		attr = attr.normalized()
 		return attr, !attr.empty()
@@ -1537,8 +1576,11 @@ func stringIDFromAny(raw any) (string, bool) {
 		}
 		return strconv.FormatInt(int64(v), 10), true
 	case json.Number:
-		if n, err := v.Int64(); err == nil && n != 0 {
-			return strconv.FormatInt(n, 10), true
+		{
+			n, err := v.Int64()
+			if err == nil && n != 0 {
+				return strconv.FormatInt(n, 10), true
+			}
 		}
 		return "", false
 	default:
@@ -1618,8 +1660,11 @@ func protocolPartToSchemaInputPart(part inputpkg.MessagePart) (schemapkg.Message
 }
 
 func schemaUserMessageToProtocolParts(message *schemapkg.Message) []eventpkg.MessagePart {
-	if parts := originalProtocolInputParts(message); len(parts) > 0 {
-		return inputPartsForEvent(parts)
+	{
+		parts := originalProtocolInputParts(message)
+		if len(parts) > 0 {
+			return inputPartsForEvent(parts)
+		}
 	}
 	if message == nil {
 		return nil
@@ -1798,11 +1843,17 @@ func schemaMessagePartCommon(part inputpkg.MessagePart) schemapkg.MessagePartCom
 		MIMEType: strings.TrimSpace(part.MIMEType),
 		Extra:    protocolExtraToSchemaExtra(part.Extra),
 	}
-	if url := strings.TrimSpace(part.URL); url != "" {
-		common.URL = &url
+	{
+		url := strings.TrimSpace(part.URL)
+		if url != "" {
+			common.URL = &url
+		}
 	}
-	if data := strings.TrimSpace(part.Base64Data); data != "" {
-		common.Base64Data = &data
+	{
+		data := strings.TrimSpace(part.Base64Data)
+		if data != "" {
+			common.Base64Data = &data
+		}
 	}
 	return common
 }
@@ -2191,11 +2242,17 @@ func isHiddenInternalToolEvent(ev agentthread.Event) bool {
 
 func parseResumePayload(message *TransportMessage) (inputpkg.ResumeRunPayload, error) {
 	var payload inputpkg.ResumeRunPayload
-	if err := json.Unmarshal(message.Payload, &payload); err != nil {
-		return inputpkg.ResumeRunPayload{}, fmt.Errorf("unmarshal resume payload: %w", err)
+	{
+		err := json.Unmarshal(message.Payload, &payload)
+		if err != nil {
+			return inputpkg.ResumeRunPayload{}, fmt.Errorf("unmarshal resume payload: %w", err)
+		}
 	}
-	if err := payload.Validate(); err != nil {
-		return inputpkg.ResumeRunPayload{}, err
+	{
+		err := payload.Validate()
+		if err != nil {
+			return inputpkg.ResumeRunPayload{}, err
+		}
 	}
 	return payload, nil
 }
@@ -2210,8 +2267,11 @@ func resumeData(ctx context.Context, payload inputpkg.ResumeRunPayload, interrup
 			if answer.InterruptID == "" {
 				return nil, fmt.Errorf("batch answer missing interrupt ID")
 			}
-			if _, exists := out[answer.InterruptID]; exists {
-				return nil, fmt.Errorf("duplicate batch interrupt ID %q", answer.InterruptID)
+			{
+				_, exists := out[answer.InterruptID]
+				if exists {
+					return nil, fmt.Errorf("duplicate batch interrupt ID %q", answer.InterruptID)
+				}
 			}
 			one := inputpkg.ResumeRunPayload{InterruptID: answer.InterruptID, Approval: answer.Approval, RequestUserInput: answer.RequestUserInput, Interrupt: answer.Interrupt}
 			value, err := resumeData(ctx, one, interruptResume)
@@ -2271,8 +2331,11 @@ func interruptResumeData(ctx context.Context, payload inputpkg.ResumeRunPayload,
 		var body struct {
 			UserAnswer string `json:"user_answer"`
 		}
-		if err := json.Unmarshal(payload.Interrupt.Data, &body); err != nil {
-			return nil, fmt.Errorf("decode follow_up resume data: %w", err)
+		{
+			err := json.Unmarshal(payload.Interrupt.Data, &body)
+			if err != nil {
+				return nil, fmt.Errorf("decode follow_up resume data: %w", err)
+			}
 		}
 		answer := strings.TrimSpace(body.UserAnswer)
 		if answer == "" {

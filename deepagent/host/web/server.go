@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/manager"
@@ -78,7 +79,7 @@ func viewThread(thread *dalmodel.Thread) threadView {
 	}
 	view := threadView{
 		ID: strconv.FormatInt(thread.ThreadID, 10), SessionID: thread.SessionID,
-		Status: thread.Status, Title: thread.Metadata["title"],
+		Status: thread.DisplayStatus(time.Now()), Title: thread.Metadata["title"],
 	}
 	if thread.Profile != nil {
 		view.WorkDir = thread.Profile.Cwd
@@ -107,9 +108,12 @@ func (s *Server) threads(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, rows)
 	case http.MethodPost:
 		var req createRequest
-		if err := decode(r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
+		{
+			err := decode(r, &req)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
 		}
 		if strings.TrimSpace(req.SessionID) == "" {
 			writeError(w, http.StatusBadRequest, errors.New("session_id is required"))
@@ -177,18 +181,24 @@ type submitRequest struct {
 
 func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID int64) {
 	var req submitRequest
-	if err := decode(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
+	{
+		err := decode(r, &req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
 	}
 	var (
 		result manager.ThreadMessageResult
 		err    error
 	)
 	if req.Resume != nil {
-		if err := req.Resume.Validate(); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
+		{
+			err := req.Resume.Validate()
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
 		}
 		payload, marshalErr := json.Marshal(req.Resume)
 		if marshalErr != nil {
@@ -242,11 +252,29 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, threadID int64) 
 	for _, message := range result.Messages {
 		rows = append(rows, eventView{
 			Sequence: strconv.FormatInt(message.MessageID, 10), RunID: message.TriggerRunID, Kind: message.MessageType,
-			Status: message.Status,
+			Status: messageDisplayStatus(message, result.Runs[message.TriggerRunID]),
 			Text:   messageText(message), Payload: append(json.RawMessage(nil), message.Payload...),
 		})
 	}
 	writeJSON(w, http.StatusOK, rows)
+}
+
+func messageDisplayStatus(message *dalmodel.Message, run *dalmodel.RunRecord) string {
+	if message.OutputKey != nil {
+		return ""
+	}
+	if message.Status == dalmodel.MessageStatusCanceled {
+		return "canceled"
+	}
+	if run != nil {
+		switch run.Status {
+		case "finished":
+			return "completed"
+		case "interrupted", "failed":
+			return "interrupted"
+		}
+	}
+	return message.Status
 }
 
 func messageText(message *dalmodel.Message) string {

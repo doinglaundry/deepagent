@@ -117,6 +117,7 @@ type ListMessagesRequest struct {
 
 type ListMessagesResult struct {
 	Messages []*db.Message
+	Runs     map[string]*model.RunRecord
 	Total    int64
 }
 

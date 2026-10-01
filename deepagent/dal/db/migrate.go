@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// MigrateMailbox creates the Thread and Message tables for the new Manager data model.
+// MigrateMailbox creates the Thread, Message and Run tables for the new Manager data model.
 func MigrateMailbox(ctx context.Context, conn *gorm.DB) error {
-	return conn.WithContext(ctx).AutoMigrate(&model.Thread{}, &model.Message{})
+	return conn.WithContext(ctx).AutoMigrate(&model.Thread{}, &model.Message{}, &model.RunRecord{})
 }

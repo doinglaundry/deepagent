@@ -23,8 +23,8 @@ Web 负责交互，Worker 负责执行，Manager 通过 MySQL 与 Redis 协调�
 | 依赖 | 用途 |
 | --- | --- |
 | Go 1.25+ | 构建 Web 和 Worker；版本要求见 [go.mod](go.mod) |
-| MySQL 8 | Thread、消息和对话历史 |
-| Redis 7 | 输入队列、实时事件、checkpoint |
+| MySQL 8 | Thread、输入投递、Run 结果和对话历史 |
+| Redis 7 | 共享 ID、实时事件、checkpoint |
 | 支持工具调用与流式输出的模型 | Agent 推理与工具选择 |
 | Docker Compose | 可选，用于启动本地 MySQL / Redis |
 
@@ -183,7 +183,7 @@ Graph 事件
 工具需要审批
     → Eino Interrupt
     → 保存 Checkpoint
-    → Thread 进入 blocked
+    → RunRecord 记录 blocked；Thread 仍为 open
 
 用户回复审批
     → Manager.Resume
@@ -193,6 +193,21 @@ Graph 事件
 ```
 
 ThreadHost 先处理输出保存，再处理 Yield 和租约释放。完整结果与流式增量的持久化策略不同，不能把 SSE 当作完整历史存储。
+
+### 状态与租约
+
+```text
+Thread:  open → closing → closed
+Message: pending → accepted；执行前取消 → canceled
+Run:     started → blocked → started → finished / interrupted / failed
+```
+
+- Thread 只保存生命周期、租约和 LastRunID；ready/running/blocked 是查询得到的展示状态。
+- Message 的状态只表示输入投递；输出消息不设置投递状态。执行结果通过 RunID 查询 `agent_run`。
+- 输入队列以 MySQL 为唯一来源。Submit、AckInput、SaveOutput、Resume 和 Close 使用同一 Thread 行锁。
+- Acquire 根据待处理输入、恢复命令和未结束的 Run 领取租约；普通输入不会唤醒 blocked Run。
+- ReleaseThread 只清除租约。恢复时按 MessageID 去重，保留 checkpoint 之外的新输入。
+- 本次状态模型不提供旧邮箱数据迁移。已有旧状态数据应使用新的空邮箱数据库；不要直接将旧表状态改为 open，否则会丢失执行归属。
 
 ## 工具
 
@@ -291,8 +306,8 @@ memory_lease_ttl: 30s
 
 | 数据 | 当前 Worker 使用的存储 |
 | --- | --- |
-| Thread、消息与历史 | MySQL |
-| 输入队列、实时事件、历史序号 | Redis |
+| Thread 生命周期、租约、消息投递、Run 结果与历史 | MySQL |
+| 共享 ID、实时事件、历史序号 | Redis |
 | Eino checkpoint | Redis |
 | 工作文件与记忆产物 | 本地 / 容器文件系统及配置的记忆目录 |
 

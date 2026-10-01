@@ -36,15 +36,18 @@ func createThread(req SubmitRequest, id int64) *model.Thread {
 	if metadata == nil {
 		metadata = map[string]string{}
 	}
-	if title := strings.TrimSpace(req.Title); title != "" {
-		metadata["title"] = title
+	{
+		title := strings.TrimSpace(req.Title)
+		if title != "" {
+			metadata["title"] = title
+		}
 	}
 	var profile *model.Profile
 	if req.Profile != nil && *req.Profile != (model.Profile{}) {
 		copy := *req.Profile
 		profile = &copy
 	}
-	return &model.Thread{ThreadID: id, UserID: req.UserID, SessionID: req.SessionID, Status: model.ThreadStatusIdle, Metadata: metadata, Profile: profile}
+	return &model.Thread{ThreadID: id, UserID: req.UserID, SessionID: req.SessionID, Status: model.ThreadStatusOpen, Metadata: metadata, Profile: profile}
 }
 
 func normalizeLeaseDuration(ms int64) time.Duration {
@@ -55,11 +58,6 @@ func normalizeLeaseDuration(ms int64) time.Duration {
 		return maxLeaseDuration
 	}
 	return time.Duration(ms) * time.Millisecond
-}
-
-func RedisPendingInputKey(threadID int64) string { return fmt.Sprintf("ac:thread:%d:input", threadID) }
-func RedisAcceptedInputKey(threadID int64) string {
-	return fmt.Sprintf("deepagent:thread:%d:accepted", threadID)
 }
 
 func cloneEvents(frames []OutputFrame) []OutputFrame {
@@ -106,7 +104,6 @@ type outputEventRule struct {
 	messageType      string
 	sender           string
 	messageKeySource outputMessageKeySource
-	messageStatus    string
 }
 
 var outputEventRules = map[string]outputEventRule{
@@ -123,14 +120,6 @@ func outputEventRuleFor(eventType string, payload outputPayload) outputEventRule
 	rule, ok := outputEventRules[eventType]
 	if !ok {
 		return outputEventRule{action: outputActionLiveOnly}
-	}
-	if eventType == eventpkg.EventTypeRunStatus.String() {
-		switch payload.Status {
-		case eventpkg.RunStatusFinished:
-			rule.messageStatus = model.MessageStatusCompleted
-		case eventpkg.RunStatusInterrupted, eventpkg.RunStatusFailed:
-			rule.messageStatus = model.MessageStatusInterrupted
-		}
 	}
 	if eventType == eventpkg.EventTypeToolCall.String() && payload.OutputDelta != nil {
 		rule.action = outputActionLiveOnly
@@ -173,36 +162,4 @@ func outputMessageKey(output *OutputFrame, payload outputPayload, originalID int
 		key = fmt.Sprintf("%x", sum)
 	}
 	return output.RunID + ":" + rule.messageType + ":" + key
-}
-
-// recordRunStatus keeps execution results separate from Thread scheduling state.
-// Only results reported by the current lease may affect its eventual release.
-func recordRunStatus(thread *model.Thread, output *OutputFrame, payload outputPayload) (bool, error) {
-	if output.EventType != eventpkg.EventTypeRunStatus.String() {
-		return false, nil
-	}
-	switch payload.Status {
-	case eventpkg.RunStatusStarted:
-	case eventpkg.RunStatusCompactStarted:
-		// Automatic compaction belongs to the active Run. Manual compaction
-		// has its own RunID and ends with a normal RunEnd event.
-		if thread.RunID == output.RunID {
-			return false, nil
-		}
-	case eventpkg.RunStatusFinished, eventpkg.RunStatusBlocked, eventpkg.RunStatusInterrupted, eventpkg.RunStatusFailed:
-		awaitingEnd := thread.RunStatus == eventpkg.RunStatusStarted || thread.RunStatus == eventpkg.RunStatusCompactStarted || thread.RunStatus == eventpkg.RunStatusBlocked
-		if thread.RunLeaseToken == thread.LeaseToken && awaitingEnd && thread.RunID != output.RunID {
-			return false, fmt.Errorf("run outcome mismatch: current=%q received=%q", thread.RunID, output.RunID)
-		}
-		if payload.Status == eventpkg.RunStatusBlocked && (payload.CheckpointID == "" || payload.InterruptID == "") {
-			return false, errors.New("blocked run lacks checkpoint or interrupt ID")
-		}
-	default:
-		// Compaction progress does not change the current execution outcome.
-		return false, nil
-	}
-	thread.RunID = output.RunID
-	thread.RunStatus = payload.Status
-	thread.RunLeaseToken = thread.LeaseToken
-	return true, nil
 }

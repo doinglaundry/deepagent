@@ -36,7 +36,8 @@ func Open(ctx context.Context, cfg Config) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect MySQL: %w", err)
 	}
-	if err = db.MigrateMailbox(ctx, client.DB(ctx, true)); err != nil {
+	err = db.MigrateMailbox(ctx, client.DB(ctx, true))
+	if err != nil {
 		return nil, fmt.Errorf("migrate mailbox: %w", err)
 	}
 	redisClient, err := cache.NewRedis(cache.RedisConfig{
@@ -55,6 +56,7 @@ func New(client *db.MySQLClient, redisClient cache.RedisClient) (*Manager, error
 	return &Manager{
 		threads:                 &db.ThreadDAO{Client: client},
 		messages:                &db.MessageDAO{Client: client},
+		runs:                    &db.RunDAO{Client: client},
 		redis:                   redisClient,
 		db:                      client,
 		stream:                  &StreamStreamOut{redis: redisClient},
