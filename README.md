@@ -322,13 +322,15 @@ Core 另有文件 checkpoint 实现，但当前 Worker 没有通过 YAML 选择 
 | --- | --- | --- |
 | 1 | [manager/input.go](deepagent/manager/input.go)、[manager/thread.go](deepagent/manager/thread.go)、[manager/output.go](deepagent/manager/output.go) | `Submit`、`Acquire`、`SaveOutput` |
 | 2 | [threadhost/threadhost.go](deepagent/threadhost/threadhost.go) | `Run`、`RunThread` |
-| 3 | [threadhost/runtime.go](deepagent/threadhost/runtime.go) | `createThread`、`buildRunConfig` |
-| 4 | [core/thread_transport.go](deepagent/core/thread_transport.go) | `PostMessage`、外部协议和输出转换 |
-| 5 | [core/thread.go](deepagent/core/thread.go) | `SubmitInput`、`ResumeRun`、输入归属 |
-| 6 | [core/run.go](deepagent/core/run.go) | `Run`、`NewRun`、唯一完成边界 |
-| 7 | [core/run_graph.go](deepagent/core/run_graph.go) | `Run.Execute` |
-| 8 | [core/graph.go](deepagent/core/graph.go) | `buildGraph`、节点与分支 |
-| 9 | [core/thread_run.go](deepagent/core/thread_run.go) | `executeRun`、终态和中断事件 |
+| 3 | [threadhost/thread.go](deepagent/threadhost/thread.go) | `createThread`、`buildRunConfig` |
+| 4 | [threadhost/execution.go](deepagent/threadhost/execution.go) | `threadRun.run`、`wait`、`finish` |
+| 5 | [threadhost/input.go](deepagent/threadhost/input.go)、[threadhost/output.go](deepagent/threadhost/output.go) | `deliverMessage`、`handleOutput` |
+| 6 | [core/thread_transport.go](deepagent/core/thread_transport.go) | `PostMessage`、外部协议和输出转换 |
+| 7 | [core/thread.go](deepagent/core/thread.go) | `SubmitInput`、`ResumeRun`、输入归属 |
+| 8 | [core/run.go](deepagent/core/run.go) | `Run`、`NewRun`、唯一完成边界 |
+| 9 | [core/run_graph.go](deepagent/core/run_graph.go) | `Run.Execute` |
+| 10 | [core/graph.go](deepagent/core/graph.go) | `buildGraph`、节点与分支 |
+| 11 | [core/thread_run.go](deepagent/core/thread_run.go) | `executeRun`、终态和中断事件 |
 
 ```text
 cmd/                         Web / Worker 入口

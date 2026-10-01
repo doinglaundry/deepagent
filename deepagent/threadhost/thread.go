@@ -4,7 +4,6 @@ package threadhost
 
 import (
 	"context"
-	deepagents "eino-cli/deepagent/core"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,11 +14,10 @@ import (
 	"time"
 
 	"eino-cli/deepagent/config"
+	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/core/backend"
-
 	longmemory "eino-cli/deepagent/core/memory"
 	"eino-cli/deepagent/core/middleware"
-
 	"eino-cli/deepagent/core/tools"
 	dalmodel "eino-cli/deepagent/dal/model"
 	memorypkg "eino-cli/deepagent/protocol/memory"
@@ -69,9 +67,9 @@ type RuntimeDeps struct {
 	InterruptResume  deepagents.InterruptResumeDecoder
 }
 
-func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (*deepagents.Thread, error) {
+func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (thread *deepagents.Thread, output *deepagents.TransportThreadOutput, err error) {
 	if info == nil || info.ThreadID == 0 {
-		return nil, errors.New("threadhost: thread info is required")
+		return nil, nil, errors.New("threadhost: thread info is required")
 	}
 	threadID := strconv.FormatInt(info.ThreadID, 10)
 	roleID, workDir := "", ""
@@ -80,39 +78,57 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (*
 		workDir = strings.TrimSpace(info.Profile.Cwd)
 	}
 	if workDir == "" {
-		var err error
 		workDir, err = os.Getwd()
 		if err != nil {
-			return nil, fmt.Errorf("resolve workdir: %w", err)
+			return nil, nil, fmt.Errorf("resolve workdir: %w", err)
 		}
 	}
-	workDir, err := filepath.Abs(workDir)
+	workDir, err = filepath.Abs(workDir)
 	if err != nil {
-		return nil, fmt.Errorf("resolve workdir: %w", err)
+		return nil, nil, fmt.Errorf("resolve workdir: %w", err)
 	}
 	modelName := w.modelName(roleID)
 	chatModel := w.Runtime.Models[modelName]
 	if chatModel == nil {
-		return nil, fmt.Errorf("model %q is unavailable", modelName)
+		return nil, nil, fmt.Errorf("model %q is unavailable", modelName)
 	}
 	var filesystem backend.ToolFilesystem
-	cleanup := func() {}
+	var cleanup func()
 	switch w.Runtime.FilesystemKind {
 	case "", "local":
 		filesystem, err = backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: workDir, VirtualMode: true}, threadID)
 	case "docker":
 		var provider sandbox.Sandbox
 		provider, cleanup, err = aio.AcquireDockerWorkspace(ctx, w.Runtime.Docker, info.SessionID+"-"+threadID, workDir)
-		if err == nil {
-			filesystem, err = backend.NewDockerFilesystem(provider, workDir, threadID)
+		if err != nil {
+			return nil, nil, err
 		}
+		filesystem, err = backend.NewDockerFilesystem(provider, workDir, threadID)
 	default:
-		return nil, fmt.Errorf("unsupported filesystem kind %q", w.Runtime.FilesystemKind)
+		return nil, nil, fmt.Errorf("unsupported filesystem kind %q", w.Runtime.FilesystemKind)
 	}
 	if err != nil {
-		cleanup()
-		return nil, err
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, nil, err
 	}
+	closeResources := func(closeCtx context.Context) error {
+		closeErr := filesystem.Close(closeCtx)
+		if closeErr != nil {
+			return closeErr
+		}
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil
+	}
+	defer func() {
+		// Once constructed, Thread owns cleanup, including an Init failure.
+		if thread == nil {
+			err = errors.Join(err, closeResources(context.WithoutCancel(ctx)))
+		}
+	}()
 	options := deepagents.ThreadOptions{
 		HistoryStore: w.Deps.History, ContextWindow: w.Runtime.ContextWindow,
 		HistoryRecordID: w.Deps.HistoryRecordID,
@@ -130,32 +146,25 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (*
 	events := make(chan deepagents.Event, eventBuffer)
 	runConfig, err := w.buildRunConfig(info, chatModel, filesystem)
 	if err != nil {
-		_ = filesystem.Close(context.WithoutCancel(ctx))
-		cleanup()
-		return nil, err
+		return nil, nil, err
 	}
-	thread, err := deepagents.NewThread(deepagents.ThreadConfig{
+	thread, err = deepagents.NewThread(deepagents.ThreadConfig{
 		SessionID:  info.SessionID,
 		ThreadID:   threadID,
 		ThreadInfo: deepagents.ContextThreadIdentity{ThreadID: threadID, SessionID: info.SessionID, UserID: info.UserID},
 		RunConfig:  runConfig, Events: events, Options: options,
 		ApprovalRemember: w.Deps.ApprovalRemember,
 		InterruptResume:  w.Deps.InterruptResume,
-		CloseResources: func(closeCtx context.Context) error {
-			closeErr := filesystem.Close(closeCtx)
-			if closeErr != nil {
-				return closeErr
-			}
-			cleanup()
-			return nil
-		},
+		CloseResources:   closeResources,
 	})
 	if err != nil {
-		_ = filesystem.Close(context.WithoutCancel(ctx))
-		cleanup()
-		return nil, err
+		return nil, nil, err
 	}
-	return thread, nil
+	output, err = thread.Init(ctx)
+	if err != nil {
+		return thread, nil, fmt.Errorf("Thread.Init thread_id=%d: %w", info.ThreadID, err)
+	}
+	return thread, output, nil
 }
 
 func (w *ThreadHost) buildRunConfig(

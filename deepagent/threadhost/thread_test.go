@@ -7,9 +7,13 @@ import (
 	deepagents "eino-cli/deepagent/core"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"eino-cli/deepagent/config"
 	"eino-cli/deepagent/dal/model"
 	eventpkg "eino-cli/deepagent/protocol/event"
 
@@ -27,11 +31,7 @@ func TestThreadHostCanonicalRuntimeSubmitToYield(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	host := &ThreadHost{Runtime: RuntimeConfig{Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default"}}
-	runtime, err := host.createThread(ctx, &model.Thread{ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	output, err := runtime.Init(ctx)
+	runtime, output, err := host.createThread(ctx, &model.Thread{ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,13 +93,12 @@ func TestThreadHostCreatesCanonicalRuntime(t *testing.T) {
 	host := &ThreadHost{Runtime: RuntimeConfig{
 		Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default",
 	}}
-	runtime, err := host.createThread(context.Background(), &model.Thread{ThreadID: 42, SessionID: "session"})
+	runtime, output, err := host.createThread(context.Background(), &model.Thread{ThreadID: 42, SessionID: "session"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = runtime.Init(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	if output == nil || output.Items == nil {
+		t.Fatal("createThread must initialize the output stream")
 	}
 	err = runtime.Close(context.Background())
 	if err != nil {
@@ -139,5 +138,105 @@ func TestBuildRunConfigCreatesRunLocalMiddlewares(t *testing.T) {
 	}
 	if len(cfg.Agent.SubAgents) != 1 || cfg.Agent.SubAgents[0].Name != "general-purpose" {
 		t.Fatal("Web must explicitly configure its default child")
+	}
+}
+
+func TestCreateThreadDockerAllocationFailure(t *testing.T) {
+	host := &ThreadHost{Runtime: RuntimeConfig{
+		FilesystemKind: "docker",
+		Models:         map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}},
+		DefaultModel:   "default",
+	}}
+	thread, output, err := host.createThread(context.Background(), &model.Thread{
+		ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()},
+	})
+	if err == nil || thread != nil || output != nil {
+		t.Fatalf("expected allocation error without a Thread: thread=%v output=%v err=%v", thread, output, err)
+	}
+}
+
+type failingHistoryStore struct{ err error }
+
+func (s failingHistoryStore) Append(context.Context, *deepagents.HistoryRecord) error {
+	return s.err
+}
+
+func (s failingHistoryStore) List(context.Context, deepagents.ListQuery) ([]*deepagents.HistoryRecord, error) {
+	return nil, s.err
+}
+
+func TestCreateThreadDockerResourceOwnership(t *testing.T) {
+	for _, scenario := range []string{"success", "config_failure", "init_failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			logPath := filepath.Join(dir, "docker.log")
+			// Substitute only the external Docker CLI; use the real filesystem and Thread.
+			script := `#!/bin/sh
+printf '%s\n' "$*" >> "$DOCKER_LOG"
+case "$1" in
+inspect) printf '%s\n' '[{"NetworkSettings":{"Ports":{"8080/tcp":[{"HostPort":"18080"}]}},"Created":"2026-01-01T00:00:00Z"}]' ;;
+rm) ;;
+*) exit 1 ;;
+esac
+`
+			err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0700)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir)
+			t.Setenv("DOCKER_LOG", logPath)
+			cleanupCount := func() int {
+				data, readErr := os.ReadFile(logPath)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				return strings.Count(string(data), "rm -f ")
+			}
+			host := &ThreadHost{Runtime: RuntimeConfig{
+				FilesystemKind: "docker", Docker: config.SandboxConfig{Image: "test-image"},
+				Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default",
+			}}
+			historyErr := errors.New("history unavailable")
+			switch scenario {
+			case "config_failure":
+				// A file cannot be used as a memory directory; config fails after allocation.
+				host.Runtime.MemoryEnabled = true
+				host.Runtime.MemoryDir = logPath
+			case "init_failure":
+				host.Deps.History = failingHistoryStore{err: historyErr}
+			}
+			thread, output, err := host.createThread(context.Background(), &model.Thread{
+				ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: dir},
+			})
+			if scenario == "config_failure" {
+				if err == nil || thread != nil || output != nil || cleanupCount() != 1 {
+					t.Fatalf("construction failure leaked resources: thread=%v output=%v err=%v", thread, output, err)
+				}
+				return
+			}
+			if thread == nil {
+				t.Fatalf("constructed Thread must retain resource ownership: %v", err)
+			}
+			defer thread.Close(context.Background())
+			if scenario == "init_failure" {
+				if !errors.Is(err, historyErr) || output != nil {
+					t.Fatalf("lost initialization failure: output=%v err=%v", output, err)
+				}
+			} else if err != nil || output == nil || output.Items == nil {
+				t.Fatalf("Thread was not initialized: output=%v err=%v", output, err)
+			}
+			if cleanupCount() != 0 {
+				t.Fatal("container released before Thread.Close")
+			}
+			for i := 0; i < 2; i++ {
+				err = thread.Close(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if cleanupCount() != 1 {
+				t.Fatal("Thread.Close must release the container once")
+			}
+		})
 	}
 }
