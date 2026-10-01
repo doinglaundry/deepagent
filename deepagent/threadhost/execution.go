@@ -177,7 +177,7 @@ func (c *threadRun) drainShutdown(inputResults <-chan runResult, outputSignal <-
 }
 
 func (c *threadRun) interruptShutdownTimeout() {
-	interruptTimeout := c.host.getRuntimeInterruptTimeoutForDrain(c.host.ShutdownInterruptDrainTimeout)
+	interruptTimeout := runtimeInterruptTimeout(c.host.ShutdownInterruptDrainTimeout)
 	_ = c.thread.Interrupt(c.ctx, deepagents.TransportThreadInterruptRequest{
 		Kind:    deepagents.TransportThreadInterruptKindWorkerShutdownTimeout,
 		Reason:  defaultShutdownTimeoutReason,

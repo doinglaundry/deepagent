@@ -9,8 +9,7 @@ import (
 type ThreadStatus = string
 
 type Profile struct {
-	Role string
-	Cwd  string
+	Cwd string
 }
 
 const (

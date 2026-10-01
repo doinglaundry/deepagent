@@ -15,15 +15,6 @@ import (
 	"eino-cli/deepagent/manager"
 )
 
-const (
-	// MessageTypeControlCancelInput is the Manager mailbox message type
-	// used by control-plane callers to cancel input up to a cutoff message.
-	MessageTypeControlCancelInput = dalmodel.ControlMessageTypeCancelInput
-	// MessageTypeControlCloseThread is the Manager mailbox message type
-	// used by control-plane callers to close a thread.
-	MessageTypeControlCloseThread = dalmodel.ControlMessageTypeCloseThread
-)
-
 // CancelInputControlPayload is the JSON payload for
 // MessageTypeControlCancelInput.
 type CancelInputControlPayload struct {
@@ -166,7 +157,7 @@ func (c *threadRun) handleCancel(message *dalmodel.Message, pending *[]*dalmodel
 	if reason == "" {
 		reason = "user_cancel"
 	}
-	interruptTimeout := c.host.getRuntimeInterruptTimeout()
+	interruptTimeout := runtimeInterruptTimeout(c.host.InterruptDrainTimeout)
 	err := c.thread.Interrupt(c.ctx, deepagents.TransportThreadInterruptRequest{
 		Kind:             deepagents.TransportThreadInterruptKindCancelInput,
 		ControlMessageID: fmt.Sprint(message.MessageID),
@@ -202,7 +193,7 @@ func (c *threadRun) handleClose(message *dalmodel.Message, pending *[]*dalmodel.
 	*pending = nil
 
 	if c.thread.ActiveRun() != nil {
-		interruptTimeout := c.host.getRuntimeInterruptTimeout()
+		interruptTimeout := runtimeInterruptTimeout(c.host.InterruptDrainTimeout)
 		_ = c.thread.Interrupt(c.ctx, deepagents.TransportThreadInterruptRequest{
 			Kind:             deepagents.TransportThreadInterruptKindCloseThread,
 			ControlMessageID: fmt.Sprint(message.MessageID),
@@ -236,23 +227,9 @@ func (c *threadRun) waitForInterrupt(stop <-chan struct{}) (timedOut bool, err e
 	}
 }
 
-func (w *ThreadHost) getRuntimeInterruptTimeout() time.Duration {
-	return w.getRuntimeInterruptTimeoutForDrain(w.InterruptDrainTimeout)
-}
-
-func (w *ThreadHost) getRuntimeInterruptTimeoutForDrain(drain time.Duration) time.Duration {
-	timeout := w.RuntimeInterruptTimeout
-	if timeout <= 0 {
-		timeout = defaultRuntimeInterruptTimeout
-	}
-	if drain > 0 && timeout >= drain {
-		adjusted := drain / 2
-		if adjusted > 0 {
-			return adjusted
-		}
-		return drain
-	}
-	return timeout
+// Run 先强制取消，给 Host 留出后半个等待窗口保存输出和清理。
+func runtimeInterruptTimeout(drain time.Duration) time.Duration {
+	return min(defaultRuntimeInterruptTimeout, drain/2)
 }
 
 func (c *threadRun) waitInput(stop <-chan struct{}, delay time.Duration) bool {

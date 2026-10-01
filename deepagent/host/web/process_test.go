@@ -45,8 +45,9 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 		}
 	})
 	cfg := filepath.Join(dir, "config.yaml")
-	wire := fmt.Sprintf("manager:\n  mysql_dsn: %q\n  redis_addr: %q\nworker:\n  concurrency: 2\n  lease_ms: 3000\n  scan_interval: 20ms\n  renew_interval: 500ms\n  message_poll_interval: 20ms\n  idle_timeout: 100ms\n  shutdown_drain_timeout: 1s\n  shutdown_interrupt_drain_timeout: 1s\ndefault_model: fake\nmodels:\n  - name: fake\n    provider: openai\n    model: fake\n    base_url: %q\n    api_key: test-only\n", dsn, redis, server.URL+"/v1")
-	if err := os.WriteFile(cfg, []byte(wire), 0600); err != nil {
+	wire := fmt.Sprintf("manager:\n  mysql_dsn: %q\n  redis_addr: %q\nworker:\n  concurrency: 2\n  lease_ms: 3000\n  scan_interval: 20ms\n  message_poll_interval: 20ms\n  idle_timeout: 100ms\n  shutdown_drain_timeout: 1s\n  shutdown_interrupt_drain_timeout: 1s\ndefault_model: fake\nmodels:\n  - name: fake\n    provider: openai\n    model: fake\n    base_url: %q\n    api_key: test-only\n", dsn, redis, server.URL+"/v1")
+	err := os.WriteFile(cfg, []byte(wire), 0600)
+	if err != nil {
 		t.Fatal(err)
 	}
 	var active *exec.Cmd

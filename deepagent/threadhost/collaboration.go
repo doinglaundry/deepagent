@@ -55,7 +55,6 @@ func (m *collaborationMiddleware) Tools(context.Context) ([]tool.BaseTool, error
 
 type collaborationSpawnInput struct {
 	Title    string            `json:"title,omitempty"`
-	Role     string            `json:"role,omitempty"`
 	Content  string            `json:"content"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
@@ -66,16 +65,9 @@ func (m *collaborationMiddleware) spawn(ctx context.Context, input *collaboratio
 	}
 	metadata := cloneStrings(input.Metadata)
 	metadata["parent_thread_id"] = strconv.FormatInt(m.current.ThreadID, 10)
-	profile := &model.Profile{Role: strings.TrimSpace(input.Role)}
-	if m.current.Profile != nil {
-		profile.Cwd = m.current.Profile.Cwd
-		if profile.Role == "" {
-			profile.Role = m.current.Profile.Role
-		}
-	}
 	result, err := m.manager.Submit(ctx, manager.SubmitRequest{
 		UserID: m.current.UserID, SessionID: m.current.SessionID,
-		Title: strings.TrimSpace(input.Title), Metadata: metadata, Profile: profile,
+		Title: strings.TrimSpace(input.Title), Metadata: metadata, Profile: m.current.Profile,
 		Input: collaborationInput(m.current.ThreadID, input.Content, nil),
 	})
 	if err != nil {

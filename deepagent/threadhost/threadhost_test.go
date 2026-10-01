@@ -3,6 +3,7 @@ package threadhost
 import (
 	"context"
 	deepagents "eino-cli/deepagent/core"
+	"encoding/json"
 	"errors"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -153,7 +154,7 @@ func runTestThread(host *ThreadHost, thread *deepagents.Thread, ctx, acceptCtx c
 }
 func testHost(client *managerProbe) *ThreadHost {
 	return &ThreadHost{
-		Config: Config{RenewInterval: time.Hour, MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
+		Config: Config{MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
 		Client: client,
 	}
 }
@@ -252,8 +253,10 @@ func TestLeaseLossPreventsRelease(t *testing.T) {
 	})
 	startPausedRun(t, thread, chatModel)
 	host := testHost(client)
-	host.RenewInterval = time.Millisecond
-	err := runTestThread(host, thread, context.Background(), context.Background(), testClaim(), make(chan deepagents.TransportThreadOutputItem))
+	host.LeaseMS = int64(time.Hour / time.Millisecond)
+	claim := testClaim()
+	claim.Lease.LeaseUntil = time.Now().Add(500 * time.Millisecond)
+	err := runTestThread(host, thread, context.Background(), context.Background(), claim, make(chan deepagents.TransportThreadOutputItem))
 	if !errors.Is(err, client.renewErr) {
 		t.Fatalf("lease error=%v", err)
 	}
@@ -383,5 +386,64 @@ func TestThreadHost_OutputConversionFailurePreventsRelease(t *testing.T) {
 	defer client.mu.Unlock()
 	if !errors.Is(err, expected) || client.closed || client.released {
 		t.Fatalf("error=%v closed=%v released=%v", err, client.closed, client.released)
+	}
+}
+
+func TestThreadHost_InterruptTimeoutPersistsBeforeRelease(t *testing.T) {
+	for _, scenario := range []string{"cancel", "shutdown"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			client := &managerProbe{}
+			chatModel := &pausedHostModel{started: make(chan struct{})}
+			thread := newHostThread(t, chatModel, nil)
+			output, err := thread.Init(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			handle := startPausedRun(t, thread, chatModel)
+			host := testHost(client)
+			host.InterruptDrainTimeout = 200 * time.Millisecond
+			host.ShutdownDrainTimeout = 20 * time.Millisecond
+			host.ShutdownInterruptDrainTimeout = 200 * time.Millisecond
+			claim := testClaim()
+			acceptCtx, stopAccept := context.WithCancel(ctx)
+			defer stopAccept()
+			if scenario == "cancel" {
+				claim.PendingMessages = []*dalmodel.Message{{
+					ThreadID: 1, MessageID: 7, MessageType: MessageTypeControlCancelInput,
+					Payload: []byte(`{"cutoff_message_id":101}`),
+				}}
+			} else {
+				stopAccept()
+			}
+			err = runTestThread(host, thread, ctx, acceptCtx, claim, output.Items)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = handle.Wait(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.mu.Lock()
+			defer client.mu.Unlock()
+			interrupted := false
+			for _, frame := range client.saved {
+				if frame.RunID != handle.RunID() || frame.EventType != "run_status" {
+					continue
+				}
+				var payload struct {
+					Status string `json:"status"`
+				}
+				err = json.Unmarshal(frame.Payload, &payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				interrupted = interrupted || payload.Status == "interrupted"
+			}
+			if !interrupted || !client.released || len(client.order) == 0 || client.order[len(client.order)-1] != "release" {
+				t.Fatalf("terminal interrupt must be saved before release: interrupted=%v released=%v order=%v", interrupted, client.released, client.order)
+			}
+		})
 	}
 }

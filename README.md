@@ -243,13 +243,15 @@ Model ToolCall
 | --- | --- |
 | `manager` | MySQL、Redis 连接信息 |
 | `worker` | 并发、轮询、租约、续租和关闭超时 |
-| `models` / `default_model` / `role_models` | 模型实例、默认模型和角色映射 |
+| `models` / `default_model` | 模型实例和所有 Thread 使用的默认模型 |
 | `filesystem_kind` | `local` 或 `docker` |
 | `max_steps` / `max_model_calls` | Graph 与模型调用预算 |
 | `context_window` / `compact_threshold_tokens` / `keep_recent_messages` | 上下文与压缩策略 |
 | `skill_paths` | Skill 搜索目录 |
 | `web` / `mcp` | 网络工具与 MCP 服务 |
 | `memory_enabled` / `memory_dir` | 长期记忆开关与目录 |
+
+Worker 自动计算续租间隔与 Run 的中断超时，不需要额外配置。
 
 ### 模型
 

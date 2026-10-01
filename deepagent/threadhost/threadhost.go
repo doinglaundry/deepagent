@@ -13,66 +13,20 @@ import (
 	"eino-cli/deepagent/manager"
 )
 
-const (
-	defaultConcurrency             = 1
-	defaultScanLimit               = int32(20)
-	defaultLeaseMS                 = int64(60_000)
-	defaultScanInterval            = time.Second
-	defaultMessagePollInterval     = 500 * time.Millisecond
-	defaultIdleTimeout             = 10 * time.Second
-	defaultShutdownDrainTimeout    = 120 * time.Second
-	defaultShutdownInterruptDrain  = 120 * time.Second
-	defaultInterruptDrainTimeout   = 30 * time.Second
-	defaultRuntimeInterruptTimeout = 15 * time.Second
-	defaultAppendEventAttempts     = 3
-	defaultAppendEventRetryDelay   = 100 * time.Millisecond
-	defaultReleaseReason           = "agent thread completed"
-	defaultErrorReleaseReason      = "agent thread failed"
-	postMessageFailedReason        = "agent thread post message failed"
-	ackMessageFailedReason         = "agent thread ack failed"
-	controlInputFailedReason       = "agent thread control input failed"
-	interruptFailedReason          = "agent thread interrupt failed"
-	defaultGracefulReleaseReason   = "worker graceful exit"
-	defaultShutdownTimeoutReason   = "worker graceful exit timeout"
-	defaultInterruptTimeoutReason  = "agent thread interrupt timeout"
-	defaultThreadClosedReason      = "agent thread closed"
-	defaultCloseThreadReason       = "user_close"
-	maxPullErrorBackoff            = 5 * time.Second
-)
-
 // Config controls scheduling, leases, polling and shutdown.
 type Config struct {
-	Concurrency int    `yaml:"concurrency"`
-	ScanLimit   int32  `yaml:"scan_limit"`
-	LeaseMS     int64  `yaml:"lease_ms"`
-	LeaseOwner  string `yaml:"lease_owner"`
-
+	Concurrency         int           `yaml:"concurrency"`
+	LeaseMS             int64         `yaml:"lease_ms"`
 	ScanInterval        time.Duration `yaml:"scan_interval"`
-	RenewInterval       time.Duration `yaml:"renew_interval"`
 	MessagePollInterval time.Duration `yaml:"message_poll_interval"`
-	// IdleTimeout is the normal-operation quiet period before a claimed thread
-	// is released after it becomes inactive.
-	IdleTimeout time.Duration `yaml:"idle_timeout"`
-	// ShutdownDrainTimeout is the maximum time a shutting-down worker waits for
-	// an already active run to finish naturally. During this window the worker
-	// keeps renewing the lease and appending runtime output, but it does not pull
-	// or deliver new pending messages.
+	IdleTimeout         time.Duration `yaml:"idle_timeout"`
+
+	// Worker 退出时，等待当前 Run 自然完成。
 	ShutdownDrainTimeout time.Duration `yaml:"shutdown_drain_timeout"`
-	// ShutdownInterruptDrainTimeout is the final grace period after shutdown
-	// drain timed out and the worker asked the runtime to interrupt the active
-	// run. Runtime output is still consumed during this window so business code
-	// can emit its own terminal event.
+	// 退出时中断后的等待窗口，也用于等待 Thread.Close 完成。
 	ShutdownInterruptDrainTimeout time.Duration `yaml:"shutdown_interrupt_drain_timeout"`
-	// InterruptDrainTimeout is the maximum time the worker waits for a runtime
-	// to become inactive after a user/control-plane interrupt request. During
-	// this window the worker keeps appending runtime output but does not deliver
-	// new ordinary input.
+	// 用户取消或关闭 Thread 后，等待 Run 停止。
 	InterruptDrainTimeout time.Duration `yaml:"interrupt_drain_timeout"`
-	// RuntimeInterruptTimeout is passed to the runtime when interrupting a
-	// running run. If the run is still blocked after this duration, the
-	// runtime may return an interrupted result before the blocked call exits.
-	// If unset, the worker uses 15s capped below the active drain window.
-	RuntimeInterruptTimeout time.Duration `yaml:"runtime_interrupt_timeout"`
 }
 
 // ThreadHost owns scanning, claims, input delivery and lease release.
@@ -96,20 +50,11 @@ func (w *ThreadHost) normalize() {
 	if w.Concurrency <= 0 {
 		w.Concurrency = defaultConcurrency
 	}
-	if w.ScanLimit <= 0 {
-		w.ScanLimit = defaultScanLimit
-	}
 	if w.LeaseMS <= 0 {
 		w.LeaseMS = defaultLeaseMS
 	}
 	if w.ScanInterval <= 0 {
 		w.ScanInterval = defaultScanInterval
-	}
-	if w.RenewInterval <= 0 {
-		w.RenewInterval = time.Duration(w.LeaseMS) * time.Millisecond / 3
-		if w.RenewInterval <= 0 {
-			w.RenewInterval = defaultScanInterval
-		}
 	}
 	if w.MessagePollInterval <= 0 {
 		w.MessagePollInterval = defaultMessagePollInterval
@@ -159,7 +104,7 @@ func (w *ThreadHost) Run(ctx context.Context) (err error) {
 			return ctx.Err()
 		case sem <- struct{}{}:
 		}
-		claim, acquireErr := w.Client.Acquire(ctx, manager.AcquireRequest{LeaseMS: w.LeaseMS, ScanLimit: w.ScanLimit})
+		claim, acquireErr := w.Client.Acquire(ctx, manager.AcquireRequest{LeaseMS: w.LeaseMS})
 		if acquireErr != nil || claim.Thread == nil {
 			<-sem
 			err = sleepContext(ctx, w.ScanInterval)
@@ -253,12 +198,13 @@ func (w *ThreadHost) startLease(ctx context.Context, lease *manager.Lease) (runC
 }
 
 func (w *ThreadHost) renewLease(ctx context.Context, lease *manager.Lease) (err error) {
-	ticker := time.NewTicker(w.RenewInterval)
-	defer ticker.Stop()
 	deadline := lease.LeaseUntil
 	if deadline.IsZero() {
 		deadline = time.Now().Add(time.Duration(defaultLeaseMS) * time.Millisecond)
 	}
+	// 使用实际剩余租期，避免续租间隔超过 Manager 授予的租约。
+	renewTimer := time.NewTimer(max(time.Until(deadline)/3, time.Nanosecond))
+	defer renewTimer.Stop()
 	timer := time.NewTimer(time.Until(deadline))
 	defer timer.Stop()
 	for {
@@ -267,7 +213,7 @@ func (w *ThreadHost) renewLease(ctx context.Context, lease *manager.Lease) (err 
 			return nil
 		case <-timer.C:
 			return fmt.Errorf("lease expired thread_id=%d: %w", lease.ThreadID, context.DeadlineExceeded)
-		case <-ticker.C:
+		case <-renewTimer.C:
 			renewCtx, cancel := context.WithDeadline(ctx, deadline)
 			renewed, renewErr := w.Client.Renew(renewCtx, lease.ThreadID, lease.LeaseToken, w.LeaseMS)
 			cancel()
@@ -292,6 +238,7 @@ func (w *ThreadHost) renewLease(ctx context.Context, lease *manager.Lease) (err 
 				}
 			}
 			timer.Reset(time.Until(deadline))
+			renewTimer.Reset(max(time.Until(deadline)/3, time.Nanosecond))
 		}
 	}
 }

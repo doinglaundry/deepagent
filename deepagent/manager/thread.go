@@ -29,7 +29,6 @@ type AcquireRequest struct {
 	ThreadID   int64
 	LeaseToken string
 	LeaseMS    int64
-	ScanLimit  int32
 }
 
 type Lease struct {

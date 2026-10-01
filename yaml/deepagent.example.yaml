@@ -8,10 +8,8 @@ manager:
 
 worker:
   concurrency: 4
-  scan_limit: 20
   lease_ms: 60000
   scan_interval: 1s
-  renew_interval: 20s
   message_poll_interval: 500ms
   idle_timeout: 5s
   shutdown_drain_timeout: 30s

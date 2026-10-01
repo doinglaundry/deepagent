@@ -105,7 +105,7 @@ func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 			defer server.Close()
 			provider := newSandbox("sandbox", "thread", server.URL, nil)
 			provider.containerName, provider.runtime = "test-container", runtimeDocker
-			files, err := backend.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread")
+			files, err := backend.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -160,7 +160,7 @@ func TestCoreDockerFilesystemPreservesInFlightCancellation(t *testing.T) {
 	defer close(release)
 	provider := newSandbox("sandbox", "thread", server.URL, nil)
 	provider.containerName, provider.runtime = "test-container", runtimeDocker
-	files, err := backend.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread")
+	files, err := backend.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

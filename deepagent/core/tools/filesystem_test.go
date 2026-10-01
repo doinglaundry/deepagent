@@ -257,7 +257,7 @@ func TestWorkspaceToolSchemasMatchLocalAndDocker(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer local.Close(ctx)
-	docker, err := backend.NewDockerFilesystem(&dockerToolProvider{}, "/workspace", "docker")
+	docker, err := backend.NewDockerFilesystem(&dockerToolProvider{}, "/workspace", "docker", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

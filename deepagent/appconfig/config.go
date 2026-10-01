@@ -24,7 +24,6 @@ type Config struct {
 	Host                   threadhost.Config    `yaml:"worker"`
 	Models                 []modelhub.Config    `yaml:"models"`
 	DefaultModel           string               `yaml:"default_model"`
-	RoleModels             map[string]string    `yaml:"role_models"`
 	SystemPrompt           string               `yaml:"system_prompt"`
 	MaxSteps               int                  `yaml:"max_steps"`
 	MaxModelCalls          int                  `yaml:"max_model_calls"`
@@ -108,12 +107,6 @@ func (c Config) Validate() error {
 	_, exists := names[c.DefaultModel]
 	if !exists {
 		return fmt.Errorf("default_model must name a configured model")
-	}
-	for role, name := range c.RoleModels {
-		_, exists := names[name]
-		if !exists {
-			return fmt.Errorf("role %q references unknown model %q", role, name)
-		}
 	}
 	return nil
 }

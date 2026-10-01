@@ -13,19 +13,27 @@ import (
 )
 
 // DockerFilesystem keeps file and command operations in the same container.
-// The caller owns acquisition and release of the sandbox.
+// When releaseContainer is provided, the filesystem owns the container,
+// including cleanup on construction failure.
 type DockerFilesystem struct {
-	sandbox       sandbox.Sandbox
-	mu            sync.RWMutex
-	dir           string
-	root          string
-	containerID   string
-	pathResolver  sandbox.ContainerPathResolver
-	canonicalRoot string
-	commands      *Commands
+	releaseContainer func()
+	releaseOnce      sync.Once
+	sandbox          sandbox.Sandbox
+	mu               sync.RWMutex
+	dir              string
+	root             string
+	containerID      string
+	pathResolver     sandbox.ContainerPathResolver
+	canonicalRoot    string
+	commands         *Commands
 }
 
-func NewDockerFilesystem(provider sandbox.Sandbox, dir, threadID string) (*DockerFilesystem, error) {
+func NewDockerFilesystem(provider sandbox.Sandbox, dir, threadID string, releaseContainer func()) (filesystem *DockerFilesystem, err error) {
+	defer func() {
+		if filesystem == nil && releaseContainer != nil {
+			releaseContainer()
+		}
+	}()
 	if provider == nil {
 		return nil, fmt.Errorf("sandbox is required")
 	}
@@ -44,7 +52,7 @@ func NewDockerFilesystem(provider sandbox.Sandbox, dir, threadID string) (*Docke
 	if !ok {
 		return nil, fmt.Errorf("Docker sandbox must resolve container paths")
 	}
-	b := &DockerFilesystem{sandbox: provider, dir: path.Clean(dir), root: path.Clean(dir), containerID: containerID, pathResolver: resolver}
+	b := &DockerFilesystem{releaseContainer: releaseContainer, sandbox: provider, dir: path.Clean(dir), root: path.Clean(dir), containerID: containerID, pathResolver: resolver}
 	b.commands = NewDockerCommands(threadID, b, containerID)
 	return b, nil
 }
@@ -119,7 +127,16 @@ func (b *DockerFilesystem) Wait(ctx context.Context, id, pattern string, offset 
 func (b *DockerFilesystem) Cancel(ctx context.Context, id string) error {
 	return b.commands.Cancel(ctx, id)
 }
-func (b *DockerFilesystem) Close(ctx context.Context) error { return b.commands.Close(ctx) }
+func (b *DockerFilesystem) Close(ctx context.Context) error {
+	err := b.commands.Close(ctx)
+	if err != nil {
+		return err
+	}
+	if b.releaseContainer != nil {
+		b.releaseOnce.Do(b.releaseContainer)
+	}
+	return nil
+}
 
 func dockerFileInfos(paths []string) []FileInfo {
 	out := make([]FileInfo, 0, len(paths))

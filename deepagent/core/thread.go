@@ -75,7 +75,7 @@ func NewThread(cfg ThreadConfig) (*Thread, error) {
 	}
 	events := cfg.Events
 	if events == nil {
-		events = make(chan Event, 128)
+		events = make(chan Event, 256)
 	}
 	options := cfg.Options
 	opts := cfg.ThreadOptions

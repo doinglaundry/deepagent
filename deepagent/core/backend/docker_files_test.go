@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,7 +86,7 @@ func (s *fileSandbox) Grep(_ context.Context, p, pattern string, opts sandbox.Gr
 func TestDockerFilesystemToolsUseProvider(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{"/remote/a.txt": "first\nsecond\n"}}
-	b, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	b, err := backend.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +148,7 @@ func TestDockerFilesystemToolArgumentPresenceAndReplaceAll(t *testing.T) {
 		"/remote/data.txt":   "twice twice",
 		"/remote/remove.txt": "remove me",
 	}}
-	b, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	b, err := backend.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +209,7 @@ func TestDockerFilesystemToolArgumentPresenceAndReplaceAll(t *testing.T) {
 func TestDockerFilesystemFailureDoesNotWriteOrUseHost(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{"/remote/a": "repeat repeat"}}
-	b, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	b, err := backend.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,18 +244,24 @@ func TestDockerFilesystemFailureDoesNotWriteOrUseHost(t *testing.T) {
 	if provider.writes != 1 {
 		t.Fatal("canceled call reached provider")
 	}
-	if _, err := backend.NewDockerFilesystem(nil, "/remote", "thread"); err == nil {
-		t.Fatal("nil provider accepted")
+	{
+		_, err := backend.NewDockerFilesystem(nil, "/remote", "thread", nil)
+		if err == nil {
+			t.Fatal("nil provider accepted")
+		}
 	}
-	if _, err := backend.NewDockerFilesystem(provider, "relative", "thread"); err == nil {
-		t.Fatal("relative root accepted")
+	{
+		_, err := backend.NewDockerFilesystem(provider, "relative", "thread", nil)
+		if err == nil {
+			t.Fatal("relative root accepted")
+		}
 	}
 }
 
 func TestDockerFilesystemRejectsSymlinkOutsideWorkspace(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{}, resolved: map[string]string{"/remote/escape/file": "/outside/file"}}
-	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +280,7 @@ func TestDockerFilesystemRejectsSymlinkOutsideWorkspace(t *testing.T) {
 func TestDockerFilesystemAllowsSymlinkInsideWorkspace(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{"/remote/alias": "inside"}, resolved: map[string]string{"/remote/alias": "/remote/target"}}
-	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +305,7 @@ func TestDockerEditDoesNotWriteAfterReadCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	provider := &cancelAfterReadSandbox{fileSandbox: &fileSandbox{files: map[string]string{"/remote/a": "original"}}, cancel: cancel}
-	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +335,7 @@ func TestDockerFilesystemDeletePreservesResolverCancellation(t *testing.T) {
 		fileSandbox: &fileSandbox{files: map[string]string{}},
 		cancel:      cancel,
 	}
-	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +375,7 @@ func TestDockerFilesystemDeleteCancelsInFlightDockerCommand(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	provider := &fileSandbox{files: map[string]string{}}
-	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread")
+	files, err := backend.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,5 +431,40 @@ func TestDockerFilesystemDeleteCancelsInFlightDockerCommand(t *testing.T) {
 	}
 	if !strings.Contains(deleteErr.Error(), "docker delete a:") {
 		t.Fatalf("delete lost command diagnostic: %v", deleteErr)
+	}
+}
+
+func TestDockerFilesystemCloseReleasesContainerOnce(t *testing.T) {
+	var released atomic.Int32
+	filesystem, err := backend.NewDockerFilesystem(&fileSandbox{}, "/remote", "thread", func() { released.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var callers sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		callers.Add(1)
+		go func() {
+			defer callers.Done()
+			closeErr := filesystem.Close(context.Background())
+			if closeErr != nil {
+				t.Error(closeErr)
+			}
+		}()
+	}
+	callers.Wait()
+	if released.Load() != 1 {
+		t.Fatalf("container releases=%d, want 1", released.Load())
+	}
+}
+
+func TestDockerFilesystemConstructionFailureReleasesContainer(t *testing.T) {
+	for _, root := range []string{"relative", "/remote"} {
+		t.Run(root, func(t *testing.T) {
+			released := 0
+			filesystem, err := backend.NewDockerFilesystem(&fileSandbox{}, root, "", func() { released++ })
+			if err == nil || filesystem != nil || released != 1 {
+				t.Fatalf("failed construction must release ownership: filesystem=%v error=%v releases=%d", filesystem, err, released)
+			}
+		})
 	}
 }

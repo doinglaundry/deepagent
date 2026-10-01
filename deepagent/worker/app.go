@@ -20,11 +20,9 @@ import (
 
 // Run owns process-wide resources and starts the canonical distributed Worker.
 func Run(ctx context.Context, cfg Config) error {
-	{
-		err := cfg.Validate()
-		if err != nil {
-			return err
-		}
+	err := cfg.Validate()
+	if err != nil {
+		return err
 	}
 	coordinator, err := manager.Open(ctx, cfg.Manager)
 	if err != nil {
@@ -72,7 +70,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Client: coordinator,
 		Runtime: threadhost.RuntimeConfig{
 			FilesystemKind: cfg.FilesystemKind, Docker: cfg.Docker,
-			Models: models, DefaultModel: cfg.DefaultModel, RoleModels: cfg.RoleModels,
+			Models: models, DefaultModel: cfg.DefaultModel,
 			SystemPrompt: cfg.SystemPrompt, MaxSteps: cfg.MaxSteps, MaxModelCalls: cfg.MaxModelCalls,
 			ContextWindow: cfg.ContextWindow, CompactThresholdTokens: cfg.CompactThresholdTokens,
 			KeepRecentMessages: cfg.KeepRecentMessages, Web: cfg.Web,

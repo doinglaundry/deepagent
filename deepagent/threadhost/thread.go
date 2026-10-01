@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,7 +20,6 @@ import (
 	"eino-cli/deepagent/core/tools"
 	dalmodel "eino-cli/deepagent/dal/model"
 	memorypkg "eino-cli/deepagent/protocol/memory"
-	"eino-cli/deepagent/sandbox"
 	"eino-cli/deepagent/sandbox/aio"
 
 	modelpkg "github.com/cloudwego/eino/components/model"
@@ -30,8 +28,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-const defaultEventBusSize = 256
-
 // RuntimeConfig contains process-owned values used to build each Thread and
 // each Run. Stable resources are resolved once when the Thread is created.
 type RuntimeConfig struct {
@@ -39,7 +35,6 @@ type RuntimeConfig struct {
 	Docker                 config.SandboxConfig
 	Models                 map[string]modelpkg.ToolCallingChatModel
 	DefaultModel           string
-	RoleModels             map[string]string
 	SystemPrompt           string
 	MaxSteps               int
 	MaxModelCalls          int
@@ -51,7 +46,6 @@ type RuntimeConfig struct {
 	MemoryDir              string
 	MemoryUserID           string
 	MemoryLeaseTTL         time.Duration
-	EventBuffer            int
 }
 
 // RuntimeDeps are long-lived resources shared by Thread runtimes.
@@ -67,68 +61,48 @@ type RuntimeDeps struct {
 	InterruptResume  deepagents.InterruptResumeDecoder
 }
 
+// createThread 创建并初始化可执行 Thread，尚不启动 Run。
 func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (thread *deepagents.Thread, output *deepagents.TransportThreadOutput, err error) {
 	if info == nil || info.ThreadID == 0 {
 		return nil, nil, errors.New("threadhost: thread info is required")
 	}
 	threadID := strconv.FormatInt(info.ThreadID, 10)
-	roleID, workDir := "", ""
+	workDir := ""
 	if info.Profile != nil {
-		roleID = strings.TrimSpace(info.Profile.Role)
 		workDir = strings.TrimSpace(info.Profile.Cwd)
-	}
-	if workDir == "" {
-		workDir, err = os.Getwd()
-		if err != nil {
-			return nil, nil, fmt.Errorf("resolve workdir: %w", err)
-		}
 	}
 	workDir, err = filepath.Abs(workDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve workdir: %w", err)
 	}
-	modelName := w.modelName(roleID)
-	chatModel := w.Runtime.Models[modelName]
+	chatModel := w.Runtime.Models[w.Runtime.DefaultModel]
 	if chatModel == nil {
-		return nil, nil, fmt.Errorf("model %q is unavailable", modelName)
+		return nil, nil, fmt.Errorf("model %q is unavailable", w.Runtime.DefaultModel)
 	}
+	// filesystem 由整个 Thread 共用；DockerFilesystem 同时负责释放容器。
 	var filesystem backend.ToolFilesystem
-	var cleanup func()
 	switch w.Runtime.FilesystemKind {
 	case "", "local":
 		filesystem, err = backend.NewLocalFilesystem(&backend.LocalFilesystemConfig{RootDir: workDir, VirtualMode: true}, threadID)
 	case "docker":
-		var provider sandbox.Sandbox
-		provider, cleanup, err = aio.AcquireDockerWorkspace(ctx, w.Runtime.Docker, info.SessionID+"-"+threadID, workDir)
-		if err != nil {
-			return nil, nil, err
+		provider, releaseContainer, acquireErr := aio.AcquireDockerWorkspace(ctx, w.Runtime.Docker, info.SessionID+"-"+threadID, workDir)
+		if acquireErr != nil {
+			return nil, nil, acquireErr
 		}
-		filesystem, err = backend.NewDockerFilesystem(provider, workDir, threadID)
+		filesystem, err = backend.NewDockerFilesystem(provider, workDir, threadID, releaseContainer)
 	default:
 		return nil, nil, fmt.Errorf("unsupported filesystem kind %q", w.Runtime.FilesystemKind)
 	}
 	if err != nil {
-		if cleanup != nil {
-			cleanup()
-		}
 		return nil, nil, err
 	}
-	closeResources := func(closeCtx context.Context) error {
-		closeErr := filesystem.Close(closeCtx)
-		if closeErr != nil {
-			return closeErr
-		}
-		if cleanup != nil {
-			cleanup()
-		}
-		return nil
-	}
+	// NewThread 成功前由 Host 清理资源；成功后交给 Thread.Close。
 	defer func() {
-		// Once constructed, Thread owns cleanup, including an Init failure.
 		if thread == nil {
-			err = errors.Join(err, closeResources(context.WithoutCancel(ctx)))
+			err = errors.Join(err, filesystem.Close(context.WithoutCancel(ctx)))
 		}
 	}()
+	// 配置历史存储，以及可选的摘要压缩。
 	options := deepagents.ThreadOptions{
 		HistoryStore: w.Deps.History, ContextWindow: w.Runtime.ContextWindow,
 		HistoryRecordID: w.Deps.HistoryRecordID,
@@ -139,29 +113,26 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 			KeepRecent: w.Runtime.KeepRecentMessages,
 		}
 	}
-	eventBuffer := w.Runtime.EventBuffer
-	if eventBuffer <= 0 {
-		eventBuffer = defaultEventBusSize
-	}
-	events := make(chan deepagents.Event, eventBuffer)
 	runConfig, err := w.buildRunConfig(info, chatModel, filesystem)
 	if err != nil {
 		return nil, nil, err
 	}
+	// Thread 接管 filesystem.Close，并创建默认事件通道。
 	thread, err = deepagents.NewThread(deepagents.ThreadConfig{
 		SessionID:  info.SessionID,
 		ThreadID:   threadID,
 		ThreadInfo: deepagents.ContextThreadIdentity{ThreadID: threadID, SessionID: info.SessionID, UserID: info.UserID},
-		RunConfig:  runConfig, Events: events, Options: options,
+		RunConfig:  runConfig, Options: options,
 		ApprovalRemember: w.Deps.ApprovalRemember,
 		InterruptResume:  w.Deps.InterruptResume,
-		CloseResources:   closeResources,
+		CloseResources:   filesystem.Close,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	output, err = thread.Init(ctx)
 	if err != nil {
+		// 保留 Thread，让调用方先关闭资源，再释放租约。
 		return thread, nil, fmt.Errorf("Thread.Init thread_id=%d: %w", info.ThreadID, err)
 	}
 	return thread, output, nil
@@ -218,14 +189,6 @@ func (w *ThreadHost) buildRunConfig(
 		}
 	}
 	return runConfig, nil
-}
-
-func (w *ThreadHost) modelName(roleID string) string {
-	name := strings.TrimSpace(w.Runtime.RoleModels[roleID])
-	if name != "" {
-		return name
-	}
-	return w.Runtime.DefaultModel
 }
 
 func (w *ThreadHost) memoryService(chatModel modelpkg.ToolCallingChatModel) (longmemory.Service, error) {

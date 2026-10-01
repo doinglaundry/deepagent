@@ -67,7 +67,7 @@ func TestWorkspacePatchHasSameLocalAndDockerBehavior(t *testing.T) {
 	}
 	defer local.Close(ctx)
 	provider := &fileSandbox{files: map[string]string{"/remote/a.txt": "old\n"}}
-	docker, err := backend.NewDockerFilesystem(provider, "/remote", "docker-thread")
+	docker, err := backend.NewDockerFilesystem(provider, "/remote", "docker-thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestWorkspacePatchRejectsRepeatedSourcesAndSelfMoves(t *testing.T) {
 			defer local.Close(ctx)
 
 			provider := &fileSandbox{files: map[string]string{"/remote/a": "old\n"}}
-			docker, err := backend.NewDockerFilesystem(provider, "/remote", "docker-patch-validation")
+			docker, err := backend.NewDockerFilesystem(provider, "/remote", "docker-patch-validation", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -217,7 +217,7 @@ func TestWorkspacePatchProtectsExistingTargetsAndDeletesOversizedFiles(t *testin
 	defer local.Close(ctx)
 
 	provider := &fileSandbox{files: map[string]string{"/remote/target.txt": oversized}}
-	docker, err := backend.NewDockerFilesystem(provider, "/remote", "docker-oversized-patch")
+	docker, err := backend.NewDockerFilesystem(provider, "/remote", "docker-oversized-patch", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestWorkspacePatchProtectsExistingTargetsAndDeletesOversizedFiles(t *testin
 func TestWorkspacePatchRejectsArbitraryAddReadErrors(t *testing.T) {
 	sentinel := errors.New("provider read failed")
 	provider := &fileSandbox{files: map[string]string{"/remote/target.txt": "original"}, err: sentinel}
-	workspace, err := backend.NewDockerFilesystem(provider, "/remote", "docker-add-error")
+	workspace, err := backend.NewDockerFilesystem(provider, "/remote", "docker-add-error", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestWorkspacePatchRejectsExistingMoveDestinations(t *testing.T) {
 	defer local.Close(ctx)
 
 	provider := &fileSandbox{files: map[string]string{"/remote/source.txt": "source\n", "/remote/destination.txt": "destination\n"}}
-	docker, err := backend.NewDockerFilesystem(provider, "/remote", "docker-move-destination")
+	docker, err := backend.NewDockerFilesystem(provider, "/remote", "docker-move-destination", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestWorkspacePatchRejectsExistingMoveDestinations(t *testing.T) {
 func TestWorkspacePatchStopsBeforeMutationOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	provider := &cancelingPatchExistenceSandbox{fileSandbox: &fileSandbox{files: map[string]string{}}, cancel: cancel}
-	workspace, err := backend.NewDockerFilesystem(provider, "/remote", "docker-canceled-patch")
+	workspace, err := backend.NewDockerFilesystem(provider, "/remote", "docker-canceled-patch", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func TestDockerPatchFallbackUsesContainerNoReplaceCreation(t *testing.T) {
 	t.Setenv("PATH", pathValue)
 
 	provider := &execDockerSandbox{Sandbox: &fileSandbox{files: map[string]string{}}}
-	workspace, err := backend.NewDockerFilesystem(provider, filepath.ToSlash(storageDir), "docker-exec-create")
+	workspace, err := backend.NewDockerFilesystem(provider, filepath.ToSlash(storageDir), "docker-exec-create", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +488,7 @@ func TestDockerCommandRunsInSelectedContainer(t *testing.T) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	provider := &fileSandbox{files: map[string]string{}}
-	ws, err := backend.NewDockerFilesystem(provider, "/remote", "docker-thread")
+	ws, err := backend.NewDockerFilesystem(provider, "/remote", "docker-thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +522,7 @@ func TestDockerFilesystemRealContainer(t *testing.T) {
 	id := strings.TrimSpace(string(out))
 	defer exec.Command("docker", "rm", "-f", id).Run()
 	provider := &fileSandbox{containerID: id, files: map[string]string{}}
-	ws, err := backend.NewDockerFilesystem(provider, root, "real-docker-thread")
+	ws, err := backend.NewDockerFilesystem(provider, root, "real-docker-thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

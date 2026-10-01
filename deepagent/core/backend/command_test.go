@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -90,5 +91,25 @@ func TestCommandsPrefixRetentionAndIncrementalOffsets(t *testing.T) {
 	partial, err := service.Wait(ctx, id, "", 2)
 	if err != nil || partial.Output != "34" {
 		t.Fatalf("partial prefix=%+v err=%v", partial, err)
+	}
+}
+
+func TestDockerFilesystemCloseTimeoutRetainsContainerUntilJobsFinish(t *testing.T) {
+	released := 0
+	job := &commandJob{done: make(chan struct{}), cancel: func() {}}
+	filesystem := &DockerFilesystem{
+		commands:         &Commands{jobs: map[string]*commandJob{"running": job}},
+		releaseContainer: func() { released++ },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := filesystem.Close(ctx)
+	if !errors.Is(err, context.Canceled) || released != 0 {
+		t.Fatalf("released container before job completion: error=%v releases=%d", err, released)
+	}
+	close(job.done)
+	err = filesystem.Close(context.Background())
+	if err != nil || released != 1 {
+		t.Fatalf("retry did not release the container: error=%v releases=%d", err, released)
 	}
 }
