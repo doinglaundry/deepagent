@@ -39,18 +39,21 @@ func (*followUpTool) Info(context.Context) (*schema.ToolInfo, error) {
 }
 
 func (*followUpTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
-	target, hasData, resumed := tool.GetResumeContext[*FollowUpInfo](ctx)
-	if target {
-		if !hasData || resumed == nil || strings.TrimSpace(resumed.UserAnswer) == "" {
-			return "", errors.New("follow-up resume requires an answer")
+	isResumeTarget, hasFollowUpInfo, followUpInfo := tool.GetResumeContext[*FollowUpInfo](ctx)
+	// 当前工具未被指定续跑时，提出问题并暂停。
+	if !isResumeTarget {
+		questionInfo, err := normalizeFollowUpArgs(arguments)
+		if err != nil {
+			return "", err
 		}
-		return resumed.UserAnswer, nil
+		return "", tool.Interrupt(ctx, questionInfo)
 	}
-	info, err := normalizeFollowUpArgs(arguments)
-	if err != nil {
-		return "", err
+
+	// 当前工具续跑时，校验并返回用户回答。
+	if !hasFollowUpInfo || followUpInfo == nil || strings.TrimSpace(followUpInfo.UserAnswer) == "" {
+		return "", errors.New("follow-up resume requires an answer")
 	}
-	return "", tool.Interrupt(ctx, info)
+	return followUpInfo.UserAnswer, nil
 }
 
 func normalizeFollowUpArgs(arguments string) (*FollowUpInfo, error) {
