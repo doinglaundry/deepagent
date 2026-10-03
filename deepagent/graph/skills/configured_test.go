@@ -9,13 +9,13 @@ import (
 
 func TestLoadSkillsCustomReplacesPublic(t *testing.T) {
 	root := t.TempDir()
-	for _, item := range []struct{ category, description string }{{"public", "public copy"}, {"custom", "custom copy"}} {
-		path := filepath.Join(root, item.category, "review")
+	for _, testCase := range []struct{ category, description string }{{"public", "public copy"}, {"custom", "custom copy"}} {
+		path := filepath.Join(root, testCase.category, "review")
 		err := os.MkdirAll(path, 0o700)
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeErr := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte("---\nname: review\ndescription: "+item.description+"\n---\nbody"), 0o600)
+		writeErr := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte("---\nname: review\ndescription: "+testCase.description+"\n---\nbody"), 0o600)
 		if writeErr != nil {
 			t.Fatal(writeErr)
 		}
@@ -24,8 +24,8 @@ func TestLoadSkillsCustomReplacesPublic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := loader.ListSkills(context.Background())
-	if err != nil || len(items) != 1 || items[0].Description != "custom copy" {
-		t.Fatalf("skills = %+v, %v", items, err)
+	skillMetadata, err := loader.ListSkills(context.Background())
+	if err != nil || len(skillMetadata) != 1 || skillMetadata[0].Description != "custom copy" {
+		t.Fatalf("skills = %+v, %v", skillMetadata, err)
 	}
 }

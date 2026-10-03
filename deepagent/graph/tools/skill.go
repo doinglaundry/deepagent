@@ -12,36 +12,36 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-type ActivateSkillTool struct{ loader skillspkg.SkillLoader }
+type ActivateSkillTool struct{ skillLoader skillspkg.SkillLoader }
 
-func (t *ActivateSkillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	items, err := t.loader.ListSkills(ctx)
+func (activateSkillTool *ActivateSkillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+	skillMetadata, err := activateSkillTool.skillLoader.ListSkills(ctx)
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(items))
-	for _, item := range items {
-		if item != nil && strings.TrimSpace(item.Name) != "" {
-			names = append(names, item.Name)
+	skillNames := make([]string, 0, len(skillMetadata))
+	for _, skill := range skillMetadata {
+		if skill != nil && strings.TrimSpace(skill.Name) != "" {
+			skillNames = append(skillNames, skill.Name)
 		}
 	}
-	sort.Strings(names)
+	sort.Strings(skillNames)
 	return &schema.ToolInfo{Name: "activate_skill", Desc: "Load full instructions for one available project skill.", ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-		"name": {Type: schema.String, Required: true, Enum: names},
+		"name": {Type: schema.String, Required: true, Enum: skillNames},
 	})}, nil
 }
 
-func NewActivateSkillTool(loader skillspkg.SkillLoader) ToolDescriptor {
-	return ToolDescriptor{Tool: &ActivateSkillTool{loader: loader}, ReadOnly: true}
+func NewActivateSkillTool(skillLoader skillspkg.SkillLoader) ToolDescriptor {
+	return ToolDescriptor{Tool: &ActivateSkillTool{skillLoader: skillLoader}, ReadOnly: true}
 }
 
-func (t *ActivateSkillTool) InvokableRun(ctx context.Context, raw string, _ ...tool.Option) (string, error) {
-	var input struct {
+func (activateSkillTool *ActivateSkillTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	var skillArgs struct {
 		Name string `json:"name"`
 	}
-	err := json.Unmarshal([]byte(raw), &input)
+	err := json.Unmarshal([]byte(arguments), &skillArgs)
 	if err != nil {
 		return "", err
 	}
-	return skillspkg.LoadSkillContent(ctx, t.loader, input.Name)
+	return skillspkg.LoadSkillContent(ctx, activateSkillTool.skillLoader, skillArgs.Name)
 }

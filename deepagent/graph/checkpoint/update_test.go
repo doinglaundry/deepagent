@@ -16,14 +16,14 @@ func TestAppendInputsPreservesCheckpointFieldsAndInputCursor(t *testing.T) {
 	snapshot := []byte(`{"Type":{"PointerNum":1,"StructType":"_eino_checkpoint"},"future":"preserved","MapValues":{"State":{"Type":{"PointerNum":1,"SimpleType":"deepagent_run_state_v1"},"JSONValue":` + string(encoded) + `},"InterruptID2Addr":{"untouched":"address"},"Inputs":{"untouched":"node input"}}}`)
 	envelope := Envelope{Version: 1, ThreadID: "thread", RunID: "run", GraphVersion: "core-graph-v1", EinoSnapshot: snapshot}
 	original, _ := json.Marshal(envelope)
-	inner := &memoryStore{data: map[string][]byte{"checkpoint": original}}
+	rawStore := &memoryStore{data: map[string][]byte{"checkpoint": original}}
 	input := types.Input{Message: schema.UserMessage("pending"), Meta: map[string]string{"MessageID": "9007199254740993"}}
-	appendInputsErr := AppendInputs(context.Background(), inner, "checkpoint", "thread", "run", []types.Input{input})
+	appendInputsErr := AppendInputs(context.Background(), rawStore, "checkpoint", "thread", "run", []types.Input{input})
 	if appendInputsErr != nil {
 		t.Fatal(appendInputsErr)
 	}
 	var saved Envelope
-	savedDecodeErr := json.Unmarshal(inner.data["checkpoint"], &saved)
+	savedDecodeErr := json.Unmarshal(rawStore.data["checkpoint"], &saved)
 	if savedDecodeErr != nil {
 		t.Fatal(savedDecodeErr)
 	}
@@ -56,14 +56,14 @@ func TestAppendInputsPreservesCheckpointFieldsAndInputCursor(t *testing.T) {
 	if state.Consumed[1].Meta.(map[string]string)["MessageID"] != "9007199254740993" {
 		t.Fatal("typed metadata changed")
 	}
-	for _, tc := range []struct{ name, thread, run string }{{"thread", "other", "run"}, {"run", "thread", "other"}} {
-		t.Run(tc.name, func(t *testing.T) {
-			inner.data["checkpoint"] = original
-			err := AppendInputs(context.Background(), inner, "checkpoint", tc.thread, tc.run, []types.Input{input})
+	for _, testCase := range []struct{ name, thread, run string }{{"thread", "other", "run"}, {"run", "thread", "other"}} {
+		t.Run(testCase.name, func(t *testing.T) {
+			rawStore.data["checkpoint"] = original
+			err := AppendInputs(context.Background(), rawStore, "checkpoint", testCase.thread, testCase.run, []types.Input{input})
 			if err == nil {
 				t.Fatal("foreign checkpoint accepted")
 			}
-			if string(inner.data["checkpoint"]) != string(original) {
+			if string(rawStore.data["checkpoint"]) != string(original) {
 				t.Fatal("foreign checkpoint overwritten")
 			}
 		})

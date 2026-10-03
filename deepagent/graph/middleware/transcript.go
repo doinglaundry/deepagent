@@ -24,47 +24,47 @@ type Transcript struct {
 	seen   [][32]byte
 }
 
-func (*Transcript) Name() string { return "transcript" }
+func (*Transcript) GetName() string { return "transcript" }
 
-func (t *Transcript) NewRun() Middleware { return &Transcript{Open: t.Open} }
+func (transcript *Transcript) NewRun() Middleware { return &Transcript{Open: transcript.Open} }
 
-func (t *Transcript) BeforeRun(ctx context.Context, state *types.RunState) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.writer != nil {
+func (transcript *Transcript) PrepareRun(ctx context.Context, runState *types.RunState) error {
+	transcript.mu.Lock()
+	defer transcript.mu.Unlock()
+	if transcript.writer != nil {
 		return fmt.Errorf("transcript already open")
 	}
-	t.seen = nil
-	if t.Open == nil {
+	transcript.seen = nil
+	if transcript.Open == nil {
 		return nil
 	}
-	writer, err := t.Open(ctx, state.ThreadID, state.RunID)
+	transcriptWriter, err := transcript.Open(ctx, runState.ThreadID, runState.RunID)
 	if err != nil {
-		if writer != nil {
-			_ = writer.Close()
+		if transcriptWriter != nil {
+			_ = transcriptWriter.Close()
 		}
 		return err
 	}
-	if writer == nil {
+	if transcriptWriter == nil {
 		return fmt.Errorf("transcript opener returned nil writer")
 	}
-	t.writer = writer
+	transcript.writer = transcriptWriter
 	return nil
 }
 
-func (t *Transcript) AfterRun(context.Context, *types.RunState, error) error {
-	return t.Close(context.Background())
+func (transcript *Transcript) FinishRun(context.Context, *types.RunState, error) error {
+	return transcript.Close(context.Background())
 }
 
-func (t *Transcript) Close(context.Context) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.writer == nil {
+func (transcript *Transcript) Close(context.Context) error {
+	transcript.mu.Lock()
+	defer transcript.mu.Unlock()
+	if transcript.writer == nil {
 		return nil
 	}
-	writer := t.writer
-	t.writer = nil
-	return writer.Close()
+	transcriptWriter := transcript.writer
+	transcript.writer = nil
+	return transcriptWriter.Close()
 }
 
 // The existing time/role/content/tools fields remain readable by transcript
@@ -80,65 +80,65 @@ type transcriptMessage struct {
 	Message    *schema.Message `json:"message"`
 }
 
-func (t *Transcript) Observe(_ context.Context, event types.RuntimeEvent) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.writer == nil {
+func (transcript *Transcript) Observe(_ context.Context, runtimeEvent types.RuntimeEvent) error {
+	transcript.mu.Lock()
+	defer transcript.mu.Unlock()
+	if transcript.writer == nil {
 		return nil
 	}
 	var messages []*schema.Message
-	var snapshot bool
-	switch event.Kind {
+	var isSnapshot bool
+	switch runtimeEvent.Kind {
 	case "llm_requesting":
-		payload, _ := event.Data.(types.LLMRequestingPayload)
-		messages = payload.Messages
-		snapshot = true
+		eventPayload, _ := runtimeEvent.Data.(types.LLMRequestingPayload)
+		messages = eventPayload.Messages
+		isSnapshot = true
 	case "llm_end":
-		payload, _ := event.Data.(types.LLMEnd)
-		messages = []*schema.Message{payload.Message}
+		eventPayload, _ := runtimeEvent.Data.(types.LLMEnd)
+		messages = []*schema.Message{eventPayload.Message}
 	case "tool_end":
-		payload, ok := event.Data.(types.ToolEndPayload)
+		eventPayload, ok := runtimeEvent.Data.(types.ToolEndPayload)
 		if ok {
-			messages = []*schema.Message{schema.ToolMessage(payload.Result, payload.CallID)}
-			if len(payload.MultiContent) > 0 {
+			messages = []*schema.Message{schema.ToolMessage(eventPayload.Result, eventPayload.CallID)}
+			if len(eventPayload.MultiContent) > 0 {
 				messages[0].Content = ""
-				messages[0].UserInputMultiContent = payload.MultiContent
+				messages[0].UserInputMultiContent = eventPayload.MultiContent
 			}
 		}
 	default:
 		return nil
 	}
-	hashes := make([][32]byte, len(messages))
+	messageHashes := make([][32]byte, len(messages))
 	for i, message := range messages {
-		raw, err := json.Marshal(message)
+		encodedMessage, err := json.Marshal(message)
 		if err != nil {
 			return err
 		}
-		hashes[i] = sha256.Sum256(raw)
+		messageHashes[i] = sha256.Sum256(encodedMessage)
 	}
-	start := 0
-	if snapshot {
-		for start < len(hashes) && start < len(t.seen) && hashes[start] == t.seen[start] {
-			start++
+	firstNewMessage := 0
+	if isSnapshot {
+		for firstNewMessage < len(messageHashes) && firstNewMessage < len(transcript.seen) && messageHashes[firstNewMessage] == transcript.seen[firstNewMessage] {
+			firstNewMessage++
 		}
 	}
-	for _, message := range messages[start:] {
+	for _, message := range messages[firstNewMessage:] {
 		if message == nil {
 			continue
 		}
-		record := transcriptMessage{Time: time.Now().UTC(), Role: string(message.Role), Content: message.Content, Sequence: event.Sequence, ToolCallID: message.ToolCallID, Reasoning: message.ReasoningContent, Message: message}
-		for _, call := range message.ToolCalls {
-			record.Tools = append(record.Tools, call.Function.Name)
+		transcriptRecord := transcriptMessage{Time: time.Now().UTC(), Role: string(message.Role), Content: message.Content, Sequence: runtimeEvent.Sequence, ToolCallID: message.ToolCallID, Reasoning: message.ReasoningContent, Message: message}
+		for _, toolCall := range message.ToolCalls {
+			transcriptRecord.Tools = append(transcriptRecord.Tools, toolCall.Function.Name)
 		}
-		err := json.NewEncoder(t.writer).Encode(record)
+		err := json.NewEncoder(transcript.writer).Encode(transcriptRecord)
 		if err != nil {
 			return err
 		}
 	}
-	if snapshot {
-		t.seen = hashes
+	if isSnapshot {
+		transcript.seen = messageHashes
 	} else {
-		t.seen = append(t.seen, hashes...)
+		transcript.seen = append(transcript.seen, messageHashes...)
 	}
 	return nil
 }

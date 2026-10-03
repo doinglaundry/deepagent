@@ -14,22 +14,22 @@ import (
 	"sort"
 )
 
-func (a *Graph) callTools(ctx context.Context, s *types.RunState) (*types.RunState, error) {
-	s.Phase = types.PhaseTools
-	calls := make([]types.ToolCall, len(s.Calls))
-	for i := range s.Calls {
-		calls[i] = s.Calls[i].Call
+func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*types.RunState, error) {
+	runState.Phase = types.PhaseTools
+	toolCalls := make([]types.ToolCall, len(runState.Calls))
+	for i := range runState.Calls {
+		toolCalls[i] = runState.Calls[i].Call
 	}
-	err := a.executor.executeBatch(ctx, calls, func(ctx context.Context, call types.ToolCall, chunk string) error {
-		return a.event(ctx, s, "tool_call_output_chunk", call.ID, types.ToolCallOutputChunkPayload{Name: call.Name, CallID: call.ID, Chunk: chunk})
+	err := graph.toolExecutor.executeToolBatch(ctx, toolCalls, func(ctx context.Context, call types.ToolCall, chunk string) error {
+		return graph.emitEvent(ctx, runState, "tool_call_output_chunk", call.ID, types.ToolCallOutputChunkPayload{Name: call.Name, CallID: call.ID, Chunk: chunk})
 	})
-	a.executor.snapshot(s.Calls)
+	graph.toolExecutor.snapshotToolExecutions(runState.Calls)
 	// A later call may interrupt this batch. Its first Eino snapshot must not
 	// retain an approval obligation already resolved by a completed call.
-	pending := s.Pending[:0]
-	for _, item := range s.Pending {
+	pending := runState.Pending[:0]
+	for _, item := range runState.Pending {
 		completed := false
-		for _, call := range s.Calls {
+		for _, call := range runState.Calls {
 			if item.CallID != "" && item.CallID == call.Call.ID && call.Status == types.CallCompleted {
 				completed = true
 				break
@@ -39,12 +39,12 @@ func (a *Graph) callTools(ctx context.Context, s *types.RunState) (*types.RunSta
 			pending = append(pending, item)
 		}
 	}
-	s.Pending = pending
+	runState.Pending = pending
 	if err != nil {
 		return nil, err
 	}
-	sort.SliceStable(s.Calls, func(i, j int) bool { return s.Calls[i].Call.Index < s.Calls[j].Call.Index })
-	for _, callState := range s.Calls {
+	sort.SliceStable(runState.Calls, func(i, j int) bool { return runState.Calls[i].Call.Index < runState.Calls[j].Call.Index })
+	for _, callState := range runState.Calls {
 		call := callState.Call
 		result := callState.Result
 		if call.Name == tools.ToolUpdatePlan && !result.IsError {
@@ -53,7 +53,7 @@ func (a *Graph) callTools(ctx context.Context, s *types.RunState) (*types.RunSta
 			if err != nil {
 				return nil, fmt.Errorf("decode update_plan result: %w", err)
 			}
-			err = a.event(ctx, s, "plan_updated", result.CallID, update)
+			err = graph.emitEvent(ctx, runState, "plan_updated", result.CallID, update)
 			if err != nil {
 				return nil, err
 			}
@@ -63,26 +63,26 @@ func (a *Graph) callTools(ctx context.Context, s *types.RunState) (*types.RunSta
 			message.Content = ""
 			message.UserInputMultiContent = result.MultiContent
 		}
-		err := a.conversation.AddHistory(ctx, s.RunID, message)
+		err := graph.conversation.AddHistory(ctx, runState.RunID, message)
 		if err != nil {
 			return nil, err
 		}
-		err = a.event(ctx, s, "tool_end", result.CallID, types.ToolEndPayload{MultiContent: result.MultiContent, Name: call.Name, CallID: call.ID, ArgumentsInJSON: call.Arguments, ToolStartTime: callState.StartedAt, Result: result.Content})
+		err = graph.emitEvent(ctx, runState, "tool_end", result.CallID, types.ToolEndPayload{MultiContent: result.MultiContent, Name: call.Name, CallID: call.ID, ArgumentsInJSON: call.Arguments, ToolStartTime: callState.StartedAt, Result: result.Content})
 		if err != nil {
 			return nil, err
 		}
 	}
-	s.Pending = nil
-	return s, nil
+	runState.Pending = nil
+	return runState, nil
 }
 
-func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall) (tools.ToolDescriptor, *types.ToolResult, error) {
-	toolDescriptor, ok := e.toolset.Lookup(call.Name)
-	result := &types.ToolResult{CallID: call.ID, ReturnDirect: toolDescriptor.ReturnDirect}
+func (toolExecutor *toolExecutor) authorizeToolCall(ctx context.Context, toolCall types.ToolCall) (tools.ToolDescriptor, *types.ToolResult, error) {
+	toolDescriptor, ok := toolExecutor.toolSet.GetToolDescriptor(toolCall.Name)
+	toolResult := &types.ToolResult{CallID: toolCall.ID, ReturnDirect: toolDescriptor.ReturnDirect}
 	if !ok {
-		result.IsError = true
-		result.Content = "unknown tool: " + call.Name
-		return toolDescriptor, result, nil
+		toolResult.IsError = true
+		toolResult.Content = "unknown tool: " + toolCall.Name
+		return toolDescriptor, toolResult, nil
 	}
 	err := ctx.Err()
 	if err != nil {
@@ -92,84 +92,84 @@ func (e *toolExecutor) authorize(ctx context.Context, call types.ToolCall) (tool
 	if toolDescriptor.RequiresApproval {
 		decision.Action = tools.AskApproval
 	}
-	if e.toolPolicy != nil {
-		e.mu.Lock()
-		approvedArguments, hasEagerApproval := e.approvedEagerArgumentsByCallID[call.ID]
-		e.mu.Unlock()
+	if toolExecutor.toolPolicy != nil {
+		toolExecutor.mu.Lock()
+		approvedArguments, hasEagerApproval := toolExecutor.approvedEagerArgumentsByCallID[toolCall.ID]
+		toolExecutor.mu.Unlock()
 		if hasEagerApproval {
-			if approvedArguments != call.Arguments {
-				return toolDescriptor, nil, fmt.Errorf("eager tool %s arguments changed after policy approval", call.ID)
+			if approvedArguments != toolCall.Arguments {
+				return toolDescriptor, nil, fmt.Errorf("eager tool %s arguments changed after policy approval", toolCall.ID)
 			}
 			decision.Action = tools.Allow
 		} else {
 			var err error
-			decision, err = e.toolPolicy.Decide(ctx, call, toolDescriptor)
+			decision, err = toolExecutor.toolPolicy.Decide(ctx, toolCall, toolDescriptor)
 			if err != nil {
 				return toolDescriptor, nil, err
 			}
 		}
 	}
-	state := types.RunStateFromContext(ctx)
-	if state != nil && decision.Action == tools.Allow {
-		for _, pending := range state.Pending {
-			if pending.CallID == call.ID && pending.Kind == "approval" {
+	runState := types.GetRunState(ctx)
+	if runState != nil && decision.Action == tools.Allow {
+		for _, pending := range runState.Pending {
+			if pending.CallID == toolCall.ID && pending.Kind == "approval" {
 				decision.Action = tools.AskApproval
 				break
 			}
 		}
 	}
 	if decision.Action == tools.AskApproval {
-		target, hasData, answer := compose.GetResumeContext[*tools.ApprovalResult](ctx)
-		e.mu.Lock()
-		available := target && hasData && answer != nil && !e.approvalAnswerConsumed
-		if available && answer.CallID != "" && answer.CallID != call.ID {
-			e.mu.Unlock()
-			return toolDescriptor, nil, fmt.Errorf("approval call ID %q does not match %q", answer.CallID, call.ID)
+		isResumeTarget, hasApprovalResult, approvalResult := compose.GetResumeContext[*tools.ApprovalResult](ctx)
+		toolExecutor.mu.Lock()
+		canConsumeApprovalAnswer := isResumeTarget && hasApprovalResult && approvalResult != nil && !toolExecutor.approvalAnswerConsumed
+		if canConsumeApprovalAnswer && approvalResult.CallID != "" && approvalResult.CallID != toolCall.ID {
+			toolExecutor.mu.Unlock()
+			return toolDescriptor, nil, fmt.Errorf("approval call ID %q does not match %q", approvalResult.CallID, toolCall.ID)
 		}
-		if available {
-			e.approvalAnswerConsumed = true
+		if canConsumeApprovalAnswer {
+			toolExecutor.approvalAnswerConsumed = true
 		}
-		e.mu.Unlock()
-		if !available {
-			info := &tools.ApprovalInfo{CallID: call.ID, ToolName: call.Name, Arguments: call.Arguments, Reason: decision.Reason}
+		toolExecutor.mu.Unlock()
+		if !canConsumeApprovalAnswer {
+			approvalInfo := &tools.ApprovalInfo{CallID: toolCall.ID, ToolName: toolCall.Name, Arguments: toolCall.Arguments, Reason: decision.Reason}
 			// Approval calls are sequential barriers. Persist the obligation before
 			// Eino saves its first snapshot, even if later ID enrichment fails.
-			if state != nil {
+			if runState != nil {
 				found := false
-				for _, pending := range state.Pending {
-					if pending.CallID == call.ID && pending.Kind == "approval" {
+				for _, pending := range runState.Pending {
+					if pending.CallID == toolCall.ID && pending.Kind == "approval" {
 						found = true
 					}
 				}
 				if !found {
-					data, _ := json.Marshal(info)
-					state.Pending = append(state.Pending, types.Interrupt{CallID: call.ID, Kind: "approval", Data: data})
+					data, _ := json.Marshal(approvalInfo)
+					runState.Pending = append(runState.Pending, types.Interrupt{CallID: toolCall.ID, Kind: "approval", Data: data})
 				}
 			}
-			return toolDescriptor, nil, compose.Interrupt(ctx, info)
+			return toolDescriptor, nil, compose.Interrupt(ctx, approvalInfo)
 		}
-		if answer.Approved {
+		if approvalResult.Approved {
 			decision.Action = tools.Allow
 		} else {
 			decision.Action = tools.Deny
-			if answer.DisapproveReason != nil && *answer.DisapproveReason != "" {
-				decision.Reason = *answer.DisapproveReason
+			if approvalResult.DisapproveReason != nil && *approvalResult.DisapproveReason != "" {
+				decision.Reason = *approvalResult.DisapproveReason
 			}
 		}
 	}
 	if decision.Action == tools.Deny {
-		result.IsError = true
-		result.Content = decision.Reason
-		if result.Content == "" {
-			result.Content = "tool call denied"
+		toolResult.IsError = true
+		toolResult.Content = decision.Reason
+		if toolResult.Content == "" {
+			toolResult.Content = "tool call denied"
 		}
-		return toolDescriptor, result, nil
+		return toolDescriptor, toolResult, nil
 	}
 	if decision.Action != tools.Allow {
 		return toolDescriptor, nil, fmt.Errorf("invalid policy action %q", decision.Action)
 	}
-	if !toolDescriptor.ReadOnly && e.persistToolExecutionFence != nil {
-		err = e.persistToolExecutionFence(ctx, call)
+	if !toolDescriptor.ReadOnly && toolExecutor.persistToolExecutionFence != nil {
+		err = toolExecutor.persistToolExecutionFence(ctx, toolCall)
 		if err != nil {
 			return toolDescriptor, nil, err
 		}
@@ -187,43 +187,43 @@ func GetToolCallID(ctx context.Context) string {
 }
 
 // Every tool passes policy and checkpoint fencing before interface dispatch.
-func (e *toolExecutor) invokeTool(ctx context.Context, state types.ToolCallState, emit types.ToolChunkSink) (result *types.ToolResult, err error) {
-	call := state.Call
+func (toolExecutor *toolExecutor) invokeTool(ctx context.Context, toolCallState types.ToolCallState, emitToolChunk types.ToolChunkSink) (toolResult *types.ToolResult, err error) {
+	toolCall := toolCallState.Call
 	// Tool code may panic after producing a side effect.
 	// Return a system error so execute can finalize the shared ledger and waiters
 	// and cleanup cannot remain blocked on this execution forever.
 	defer func() {
 		recovered := recover()
 		if recovered != nil {
-			result = nil
-			err = fmt.Errorf("tool %s panicked: %v", call.Name, recovered)
+			toolResult = nil
+			err = fmt.Errorf("tool %s panicked: %v", toolCall.Name, recovered)
 		}
 	}()
-	if e.onToolStart != nil {
-		err = e.onToolStart(ctx, state)
+	if toolExecutor.onToolStart != nil {
+		err = toolExecutor.onToolStart(ctx, toolCallState)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	ctx = context.WithValue(ctx, toolCallIDKey{}, call.ID)
-	ctx = context.WithValue(ctx, toolExecutorKey{}, e)
-	descriptor, early, err := e.authorize(ctx, call)
-	if early != nil || err != nil {
-		return early, err
+	ctx = context.WithValue(ctx, toolCallIDKey{}, toolCall.ID)
+	ctx = context.WithValue(ctx, toolExecutorKey{}, toolExecutor)
+	toolDescriptor, policyResult, err := toolExecutor.authorizeToolCall(ctx, toolCall)
+	if policyResult != nil || err != nil {
+		return policyResult, err
 	}
-	result = &types.ToolResult{CallID: call.ID, ReturnDirect: descriptor.ReturnDirect}
-	switch t := descriptor.Tool.(type) {
+	toolResult = &types.ToolResult{CallID: toolCall.ID, ReturnDirect: toolDescriptor.ReturnDirect}
+	switch einoTool := toolDescriptor.Tool.(type) {
 	case tool.EnhancedStreamableTool:
-		stream, err := t.StreamableRun(ctx, &schema.ToolArgument{Text: call.Arguments})
+		stream, err := einoTool.StreamableRun(ctx, &schema.ToolArgument{Text: toolCall.Arguments})
 		if stream != nil {
 			defer stream.Close()
 		}
 		if err != nil {
-			return finishToolResult(ctx, result, err)
+			return finishToolResult(ctx, toolResult, err)
 		}
 		if stream == nil {
-			return nil, fmt.Errorf("tool %s returned nil stream", call.Name)
+			return nil, fmt.Errorf("tool %s returned nil stream", toolCall.Name)
 		}
 		var chunks []*schema.ToolResult
 		for {
@@ -236,7 +236,7 @@ func (e *toolExecutor) invokeTool(ctx context.Context, state types.ToolCallState
 				break
 			}
 			if readErr != nil {
-				return finishToolResult(ctx, result, readErr)
+				return finishToolResult(ctx, toolResult, readErr)
 			}
 			if chunk == nil {
 				continue
@@ -246,8 +246,8 @@ func (e *toolExecutor) invokeTool(ctx context.Context, state types.ToolCallState
 				return nil, convertErr
 			}
 			chunks = append(chunks, chunk)
-			if emit != nil && converted.Content != "" {
-				err = emit(ctx, call, converted.Content)
+			if emitToolChunk != nil && converted.Content != "" {
+				err = emitToolChunk(ctx, toolCall, converted.Content)
 				if err != nil {
 					return nil, err
 				}
@@ -257,23 +257,23 @@ func (e *toolExecutor) invokeTool(ctx context.Context, state types.ToolCallState
 		if err != nil {
 			return nil, err
 		}
-		return finishEnhancedResult(result, merged)
+		return finishEnhancedResult(toolResult, merged)
 	case tool.EnhancedInvokableTool:
-		output, err := t.InvokableRun(ctx, &schema.ToolArgument{Text: call.Arguments})
+		einoToolResult, err := einoTool.InvokableRun(ctx, &schema.ToolArgument{Text: toolCall.Arguments})
 		if err != nil {
-			return finishToolResult(ctx, result, err)
+			return finishToolResult(ctx, toolResult, err)
 		}
-		return finishEnhancedResult(result, output)
+		return finishEnhancedResult(toolResult, einoToolResult)
 	case tool.StreamableTool:
-		stream, err := t.StreamableRun(ctx, call.Arguments)
+		stream, err := einoTool.StreamableRun(ctx, toolCall.Arguments)
 		if stream != nil {
 			defer stream.Close()
 		}
 		if err != nil {
-			return finishToolResult(ctx, result, err)
+			return finishToolResult(ctx, toolResult, err)
 		}
 		if stream == nil {
-			return nil, fmt.Errorf("tool %s returned nil stream", call.Name)
+			return nil, fmt.Errorf("tool %s returned nil stream", toolCall.Name)
 		}
 		for {
 			err = ctx.Err()
@@ -285,31 +285,31 @@ func (e *toolExecutor) invokeTool(ctx context.Context, state types.ToolCallState
 				break
 			}
 			if readErr != nil {
-				return finishToolResult(ctx, result, readErr)
+				return finishToolResult(ctx, toolResult, readErr)
 			}
-			result.Content += chunk
-			if emit != nil {
-				err = emit(ctx, call, chunk)
+			toolResult.Content += chunk
+			if emitToolChunk != nil {
+				err = emitToolChunk(ctx, toolCall, chunk)
 				if err != nil {
 					return nil, err
 				}
 			}
 		}
-		return result, nil
+		return toolResult, nil
 	case tool.InvokableTool:
-		result.Content, err = t.InvokableRun(ctx, call.Arguments)
-		return finishToolResult(ctx, result, err)
+		toolResult.Content, err = einoTool.InvokableRun(ctx, toolCall.Arguments)
+		return finishToolResult(ctx, toolResult, err)
 	default:
-		return nil, fmt.Errorf("tool %s has no Eino execution interface", call.Name)
+		return nil, fmt.Errorf("tool %s has no Eino execution interface", toolCall.Name)
 	}
 }
 
-func finishToolResult(ctx context.Context, result *types.ToolResult, err error) (*types.ToolResult, error) {
+func finishToolResult(ctx context.Context, toolResult *types.ToolResult, err error) (*types.ToolResult, error) {
 	if err == nil {
-		return result, nil
+		return toolResult, nil
 	}
-	var internal *types.InternalError
-	if errors.As(err, &internal) {
+	var internalError *types.InternalError
+	if errors.As(err, &internalError) {
 		return nil, err
 	}
 	if ctx.Err() != nil {
@@ -320,25 +320,25 @@ func finishToolResult(ctx context.Context, result *types.ToolResult, err error) 
 	if interrupted || rerun || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
 	}
-	result.IsError = true
-	result.Content = err.Error()
-	return result, nil
+	toolResult.IsError = true
+	toolResult.Content = err.Error()
+	return toolResult, nil
 }
 
-func finishEnhancedResult(result *types.ToolResult, output *schema.ToolResult) (*types.ToolResult, error) {
-	if output == nil {
+func finishEnhancedResult(toolResult *types.ToolResult, einoToolResult *schema.ToolResult) (*types.ToolResult, error) {
+	if einoToolResult == nil {
 		return nil, fmt.Errorf("enhanced tool returned nil output")
 	}
-	parts, err := output.ToMessageInputParts()
+	parts, err := einoToolResult.ToMessageInputParts()
 	if err != nil {
 		return nil, err
 	}
-	result.MultiContent = parts
-	result.Content = ""
+	toolResult.MultiContent = parts
+	toolResult.Content = ""
 	for _, part := range parts {
 		if part.Type == schema.ChatMessagePartTypeText {
-			result.Content += part.Text
+			toolResult.Content += part.Text
 		}
 	}
-	return result, nil
+	return toolResult, nil
 }

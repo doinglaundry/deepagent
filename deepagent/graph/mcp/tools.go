@@ -22,95 +22,95 @@ type mcpTool struct {
 	info       *schema.ToolInfo
 }
 
-func (t *mcpTool) Info(context.Context) (*schema.ToolInfo, error) { return t.info, nil }
-func (t *mcpTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
+func (mcpTool *mcpTool) Info(context.Context) (*schema.ToolInfo, error) { return mcpTool.info, nil }
+func (mcpTool *mcpTool) InvokableRun(ctx context.Context, argumentsJSON string, _ ...tool.Option) (string, error) {
 	var arguments map[string]any
-	decodeErr := json.Unmarshal([]byte(args), &arguments)
+	decodeErr := json.Unmarshal([]byte(argumentsJSON), &arguments)
 	if decodeErr != nil {
 		return "", decodeErr
 	}
-	result, err := t.client.request(ctx, "tools/call", map[string]any{"name": t.remoteName, "arguments": arguments}, false)
+	callResult, err := mcpTool.client.sendRequest(ctx, "tools/call", map[string]any{"name": mcpTool.remoteName, "arguments": arguments}, false)
 	if err != nil {
 		return "", err
 	}
-	var status struct {
+	var callStatus struct {
 		IsError bool `json:"isError"`
 	}
-	err = json.Unmarshal(result, &status)
+	err = json.Unmarshal(callResult, &callStatus)
 	if err != nil {
 		return "", err
 	}
-	if status.IsError {
-		return "", fmt.Errorf("MCP tool error: %s", result)
+	if callStatus.IsError {
+		return "", fmt.Errorf("MCP tool error: %s", callResult)
 	}
-	return string(result), nil
+	return string(callResult), nil
 }
 
 var toolNameCleaner = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
-func LoadMCP(ctx context.Context, configs []MCPConfig) (result []tools.ToolDescriptor, err error) {
-	names := map[string]bool{}
+func LoadMCP(ctx context.Context, mcpConfigs []MCPConfig) (toolDescriptors []tools.ToolDescriptor, err error) {
+	seenToolNames := map[string]bool{}
 
-	var clients []*mcpClient
+	var mcpClients []*mcpClient
 	defer func() {
-		retained := make(map[*mcpClient]bool)
+		retainedClients := make(map[*mcpClient]bool)
 		if err == nil {
-			for _, base := range result {
-				t, ok := base.Tool.(*mcpTool)
+			for _, toolDescriptor := range toolDescriptors {
+				loadedTool, ok := toolDescriptor.Tool.(*mcpTool)
 				if ok {
-					retained[t.client] = true
+					retainedClients[loadedTool.client] = true
 				}
 			}
 		}
-		for _, client := range clients {
-			if !retained[client] {
-				client.close()
+		for _, mcpClient := range mcpClients {
+			if !retainedClients[mcpClient] {
+				mcpClient.close()
 			}
 		}
 	}()
-	for _, config := range configs {
-		endpoint, e := url.Parse(config.URL)
-		if e != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || config.Name == "" {
-			return result, fmt.Errorf("MCP name and HTTP(S) URL required")
+	for _, mcpConfig := range mcpConfigs {
+		endpointURL, operationErr := url.Parse(mcpConfig.URL)
+		if operationErr != nil || endpointURL.Host == "" || (endpointURL.Scheme != "http" && endpointURL.Scheme != "https") || mcpConfig.Name == "" {
+			return toolDescriptors, fmt.Errorf("MCP name and HTTP(S) URL required")
 		}
-		timeout := time.Duration(config.TimeoutSeconds) * time.Second
+		timeout := time.Duration(mcpConfig.TimeoutSeconds) * time.Second
 		if timeout <= 0 {
 			timeout = 60 * time.Second
 		}
-		httpClient := config.HTTPClient
+		httpClient := mcpConfig.HTTPClient
 		if httpClient == nil {
 			httpClient = &http.Client{Timeout: timeout}
 		}
-		client := &mcpClient{config: config, client: httpClient}
-		clients = append(clients, client)
-		init, e := client.request(ctx, "initialize", map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]string{"name": "deepagent-worker", "version": "1.0"}}, false)
-		if e != nil {
-			return result, e
+		mcpClient := &mcpClient{config: mcpConfig, client: httpClient}
+		mcpClients = append(mcpClients, mcpClient)
+		initializeResponse, operationErr := mcpClient.sendRequest(ctx, "initialize", map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]string{"name": "deepagent-worker", "version": "1.0"}}, false)
+		if operationErr != nil {
+			return toolDescriptors, operationErr
 		}
-		var initialized struct {
+		var initializeResult struct {
 			ProtocolVersion string `json:"protocolVersion"`
 		}
-		e = json.Unmarshal(init, &initialized)
-		if e != nil {
-			return result, e
+		operationErr = json.Unmarshal(initializeResponse, &initializeResult)
+		if operationErr != nil {
+			return toolDescriptors, operationErr
 		}
-		client.version = initialized.ProtocolVersion
-		_, e = client.request(ctx, "notifications/initialized", nil, true)
-		if e != nil {
-			return result, e
+		mcpClient.version = initializeResult.ProtocolVersion
+		_, operationErr = mcpClient.sendRequest(ctx, "notifications/initialized", nil, true)
+		if operationErr != nil {
+			return toolDescriptors, operationErr
 		}
 		cursor := ""
 		seenCursors := map[string]bool{}
 		for {
-			params := map[string]any{}
+			parameters := map[string]any{}
 			if cursor != "" {
-				params["cursor"] = cursor
+				parameters["cursor"] = cursor
 			}
-			data, e := client.request(ctx, "tools/list", params, false)
-			if e != nil {
-				return result, e
+			toolListResponse, operationErr := mcpClient.sendRequest(ctx, "tools/list", parameters, false)
+			if operationErr != nil {
+				return toolDescriptors, operationErr
 			}
-			var list struct {
+			var toolList struct {
 				Tools []struct {
 					Name        string          `json:"name"`
 					Description string          `json:"description"`
@@ -121,43 +121,43 @@ func LoadMCP(ctx context.Context, configs []MCPConfig) (result []tools.ToolDescr
 				} `json:"tools"`
 				NextCursor string `json:"nextCursor"`
 			}
-			e = json.Unmarshal(data, &list)
-			if e != nil {
-				return result, e
+			operationErr = json.Unmarshal(toolListResponse, &toolList)
+			if operationErr != nil {
+				return toolDescriptors, operationErr
 			}
-			for _, remote := range list.Tools {
-				name := toolNameCleaner.ReplaceAllString("mcp_"+config.Name+"_"+remote.Name, "_")
-				if names[name] {
-					return result, fmt.Errorf("duplicate MCP tool name %q", name)
+			for _, remoteToolConfig := range toolList.Tools {
+				toolName := toolNameCleaner.ReplaceAllString("mcp_"+mcpConfig.Name+"_"+remoteToolConfig.Name, "_")
+				if seenToolNames[toolName] {
+					return toolDescriptors, fmt.Errorf("duplicate MCP tool name %q", toolName)
 				}
-				names[name] = true
-				var params jsonschema.Schema
-				e = json.Unmarshal(remote.InputSchema, &params)
-				if e != nil {
-					return result, e
+				seenToolNames[toolName] = true
+				var parameters jsonschema.Schema
+				operationErr = json.Unmarshal(remoteToolConfig.InputSchema, &parameters)
+				if operationErr != nil {
+					return toolDescriptors, operationErr
 				}
-				result = append(result, tools.ToolDescriptor{
-					Tool:     &mcpTool{client: client, remoteName: remote.Name, info: &schema.ToolInfo{Name: name, Desc: remote.Description, ParamsOneOf: schema.NewParamsOneOfByJSONSchema(&params)}},
-					ReadOnly: remote.Annotations.ReadOnly, RequiresApproval: !remote.Annotations.ReadOnly,
+				toolDescriptors = append(toolDescriptors, tools.ToolDescriptor{
+					Tool:     &mcpTool{client: mcpClient, remoteName: remoteToolConfig.Name, info: &schema.ToolInfo{Name: toolName, Desc: remoteToolConfig.Description, ParamsOneOf: schema.NewParamsOneOfByJSONSchema(&parameters)}},
+					ReadOnly: remoteToolConfig.Annotations.ReadOnly, RequiresApproval: !remoteToolConfig.Annotations.ReadOnly,
 				})
 			}
-			cursor = list.NextCursor
+			cursor = toolList.NextCursor
 			if cursor == "" {
 				break
 			}
 			if seenCursors[cursor] {
-				return result, fmt.Errorf("MCP tools/list repeated pagination cursor")
+				return toolDescriptors, fmt.Errorf("MCP tools/list repeated pagination cursor")
 			}
 			seenCursors[cursor] = true
 		}
 	}
-	return result, nil
+	return toolDescriptors, nil
 }
-func CloseMCP(descriptors []tools.ToolDescriptor) {
-	for _, base := range descriptors {
-		t, ok := base.Tool.(*mcpTool)
+func CloseMCP(toolDescriptors []tools.ToolDescriptor) {
+	for _, toolDescriptor := range toolDescriptors {
+		loadedTool, ok := toolDescriptor.Tool.(*mcpTool)
 		if ok {
-			t.client.close()
+			loadedTool.client.close()
 		}
 	}
 }

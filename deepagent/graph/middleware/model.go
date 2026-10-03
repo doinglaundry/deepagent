@@ -28,95 +28,95 @@ func NewLoopGuard() *LoopGuard {
 	return &LoopGuard{WarnThreshold: 3, HardLimit: 5, WindowSize: 20, Logger: slog.Default(), warned: map[string]bool{}}
 }
 
-func (*LoopGuard) Name() string { return "loop_guard" }
+func (*LoopGuard) GetName() string { return "loop_guard" }
 
-func (m *LoopGuard) NewRun() Middleware {
-	n := NewLoopGuard()
-	if m.WarnThreshold > 0 {
-		n.WarnThreshold = m.WarnThreshold
+func (loopGuard *LoopGuard) NewRun() Middleware {
+	runLoopGuard := NewLoopGuard()
+	if loopGuard.WarnThreshold > 0 {
+		runLoopGuard.WarnThreshold = loopGuard.WarnThreshold
 	}
-	if m.HardLimit > 0 {
-		n.HardLimit = m.HardLimit
+	if loopGuard.HardLimit > 0 {
+		runLoopGuard.HardLimit = loopGuard.HardLimit
 	}
-	if m.WindowSize > 0 {
-		n.WindowSize = m.WindowSize
+	if loopGuard.WindowSize > 0 {
+		runLoopGuard.WindowSize = loopGuard.WindowSize
 	}
-	if m.Logger != nil {
-		n.Logger = m.Logger
+	if loopGuard.Logger != nil {
+		runLoopGuard.Logger = loopGuard.Logger
 	}
-	return n
+	return runLoopGuard
 }
 
 // A decision hashes the complete batch, so eager execution must wait for it.
 func (*LoopGuard) RequiresCompleteModelResponse() bool { return true }
 
-func (m *LoopGuard) BuildStateHandler() types.RunTimeStateful { return m }
+func (loopGuard *LoopGuard) GetStateHandler() types.RunTimeStateful { return loopGuard }
 
-func (m *LoopGuard) ModifyModelResponse(ctx context.Context, message *schema.Message, _ *types.GraphState) (*schema.Message, error) {
+func (loopGuard *LoopGuard) ModifyModelResponse(ctx context.Context, message *schema.Message, _ *types.GraphState) (*schema.Message, error) {
 	if message == nil || len(message.ToolCalls) == 0 {
 		return message, nil
 	}
-	hash := sha256.New()
-	for _, call := range message.ToolCalls {
-		hash.Write([]byte(call.Function.Name))
-		hash.Write([]byte{0})
-		hash.Write([]byte(call.Function.Arguments))
-		hash.Write([]byte{0})
+	batchHash := sha256.New()
+	for _, toolCall := range message.ToolCalls {
+		batchHash.Write([]byte(toolCall.Function.Name))
+		batchHash.Write([]byte{0})
+		batchHash.Write([]byte(toolCall.Function.Arguments))
+		batchHash.Write([]byte{0})
 	}
-	key := hex.EncodeToString(hash.Sum(nil)[:8])
-	m.mu.Lock()
-	m.recent = append(m.recent, key)
-	if len(m.recent) > m.WindowSize {
-		m.recent = m.recent[len(m.recent)-m.WindowSize:]
+	batchKey := hex.EncodeToString(batchHash.Sum(nil)[:8])
+	loopGuard.mu.Lock()
+	loopGuard.recent = append(loopGuard.recent, batchKey)
+	if len(loopGuard.recent) > loopGuard.WindowSize {
+		loopGuard.recent = loopGuard.recent[len(loopGuard.recent)-loopGuard.WindowSize:]
 	}
-	count := 0
-	for _, item := range m.recent {
-		if item == key {
-			count++
+	repeatCount := 0
+	for _, recentKey := range loopGuard.recent {
+		if recentKey == batchKey {
+			repeatCount++
 		}
 	}
-	warn := count >= m.WarnThreshold && !m.warned[key]
-	if warn {
-		m.warned[key] = true
+	shouldWarn := repeatCount >= loopGuard.WarnThreshold && !loopGuard.warned[batchKey]
+	if shouldWarn {
+		loopGuard.warned[batchKey] = true
 	}
-	hard := count >= m.HardLimit
-	m.mu.Unlock()
-	if warn {
-		m.Logger.WarnContext(ctx, "repeated tool call batch", "count", count, "limit", m.HardLimit)
+	reachedHardLimit := repeatCount >= loopGuard.HardLimit
+	loopGuard.mu.Unlock()
+	if shouldWarn {
+		loopGuard.Logger.WarnContext(ctx, "repeated tool call batch", "count", repeatCount, "limit", loopGuard.HardLimit)
 	}
-	if hard {
-		copy := *message
-		copy.ToolCalls = nil
-		return &copy, nil
+	if reachedHardLimit {
+		messageCopy := *message
+		messageCopy.ToolCalls = nil
+		return &messageCopy, nil
 	}
 	return message, nil
 }
 
-func (m *LoopGuard) MarshalRuntimeState() string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	raw, _ := json.Marshal(struct {
+func (loopGuard *LoopGuard) MarshalRuntimeState() string {
+	loopGuard.mu.Lock()
+	defer loopGuard.mu.Unlock()
+	encodedState, _ := json.Marshal(struct {
 		Recent []string
 		Warned map[string]bool
-	}{m.recent, m.warned})
-	return string(raw)
+	}{loopGuard.recent, loopGuard.warned})
+	return string(encodedState)
 }
 
-func (m *LoopGuard) UnmarshalRuntimeState(raw string) error {
-	var state struct {
+func (loopGuard *LoopGuard) UnmarshalRuntimeState(encodedState string) error {
+	var runtimeState struct {
 		Recent []string
 		Warned map[string]bool
 	}
-	err := json.Unmarshal([]byte(raw), &state)
+	err := json.Unmarshal([]byte(encodedState), &runtimeState)
 	if err != nil {
 		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.recent = state.Recent
-	m.warned = state.Warned
-	if m.warned == nil {
-		m.warned = map[string]bool{}
+	loopGuard.mu.Lock()
+	defer loopGuard.mu.Unlock()
+	loopGuard.recent = runtimeState.Recent
+	loopGuard.warned = runtimeState.Warned
+	if loopGuard.warned == nil {
+		loopGuard.warned = map[string]bool{}
 	}
 	return nil
 }
@@ -130,20 +130,20 @@ type ModelRetry struct {
 	Retryable   func(error) bool
 }
 
-func (*ModelRetry) Name() string { return "model_retry" }
+func (*ModelRetry) GetName() string { return "model_retry" }
 
-func (m *ModelRetry) WrapModel(next ModelHandler) ModelHandler {
+func (modelRetry *ModelRetry) WrapModel(nextModel ModelHandler) ModelHandler {
 	return func(ctx context.Context, messages []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		attempts := m.MaxAttempts
-		if attempts < 1 {
-			attempts = 1
+		maxAttempts := modelRetry.MaxAttempts
+		if maxAttempts < 1 {
+			maxAttempts = 1
 		}
-		for attempt := 0; attempt < attempts; attempt++ {
+		for attempt := 0; attempt < maxAttempts; attempt++ {
 			contextErr := ctx.Err()
 			if contextErr != nil {
 				return nil, contextErr
 			}
-			stream, err := next(ctx, messages)
+			stream, err := nextModel(ctx, messages)
 			if err == nil {
 				return stream, nil
 			}
@@ -156,11 +156,11 @@ func (m *ModelRetry) WrapModel(next ModelHandler) ModelHandler {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
 			}
-			if attempt+1 == attempts || m.Retryable == nil || !m.Retryable(err) {
+			if attempt+1 == maxAttempts || modelRetry.Retryable == nil || !modelRetry.Retryable(err) {
 				return nil, err
 			}
-			if m.Delay > 0 {
-				timer := time.NewTimer(m.Delay)
+			if modelRetry.Delay > 0 {
+				timer := time.NewTimer(modelRetry.Delay)
 				select {
 				case <-timer.C:
 				case <-ctx.Done():
@@ -187,60 +187,62 @@ type CircuitBreaker struct {
 	probe     bool
 }
 
-func (*CircuitBreaker) Name() string { return "circuit_breaker" }
+func (*CircuitBreaker) GetName() string { return "circuit_breaker" }
 
-func (m *CircuitBreaker) NewRun() Middleware {
-	return &CircuitBreaker{Threshold: m.Threshold, Recovery: m.Recovery}
+func (circuitBreaker *CircuitBreaker) NewRun() Middleware {
+	return &CircuitBreaker{Threshold: circuitBreaker.Threshold, Recovery: circuitBreaker.Recovery}
 }
 
-func (m *CircuitBreaker) BuildStateHandler() types.RunTimeStateful { return m }
+func (circuitBreaker *CircuitBreaker) GetStateHandler() types.RunTimeStateful {
+	return circuitBreaker
+}
 
-func (m *CircuitBreaker) MarshalRuntimeState() string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	raw, _ := json.Marshal(struct {
+func (circuitBreaker *CircuitBreaker) MarshalRuntimeState() string {
+	circuitBreaker.mu.Lock()
+	defer circuitBreaker.mu.Unlock()
+	encodedState, _ := json.Marshal(struct {
 		Failures  int
 		OpenUntil time.Time
-	}{m.failures, m.openUntil})
-	return string(raw)
+	}{circuitBreaker.failures, circuitBreaker.openUntil})
+	return string(encodedState)
 }
 
-func (m *CircuitBreaker) UnmarshalRuntimeState(data string) error {
-	var state struct {
+func (circuitBreaker *CircuitBreaker) UnmarshalRuntimeState(encodedState string) error {
+	var runtimeState struct {
 		Failures  int
 		OpenUntil time.Time
 	}
-	err := json.Unmarshal([]byte(data), &state)
+	err := json.Unmarshal([]byte(encodedState), &runtimeState)
 	if err != nil {
 		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.failures, m.openUntil, m.probe = state.Failures, state.OpenUntil, false
+	circuitBreaker.mu.Lock()
+	defer circuitBreaker.mu.Unlock()
+	circuitBreaker.failures, circuitBreaker.openUntil, circuitBreaker.probe = runtimeState.Failures, runtimeState.OpenUntil, false
 	return nil
 }
 
-func (m *CircuitBreaker) WrapModel(next ModelHandler) ModelHandler {
+func (circuitBreaker *CircuitBreaker) WrapModel(nextModel ModelHandler) ModelHandler {
 	return func(ctx context.Context, messages []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr
 		}
-		m.mu.Lock()
-		if m.probe || (!m.openUntil.IsZero() && time.Now().Before(m.openUntil)) {
-			m.mu.Unlock()
+		circuitBreaker.mu.Lock()
+		if circuitBreaker.probe || (!circuitBreaker.openUntil.IsZero() && time.Now().Before(circuitBreaker.openUntil)) {
+			circuitBreaker.mu.Unlock()
 			return nil, ErrCircuitOpen
 		}
-		probing := !m.openUntil.IsZero()
-		if probing {
-			m.probe = true
+		isProbe := !circuitBreaker.openUntil.IsZero()
+		if isProbe {
+			circuitBreaker.probe = true
 		}
-		m.mu.Unlock()
-		stream, err := next(ctx, messages)
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if probing {
-			m.probe = false
+		circuitBreaker.mu.Unlock()
+		stream, err := nextModel(ctx, messages)
+		circuitBreaker.mu.Lock()
+		defer circuitBreaker.mu.Unlock()
+		if isProbe {
+			circuitBreaker.probe = false
 		}
 		// Cancellation is not evidence of provider failure. Leave an expired
 		// open circuit eligible for another probe.
@@ -248,20 +250,20 @@ func (m *CircuitBreaker) WrapModel(next ModelHandler) ModelHandler {
 			return stream, err
 		}
 		if err == nil {
-			m.failures, m.openUntil = 0, time.Time{}
+			circuitBreaker.failures, circuitBreaker.openUntil = 0, time.Time{}
 			return stream, nil
 		}
-		m.failures++
-		threshold := m.Threshold
-		if threshold < 1 {
-			threshold = 3
+		circuitBreaker.failures++
+		failureThreshold := circuitBreaker.Threshold
+		if failureThreshold < 1 {
+			failureThreshold = 3
 		}
-		if m.failures >= threshold {
-			recovery := m.Recovery
-			if recovery <= 0 {
-				recovery = 30 * time.Second
+		if circuitBreaker.failures >= failureThreshold {
+			recoveryDelay := circuitBreaker.Recovery
+			if recoveryDelay <= 0 {
+				recoveryDelay = 30 * time.Second
 			}
-			m.openUntil = time.Now().Add(recovery)
+			circuitBreaker.openUntil = time.Now().Add(recoveryDelay)
 		}
 		return stream, err
 	}

@@ -29,120 +29,120 @@ type fileSandbox struct {
 	resolved    map[string]string
 }
 
-func (s *fileSandbox) DockerExecTarget() (string, bool) {
-	if s.containerID != "" {
-		return s.containerID, true
+func (fileSandbox *fileSandbox) GetDockerExecTarget() (string, bool) {
+	if fileSandbox.containerID != "" {
+		return fileSandbox.containerID, true
 	}
 	return "test-container", true
 }
 
-func (s *fileSandbox) ResolveContainerPath(_ context.Context, p string) (string, error) {
-	target := s.resolved[p]
+func (fileSandbox *fileSandbox) ResolveContainerPath(_ context.Context, path string) (string, error) {
+	target := fileSandbox.resolved[path]
 	if target != "" {
 		return target, nil
 	}
-	return p, nil
+	return path, nil
 }
 
-func (s *fileSandbox) ReadFile(_ context.Context, p string) (string, error) {
-	s.lastPath = p
-	if s.err != nil {
-		return "", s.err
+func (fileSandbox *fileSandbox) ReadFile(_ context.Context, path string) (string, error) {
+	fileSandbox.lastPath = path
+	if fileSandbox.err != nil {
+		return "", fileSandbox.err
 	}
-	content, ok := s.files[p]
+	content, ok := fileSandbox.files[path]
 	if !ok {
 		return "", os.ErrNotExist
 	}
 	return content, nil
 }
 
-func (s *fileSandbox) WriteFile(_ context.Context, p, c string, appendMode bool) error {
-	s.lastPath = p
-	if s.err != nil {
-		return s.err
+func (fileSandbox *fileSandbox) WriteFile(_ context.Context, path, content string, appendMode bool) error {
+	fileSandbox.lastPath = path
+	if fileSandbox.err != nil {
+		return fileSandbox.err
 	}
-	s.writes++
+	fileSandbox.writes++
 	if appendMode {
-		s.files[p] += c
+		fileSandbox.files[path] += content
 	} else {
-		s.files[p] = c
+		fileSandbox.files[path] = content
 	}
 	return nil
 }
 
-func (s *fileSandbox) UpdateFile(ctx context.Context, p string, c []byte) error {
-	return s.WriteFile(ctx, p, string(c), false)
+func (fileSandbox *fileSandbox) UpdateFile(ctx context.Context, path string, contentBytes []byte) error {
+	return fileSandbox.WriteFile(ctx, path, string(contentBytes), false)
 }
 
-func (s *fileSandbox) ListDir(_ context.Context, p string, depth int) ([]string, error) {
-	s.lastPath = p
-	return []string{p + "/dir/", p + "/a.txt"}, s.err
+func (fileSandbox *fileSandbox) ListDir(_ context.Context, path string, depth int) ([]string, error) {
+	fileSandbox.lastPath = path
+	return []string{path + "/dir/", path + "/a.txt"}, fileSandbox.err
 }
 
-func (s *fileSandbox) Glob(_ context.Context, p, pattern string, _ sandbox.GlobOpts) ([]string, bool, error) {
-	s.lastPath = p
-	return []string{p + "/a.txt"}, false, s.err
+func (fileSandbox *fileSandbox) Glob(_ context.Context, path, pattern string, _ sandbox.GlobOpts) ([]string, bool, error) {
+	fileSandbox.lastPath = path
+	return []string{path + "/a.txt"}, false, fileSandbox.err
 }
 
-func (s *fileSandbox) Grep(_ context.Context, p, pattern string, opts sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
-	s.lastPath = p
-	s.grepOpts = opts
-	return []sandbox.GrepMatch{{Path: p + "/a.txt", LineNumber: 2, Line: "second"}}, false, s.err
+func (fileSandbox *fileSandbox) Grep(_ context.Context, path, pattern string, grepOptions sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
+	fileSandbox.lastPath = path
+	fileSandbox.grepOpts = grepOptions
+	return []sandbox.GrepMatch{{Path: path + "/a.txt", LineNumber: 2, Line: "second"}}, false, fileSandbox.err
 }
 
 func TestDockerFilesystemToolsUseProvider(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{"/remote/a.txt": "first\nsecond\n"}}
-	b, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.Close(ctx)
-	registered := map[string]einotool.InvokableTool{}
-	items, err := tools.NewFilesystemTools(b, tools.FilesystemToolOptions{EnableCommands: true, EnablePatch: true})
+	defer dockerFilesystem.Close(ctx)
+	toolsByName := map[string]einotool.InvokableTool{}
+	toolDescriptors, err := tools.NewFilesystemTools(dockerFilesystem, tools.FilesystemToolOptions{EnableCommands: true, EnablePatch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, item := range items {
-		info, err := item.Tool.Info(ctx)
+	for _, toolDescriptor := range toolDescriptors {
+		toolInfo, err := toolDescriptor.Tool.Info(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		registered[info.Name] = item.Tool.(einotool.InvokableTool)
+		toolsByName[toolInfo.Name] = toolDescriptor.Tool.(einotool.InvokableTool)
 	}
-	read, err := registered["read_file"].InvokableRun(ctx, `{"path":"a.txt","offset":2,"limit":1}`)
-	if err != nil || !strings.Contains(read, "second") || strings.Contains(read, "first") || provider.lastPath != "/remote/a.txt" {
-		t.Fatalf("read=%q path=%q err=%v", read, provider.lastPath, err)
+	readOutput, err := toolsByName["read_file"].InvokableRun(ctx, `{"path":"a.txt","offset":2,"limit":1}`)
+	if err != nil || !strings.Contains(readOutput, "second") || strings.Contains(readOutput, "first") || provider.lastPath != "/remote/a.txt" {
+		t.Fatalf("read=%q path=%q err=%v", readOutput, provider.lastPath, err)
 	}
-	_, err = registered["edit_file"].InvokableRun(ctx, `{"path":"a.txt","old":"second","new":"changed"}`)
+	_, err = toolsByName["edit_file"].InvokableRun(ctx, `{"path":"a.txt","old":"second","new":"changed"}`)
 	if err != nil || provider.files["/remote/a.txt"] != "first\nchanged\n" || provider.writes != 1 {
 		t.Fatalf("edit=%v files=%v", err, provider.files)
 	}
-	_, err = registered["write_file"].InvokableRun(ctx, `{"path":"b.txt","content":"new"}`)
+	_, err = toolsByName["write_file"].InvokableRun(ctx, `{"path":"b.txt","content":"new"}`)
 	if err != nil || provider.files["/remote/b.txt"] != "new" {
 		t.Fatalf("write=%v files=%v", err, provider.files)
 	}
-	out, err := registered["grep"].InvokableRun(ctx, `{"pattern":"second","glob":"*.txt"}`)
-	if err != nil || out != "/remote/a.txt:2:second" || provider.grepOpts.Glob != "*.txt" || !provider.grepOpts.CaseSensitive {
-		t.Fatalf("grep=%q %v opts=%+v", out, err, provider.grepOpts)
+	grepOutput, err := toolsByName["grep"].InvokableRun(ctx, `{"pattern":"second","glob":"*.txt"}`)
+	if err != nil || grepOutput != "/remote/a.txt:2:second" || provider.grepOpts.Glob != "*.txt" || !provider.grepOpts.CaseSensitive {
+		t.Fatalf("grep=%q %v opts=%+v", grepOutput, err, provider.grepOpts)
 	}
-	entries, err := b.List(ctx, "")
+	entries, err := dockerFilesystem.List(ctx, "")
 	if err != nil || len(entries) != 2 || !entries[0].IsDir || entries[1].IsDir {
 		t.Fatalf("list=%v %v", entries, err)
 	}
-	matches, err := b.Glob(ctx, "*.txt", "")
+	matches, err := dockerFilesystem.Glob(ctx, "*.txt", "")
 	if err != nil || len(matches) != 1 || matches[0].Path != "/remote/a.txt" {
 		t.Fatalf("glob=%v %v", matches, err)
 	}
-	changeDirErr := b.ChangeDir(ctx, "dir")
+	changeDirErr := dockerFilesystem.ChangeDir(ctx, "dir")
 	if changeDirErr != nil {
 		t.Fatal(changeDirErr)
 	}
-	_, writeErr := b.Write(ctx, "x", "nested")
+	_, writeErr := dockerFilesystem.Write(ctx, "x", "nested")
 	if writeErr != nil || provider.files["/remote/dir/x"] != "nested" {
 		t.Fatalf("cwd=%v files=%v", writeErr, provider.files)
 	}
-	uploads, err := b.UploadFiles(ctx, []struct {
+	uploads, err := dockerFilesystem.UploadFiles(ctx, []struct {
 		Path    string
 		Content []byte
 	}{{Path: "binary", Content: []byte{0, 255}}})
@@ -157,60 +157,60 @@ func TestDockerFilesystemToolArgumentPresenceAndReplaceAll(t *testing.T) {
 		"/remote/data.txt":   "twice twice",
 		"/remote/remove.txt": "remove me",
 	}}
-	b, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	write := tools.NewWriteFileTool(b).Tool.(einotool.InvokableTool)
-	edit := tools.NewEditFileTool(b).Tool.(einotool.InvokableTool)
+	writeTool := tools.NewWriteFileTool(dockerFilesystem).Tool.(einotool.InvokableTool)
+	editTool := tools.NewEditFileTool(dockerFilesystem).Tool.(einotool.InvokableTool)
 
-	for _, args := range []string{
+	for _, arguments := range []string{
 		`{"path":"data.txt"}`,
 		`{"path":"data.txt","content":null}`,
 	} {
-		_, err = write.InvokableRun(ctx, args)
+		_, err = writeTool.InvokableRun(ctx, arguments)
 		if err == nil {
-			t.Fatalf("accepted write arguments: %s", args)
+			t.Fatalf("accepted write arguments: %s", arguments)
 		}
 	}
 	if provider.files["/remote/data.txt"] != "twice twice" || provider.writes != 0 {
 		t.Fatalf("invalid write changed provider: files=%v writes=%d", provider.files, provider.writes)
 	}
 
-	for _, args := range []string{
+	for _, arguments := range []string{
 		`{"path":"data.txt","old":"twice"}`,
 		`{"path":"data.txt","old":"twice","new":null}`,
 	} {
-		_, err = edit.InvokableRun(ctx, args)
+		_, err = editTool.InvokableRun(ctx, arguments)
 		if err == nil {
-			t.Fatalf("accepted edit arguments: %s", args)
+			t.Fatalf("accepted edit arguments: %s", arguments)
 		}
 	}
 	if provider.files["/remote/data.txt"] != "twice twice" || provider.writes != 0 {
 		t.Fatalf("invalid edit changed provider: files=%v writes=%d", provider.files, provider.writes)
 	}
 
-	_, err = write.InvokableRun(ctx, `{"path":"empty.txt","content":""}`)
+	_, err = writeTool.InvokableRun(ctx, `{"path":"empty.txt","content":""}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	empty, ok := provider.files["/remote/empty.txt"]
-	if err != nil || !ok || empty != "" {
-		t.Fatalf("explicit empty write failed: %q %v", empty, err)
+	emptyContent, ok := provider.files["/remote/empty.txt"]
+	if err != nil || !ok || emptyContent != "" {
+		t.Fatalf("explicit empty write failed: %q %v", emptyContent, err)
 	}
-	_, err = edit.InvokableRun(ctx, `{"path":"remove.txt","old":"remove","new":""}`)
+	_, err = editTool.InvokableRun(ctx, `{"path":"remove.txt","old":"remove","new":""}`)
 	if err != nil || provider.files["/remote/remove.txt"] != " me" {
 		t.Fatalf("explicit empty edit failed: %q %v", provider.files["/remote/remove.txt"], err)
 	}
 
-	_, err = edit.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":false}`)
+	_, err = editTool.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":false}`)
 	if err == nil {
 		t.Fatal("replace_all=false accepted ambiguous edit")
 	}
 	if provider.files["/remote/data.txt"] != "twice twice" {
 		t.Fatal("ambiguous edit changed provider")
 	}
-	_, err = edit.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":true}`)
+	_, err = editTool.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":true}`)
 	if err != nil || provider.files["/remote/data.txt"] != "once once" {
 		t.Fatalf("replace_all edit failed: %q %v", provider.files["/remote/data.txt"], err)
 	}
@@ -219,14 +219,14 @@ func TestDockerFilesystemToolArgumentPresenceAndReplaceAll(t *testing.T) {
 func TestDockerFilesystemFailureDoesNotWriteOrUseHost(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{"/remote/a": "repeat repeat"}}
-	b, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, old := range []string{"", "missing", "repeat"} {
-		_, err := b.Edit(ctx, "a", old, "new", false)
+	for _, oldText := range []string{"", "missing", "repeat"} {
+		_, err := dockerFilesystem.Edit(ctx, "a", oldText, "new", false)
 		if err == nil {
-			t.Fatalf("accepted %q", old)
+			t.Fatalf("accepted %q", oldText)
 		}
 	}
 	if provider.writes != 0 {
@@ -234,38 +234,38 @@ func TestDockerFilesystemFailureDoesNotWriteOrUseHost(t *testing.T) {
 	}
 	sentinel := errors.New("provider unavailable")
 	provider.err = sentinel
-	_, readErr := b.Read(ctx, "a", nil, nil)
+	_, readErr := dockerFilesystem.Read(ctx, "a", nil, nil)
 	if !errors.Is(readErr, sentinel) {
 		t.Fatal(readErr)
 	}
-	_, writeErr2 := b.Write(ctx, "a", "new")
-	if !errors.Is(writeErr2, sentinel) {
-		t.Fatal(writeErr2)
+	_, providerWriteErr := dockerFilesystem.Write(ctx, "a", "new")
+	if !errors.Is(providerWriteErr, sentinel) {
+		t.Fatal(providerWriteErr)
 	}
-	changeDirErr := b.ChangeDir(ctx, "bad")
+	changeDirErr := dockerFilesystem.ChangeDir(ctx, "bad")
 	if !errors.Is(changeDirErr, sentinel) {
 		t.Fatal(changeDirErr)
 	}
 	provider.err = nil
-	_, bWriteErr := b.Write(ctx, "after", "x")
-	if bWriteErr != nil || provider.lastPath != "/remote/after" {
-		t.Fatalf("failed chdir changed cwd: %s %v", provider.lastPath, bWriteErr)
+	_, writeAfterChangeDirErr := dockerFilesystem.Write(ctx, "after", "x")
+	if writeAfterChangeDirErr != nil || provider.lastPath != "/remote/after" {
+		t.Fatalf("failed chdir changed cwd: %s %v", provider.lastPath, writeAfterChangeDirErr)
 	}
-	canceled, cancel := context.WithCancel(ctx)
+	canceledCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	_, writeErr := b.Write(canceled, "a", "x")
+	_, writeErr := dockerFilesystem.Write(canceledCtx, "a", "x")
 	if !errors.Is(writeErr, context.Canceled) {
 		t.Fatal(writeErr)
 	}
 	if provider.writes != 1 {
 		t.Fatal("canceled call reached provider")
 	}
-	_, backendNewDockerFilesystemErr := filesystempkg.NewDockerFilesystem(nil, "/remote", "thread", nil)
-	if backendNewDockerFilesystemErr == nil {
+	_, missingProviderErr := filesystempkg.NewDockerFilesystem(nil, "/remote", "thread", nil)
+	if missingProviderErr == nil {
 		t.Fatal("nil provider accepted")
 	}
-	_, newDockerFilesystemErr := filesystempkg.NewDockerFilesystem(provider, "relative", "thread", nil)
-	if newDockerFilesystemErr == nil {
+	_, invalidRootErr := filesystempkg.NewDockerFilesystem(provider, "relative", "thread", nil)
+	if invalidRootErr == nil {
 		t.Fatal("relative root accepted")
 	}
 }
@@ -273,16 +273,16 @@ func TestDockerFilesystemFailureDoesNotWriteOrUseHost(t *testing.T) {
 func TestDockerFilesystemRejectsSymlinkOutsideWorkspace(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{}, resolved: map[string]string{"/remote/escape/file": "/outside/file"}}
-	files, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer files.Close(ctx)
-	_, writeErr := files.Write(ctx, "escape/file", "outside")
+	defer dockerFilesystem.Close(ctx)
+	_, writeErr := dockerFilesystem.Write(ctx, "escape/file", "outside")
 	if !errors.Is(writeErr, filesystempkg.ErrInvalidPath) {
 		t.Fatalf("write through escaping symlink = %v", writeErr)
 	}
-	_, readErr := files.Read(ctx, "escape/file", nil, nil)
+	_, readErr := dockerFilesystem.Read(ctx, "escape/file", nil, nil)
 	if !errors.Is(readErr, filesystempkg.ErrInvalidPath) {
 		t.Fatalf("read through escaping symlink = %v", readErr)
 	}
@@ -294,14 +294,14 @@ func TestDockerFilesystemRejectsSymlinkOutsideWorkspace(t *testing.T) {
 func TestDockerFilesystemAllowsSymlinkInsideWorkspace(t *testing.T) {
 	ctx := context.Background()
 	provider := &fileSandbox{files: map[string]string{"/remote/alias": "inside"}, resolved: map[string]string{"/remote/alias": "/remote/target"}}
-	files, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer files.Close(ctx)
-	got, err := files.Read(ctx, "alias", nil, nil)
-	if err != nil || got != "inside" {
-		t.Fatalf("in-root symlink read = %q, %v", got, err)
+	defer dockerFilesystem.Close(ctx)
+	content, err := dockerFilesystem.Read(ctx, "alias", nil, nil)
+	if err != nil || content != "inside" {
+		t.Fatalf("in-root symlink read = %q, %v", content, err)
 	}
 }
 
@@ -310,9 +310,9 @@ type cancelAfterReadSandbox struct {
 	cancel context.CancelFunc
 }
 
-func (s *cancelAfterReadSandbox) ReadFile(ctx context.Context, p string) (string, error) {
-	content, err := s.fileSandbox.ReadFile(ctx, p)
-	s.cancel()
+func (cancelAfterReadSandbox *cancelAfterReadSandbox) ReadFile(ctx context.Context, path string) (string, error) {
+	content, err := cancelAfterReadSandbox.fileSandbox.ReadFile(ctx, path)
+	cancelAfterReadSandbox.cancel()
 	return content, err
 }
 
@@ -320,11 +320,11 @@ func TestDockerEditDoesNotWriteAfterReadCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	provider := &cancelAfterReadSandbox{fileSandbox: &fileSandbox{files: map[string]string{"/remote/a": "original"}}, cancel: cancel}
-	files, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = files.Edit(ctx, "a", "original", "changed", false)
+	_, err = dockerFilesystem.Edit(ctx, "a", "original", "changed", false)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("edit lost cancellation: %v", err)
 	}
@@ -338,8 +338,8 @@ type cancelingResolverSandbox struct {
 	cancel context.CancelFunc
 }
 
-func (s *cancelingResolverSandbox) ResolveContainerPath(_ context.Context, p string) (string, error) {
-	s.cancel()
+func (cancelingResolverSandbox *cancelingResolverSandbox) ResolveContainerPath(_ context.Context, path string) (string, error) {
+	cancelingResolverSandbox.cancel()
 	return "", errors.New("resolver canceled")
 }
 
@@ -350,11 +350,11 @@ func TestDockerFilesystemDeletePreservesResolverCancellation(t *testing.T) {
 		fileSandbox: &fileSandbox{files: map[string]string{}},
 		cancel:      cancel,
 	}
-	files, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = files.Delete(ctx, "a")
+	_, err = dockerFilesystem.Delete(ctx, "a")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("delete lost resolver cancellation: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestDockerFilesystemDeleteCancelsInFlightDockerCommand(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	provider := &fileSandbox{files: map[string]string{}}
-	files, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestDockerFilesystemDeleteCancelsInFlightDockerCommand(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, deleteErr := files.Delete(ctx, "a")
+		_, deleteErr := dockerFilesystem.Delete(ctx, "a")
 		resultCh <- deleteErr
 	}()
 	defer func() {
@@ -410,10 +410,10 @@ func TestDockerFilesystemDeleteCancelsInFlightDockerCommand(t *testing.T) {
 		}
 	}()
 
-	ready := time.NewTicker(10 * time.Millisecond)
-	defer ready.Stop()
-	deadline := time.NewTimer(10 * time.Second)
-	defer deadline.Stop()
+	readyTicker := time.NewTicker(10 * time.Millisecond)
+	defer readyTicker.Stop()
+	readyDeadline := time.NewTimer(10 * time.Second)
+	defer readyDeadline.Stop()
 	for {
 		_, statErr := os.Stat(readyPath)
 		if statErr == nil {
@@ -425,8 +425,8 @@ func TestDockerFilesystemDeleteCancelsInFlightDockerCommand(t *testing.T) {
 		select {
 		case earlyErr := <-resultCh:
 			t.Fatalf("docker delete exited before readiness: %v", earlyErr)
-		case <-ready.C:
-		case <-deadline.C:
+		case <-readyTicker.C:
+		case <-readyDeadline.C:
 			cancel()
 			t.Fatal("fake docker did not become ready")
 		}
@@ -450,35 +450,35 @@ func TestDockerFilesystemDeleteCancelsInFlightDockerCommand(t *testing.T) {
 }
 
 func TestDockerFilesystemCloseReleasesContainerOnce(t *testing.T) {
-	var released atomic.Int32
-	filesystem, err := filesystempkg.NewDockerFilesystem(&fileSandbox{}, "/remote", "thread", func() { released.Add(1) })
+	var releaseCount atomic.Int32
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(&fileSandbox{}, "/remote", "thread", func() { releaseCount.Add(1) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	var callers sync.WaitGroup
+	var closeCallers sync.WaitGroup
 	for i := 0; i < 8; i++ {
-		callers.Add(1)
+		closeCallers.Add(1)
 		go func() {
-			defer callers.Done()
-			closeErr := filesystem.Close(context.Background())
+			defer closeCallers.Done()
+			closeErr := dockerFilesystem.Close(context.Background())
 			if closeErr != nil {
 				t.Error(closeErr)
 			}
 		}()
 	}
-	callers.Wait()
-	if released.Load() != 1 {
-		t.Fatalf("container releases=%d, want 1", released.Load())
+	closeCallers.Wait()
+	if releaseCount.Load() != 1 {
+		t.Fatalf("container releases=%d, want 1", releaseCount.Load())
 	}
 }
 
 func TestDockerFilesystemConstructionFailureReleasesContainer(t *testing.T) {
-	for _, root := range []string{"relative", "/remote"} {
-		t.Run(root, func(t *testing.T) {
-			released := 0
-			filesystem, err := filesystempkg.NewDockerFilesystem(&fileSandbox{}, root, "", func() { released++ })
-			if err == nil || filesystem != nil || released != 1 {
-				t.Fatalf("failed construction must release ownership: filesystem=%v error=%v releases=%d", filesystem, err, released)
+	for _, rootDir := range []string{"relative", "/remote"} {
+		t.Run(rootDir, func(t *testing.T) {
+			releaseCount := 0
+			dockerFilesystem, err := filesystempkg.NewDockerFilesystem(&fileSandbox{}, rootDir, "", func() { releaseCount++ })
+			if err == nil || dockerFilesystem != nil || releaseCount != 1 {
+				t.Fatalf("failed construction must release ownership: filesystem=%v error=%v releases=%d", dockerFilesystem, err, releaseCount)
 			}
 		})
 	}

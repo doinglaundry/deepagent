@@ -10,61 +10,61 @@ import (
 
 func TestFileCheckpointSharedAndKeysConfined(t *testing.T) {
 	root := t.TempDir()
-	a, e := NewFile(root)
-	if e != nil {
-		t.Fatal(e)
+	firstFileStore, err := NewFile(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	b, e := NewFile(root)
-	if e != nil {
-		t.Fatal(e)
+	secondFileStore, err := NewFile(root)
+	if err != nil {
+		t.Fatal(err)
 	}
 	ctx := context.Background()
-	e = a.Set(ctx, "checkpoint", []byte(`{"run":"same"}`))
-	if e != nil {
-		t.Fatal(e)
+	err = firstFileStore.Set(ctx, "checkpoint", []byte(`{"run":"same"}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	v, exists, e := b.Get(ctx, "checkpoint")
-	if e != nil || !exists || string(v) != `{"run":"same"}` {
-		t.Fatal(string(v), e)
+	snapshot, exists, err := secondFileStore.Get(ctx, "checkpoint")
+	if err != nil || !exists || string(snapshot) != `{"run":"same"}` {
+		t.Fatal(string(snapshot), err)
 	}
-	e = a.Set(ctx, "../../checkpoint", []byte("bad"))
-	if e == nil {
+	err = firstFileStore.Set(ctx, "../../checkpoint", []byte("bad"))
+	if err == nil {
 		t.Fatal("traversal key accepted")
 	}
-	_, exists, e = b.Get(ctx, "other")
-	if e != nil || exists {
-		t.Fatal("missing checkpoint exists", e)
+	_, exists, err = secondFileStore.Get(ctx, "other")
+	if err != nil || exists {
+		t.Fatal("missing checkpoint exists", err)
 	}
 }
 func TestRedisCheckpointsNamespaceAndRoundTrip(t *testing.T) {
-	addr := os.Getenv("DEEPAGENT_TEST_REDIS_ADDR")
-	if addr == "" {
+	redisAddress := os.Getenv("DEEPAGENT_TEST_REDIS_ADDR")
+	if redisAddress == "" {
 		t.Skip("set DEEPAGENT_TEST_REDIS_ADDR for Redis integration")
 	}
 	ctx := context.Background()
-	client := redis.NewClient(&redis.Options{Addr: addr})
+	client := redis.NewClient(&redis.Options{Addr: redisAddress})
 	defer client.Close()
 	prefix := "deepagent:test:checkpoint:" + uuid.NewString()
-	a, e := NewRedis(client, prefix)
-	if e != nil {
-		t.Fatal(e)
+	redisStore, err := NewRedis(client, prefix)
+	if err != nil {
+		t.Fatal(err)
 	}
-	b, _ := NewRedis(client, prefix+":other")
+	otherRedisStore, _ := NewRedis(client, prefix+":other")
 	defer client.Del(ctx, prefix+":key")
-	e = a.Set(ctx, "key", []byte("checkpoint state"))
-	if e != nil {
-		t.Fatal(e)
+	err = redisStore.Set(ctx, "key", []byte("checkpoint state"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	v, exists, e := a.Get(ctx, "key")
-	if e != nil || !exists || string(v) != "checkpoint state" {
-		t.Fatal(string(v), e)
+	snapshot, exists, err := redisStore.Get(ctx, "key")
+	if err != nil || !exists || string(snapshot) != "checkpoint state" {
+		t.Fatal(string(snapshot), err)
 	}
-	_, exists, e = b.Get(ctx, "key")
-	if e != nil || exists {
-		t.Fatal("namespace isolation", e)
+	_, exists, err = otherRedisStore.Get(ctx, "key")
+	if err != nil || exists {
+		t.Fatal("namespace isolation", err)
 	}
-	_, _, e = a.Get(ctx, "../key")
-	if e == nil {
+	_, _, err = redisStore.Get(ctx, "../key")
+	if err == nil {
 		t.Fatal("invalid identifier accepted")
 	}
 }

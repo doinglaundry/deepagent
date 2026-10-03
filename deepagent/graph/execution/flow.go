@@ -10,78 +10,78 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func (a *Graph) buildGraph(ctx context.Context) error {
-	g := compose.NewGraph[*types.RunState, *schema.Message](compose.WithGenLocalState(a.newLocalState))
+func (graph *Graph) buildGraph(ctx context.Context) error {
+	einoGraph := compose.NewGraph[*types.RunState, *schema.Message](compose.WithGenLocalState(graph.newLocalState))
 
-	prepare := compose.InvokableLambda(a.prepareNode)
-	err := g.AddLambdaNode("prepare", prepare)
+	prepareNode := compose.InvokableLambda(graph.executePrepareNode)
+	err := einoGraph.AddLambdaNode("prepare", prepareNode)
 	if err != nil {
 		return err
 	}
-	model := compose.InvokableLambda(a.modelNode)
-	err = g.AddLambdaNode("model", model)
+	modelNode := compose.InvokableLambda(graph.executeModelNode)
+	err = einoGraph.AddLambdaNode("model", modelNode)
 	if err != nil {
 		return err
 	}
-	toolNode := compose.InvokableLambda(a.toolsNode)
-	err = g.AddLambdaNode("tools", toolNode)
+	toolsNode := compose.InvokableLambda(graph.executeToolsNode)
+	err = einoGraph.AddLambdaNode("tools", toolsNode)
 	if err != nil {
 		return err
 	}
-	continuation := compose.InvokableLambda(a.continueNode)
-	err = g.AddLambdaNode("continue", continuation)
+	continueNode := compose.InvokableLambda(graph.executeContinueNode)
+	err = einoGraph.AddLambdaNode("continue", continueNode)
 	if err != nil {
 		return err
 	}
-	finish := compose.InvokableLambda(a.finishNode)
-	err = g.AddLambdaNode("finish", finish)
+	finishNode := compose.InvokableLambda(graph.executeFinishNode)
+	err = einoGraph.AddLambdaNode("finish", finishNode)
 	if err != nil {
 		return err
 	}
 
-	err = a.connectGraph(g)
+	err = graph.connectGraphEdges(einoGraph)
 	if err != nil {
 		return err
 	}
-	a.graph, err = g.Compile(ctx, a.graphCompileOptions()...)
+	graph.runnable, err = einoGraph.Compile(ctx, graph.buildGraphCompileOptions()...)
 	return err
 }
 
-func (a *Graph) connectGraph(g *compose.Graph[*types.RunState, *schema.Message]) error {
-	err := g.AddEdge(compose.START, "prepare")
+func (graph *Graph) connectGraphEdges(einoGraph *compose.Graph[*types.RunState, *schema.Message]) error {
+	err := einoGraph.AddEdge(compose.START, "prepare")
 	if err != nil {
 		return err
 	}
-	err = g.AddEdge("prepare", "model")
+	err = einoGraph.AddEdge("prepare", "model")
 	if err != nil {
 		return err
 	}
-	err = g.AddEdge("finish", compose.END)
+	err = einoGraph.AddEdge("finish", compose.END)
 	if err != nil {
 		return err
 	}
 
-	err = g.AddBranch("model", compose.NewGraphBranch(a.routeAfterModel, map[string]bool{"tools": true, "continue": true}))
+	err = einoGraph.AddBranch("model", compose.NewGraphBranch(graph.routeAfterModel, map[string]bool{"tools": true, "continue": true}))
 	if err != nil {
 		return err
 	}
-	err = g.AddBranch("tools", compose.NewGraphBranch(a.routeAfterTools, map[string]bool{"model": true, "continue": true}))
+	err = einoGraph.AddBranch("tools", compose.NewGraphBranch(graph.routeAfterTools, map[string]bool{"model": true, "continue": true}))
 	if err != nil {
 		return err
 	}
-	err = g.AddBranch("continue", compose.NewGraphBranch(a.routeAfterContinue, map[string]bool{"prepare": true, "finish": true}))
+	err = einoGraph.AddBranch("continue", compose.NewGraphBranch(graph.routeAfterContinue, map[string]bool{"prepare": true, "finish": true}))
 	return err
 }
 
-func (a *Graph) routeAfterModel(_ context.Context, state *types.RunState) (string, error) {
-	if len(state.Calls) > 0 {
+func (graph *Graph) routeAfterModel(_ context.Context, runState *types.RunState) (string, error) {
+	if len(runState.Calls) > 0 {
 		return "tools", nil
 	}
 	return "continue", nil
 }
 
-func (a *Graph) routeAfterTools(_ context.Context, state *types.RunState) (string, error) {
-	for _, call := range state.Calls {
+func (graph *Graph) routeAfterTools(_ context.Context, runState *types.RunState) (string, error) {
+	for _, call := range runState.Calls {
 		if call.Result != nil && call.Result.ReturnDirect {
 			return "continue", nil
 		}
@@ -89,138 +89,138 @@ func (a *Graph) routeAfterTools(_ context.Context, state *types.RunState) (strin
 	return "model", nil
 }
 
-func (a *Graph) routeAfterContinue(_ context.Context, state *types.RunState) (string, error) {
-	if state.Phase == types.PhasePreparing {
+func (graph *Graph) routeAfterContinue(_ context.Context, runState *types.RunState) (string, error) {
+	if runState.Phase == types.PhasePreparing {
 		return "prepare", nil
 	}
 	return "finish", nil
 }
 
-func (a *Graph) graphCompileOptions() []compose.GraphCompileOption {
-	options := []compose.GraphCompileOption{
+func (graph *Graph) buildGraphCompileOptions() []compose.GraphCompileOption {
+	compileOptions := []compose.GraphCompileOption{
 		compose.WithGraphName("deepagent"),
 		compose.WithNodeTriggerMode(compose.AnyPredecessor),
-		compose.WithMaxRunSteps(a.cfg.MaxSteps),
+		compose.WithMaxRunSteps(graph.config.MaxSteps),
 	}
-	if a.cfg.CheckpointStore != nil {
-		store := checkpointer.New(a.cfg.CheckpointStore, a.cfg.ThreadID, a.runID, "core-graph-v1")
-		options = append(options, compose.WithCheckPointStore(store))
+	if graph.config.CheckpointStore != nil {
+		store := checkpointer.New(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID, "core-graph-v1")
+		compileOptions = append(compileOptions, compose.WithCheckPointStore(store))
 	}
-	return options
+	return compileOptions
 }
 
-func (a *Graph) modelNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
-	ctx, state, err := a.enterNode(ctx)
+func (graph *Graph) executeModelNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+	ctx, runState, err := graph.enterNode(ctx)
 	if err != nil {
 		return nil, err
 	}
-	output, nodeErr := a.callModel(ctx, state)
-	return a.leaveNode(ctx, state, output, nodeErr)
+	nextRunState, nodeErr := graph.callModel(ctx, runState)
+	return graph.leaveNode(ctx, runState, nextRunState, nodeErr)
 }
 
-func (a *Graph) prepareNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
-	err := a.ensureInitialCheckpoint(ctx)
+func (graph *Graph) executePrepareNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+	err := graph.ensureInitialCheckpoint(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ctx, state, err := a.enterNode(ctx)
+	ctx, runState, err := graph.enterNode(ctx)
 	if err != nil {
 		return nil, err
 	}
-	output, nodeErr := a.prepare(ctx, state)
-	return a.leaveNode(ctx, state, output, nodeErr)
+	nextRunState, nodeErr := graph.prepareConversation(ctx, runState)
+	return graph.leaveNode(ctx, runState, nextRunState, nodeErr)
 }
 
-func (a *Graph) toolsNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
-	ctx, state, err := a.enterNode(ctx)
+func (graph *Graph) executeToolsNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+	ctx, runState, err := graph.enterNode(ctx)
 	if err != nil {
 		return nil, err
 	}
-	output, nodeErr := a.callTools(ctx, state)
-	return a.leaveNode(ctx, state, output, nodeErr)
+	nextRunState, nodeErr := graph.callTools(ctx, runState)
+	return graph.leaveNode(ctx, runState, nextRunState, nodeErr)
 }
 
-func (a *Graph) continueNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
-	ctx, state, err := a.enterNode(ctx)
+func (graph *Graph) executeContinueNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+	ctx, runState, err := graph.enterNode(ctx)
 	if err != nil {
 		return nil, err
 	}
-	output, nodeErr := a.continueRun(ctx, state)
-	return a.leaveNode(ctx, state, output, nodeErr)
+	nextRunState, nodeErr := graph.continueRun(ctx, runState)
+	return graph.leaveNode(ctx, runState, nextRunState, nodeErr)
 }
 
 // Eino uses this value for a new run. A resumed run uses its checkpoint state.
-func (a *Graph) newLocalState(ctx context.Context) *types.RunState {
-	state := types.RunStateFromContext(ctx)
-	if state != nil {
-		return state
+func (graph *Graph) newLocalState(ctx context.Context) *types.RunState {
+	runState := types.GetRunState(ctx)
+	if runState != nil {
+		return runState
 	}
 	return &types.RunState{}
 }
 
 // The first prepare establishes a durable Eino cursor before doing any work.
-func (a *Graph) ensureInitialCheckpoint(ctx context.Context) error {
-	initial, ok := ctx.Value(initialCheckpointKey{}).(*types.RunState)
+func (graph *Graph) ensureInitialCheckpoint(ctx context.Context) error {
+	initialRunState, ok := ctx.Value(initialCheckpointKey{}).(*types.RunState)
 	if !ok {
 		return nil
 	}
-	fresh := false
-	err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, state *types.RunState) error {
-		fresh = state == initial
+	isInitialState := false
+	err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, runState *types.RunState) error {
+		isInitialState = runState == initialRunState
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	if !fresh {
+	if !isInitialState {
 		return nil
 	}
-	a.mu.Lock()
-	a.state = initial
-	a.mu.Unlock()
+	graph.mu.Lock()
+	graph.runState = initialRunState
+	graph.mu.Unlock()
 	return compose.Interrupt(ctx, &initialCheckpoint{})
 }
 
 // enterNode always uses Eino's local state, including the restored state.
-func (a *Graph) enterNode(ctx context.Context) (context.Context, *types.RunState, error) {
-	state, err := a.localState(ctx)
+func (graph *Graph) enterNode(ctx context.Context) (context.Context, *types.RunState, error) {
+	runState, err := graph.getLocalState(ctx)
 	if err != nil {
 		return ctx, nil, err
 	}
-	cancelled, _ := ctx.Value(approvalCancelKey{}).(bool)
-	if cancelled {
+	approvalCancelled, _ := ctx.Value(approvalCancelKey{}).(bool)
+	if approvalCancelled {
 		// Restore input ownership first, then cancel the whole Run before any
 		// budget check or child/tool dispatch can replay its work.
-		return ctx, state, context.Canceled
+		return ctx, runState, context.Canceled
 	}
-	if a.cfg.MaxSteps > 0 && state.GraphSteps >= a.cfg.MaxSteps {
-		return ctx, nil, fmt.Errorf("maximum graph steps exceeded: %d", a.cfg.MaxSteps)
+	if graph.config.MaxSteps > 0 && runState.GraphSteps >= graph.config.MaxSteps {
+		return ctx, nil, fmt.Errorf("maximum graph steps exceeded: %d", graph.config.MaxSteps)
 	}
-	state.GraphSteps++
-	ctx = types.WithRunState(ctx, state)
-	return ctx, state, nil
+	runState.GraphSteps++
+	ctx = types.WithRunState(ctx, runState)
+	return ctx, runState, nil
 }
 
-func (a *Graph) leaveNode(ctx context.Context, state, output *types.RunState, nodeErr error) (*types.RunState, error) {
-	if a.cfg.Depth > 0 {
-		history, err := json.Marshal(a.conversation.History(ctx))
+func (graph *Graph) leaveNode(ctx context.Context, runState, nextRunState *types.RunState, nodeErr error) (*types.RunState, error) {
+	if graph.config.Depth > 0 {
+		historyJSON, err := json.Marshal(graph.conversation.GetHistory(ctx))
 		if err != nil {
 			return nil, err
 		}
-		if state.Extensions == nil {
-			state.Extensions = map[string]json.RawMessage{}
+		if runState.Extensions == nil {
+			runState.Extensions = map[string]json.RawMessage{}
 		}
-		state.Extensions["child_history"] = history
+		runState.Extensions["child_history"] = historyJSON
 
 	}
-	contextSnapshot := a.conversation.SnapshotContext()
-	state.Context = &contextSnapshot
-	a.executor.snapshotChildCheckpoints(state)
-	markRunError(ctx, state, nodeErr)
-	snapshotErr := a.graphState.SnapshotExtensions(state)
+	contextSnapshot := graph.conversation.SnapshotContext()
+	runState.Context = &contextSnapshot
+	graph.toolExecutor.snapshotChildCheckpoints(runState)
+	markRunError(ctx, runState, nodeErr)
+	snapshotErr := graph.graphState.SnapshotExtensions(runState)
 	if snapshotErr != nil {
-		state.Phase = types.PhaseFailed
+		runState.Phase = types.PhaseFailed
 		return nil, snapshotErr
 	}
-	return output, nodeErr
+	return nextRunState, nodeErr
 }

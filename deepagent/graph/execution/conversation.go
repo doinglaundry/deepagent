@@ -8,17 +8,17 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func (a *Graph) persistInputs(ctx context.Context, s *types.RunState) error {
-	if s.PreparedInputs < 0 || s.PreparedInputs > len(s.Consumed) {
+func (graph *Graph) persistInputs(ctx context.Context, runState *types.RunState) error {
+	if runState.PreparedInputs < 0 || runState.PreparedInputs > len(runState.Consumed) {
 		return fmt.Errorf("invalid prepared input cursor")
 	}
-	for _, input := range s.Consumed[s.PreparedInputs:] {
-		err := a.conversation.AddHistory(ctx, s.RunID, input.Message)
+	for _, input := range runState.Consumed[runState.PreparedInputs:] {
+		err := graph.conversation.AddHistory(ctx, runState.RunID, input.Message)
 		if err != nil {
 			return err
 		}
-		s.PreparedInputs++
-		err = a.event(ctx, s, "input_consumed", "", input)
+		runState.PreparedInputs++
+		err = graph.emitEvent(ctx, runState, "input_consumed", "", input)
 		if err != nil {
 			return err
 		}
@@ -26,79 +26,79 @@ func (a *Graph) persistInputs(ctx context.Context, s *types.RunState) error {
 	return nil
 }
 
-func (a *Graph) prepare(ctx context.Context, s *types.RunState) (*types.RunState, error) {
-	err := a.persistInputs(ctx, s)
+func (graph *Graph) prepareConversation(ctx context.Context, runState *types.RunState) (*types.RunState, error) {
+	err := graph.persistInputs(ctx, runState)
 	if err != nil {
 		return nil, err
 	}
-	err = a.compactContext(ctx, s)
+	err = graph.compactContext(ctx, runState)
 	if err != nil {
 		return nil, err
 	}
-	s.Phase = types.PhaseModeling
-	return s, nil
+	runState.Phase = types.PhaseModeling
+	return runState, nil
 }
 
-func (a *Graph) compactContext(ctx context.Context, s *types.RunState) error {
-	if !a.conversation.CompactNeeded(ctx) {
+func (graph *Graph) compactContext(ctx context.Context, runState *types.RunState) error {
+	if !graph.conversation.NeedsCompaction(ctx) {
 		return nil
 	}
-	err := a.event(ctx, s, "context_compact_started", "", conversation.ContextCompactStartedPayload{ContextUsage: a.conversation.ContextUsage()})
+	err := graph.emitEvent(ctx, runState, "context_compact_started", "", conversation.ContextCompactStartedPayload{ContextUsage: graph.conversation.GetContextUsage()})
 	if err != nil {
 		return err
 	}
-	payload, err := a.conversation.Compact(ctx, s.RunID)
+	payload, err := graph.conversation.Compact(ctx, runState.RunID)
 	if err != nil {
 		return err
 	}
 	if payload != nil {
-		return a.event(ctx, s, "context_compacted", "", *payload)
+		return graph.emitEvent(ctx, runState, "context_compacted", "", *payload)
 	}
 	return nil
 }
 
-func hasPendingInputs(s *types.RunState) bool {
-	return s.PreparedInputs < len(s.Consumed)
+func hasPendingInputs(runState *types.RunState) bool {
+	return runState.PreparedInputs < len(runState.Consumed)
 }
 
-func (a *Graph) continueRun(ctx context.Context, s *types.RunState) (*types.RunState, error) {
-	if hasPendingInputs(s) {
-		s.Calls = nil
-		s.Phase = types.PhasePreparing
-		return s, nil
+func (graph *Graph) continueRun(ctx context.Context, runState *types.RunState) (*types.RunState, error) {
+	if hasPendingInputs(runState) {
+		runState.Calls = nil
+		runState.Phase = types.PhasePreparing
+		return runState, nil
 	}
 
-	if a.cfg.DrainInput != nil {
-		inputs, more, err := a.cfg.DrainInput(ctx, s.RunID)
+	if graph.config.DrainInput != nil {
+		pendingInputs, shouldContinue, err := graph.config.DrainInput(ctx, runState.RunID)
 		if err != nil {
 			return nil, err
 		}
-		if more && len(inputs) == 0 {
+		if shouldContinue && len(pendingInputs) == 0 {
 			return nil, fmt.Errorf("drain input returned continuation without input")
 		}
-		if len(inputs) > 0 {
-			before := len(s.Consumed)
-			s.Consumed = types.AppendInputs(s.Consumed, inputs...)
-			if len(s.Consumed) == before {
-				s.Phase = types.PhaseCompleted
-				return s, nil
+		if len(pendingInputs) > 0 {
+			before := len(runState.Consumed)
+			runState.Consumed = types.AppendInputs(runState.Consumed, pendingInputs...)
+			if len(runState.Consumed) == before {
+				runState.Phase = types.PhaseCompleted
+				return runState, nil
 			}
-			s.Calls = nil
-			s.Phase = types.PhasePreparing
-			return s, nil
+			runState.Calls = nil
+			runState.Phase = types.PhasePreparing
+			return runState, nil
 		}
 	}
-	s.Phase = types.PhaseCompleted
-	return s, nil
+	runState.Phase = types.PhaseCompleted
+	return runState, nil
 }
 
-func (a *Graph) finishNode(ctx context.Context, s *types.RunState) (*schema.Message, error) {
-	s.Pending = nil
-	history := a.conversation.History(ctx)
-	if len(history) == 0 {
+func (graph *Graph) executeFinishNode(ctx context.Context, runState *types.RunState) (*schema.Message, error) {
+	runState.Pending = nil
+	historyMessages := graph.conversation.GetHistory(ctx)
+	if len(historyMessages) == 0 {
 		return nil, fmt.Errorf("agent produced no message")
 	}
-	message := history[len(history)-1]
+	message := historyMessages[len(historyMessages)-1]
 	if message.Role == schema.Tool {
 		message = types.CopyMessage(message)
 		message.Role = schema.Assistant

@@ -13,12 +13,12 @@ import (
 
 // configure 将配置装配为当前 Graph 使用的工具、模型和中间件，不构图、不调用模型。
 // 文件系统归 Thread 管理；装配失败时，这里只清理中间件资源。
-func (a *Graph) configure(ctx context.Context) (err error) {
+func (graph *Graph) configure(ctx context.Context) (err error) {
 	// 使用配置副本补齐本次 RunID，避免修改原配置。
-	cfg := *a.cfg.Clone()
-	cfg.RunID = a.runID
+	config := *graph.config.Clone()
+	config.RunID = graph.runID
 	// 中间件只处理提示和执行钩子，不注册工具。
-	middlewares, err := a.newRunMiddlewares(ctx)
+	middlewares, err := graph.newRunMiddlewares(ctx)
 	if err != nil {
 		return err
 	}
@@ -29,47 +29,47 @@ func (a *Graph) configure(ctx context.Context) (err error) {
 	}()
 
 	// 工具单独装配、校验和过滤，再将 schema 绑定到模型。
-	toolSet, err := newToolSet(ctx, cfg)
+	toolSet, err := newToolSet(ctx, config)
 	if err != nil {
 		return err
 	}
-	infos, err := toolSet.ModelTools(ctx)
+	toolInfos, err := toolSet.GetToolInfos(ctx)
 	if err != nil {
 		return err
 	}
 	// 把最终工具 schema 绑定到模型；这里只告知模型有哪些工具，不执行工具。
-	a.model = cfg.Model
-	if len(infos) > 0 {
-		a.model, err = cfg.Model.WithTools(infos)
+	graph.chatModel = config.Model
+	if len(toolInfos) > 0 {
+		graph.chatModel, err = config.Model.WithTools(toolInfos)
 		if err != nil {
 			return err
 		}
 	}
 	// 注册中间件状态供 checkpoint 保存与恢复，并判断是否允许提前执行工具。
-	graphState, err := a.buildRuntimeState(middlewares)
+	graphState, err := graph.buildRuntimeState(middlewares)
 	if err != nil {
 		return err
 	}
 	// 固定说明属于配置；动态提示仍由中间件在每次模型请求前生成。
-	if cfg.FilesystemConfig != nil && cfg.Filesystem != nil {
-		cfg.Prompts = append(cfg.Prompts, schema.SystemMessage(tools.FilesystemPrompt))
+	if config.FilesystemConfig != nil && config.Filesystem != nil {
+		config.Prompts = append(config.Prompts, schema.SystemMessage(tools.FilesystemPrompt))
 	}
-	a.cfg.Prompts = cfg.Prompts
-	a.middlewares, a.tools, a.graphState = middlewares, toolSet, graphState
-	a.eager = a.canExecuteToolsEagerly(middlewares)
-	a.resourcesOpen = true
+	graph.config.Prompts = config.Prompts
+	graph.middlewares, graph.toolSet, graph.graphState = middlewares, toolSet, graphState
+	graph.enableEagerTools = graph.canExecuteToolsEagerly(middlewares)
+	graph.resourcesOpen = true
 	return nil
 }
 
 // newToolSet 只装配工具，不访问中间件。
-func newToolSet(ctx context.Context, cfg Config) (*tools.ToolSet, error) {
-	descriptors := append([]tools.ToolDescriptor(nil), cfg.ToolDescriptors...)
-	if cfg.SkillLoader != nil {
-		descriptors = append(descriptors, tools.NewActivateSkillTool(cfg.SkillLoader))
+func newToolSet(ctx context.Context, config Config) (*tools.ToolSet, error) {
+	toolDescriptors := append([]tools.ToolDescriptor(nil), config.ToolDescriptors...)
+	if config.SkillLoader != nil {
+		toolDescriptors = append(toolDescriptors, tools.NewActivateSkillTool(config.SkillLoader))
 	}
-	filesystemConfig := cfg.FilesystemConfig
-	if filesystemConfig != nil && cfg.Filesystem != nil {
-		items, err := tools.NewFilesystemTools(cfg.Filesystem, tools.FilesystemToolOptions{
+	filesystemConfig := config.FilesystemConfig
+	if filesystemConfig != nil && config.Filesystem != nil {
+		featureToolDescriptors, err := tools.NewFilesystemTools(config.Filesystem, tools.FilesystemToolOptions{
 			ReadOnly:       filesystemConfig.ReadOnly,
 			EnableCommands: !filesystemConfig.DisableExecute,
 			EnablePatch:    !filesystemConfig.DisableApplyPatch,
@@ -78,83 +78,83 @@ func newToolSet(ctx context.Context, cfg Config) (*tools.ToolSet, error) {
 		if err != nil {
 			return nil, err
 		}
-		descriptors = append(descriptors, items...)
+		toolDescriptors = append(toolDescriptors, featureToolDescriptors...)
 	}
-	if cfg.WebConfig != nil {
-		items, err := tools.NewWebTools(ctx, cfg.WebConfig)
+	if config.WebConfig != nil {
+		featureToolDescriptors, err := tools.NewWebTools(ctx, config.WebConfig)
 		if err != nil {
 			return nil, err
 		}
-		descriptors = append(descriptors, items...)
+		toolDescriptors = append(toolDescriptors, featureToolDescriptors...)
 	}
-	if len(cfg.SubAgents) > 0 {
-		names := make([]string, 0, len(cfg.SubAgents))
-		for _, spec := range cfg.SubAgents {
-			names = append(names, spec.Name)
+	if len(config.SubAgents) > 0 {
+		subAgentNames := make([]string, 0, len(config.SubAgents))
+		for _, subAgent := range config.SubAgents {
+			subAgentNames = append(subAgentNames, subAgent.Name)
 		}
-		descriptors = append(descriptors, tools.NewStreamingTaskTool(NewChildRunner(cfg), cfg.ReadOnlyToolsOnly, names...))
+		toolDescriptors = append(toolDescriptors, tools.NewStreamingTaskTool(NewChildRunner(config), config.ReadOnlyToolsOnly, subAgentNames...))
 	}
-	toolSet, err := tools.NewToolSet(ctx, descriptors)
+	toolSet, err := tools.NewToolSet(ctx, toolDescriptors)
 	if err != nil {
 		return nil, err
 	}
-	return toolSet.Filter(ctx, cfg.ReadOnlyToolsOnly, cfg.ToolMask)
+	return toolSet.FilterTools(ctx, config.ReadOnlyToolsOnly, config.ToolMask)
 }
 
 // newRunMiddlewares creates dynamic prompts and fresh mutable instances for this Run.
-func (a *Graph) newRunMiddlewares(ctx context.Context) (middlewares []middleware.Middleware, err error) {
+func (graph *Graph) newRunMiddlewares(ctx context.Context) (middlewares []middleware.Middleware, err error) {
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, closeMiddlewareResources(context.WithoutCancel(ctx), middlewares))
 		}
 	}()
-	if a.cfg.SkillLoader != nil {
-		middlewares = append(middlewares, middleware.NewSkillMiddleware(a.cfg.SkillLoader))
+	if graph.config.SkillLoader != nil {
+		middlewares = append(middlewares, middleware.NewSkillMiddleware(graph.config.SkillLoader))
 	}
-	for _, source := range a.cfg.Middlewares {
-		if source == nil {
+	for _, configuredMiddleware := range graph.config.Middlewares {
+		if configuredMiddleware == nil {
 			continue
 		}
-		instance := source
-		factory, ok := source.(middleware.RunFactory)
+		runMiddleware := configuredMiddleware
+		runFactory, ok := configuredMiddleware.(middleware.RunFactory)
 		if ok {
-			instance = factory.NewRun()
+			runMiddleware = runFactory.NewRun()
 		}
-		if instance == nil {
+		if runMiddleware == nil {
 			return middlewares, fmt.Errorf("middleware factory returned nil")
 		}
-		middlewares = append(middlewares, instance)
+		middlewares = append(middlewares, runMiddleware)
 	}
 	middlewares = append(middlewares, middleware.NewPatchToolCalls())
 	return middlewares, nil
 }
 
-func (a *Graph) canExecuteToolsEagerly(middlewares []middleware.Middleware) bool {
-	if !a.cfg.EnableEagerTools {
+func (graph *Graph) canExecuteToolsEagerly(middlewares []middleware.Middleware) bool {
+	if !graph.config.EnableEagerTools {
 		return false
 	}
-	for _, mw := range middlewares {
-		guard, ok := mw.(interface{ RequiresCompleteModelResponse() bool })
-		if ok && guard.RequiresCompleteModelResponse() {
+	for _, currentMiddleware := range middlewares {
+		responseGuard, ok := currentMiddleware.(interface{ RequiresCompleteModelResponse() bool })
+		if ok && responseGuard.RequiresCompleteModelResponse() {
 			return false
 		}
 	}
 	return true
 }
 
-func (a *Graph) buildRuntimeState(middlewares []middleware.Middleware) (*types.GraphState, error) {
-	state := types.NewGraphState()
-	for _, mw := range middlewares {
-		handler := mw.BuildStateHandler()
-		if handler != nil {
-			name := mw.Name()
-			_, exists := state.StateHolder[name]
+func (graph *Graph) buildRuntimeState(middlewares []middleware.Middleware) (*types.GraphState, error) {
+	graphState := types.NewGraphState()
+	for _, currentMiddleware := range middlewares {
+		stateHandler := currentMiddleware.GetStateHandler()
+		if stateHandler != nil {
+			middlewareName := currentMiddleware.GetName()
+			_, exists := graphState.StateHolder[middlewareName]
 			if exists {
-				return nil, fmt.Errorf("duplicate stateful middleware name %q", name)
+				return nil, fmt.Errorf("duplicate stateful middleware name %q", middlewareName)
 			}
-			state.RegisterStateful(name, handler)
+			graphState.RegisterStateful(middlewareName, stateHandler)
 		}
 	}
 
-	return state, nil
+	return graphState, nil
 }

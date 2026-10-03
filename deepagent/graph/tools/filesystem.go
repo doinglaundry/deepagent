@@ -25,195 +25,195 @@ type FilesystemToolOptions struct {
 }
 
 // NewFilesystemTools is the only filesystem tool factory for local and Docker.
-func NewFilesystemTools(filesystem filesystempkg.ToolFilesystem, opts FilesystemToolOptions) ([]ToolDescriptor, error) {
+func NewFilesystemTools(filesystem filesystempkg.ToolFilesystem, options FilesystemToolOptions) ([]ToolDescriptor, error) {
 	if filesystem == nil {
 		return nil, fmt.Errorf("filesystem is required")
 	}
-	items := []ToolDescriptor{
+	toolDescriptors := []ToolDescriptor{
 		NewListFilesTool(filesystem), NewReadFileTool(filesystem),
 		newFileSearchTool(filesystem, "glob"), newFileSearchTool(filesystem, "grep"),
 		newFileSearchTool(filesystem, "rg"),
 	}
-	semantic, err := NewSemanticSearchTool(filesystem)
+	semanticSearchDescriptor, err := NewSemanticSearchTool(filesystem)
 	if err != nil {
 		return nil, err
 	}
-	items = append(items, semantic)
-	if opts.ReadOnly {
-		return items, nil
+	toolDescriptors = append(toolDescriptors, semanticSearchDescriptor)
+	if options.ReadOnly {
+		return toolDescriptors, nil
 	}
-	items = append(items, NewWriteFileTool(filesystem), NewEditFileTool(filesystem), NewDeleteFileTool(filesystem))
-	if opts.EnablePatch {
-		items = append(items, NewApplyPatchTool(filesystem))
+	toolDescriptors = append(toolDescriptors, NewWriteFileTool(filesystem), NewEditFileTool(filesystem), NewDeleteFileTool(filesystem))
+	if options.EnablePatch {
+		toolDescriptors = append(toolDescriptors, NewApplyPatchTool(filesystem))
 	}
-	if opts.EnableCommands {
-		lints, err := NewReadLintsTool(filesystem, filesystem)
+	if options.EnableCommands {
+		lintDescriptor, err := NewReadLintsTool(filesystem, filesystem)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, lints)
-		items = append(items, NewCommandTools(filesystem, opts.CommandTimeout)...)
+		toolDescriptors = append(toolDescriptors, lintDescriptor)
+		toolDescriptors = append(toolDescriptors, NewCommandTools(filesystem, options.CommandTimeout)...)
 	}
-	return items, nil
+	return toolDescriptors, nil
 }
 
 type ListFilesTool struct {
-	backend filesystempkg.Filesystem
+	filesystem filesystempkg.Filesystem
 }
 
-func NewListFilesTool(backend filesystempkg.Filesystem) ToolDescriptor {
-	return ToolDescriptor{Tool: &ListFilesTool{backend: backend}, ReadOnly: true, ParallelSafe: true}
+func NewListFilesTool(filesystem filesystempkg.Filesystem) ToolDescriptor {
+	return ToolDescriptor{Tool: &ListFilesTool{filesystem: filesystem}, ReadOnly: true, ParallelSafe: true}
 }
 
 func (*ListFilesTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfo("list_files", "List files in a directory.", map[string]*schema.ParameterInfo{"path": {Type: schema.String}})
+	return newToolInfo("list_files", "List files in a directory.", map[string]*schema.ParameterInfo{"path": {Type: schema.String}})
 }
 
-func (t *ListFilesTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
-	var in struct {
+func (listFilesTool *ListFilesTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	var listArgs struct {
 		Path string `json:"path"`
 	}
-	err := json.Unmarshal([]byte(args), &in)
+	err := json.Unmarshal([]byte(arguments), &listArgs)
 	if err != nil {
 		return "", err
 	}
-	items, err := t.backend.List(ctx, in.Path)
+	files, err := listFilesTool.filesystem.List(ctx, listArgs.Path)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprint(items), nil
+	return fmt.Sprint(files), nil
 }
 
-func NewReadFileTool(backend interface {
+func NewReadFileTool(fileReader interface {
 	Read(context.Context, string, *int, *int) (string, error)
 }) ToolDescriptor {
-	return ToolDescriptor{Tool: &readFileTool{backend: backend}, ReadOnly: true, ParallelSafe: true}
+	return ToolDescriptor{Tool: &readFileTool{fileReader: fileReader}, ReadOnly: true, ParallelSafe: true}
 }
 
 type readFileTool struct {
-	backend interface {
+	fileReader interface {
 		Read(context.Context, string, *int, *int) (string, error)
 	}
 }
 
 func (*readFileTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfo("read_file", "Read a UTF-8 file. Offset is a one-based line number.", map[string]*schema.ParameterInfo{"path": {Type: schema.String, Required: true}, "offset": {Type: schema.Integer}, "limit": {Type: schema.Integer}})
+	return newToolInfo("read_file", "Read a UTF-8 file. Offset is a one-based line number.", map[string]*schema.ParameterInfo{"path": {Type: schema.String, Required: true}, "offset": {Type: schema.Integer}, "limit": {Type: schema.Integer}})
 }
 
-func (t *readFileTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
-	var in struct {
+func (readFileTool *readFileTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	var readArgs struct {
 		Path   string `json:"path"`
 		Offset *int   `json:"offset"`
 		Limit  *int   `json:"limit"`
 	}
-	err := json.Unmarshal([]byte(args), &in)
+	err := json.Unmarshal([]byte(arguments), &readArgs)
 	if err != nil {
 		return "", err
 	}
-	if in.Offset != nil && *in.Offset > 0 {
-		*in.Offset--
+	if readArgs.Offset != nil && *readArgs.Offset > 0 {
+		*readArgs.Offset--
 	}
-	return t.backend.Read(ctx, in.Path, in.Offset, in.Limit)
+	return readFileTool.fileReader.Read(ctx, readArgs.Path, readArgs.Offset, readArgs.Limit)
 }
 
-type WriteFileTool struct{ backend filesystempkg.Filesystem }
+type WriteFileTool struct{ filesystem filesystempkg.Filesystem }
 
-func NewWriteFileTool(backend filesystempkg.Filesystem) ToolDescriptor {
-	return ToolDescriptor{Tool: &WriteFileTool{backend: backend}, RequiresApproval: true}
+func NewWriteFileTool(filesystem filesystempkg.Filesystem) ToolDescriptor {
+	return ToolDescriptor{Tool: &WriteFileTool{filesystem: filesystem}, RequiresApproval: true}
 }
 
 func (*WriteFileTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfo("write_file", "Write a UTF-8 file.", map[string]*schema.ParameterInfo{"path": {Type: schema.String, Required: true}, "content": {Type: schema.String, Required: true}})
+	return newToolInfo("write_file", "Write a UTF-8 file.", map[string]*schema.ParameterInfo{"path": {Type: schema.String, Required: true}, "content": {Type: schema.String, Required: true}})
 }
 
-func (t *WriteFileTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
-	var in struct {
+func (writeFileTool *WriteFileTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	var writeArgs struct {
 		Path    string  `json:"path"`
 		Content *string `json:"content"`
 	}
-	err := json.Unmarshal([]byte(args), &in)
+	err := json.Unmarshal([]byte(arguments), &writeArgs)
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(in.Path) == "" {
+	if strings.TrimSpace(writeArgs.Path) == "" {
 		return "", errors.New("path is required")
 	}
-	if in.Content == nil {
+	if writeArgs.Content == nil {
 		return "", errors.New("content is required")
 	}
-	result, err := t.backend.Write(ctx, in.Path, *in.Content)
+	writeResult, err := writeFileTool.filesystem.Write(ctx, writeArgs.Path, *writeArgs.Content)
 	if err != nil {
 		return "", err
 	}
-	if result != nil && result.Error != "" {
-		return "", result.Error
+	if writeResult != nil && writeResult.Error != "" {
+		return "", writeResult.Error
 	}
-	return "wrote " + in.Path, nil
+	return "wrote " + writeArgs.Path, nil
 }
 
-type EditFileTool struct{ backend filesystempkg.Filesystem }
+type EditFileTool struct{ filesystem filesystempkg.Filesystem }
 
-func NewEditFileTool(backend filesystempkg.Filesystem) ToolDescriptor {
-	return ToolDescriptor{Tool: &EditFileTool{backend: backend}, RequiresApproval: true}
+func NewEditFileTool(filesystem filesystempkg.Filesystem) ToolDescriptor {
+	return ToolDescriptor{Tool: &EditFileTool{filesystem: filesystem}, RequiresApproval: true}
 }
 
 func (*EditFileTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfo("edit_file", "Replace an exact text span in a file; set replace_all to replace every occurrence.", map[string]*schema.ParameterInfo{"path": {Type: schema.String, Required: true}, "old": {Type: schema.String, Required: true}, "new": {Type: schema.String, Required: true}, "replace_all": {Type: schema.Boolean}})
+	return newToolInfo("edit_file", "Replace an exact text span in a file; set replace_all to replace every occurrence.", map[string]*schema.ParameterInfo{"path": {Type: schema.String, Required: true}, "old": {Type: schema.String, Required: true}, "new": {Type: schema.String, Required: true}, "replace_all": {Type: schema.Boolean}})
 }
 
-func (t *EditFileTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
-	var in struct {
+func (editFileTool *EditFileTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	var editArgs struct {
 		Path       string  `json:"path"`
 		Old        string  `json:"old"`
 		New        *string `json:"new"`
 		ReplaceAll bool    `json:"replace_all"`
 	}
-	err := json.Unmarshal([]byte(args), &in)
+	err := json.Unmarshal([]byte(arguments), &editArgs)
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(in.Path) == "" {
+	if strings.TrimSpace(editArgs.Path) == "" {
 		return "", errors.New("path is required")
 	}
-	if in.New == nil {
+	if editArgs.New == nil {
 		return "", errors.New("new is required")
 	}
-	result, err := t.backend.Edit(ctx, in.Path, in.Old, *in.New, in.ReplaceAll)
+	editResult, err := editFileTool.filesystem.Edit(ctx, editArgs.Path, editArgs.Old, *editArgs.New, editArgs.ReplaceAll)
 	if err != nil {
 		return "", err
 	}
-	if result != nil && result.Error != "" {
-		return "", result.Error
+	if editResult != nil && editResult.Error != "" {
+		return "", editResult.Error
 	}
-	return "edited " + in.Path, nil
+	return "edited " + editArgs.Path, nil
 }
 
-type DeleteFileTool struct{ workspace filesystempkg.Filesystem }
+type DeleteFileTool struct{ filesystem filesystempkg.Filesystem }
 
-func NewDeleteFileTool(workspace filesystempkg.Filesystem) ToolDescriptor {
-	return ToolDescriptor{Tool: &DeleteFileTool{workspace: workspace}, RequiresApproval: true}
+func NewDeleteFileTool(filesystem filesystempkg.Filesystem) ToolDescriptor {
+	return ToolDescriptor{Tool: &DeleteFileTool{filesystem: filesystem}, RequiresApproval: true}
 }
 
 func (*DeleteFileTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfo("delete_file", "Delete a file in the workspace.", map[string]*schema.ParameterInfo{"path": {Type: schema.String, Required: true}})
+	return newToolInfo("delete_file", "Delete a file in the workspace.", map[string]*schema.ParameterInfo{"path": {Type: schema.String, Required: true}})
 }
 
-func (t *DeleteFileTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
-	var in struct {
+func (deleteFileTool *DeleteFileTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	var deleteArgs struct {
 		Path string `json:"path"`
 	}
-	err := json.Unmarshal([]byte(args), &in)
+	err := json.Unmarshal([]byte(arguments), &deleteArgs)
 	if err != nil {
 		return "", err
 	}
-	return t.workspace.Delete(ctx, in.Path)
+	return deleteFileTool.filesystem.Delete(ctx, deleteArgs.Path)
 }
 
-func NewApplyPatchTool(patcher filesystempkg.Filesystem) ToolDescriptor {
-	return ToolDescriptor{Tool: &applyPatchTool{backend: patcher}, RequiresApproval: true}
+func NewApplyPatchTool(filesystem filesystempkg.Filesystem) ToolDescriptor {
+	return ToolDescriptor{Tool: &applyPatchTool{filesystem: filesystem}, RequiresApproval: true}
 }
 
-type applyPatchTool struct{ backend filesystempkg.Filesystem }
+type applyPatchTool struct{ filesystem filesystempkg.Filesystem }
 
 func (*applyPatchTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
@@ -225,20 +225,20 @@ func (*applyPatchTool) Info(context.Context) (*schema.ToolInfo, error) {
 	}, nil
 }
 
-func (t *applyPatchTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
-	var input struct {
+func (applyPatchTool *applyPatchTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	var patchArgs struct {
 		Patch string `json:"patch"`
 	}
-	err := json.Unmarshal([]byte(arguments), &input)
+	err := json.Unmarshal([]byte(arguments), &patchArgs)
 	if err != nil {
 		return "", err
 	}
-	if input.Patch == "" {
+	if patchArgs.Patch == "" {
 		return "", fmt.Errorf("patch is required")
 	}
-	return t.backend.ApplyPatch(ctx, input.Patch)
+	return applyPatchTool.filesystem.ApplyPatch(ctx, patchArgs.Patch)
 }
 
-func toolInfo(name, desc string, params map[string]*schema.ParameterInfo) (*schema.ToolInfo, error) {
-	return &schema.ToolInfo{Name: name, Desc: desc, ParamsOneOf: schema.NewParamsOneOfByParams(params)}, nil
+func newToolInfo(toolName, description string, parameters map[string]*schema.ParameterInfo) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: toolName, Desc: description, ParamsOneOf: schema.NewParamsOneOfByParams(parameters)}, nil
 }

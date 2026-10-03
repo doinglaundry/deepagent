@@ -39,136 +39,136 @@ type rpcEnvelope struct {
 	} `json:"error"`
 }
 
-func (c *mcpClient) request(ctx context.Context, method string, params any, notification bool) (json.RawMessage, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.nextID++
-	id := c.nextID
-	body := map[string]any{"jsonrpc": "2.0", "method": method}
+func (mcpClient *mcpClient) sendRequest(ctx context.Context, method string, params any, notification bool) (json.RawMessage, error) {
+	mcpClient.mu.Lock()
+	defer mcpClient.mu.Unlock()
+	mcpClient.nextID++
+	requestID := mcpClient.nextID
+	requestBody := map[string]any{"jsonrpc": "2.0", "method": method}
 	if !notification {
-		body["id"] = id
+		requestBody["id"] = requestID
 	}
 	if params != nil {
-		body["params"] = params
+		requestBody["params"] = params
 	}
-	data, err := json.Marshal(body)
+	encodedJSON, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.URL, bytes.NewReader(data))
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, mcpClient.config.URL, bytes.NewReader(encodedJSON))
 	if err != nil {
 		return nil, err
 	}
-	for k, v := range c.config.Headers {
-		req.Header.Set(k, v)
+	for headerName, headerValue := range mcpClient.config.Headers {
+		httpRequest.Header.Set(headerName, headerValue)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	if c.session != "" {
-		req.Header.Set("Mcp-Session-Id", c.session)
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Accept", "application/json, text/event-stream")
+	if mcpClient.session != "" {
+		httpRequest.Header.Set("Mcp-Session-Id", mcpClient.session)
 	}
-	if c.version != "" {
-		req.Header.Set("MCP-Protocol-Version", c.version)
+	if mcpClient.version != "" {
+		httpRequest.Header.Set("MCP-Protocol-Version", mcpClient.version)
 	}
-	resp, err := c.client.Do(req)
+	httpResponse, err := mcpClient.client.Do(httpRequest)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("MCP %s: HTTP %d", method, resp.StatusCode)
+	defer httpResponse.Body.Close()
+	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
+		return nil, fmt.Errorf("MCP %s: HTTP %d", method, httpResponse.StatusCode)
 	}
-	getSession := resp.Header.Get("Mcp-Session-Id")
-	if getSession != "" {
-		c.session = getSession
+	sessionID := httpResponse.Header.Get("Mcp-Session-Id")
+	if sessionID != "" {
+		mcpClient.session = sessionID
 	}
 	if notification {
 		return nil, nil
 	}
-	decode := func(data []byte) (json.RawMessage, bool, error) {
-		var e rpcEnvelope
-		err := json.Unmarshal(data, &e)
+	decodeResponse := func(encodedJSON []byte) (json.RawMessage, bool, error) {
+		var envelope rpcEnvelope
+		err := json.Unmarshal(encodedJSON, &envelope)
 		if err != nil {
 			return nil, false, err
 		}
-		var got int64
-		if json.Unmarshal(e.ID, &got) != nil || got != id {
+		var responseID int64
+		if json.Unmarshal(envelope.ID, &responseID) != nil || responseID != requestID {
 			return nil, false, nil
 		}
-		if e.Error != nil {
-			return nil, true, fmt.Errorf("MCP %s (%d): %s", method, e.Error.Code, e.Error.Message)
+		if envelope.Error != nil {
+			return nil, true, fmt.Errorf("MCP %s (%d): %s", method, envelope.Error.Code, envelope.Error.Message)
 		}
-		return e.Result, true, nil
+		return envelope.Result, true, nil
 	}
-	reader := io.LimitReader(resp.Body, 16<<20)
-	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-		scanner := bufio.NewScanner(reader)
+	responseReader := io.LimitReader(httpResponse.Body, 16<<20)
+	if strings.HasPrefix(httpResponse.Header.Get("Content-Type"), "text/event-stream") {
+		scanner := bufio.NewScanner(responseReader)
 		scanner.Buffer(make([]byte, 4096), 16<<20)
-		var event bytes.Buffer
+		var eventData bytes.Buffer
 		for scanner.Scan() {
 			line := scanner.Text()
 			if line == "" {
-				if event.Len() > 0 {
-					result, matched, err := decode(event.Bytes())
-					event.Reset()
+				if eventData.Len() > 0 {
+					responseResult, matched, err := decodeResponse(eventData.Bytes())
+					eventData.Reset()
 					if err != nil || matched {
-						return result, err
+						return responseResult, err
 					}
 				}
 				continue
 			}
 			if strings.HasPrefix(line, "data:") {
-				if event.Len() > 0 {
-					event.WriteByte('\n')
+				if eventData.Len() > 0 {
+					eventData.WriteByte('\n')
 				}
-				event.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
+				eventData.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
 			}
 		}
 		if scanner.Err() != nil {
 			return nil, scanner.Err()
 		}
-		if event.Len() > 0 {
-			result, matched, err := decode(event.Bytes())
+		if eventData.Len() > 0 {
+			responseResult, matched, err := decodeResponse(eventData.Bytes())
 			if err != nil || matched {
-				return result, err
+				return responseResult, err
 			}
 		}
 		return nil, fmt.Errorf("MCP stream ended without response")
 	}
-	payload, err := io.ReadAll(reader)
+	responsePayload, err := io.ReadAll(responseReader)
 	if err != nil {
 		return nil, err
 	}
-	result, matched, err := decode(payload)
+	responseResult, matched, err := decodeResponse(responsePayload)
 	if err == nil && !matched {
 		return nil, fmt.Errorf("MCP response identifier mismatch")
 	}
-	return result, err
+	return responseResult, err
 }
 
-func (c *mcpClient) close() {
-	c.closeOnce.Do(func() {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.session == "" {
+func (mcpClient *mcpClient) close() {
+	mcpClient.closeOnce.Do(func() {
+		mcpClient.mu.Lock()
+		defer mcpClient.mu.Unlock()
+		if mcpClient.session == "" {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.config.URL, nil)
+		httpRequest, err := http.NewRequestWithContext(ctx, http.MethodDelete, mcpClient.config.URL, nil)
 		if err != nil {
 			return
 		}
-		for k, v := range c.config.Headers {
-			req.Header.Set(k, v)
+		for headerName, headerValue := range mcpClient.config.Headers {
+			httpRequest.Header.Set(headerName, headerValue)
 		}
-		req.Header.Set("Mcp-Session-Id", c.session)
-		if c.version != "" {
-			req.Header.Set("MCP-Protocol-Version", c.version)
+		httpRequest.Header.Set("Mcp-Session-Id", mcpClient.session)
+		if mcpClient.version != "" {
+			httpRequest.Header.Set("MCP-Protocol-Version", mcpClient.version)
 		}
-		resp, doErr := c.client.Do(req)
+		httpResponse, doErr := mcpClient.client.Do(httpRequest)
 		if doErr == nil {
-			_ = resp.Body.Close()
+			_ = httpResponse.Body.Close()
 		}
 	})
 }

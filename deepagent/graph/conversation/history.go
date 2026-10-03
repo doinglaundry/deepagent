@@ -36,14 +36,14 @@ type HistoryRecord struct {
 	Ext        *HistoryRecordExtend
 }
 
-func (r *HistoryRecord) OrderSeq() int64 {
-	if r == nil {
+func (historyRecord *HistoryRecord) GetOrderSequence() int64 {
+	if historyRecord == nil {
 		return 0
 	}
-	if r.Seq > 0 {
-		return r.Seq
+	if historyRecord.Seq > 0 {
+		return historyRecord.Seq
 	}
-	return r.MessageID
+	return historyRecord.MessageID
 }
 
 type HistoryRecordExtend struct {
@@ -94,15 +94,15 @@ func NewRedisSeqGenerator(client RedisIncrByClient, prefix string) (generator *R
 	return &RedisSeqGenerator{client: client, prefix: prefix}
 }
 
-func (g *RedisSeqGenerator) Next(ctx context.Context, threadID string) (sequence int64, err error) {
-	if g == nil || g.client == nil {
+func (sequenceGenerator *RedisSeqGenerator) GenerateSequence(ctx context.Context, threadID string) (sequence int64, err error) {
+	if sequenceGenerator == nil || sequenceGenerator.client == nil {
 		return 0, errors.New("agentthread: redis seq generator is not initialized")
 	}
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return 0, errors.New("agentthread: thread id is required to generate history seq")
 	}
-	return g.client.IncrBy(ctx, fmt.Sprintf("%s:thread:%s", g.prefix, threadID), 1)
+	return sequenceGenerator.client.IncrBy(ctx, fmt.Sprintf("%s:thread:%s", sequenceGenerator.prefix, threadID), 1)
 }
 
 const defaultHistoryTable = "agentthread_history"
@@ -116,7 +116,7 @@ type GormHistoryRolloutStore struct {
 }
 
 type SeqGenerator interface {
-	Next(ctx context.Context, threadID string) (int64, error)
+	GenerateSequence(ctx context.Context, threadID string) (int64, error)
 }
 
 func NewGormHistoryRolloutStore(db *gorm.DB, table string, recordIDProvider func(ctx context.Context, threadID, runID string) int64, seqGenerators ...SeqGenerator) *GormHistoryRolloutStore {
@@ -130,91 +130,91 @@ func NewGormHistoryRolloutStore(db *gorm.DB, table string, recordIDProvider func
 	return &GormHistoryRolloutStore{db: db, table: table, recordIDProvider: recordIDProvider, seqGenerator: seqGenerator}
 }
 
-func (s *GormHistoryRolloutStore) AutoMigrate(ctx context.Context) (err error) {
-	if s == nil || s.db == nil {
+func (historyStore *GormHistoryRolloutStore) MigrateSchema(ctx context.Context) (err error) {
+	if historyStore == nil || historyStore.db == nil {
 		return errors.New("agentthread: history store not initialized")
 	}
-	err = s.db.WithContext(ctx).Table(s.table).AutoMigrate(&historyRow{})
+	err = historyStore.db.WithContext(ctx).Table(historyStore.table).AutoMigrate(&historyRow{})
 	return err
 }
 
-func (s *GormHistoryRolloutStore) Append(ctx context.Context, rec *HistoryRecord) error {
-	if s == nil || s.db == nil {
+func (historyStore *GormHistoryRolloutStore) Append(ctx context.Context, historyRecord *HistoryRecord) error {
+	if historyStore == nil || historyStore.db == nil {
 		return errors.New("agentthread: history store not initialized")
 	}
-	if rec == nil {
+	if historyRecord == nil {
 		return nil
 	}
-	if rec.MessageID == 0 {
-		if s.recordIDProvider == nil {
+	if historyRecord.MessageID == 0 {
+		if historyStore.recordIDProvider == nil {
 			return errors.New("agentthread: history record message_id is empty and no store id provider is configured")
 		}
-		rec.MessageID = s.recordIDProvider(ctx, rec.ThreadID, rec.RunID)
-		if rec.MessageID == 0 {
+		historyRecord.MessageID = historyStore.recordIDProvider(ctx, historyRecord.ThreadID, historyRecord.RunID)
+		if historyRecord.MessageID == 0 {
 			return errors.New("agentthread: history record id provider returned 0")
 		}
 	}
-	if rec.Seq == 0 {
-		if s.seqGenerator != nil {
-			seq, err := s.seqGenerator.Next(ctx, rec.ThreadID)
+	if historyRecord.Seq == 0 {
+		if historyStore.seqGenerator != nil {
+			sequence, err := historyStore.seqGenerator.GenerateSequence(ctx, historyRecord.ThreadID)
 			if err != nil {
 				return err
 			}
-			rec.Seq = seq
+			historyRecord.Seq = sequence
 		} else {
-			rec.Seq = rec.MessageID
+			historyRecord.Seq = historyRecord.MessageID
 		}
-		if rec.Seq <= 0 {
+		if historyRecord.Seq <= 0 {
 			return errors.New("agentthread: history record seq generator returned non-positive seq")
 		}
 	}
-	row, err := toHistoryRow(rec)
+	row, err := encodeHistoryRow(historyRecord)
 	if err != nil {
 		return err
 	}
-	return s.db.WithContext(ctx).Table(s.table).Clauses(clause.OnConflict{DoNothing: true}).Create(row).Error
+	return historyStore.db.WithContext(ctx).Table(historyStore.table).Clauses(clause.OnConflict{DoNothing: true}).Create(row).Error
 }
 
-func (s *GormHistoryRolloutStore) List(ctx context.Context, q ListQuery) ([]*HistoryRecord, error) {
-	if s == nil || s.db == nil {
+func (historyStore *GormHistoryRolloutStore) List(ctx context.Context, query ListQuery) ([]*HistoryRecord, error) {
+	if historyStore == nil || historyStore.db == nil {
 		return nil, errors.New("agentthread: history store not initialized")
 	}
-	db := s.db.WithContext(ctx).Table(s.table)
-	if q.ThreadID != "" {
-		db = db.Where("thread_id = ?", q.ThreadID)
+	queryDB := historyStore.db.WithContext(ctx).Table(historyStore.table)
+	if query.ThreadID != "" {
+		queryDB = queryDB.Where("thread_id = ?", query.ThreadID)
 	}
-	if q.RunID != "" {
-		db = db.Where("turn_id = ?", q.RunID)
+	if query.RunID != "" {
+		queryDB = queryDB.Where("turn_id = ?", query.RunID)
 	}
-	db = db.Where("seq > 0")
-	if q.Order == ListOrderDESC {
-		if q.BeforeID != nil {
-			db = db.Where("seq < ?", *q.BeforeID)
+	queryDB = queryDB.Where("seq > 0")
+	if query.Order == ListOrderDESC {
+		if query.BeforeID != nil {
+			queryDB = queryDB.Where("seq < ?", *query.BeforeID)
 		}
-		db = db.Order("seq DESC")
+		queryDB = queryDB.Order("seq DESC")
 	} else {
-		if q.AfterID != nil {
-			db = db.Where("seq > ?", *q.AfterID)
+		if query.AfterID != nil {
+			queryDB = queryDB.Where("seq > ?", *query.AfterID)
 		}
-		db = db.Order("seq ASC")
+		queryDB = queryDB.Order("seq ASC")
 	}
-	if q.Limit > 0 {
-		db = db.Limit(q.Limit)
+	if query.Limit > 0 {
+		queryDB = queryDB.Limit(query.Limit)
 	}
 	var rows []*historyRow
-	checkErr := db.Find(&rows).Error
+	checkErr := queryDB.Find(&rows).Error
 	if checkErr != nil {
 		return nil, checkErr
 	}
-	out := make([]*HistoryRecord, 0, len(rows))
+	historyRecords := make([]*HistoryRecord, 0, len(rows))
 	for _, row := range rows {
-		rec, err := row.toRecord()
+		historyRecord, err := row.decodeHistoryRecord()
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, rec)
+		historyRecords = append(historyRecords, historyRecord)
 	}
-	return out, nil
+	return historyRecords, nil
 }
 
 // historyRow preserves the existing durable rollout schema.
@@ -229,56 +229,56 @@ type historyRow struct {
 	CreateAt  int64  `gorm:"column:created_at"`
 }
 
-func toHistoryRow(rec *HistoryRecord) (*historyRow, error) {
+func encodeHistoryRow(historyRecord *HistoryRecord) (*historyRow, error) {
 	row := &historyRow{
-		ThreadID:  rec.ThreadID,
-		MessageID: rec.MessageID,
-		Seq:       rec.Seq,
-		RunID:     rec.RunID,
-		Type:      string(rec.Type),
-		CreateAt:  rec.CreateAt,
+		ThreadID:  historyRecord.ThreadID,
+		MessageID: historyRecord.MessageID,
+		Seq:       historyRecord.Seq,
+		RunID:     historyRecord.RunID,
+		Type:      string(historyRecord.Type),
+		CreateAt:  historyRecord.CreateAt,
 	}
-	if rec.Message != nil {
-		b, err := json.Marshal(rec.Message)
+	if historyRecord.Message != nil {
+		encodedJSON, err := json.Marshal(historyRecord.Message)
 		if err != nil {
 			return nil, err
 		}
-		row.Message = string(b)
+		row.Message = string(encodedJSON)
 	}
-	if rec.Ext != nil {
-		b, err := json.Marshal(rec.Ext)
+	if historyRecord.Ext != nil {
+		encodedJSON, err := json.Marshal(historyRecord.Ext)
 		if err != nil {
 			return nil, err
 		}
-		row.Ext = string(b)
+		row.Ext = string(encodedJSON)
 	}
 	return row, nil
 }
 
-func (r *historyRow) toRecord() (*HistoryRecord, error) {
-	rec := &HistoryRecord{
-		Type:      HistoryRecordType(r.Type),
-		ThreadID:  r.ThreadID,
-		RunID:     r.RunID,
-		MessageID: r.MessageID,
-		Seq:       r.Seq,
-		CreateAt:  r.CreateAt,
+func (historyRow *historyRow) decodeHistoryRecord() (*HistoryRecord, error) {
+	historyRecord := &HistoryRecord{
+		Type:      HistoryRecordType(historyRow.Type),
+		ThreadID:  historyRow.ThreadID,
+		RunID:     historyRow.RunID,
+		MessageID: historyRow.MessageID,
+		Seq:       historyRow.Seq,
+		CreateAt:  historyRow.CreateAt,
 	}
-	if r.Message != "" {
-		var msg Message
-		err := json.Unmarshal([]byte(r.Message), &msg)
+	if historyRow.Message != "" {
+		var message Message
+		err := json.Unmarshal([]byte(historyRow.Message), &message)
 		if err != nil {
 			return nil, err
 		}
-		rec.Message = &msg
+		historyRecord.Message = &message
 	}
-	if r.Ext != "" {
-		var ext HistoryRecordExtend
-		err := json.Unmarshal([]byte(r.Ext), &ext)
+	if historyRow.Ext != "" {
+		var historyExtension HistoryRecordExtend
+		err := json.Unmarshal([]byte(historyRow.Ext), &historyExtension)
 		if err != nil {
 			return nil, err
 		}
-		rec.Ext = &ext
+		historyRecord.Ext = &historyExtension
 	}
-	return rec, nil
+	return historyRecord, nil
 }

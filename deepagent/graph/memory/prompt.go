@@ -22,20 +22,20 @@ func NewPrompt(service Service, scope string) middleware.Middleware {
 	return &promptMiddleware{service: service, scope: scope}
 }
 
-func (*promptMiddleware) Name() string { return "memory_prompt" }
+func (*promptMiddleware) GetName() string { return "memory_prompt" }
 
-func (m *promptMiddleware) BuildPrompt(ctx context.Context) ([]*schema.Message, error) {
-	if m.service == nil {
+func (memoryPrompt *promptMiddleware) BuildPrompt(ctx context.Context) ([]*schema.Message, error) {
+	if memoryPrompt.service == nil {
 		return nil, fmt.Errorf("memory prompt requires service")
 	}
-	snapshot, err := m.service.Read(ctx, m.scope)
+	snapshot, err := memoryPrompt.service.Read(ctx, memoryPrompt.scope)
 	if err != nil {
 		return nil, fmt.Errorf("read memory: %w", err)
 	}
 	if snapshot == nil {
 		return nil, fmt.Errorf("memory service returned nil snapshot")
 	}
-	if snapshot.Scope != m.scope {
+	if snapshot.Scope != memoryPrompt.scope {
 		return nil, fmt.Errorf("memory snapshot scope mismatch")
 	}
 	if strings.TrimSpace(snapshot.Summary) == "" {

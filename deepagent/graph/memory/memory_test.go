@@ -25,67 +25,67 @@ func newMemoryStore() *memoryStore {
 	return &memoryStore{leases: map[string]memorypkg.Lease{}, artifacts: map[string]memorypkg.Artifact{}}
 }
 
-func (s *memoryStore) ClaimMemory(_ context.Context, key, _ string, ttl time.Duration) (memorypkg.Lease, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	leasesLease, ok := s.leases[key]
-	if ok && time.Now().Before(leasesLease.ExpiresAt) {
+func (memoryStore *memoryStore) ClaimMemory(_ context.Context, key, _ string, ttl time.Duration) (memorypkg.Lease, error) {
+	memoryStore.mu.Lock()
+	defer memoryStore.mu.Unlock()
+	existingLease, exists := memoryStore.leases[key]
+	if exists && time.Now().Before(existingLease.ExpiresAt) {
 		return memorypkg.Lease{}, memorypkg.ErrConflict
 	}
 	lease := memorypkg.Lease{Key: key, Token: uuid.NewString(), ExpiresAt: time.Now().Add(ttl)}
-	s.leases[key] = lease
+	memoryStore.leases[key] = lease
 	return lease, nil
 }
 
-func (s *memoryStore) RenewMemory(_ context.Context, lease memorypkg.Lease, ttl time.Duration) (memorypkg.Lease, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	current, ok := s.leases[lease.Key]
-	if !ok || current.Token != lease.Token || time.Now().After(current.ExpiresAt) {
+func (memoryStore *memoryStore) RenewMemory(_ context.Context, lease memorypkg.Lease, ttl time.Duration) (memorypkg.Lease, error) {
+	memoryStore.mu.Lock()
+	defer memoryStore.mu.Unlock()
+	current, exists := memoryStore.leases[lease.Key]
+	if !exists || current.Token != lease.Token || time.Now().After(current.ExpiresAt) {
 		return memorypkg.Lease{}, memorypkg.ErrLeaseLost
 	}
 	lease.ExpiresAt = time.Now().Add(ttl)
-	s.leases[lease.Key] = lease
+	memoryStore.leases[lease.Key] = lease
 	return lease, nil
 }
 
-func (s *memoryStore) CompleteMemory(_ context.Context, lease memorypkg.Lease, version string, data []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	current, ok := s.leases[lease.Key]
-	if !ok || current.Token != lease.Token || time.Now().After(current.ExpiresAt) {
+func (memoryStore *memoryStore) CompleteMemory(_ context.Context, lease memorypkg.Lease, version string, data []byte) error {
+	memoryStore.mu.Lock()
+	defer memoryStore.mu.Unlock()
+	current, exists := memoryStore.leases[lease.Key]
+	if !exists || current.Token != lease.Token || time.Now().After(current.ExpiresAt) {
 		return memorypkg.ErrLeaseLost
 	}
-	s.artifacts[lease.Key] = memorypkg.Artifact{Version: version, Data: append([]byte(nil), data...)}
+	memoryStore.artifacts[lease.Key] = memorypkg.Artifact{Version: version, Data: append([]byte(nil), data...)}
 	return nil
 }
 
-func (s *memoryStore) ReleaseMemory(_ context.Context, lease memorypkg.Lease) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	current, ok := s.leases[lease.Key]
-	if !ok || current.Token != lease.Token {
+func (memoryStore *memoryStore) ReleaseMemory(_ context.Context, lease memorypkg.Lease) error {
+	memoryStore.mu.Lock()
+	defer memoryStore.mu.Unlock()
+	current, exists := memoryStore.leases[lease.Key]
+	if !exists || current.Token != lease.Token {
 		return memorypkg.ErrLeaseLost
 	}
-	delete(s.leases, lease.Key)
+	delete(memoryStore.leases, lease.Key)
 	return nil
 }
 
-func (s *memoryStore) GetMemory(_ context.Context, key string) (memorypkg.Artifact, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	artifact, ok := s.artifacts[key]
-	if !ok {
+func (memoryStore *memoryStore) GetMemory(_ context.Context, key string) (memorypkg.Artifact, error) {
+	memoryStore.mu.Lock()
+	defer memoryStore.mu.Unlock()
+	artifact, exists := memoryStore.artifacts[key]
+	if !exists {
 		return memorypkg.Artifact{}, memorypkg.ErrNotFound
 	}
 	return artifact, nil
 }
 
-func (s *memoryStore) ListMemory(_ context.Context, prefix string, limit, offset int) (map[string]memorypkg.Artifact, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (memoryStore *memoryStore) ListMemory(_ context.Context, prefix string, limit, offset int) (map[string]memorypkg.Artifact, error) {
+	memoryStore.mu.Lock()
+	defer memoryStore.mu.Unlock()
 	result := map[string]memorypkg.Artifact{}
-	for key, artifact := range s.artifacts {
+	for key, artifact := range memoryStore.artifacts {
 		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
@@ -105,94 +105,94 @@ var _ memorypkg.Store = (*memoryStore)(nil)
 
 type memoryModel struct{ calls int }
 
-func (m *memoryModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	return m, nil
+func (chatModel *memoryModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return chatModel, nil
 }
-func (m *memoryModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+func (chatModel *memoryModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	return nil, errors.New("memory extraction bypassed Graph")
 }
-func (m *memoryModel) Stream(_ context.Context, in []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	m.calls++
-	if m.calls == 1 {
+func (chatModel *memoryModel) Stream(_ context.Context, messages []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	chatModel.calls++
+	if chatModel.calls == 1 {
 		return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("User prefers Go. Project uses MySQL.", nil)}), nil
 	}
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("# Memory\n- User prefers Go.\n- Project uses MySQL.", nil)}), nil
 }
 func TestExtractionConsolidationAndRestartBaseline(t *testing.T) {
 	ctx := context.Background()
-	m := &memoryModel{}
+	chatModel := &memoryModel{}
 	root := t.TempDir()
-	p, e := New(Config{Root: root, Model: m, Consolidator: func(context.Context, string, string) (string, error) {
-		m.calls++
+	memoryService, err := New(Config{Root: root, Model: chatModel, Consolidator: func(context.Context, string, string) (string, error) {
+		chatModel.calls++
 		return "# Memory\n- User prefers Go.\n- Project uses MySQL.", nil
 	}})
-	if e != nil {
-		t.Fatal(e)
+	if err != nil {
+		t.Fatal(err)
 	}
 	messages := []*schema.Message{schema.UserMessage("Use Go and MySQL.")}
-	e = p.Observe(ctx, "local", "session/thread", messages)
-	if e != nil {
-		t.Fatal(e)
+	err = memoryService.Observe(ctx, "local", "session/thread", messages)
+	if err != nil {
+		t.Fatal(err)
 	}
-	e = p.Observe(ctx, "local", "session/thread", messages)
-	if e != nil {
-		t.Fatal(e)
+	err = memoryService.Observe(ctx, "local", "session/thread", messages)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if m.calls != 1 {
+	if chatModel.calls != 1 {
 		t.Fatal("unchanged source extracted twice")
 	}
-	e = p.Consolidate(ctx, "local")
-	if e != nil {
-		t.Fatal(e)
+	err = memoryService.Consolidate(ctx, "local")
+	if err != nil {
+		t.Fatal(err)
 	}
-	p2, e := New(Config{Root: root, Model: m, Consolidator: func(context.Context, string, string) (string, error) {
-		m.calls++
+	secondMemoryService, err := New(Config{Root: root, Model: chatModel, Consolidator: func(context.Context, string, string) (string, error) {
+		chatModel.calls++
 		return "# Memory\n- User prefers Go.\n- Project uses MySQL.", nil
 	}})
-	if e != nil {
-		t.Fatal(e)
+	if err != nil {
+		t.Fatal(err)
 	}
-	e = p2.Consolidate(ctx, "local")
-	if e != nil {
-		t.Fatal(e)
+	err = secondMemoryService.Consolidate(ctx, "local")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if m.calls != 2 {
+	if chatModel.calls != 2 {
 		t.Fatal("unchanged extractions consolidated twice")
 	}
-	summary, e := p2.Read(ctx, "local")
-	if e != nil || summary.Summary != "# Memory\n- User prefers Go.\n- Project uses MySQL." {
-		t.Fatal(summary, e)
+	summary, err := secondMemoryService.Read(ctx, "local")
+	if err != nil || summary.Summary != "# Memory\n- User prefers Go.\n- Project uses MySQL." {
+		t.Fatal(summary, err)
 	}
 }
 
 func TestDurableArtifactsResumeOnDifferentWorkerDirectory(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStore()
-	m := &memoryModel{}
+	chatModel := &memoryModel{}
 	consolidate := func(context.Context, string, string) (string, error) { return "Shared durable memory", nil }
-	p, e := New(Config{Root: t.TempDir(), Model: m, Consolidator: consolidate, Store: store})
-	if e != nil {
-		t.Fatal(e)
+	memoryService, err := New(Config{Root: t.TempDir(), Model: chatModel, Consolidator: consolidate, Store: store})
+	if err != nil {
+		t.Fatal(err)
 	}
-	e = p.Observe(ctx, "user/u1", "thread1", []*schema.Message{schema.UserMessage("Go preference")})
-	if e != nil {
-		t.Fatal(e)
+	err = memoryService.Observe(ctx, "user/u1", "thread1", []*schema.Message{schema.UserMessage("Go preference")})
+	if err != nil {
+		t.Fatal(err)
 	}
-	p2, e := New(Config{Root: t.TempDir(), Model: m, Consolidator: consolidate, Store: store})
-	if e != nil {
-		t.Fatal(e)
+	secondMemoryService, err := New(Config{Root: t.TempDir(), Model: chatModel, Consolidator: consolidate, Store: store})
+	if err != nil {
+		t.Fatal(err)
 	}
-	e = p2.Consolidate(ctx, "user/u1")
-	if e != nil {
-		t.Fatal(e)
+	err = secondMemoryService.Consolidate(ctx, "user/u1")
+	if err != nil {
+		t.Fatal(err)
 	}
-	out, e := p.Read(ctx, "user/u1")
-	if e != nil || out.Summary != "Shared durable memory" {
-		t.Fatal(out, e)
+	snapshot, err := memoryService.Read(ctx, "user/u1")
+	if err != nil || snapshot.Summary != "Shared durable memory" {
+		t.Fatal(snapshot, err)
 	}
-	p3, _ := New(Config{Root: t.TempDir(), Model: m, Consolidator: consolidate, Store: store})
-	out, e = p3.Read(ctx, "user/other")
-	if e != nil || out.Summary != "" {
-		t.Fatal("memory user scope leaked", out, e)
+	otherMemoryService, _ := New(Config{Root: t.TempDir(), Model: chatModel, Consolidator: consolidate, Store: store})
+	snapshot, err = otherMemoryService.Read(ctx, "user/other")
+	if err != nil || snapshot.Summary != "" {
+		t.Fatal("memory user scope leaked", snapshot, err)
 	}
 }

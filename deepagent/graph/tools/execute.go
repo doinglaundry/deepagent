@@ -18,104 +18,104 @@ import (
 // executeTool streams the same thread-owned job used by shell and await_shell.
 type executeTool struct{ commandTool }
 
-func (t *executeTool) InvokableRun(ctx context.Context, raw string, opts ...tool.Option) (string, error) {
-	stream, err := t.StreamableRun(ctx, raw, opts...)
+func (executeTool *executeTool) InvokableRun(ctx context.Context, arguments string, options ...tool.Option) (string, error) {
+	outputStream, err := executeTool.StreamableRun(ctx, arguments, options...)
 	if err != nil {
 		return "", err
 	}
-	defer stream.Close()
-	var output strings.Builder
+	defer outputStream.Close()
+	var outputBuilder strings.Builder
 	for {
-		chunk, err := stream.Recv()
+		chunk, err := outputStream.Recv()
 		if errors.Is(err, io.EOF) {
-			return output.String(), ctx.Err()
+			return outputBuilder.String(), ctx.Err()
 		}
 		if err != nil {
-			return output.String(), err
+			return outputBuilder.String(), err
 		}
-		output.WriteString(chunk)
+		outputBuilder.WriteString(chunk)
 	}
 }
 
-func (t *executeTool) StreamableRun(ctx context.Context, raw string, _ ...tool.Option) (*schema.StreamReader[string], error) {
-	if t.service == nil {
+func (executeTool *executeTool) StreamableRun(ctx context.Context, arguments string, _ ...tool.Option) (*schema.StreamReader[string], error) {
+	if executeTool.commandService == nil {
 		return nil, fmt.Errorf("command service is required")
 	}
-	var input struct {
+	var commandArgs struct {
 		Command        string `json:"command"`
 		WorkDir        string `json:"working_directory"`
 		TimeoutMS      int    `json:"timeout_ms"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
 	}
-	decodeErr := json.Unmarshal([]byte(raw), &input)
+	decodeErr := json.Unmarshal([]byte(arguments), &commandArgs)
 	if decodeErr != nil {
 		return nil, decodeErr
 	}
-	timeout := t.defaultTimeout
-	if input.TimeoutMS > 0 {
-		timeout = time.Duration(min(input.TimeoutMS, 300_000)) * time.Millisecond
-	} else if input.TimeoutSeconds > 0 {
-		timeout = time.Duration(min(input.TimeoutSeconds, 300)) * time.Second
+	timeout := executeTool.defaultTimeout
+	if commandArgs.TimeoutMS > 0 {
+		timeout = time.Duration(min(commandArgs.TimeoutMS, 300_000)) * time.Millisecond
+	} else if commandArgs.TimeoutSeconds > 0 {
+		timeout = time.Duration(min(commandArgs.TimeoutSeconds, 300)) * time.Second
 	}
 	if timeout > 5*time.Minute {
 		timeout = 5 * time.Minute
 	}
-	jobCtx, cancel := context.WithCancel(ctx)
-	id, err := t.service.Start(jobCtx, filesystempkg.CommandRequest{Command: input.Command, WorkDir: input.WorkDir, Timeout: timeout, MaxOutputBytes: 1 << 20, KeepOutputPrefix: true})
+	commandCtx, cancelCommand := context.WithCancel(ctx)
+	taskID, err := executeTool.commandService.Start(commandCtx, filesystempkg.CommandRequest{Command: commandArgs.Command, WorkDir: commandArgs.WorkDir, Timeout: timeout, MaxOutputBytes: 1 << 20, KeepOutputPrefix: true})
 	if err != nil {
-		cancel()
+		cancelCommand()
 		return nil, err
 	}
-	reader, writer := schema.Pipe[string](0)
-	reader.SetAutomaticClose()
-	stopClose := context.AfterFunc(ctx, reader.Close)
+	streamReader, streamWriter := schema.Pipe[string](0)
+	streamReader.SetAutomaticClose()
+	stopAutomaticClose := context.AfterFunc(ctx, streamReader.Close)
 	go func() {
-		defer writer.Close()
-		defer stopClose()
+		defer streamWriter.Close()
+		defer stopAutomaticClose()
 		defer func() {
-			cancel()
+			cancelCommand()
 			// Join the process even when the stream consumer closes while silent.
-			_ = t.service.Cancel(context.Background(), id)
+			_ = executeTool.commandService.Cancel(context.Background(), taskID)
 		}()
-		offset, remaining := 0, 1<<20
+		outputOffset, remainingBytes := 0, 1<<20
 		for {
-			waitCtx, stopWait := context.WithTimeout(jobCtx, 50*time.Millisecond)
-			snapshot, err := t.service.Wait(waitCtx, id, "(?s).", offset)
-			stopWait()
+			waitCtx, cancelWait := context.WithTimeout(commandCtx, 50*time.Millisecond)
+			commandSnapshot, err := executeTool.commandService.Wait(waitCtx, taskID, "(?s).", outputOffset)
+			cancelWait()
 			if ctx.Err() != nil {
 				return
 			}
 			if err != nil && !errors.Is(err, context.DeadlineExceeded) {
-				writer.Send("", err)
+				streamWriter.Send("", err)
 				return
 			}
-			if snapshot == nil {
-				writer.Send("", fmt.Errorf("command returned no snapshot"))
+			if commandSnapshot == nil {
+				streamWriter.Send("", fmt.Errorf("command returned no snapshot"))
 				return
 			}
-			chunk := snapshot.Output
-			if len(chunk) > remaining {
-				chunk = chunk[:remaining]
+			chunk := commandSnapshot.Output
+			if len(chunk) > remainingBytes {
+				chunk = chunk[:remainingBytes]
 			}
-			remaining -= len(chunk)
-			offset = snapshot.Offset
+			remainingBytes -= len(chunk)
+			outputOffset = commandSnapshot.Offset
 			// Empty sends detect consumer closure without exposing heartbeat chunks.
-			if writer.Send(chunk, nil) {
+			if streamWriter.Send(chunk, nil) {
 				return
 			}
-			if snapshot.Done {
-				if snapshot.TimedOut {
-					writer.Send("", fmt.Errorf("command timed out after %s", timeout))
-				} else if snapshot.ExitCode != 0 {
-					writer.Send("", fmt.Errorf("command exited with code %d", snapshot.ExitCode))
+			if commandSnapshot.Done {
+				if commandSnapshot.TimedOut {
+					streamWriter.Send("", fmt.Errorf("command timed out after %s", timeout))
+				} else if commandSnapshot.ExitCode != 0 {
+					streamWriter.Send("", fmt.Errorf("command exited with code %d", commandSnapshot.ExitCode))
 				} else {
-					writer.Send("\nexit_code=0", nil)
+					streamWriter.Send("\nexit_code=0", nil)
 				}
 				return
 			}
 		}
 	}()
-	return schema.StreamReaderWithConvert(reader, func(chunk string) (string, error) {
+	return schema.StreamReaderWithConvert(streamReader, func(chunk string) (string, error) {
 		if chunk == "" {
 			return "", schema.ErrNoValue
 		}

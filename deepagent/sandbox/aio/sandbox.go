@@ -58,13 +58,13 @@ func (s *Sandbox) ID() string { return s.id }
 
 func (s *Sandbox) SessionID() string { return s.sessionID }
 
-// DockerExecTarget identifies the same container used by the file HTTP API.
-func (s *Sandbox) DockerExecTarget() (string, bool) {
+// GetDockerExecTarget identifies the same container used by the file HTTP API.
+func (s *Sandbox) GetDockerExecTarget() (string, bool) {
 	return s.containerName, s.runtime == runtimeDocker && s.containerName != ""
 }
 
 func (s *Sandbox) ResolveContainerPath(ctx context.Context, path string) (string, error) {
-	container, ok := s.DockerExecTarget()
+	container, ok := s.GetDockerExecTarget()
 	if !ok {
 		return "", fmt.Errorf("Docker container is unavailable")
 	}

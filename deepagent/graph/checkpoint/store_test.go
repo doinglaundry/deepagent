@@ -12,19 +12,19 @@ type memoryStore struct {
 	err  error
 }
 
-func (s *memoryStore) Get(_ context.Context, id string) ([]byte, bool, error) {
-	v, ok := s.data[id]
-	return v, ok, s.err
+func (memoryStore *memoryStore) Get(_ context.Context, id string) ([]byte, bool, error) {
+	snapshot, ok := memoryStore.data[id]
+	return snapshot, ok, memoryStore.err
 }
 
-func (s *memoryStore) Set(_ context.Context, id string, value []byte) error {
-	if s.err != nil {
-		return s.err
+func (memoryStore *memoryStore) Set(_ context.Context, id string, value []byte) error {
+	if memoryStore.err != nil {
+		return memoryStore.err
 	}
-	if s.data == nil {
-		s.data = make(map[string][]byte)
+	if memoryStore.data == nil {
+		memoryStore.data = make(map[string][]byte)
 	}
-	s.data[id] = value
+	memoryStore.data[id] = value
 	return nil
 }
 
@@ -62,8 +62,8 @@ func TestFreshCheckpointReplacesForeignIdentityAndInvalidBytes(t *testing.T) {
 		[]byte(`obsolete bytes`),
 		[]byte(`{"Version":1,"ThreadID":"thread","RunID":"old","GraphVersion":"graph-v1","EinoSnapshot":"b2xk","OldOwnerField":true}`),
 	} {
-		inner := &memoryStore{data: map[string][]byte{"checkpoint": existing}}
-		store := New(inner, "thread", "fresh", "graph-v1")
+		rawStore := &memoryStore{data: map[string][]byte{"checkpoint": existing}}
+		store := New(rawStore, "thread", "fresh", "graph-v1")
 		err := store.Set(context.Background(), "checkpoint", []byte("fresh snapshot"))
 		if err != nil {
 			t.Fatal(err)
@@ -73,7 +73,7 @@ func TestFreshCheckpointReplacesForeignIdentityAndInvalidBytes(t *testing.T) {
 			t.Fatalf("snapshot=%s exists=%v err=%v", got, exists, err)
 		}
 		var envelope map[string]json.RawMessage
-		err = json.Unmarshal(inner.data["checkpoint"], &envelope)
+		err = json.Unmarshal(rawStore.data["checkpoint"], &envelope)
 		if err != nil {
 			t.Fatal(err)
 		}

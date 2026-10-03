@@ -16,35 +16,35 @@ type webMaskContextKey struct{}
 
 func TestWebFactoryAppliesConfiguredMask(t *testing.T) {
 	ctx := context.WithValue(context.Background(), webMaskContextKey{}, "present")
-	calls := 0
-	validContext := true
-	config := &WebConfig{
+	maskCalls := 0
+	validMaskContext := true
+	webConfig := &WebConfig{
 		EnableFetchURL: true, EnableWebSearch: true, SearchURL: "https://search.example/query",
-		ToolMask: func(maskContext context.Context, info *schema.ToolInfo) bool {
-			calls++
+		ToolMask: func(maskContext context.Context, toolInfo *schema.ToolInfo) bool {
+			maskCalls++
 			if maskContext.Value(webMaskContextKey{}) != "present" {
-				validContext = false
+				validMaskContext = false
 			}
-			return info.Name == "read_url"
+			return toolInfo.Name == "read_url"
 		},
 	}
-	items, err := NewWebTools(ctx, config)
+	toolDescriptors, err := NewWebTools(ctx, webConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("tools = %d, want only read_url", len(items))
+	if len(toolDescriptors) != 1 {
+		t.Fatalf("tools = %d, want only read_url", len(toolDescriptors))
 	}
-	info, err := items[0].Tool.Info(ctx)
-	if err != nil || info.Name != "read_url" {
-		t.Fatalf("tool = %v, %v", info, err)
+	toolInfo, err := toolDescriptors[0].Tool.Info(ctx)
+	if err != nil || toolInfo.Name != "read_url" {
+		t.Fatalf("tool = %v, %v", toolInfo, err)
 	}
-	if calls != 2 || !validContext {
-		t.Fatalf("mask calls = %d, valid context = %v", calls, validContext)
+	if maskCalls != 2 || !validMaskContext {
+		t.Fatalf("mask calls = %d, valid context = %v", maskCalls, validMaskContext)
 	}
-	items, err = NewWebTools(ctx, nil)
-	if err != nil || items != nil {
-		t.Fatalf("nil config = %v, %v", items, err)
+	toolDescriptors, err = NewWebTools(ctx, nil)
+	if err != nil || toolDescriptors != nil {
+		t.Fatalf("nil config = %v, %v", toolDescriptors, err)
 	}
 	_, err = NewWebTools(ctx, &WebConfig{EnableFetchURL: true, MaxBytes: -1})
 	if err == nil {
@@ -53,29 +53,29 @@ func TestWebFactoryAppliesConfiguredMask(t *testing.T) {
 }
 
 func TestWebSearchEscapesQueryAndReadLimitsResponse(t *testing.T) {
-	var target string
-	client := &http.Client{Transport: webRoundTripFunc(func(r *http.Request) (*http.Response, error) {
-		target = r.URL.String()
+	var requestedURL string
+	httpClient := &http.Client{Transport: webRoundTripFunc(func(httpRequest *http.Request) (*http.Response, error) {
+		requestedURL = httpRequest.URL.String()
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/plain"}}, Body: io.NopCloser(strings.NewReader("abcdef"))}, nil
 	})}
-	tools, err := NewWebTools(context.Background(), &WebConfig{Enabled: true, EnableFetchURL: true, EnableWebSearch: true, SearchURL: "https://search.example/query", MaxBytes: 4, HTTPClient: client})
+	toolDescriptors, err := NewWebTools(context.Background(), &WebConfig{Enabled: true, EnableFetchURL: true, EnableWebSearch: true, SearchURL: "https://search.example/query", MaxBytes: 4, HTTPClient: httpClient})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := tools[1].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"a & b"}`)
+	result, err := toolDescriptors[1].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"a & b"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(target, "q=a+%26+b") || !strings.Contains(result, "abcd") || !strings.Contains(result, "truncated") {
-		t.Fatalf("target %s result %s", target, result)
+	if !strings.Contains(requestedURL, "q=a+%26+b") || !strings.Contains(result, "abcd") || !strings.Contains(result, "truncated") {
+		t.Fatalf("target %s result %s", requestedURL, result)
 	}
 }
 func TestWebToolRejectsFileScheme(t *testing.T) {
-	tools, err := NewWebTools(context.Background(), &WebConfig{Enabled: true, EnableFetchURL: true, EnableWebSearch: true})
+	toolDescriptors, err := NewWebTools(context.Background(), &WebConfig{Enabled: true, EnableFetchURL: true, EnableWebSearch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = tools[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"file:///etc/passwd"}`)
+	_, err = toolDescriptors[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"file:///etc/passwd"}`)
 	if err == nil {
 		t.Fatal("file URL accepted")
 	}
@@ -84,33 +84,33 @@ func TestWebToolRejectsFileScheme(t *testing.T) {
 func TestWebSearchHeadersStayOnConfiguredOrigin(t *testing.T) {
 	for _, destination := range []string{"https://other.example/page", "http://search.example/page"} {
 		t.Run(destination, func(t *testing.T) {
-			calls := 0
-			client := &http.Client{Transport: webRoundTripFunc(func(r *http.Request) (*http.Response, error) {
-				calls++
-				if calls == 1 {
-					if r.Header.Get("X-Search-Key") != "secret" {
+			requestCount := 0
+			httpClient := &http.Client{Transport: webRoundTripFunc(func(httpRequest *http.Request) (*http.Response, error) {
+				requestCount++
+				if requestCount == 1 {
+					if httpRequest.Header.Get("X-Search-Key") != "secret" {
 						t.Fatal("search credential missing")
 					}
-					return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{destination}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+					return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{destination}}, Body: io.NopCloser(strings.NewReader("")), Request: httpRequest}, nil
 				}
-				if r.Header.Get("X-Search-Key") != "" {
+				if httpRequest.Header.Get("X-Search-Key") != "" {
 					t.Fatal("search credential crossed origin")
 				}
-				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("result")), Request: r}, nil
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("result")), Request: httpRequest}, nil
 			})}
-			items, err := NewWebTools(context.Background(), &WebConfig{EnableFetchURL: true, EnableWebSearch: true, SearchURL: "https://search.example/query", Headers: map[string]string{"X-Search-Key": "secret"}, HTTPClient: client})
+			toolDescriptors, err := NewWebTools(context.Background(), &WebConfig{EnableFetchURL: true, EnableWebSearch: true, SearchURL: "https://search.example/query", Headers: map[string]string{"X-Search-Key": "secret"}, HTTPClient: httpClient})
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = items[1].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"go"}`)
+			_, err = toolDescriptors[1].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"go"}`)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if calls != 2 {
-				t.Fatalf("redirect calls=%d", calls)
+			if requestCount != 2 {
+				t.Fatalf("redirect calls=%d", requestCount)
 			}
 			// Arbitrary read URLs must not receive the configured search headers.
-			_, err = items[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"https://page.example"}`)
+			_, err = toolDescriptors[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"https://page.example"}`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,35 +120,37 @@ func TestWebSearchHeadersStayOnConfiguredOrigin(t *testing.T) {
 
 type webRoundTripFunc func(*http.Request) (*http.Response, error)
 
-func (f webRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func (roundTrip webRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return roundTrip(request)
+}
 
 func TestReadURLExtractsVisibleText(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(`<html><style>hidden</style><body>Hello <b>world</b></body></html>`))
+	httpServer := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		responseWriter.Header().Set("Content-Type", "text/html")
+		_, _ = responseWriter.Write([]byte(`<html><style>hidden</style><body>Hello <b>world</b></body></html>`))
 	}))
-	defer server.Close()
+	defer httpServer.Close()
 
-	items, err := NewWebTools(context.Background(), &WebConfig{EnableFetchURL: true})
-	if err != nil || len(items) != 1 {
-		t.Fatalf("tools = %d, %v", len(items), err)
+	toolDescriptors, err := NewWebTools(context.Background(), &WebConfig{EnableFetchURL: true})
+	if err != nil || len(toolDescriptors) != 1 {
+		t.Fatalf("tools = %d, %v", len(toolDescriptors), err)
 	}
-	output, err := items[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"`+server.URL+`"}`)
+	output, err := toolDescriptors[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"`+httpServer.URL+`"}`)
 	if err != nil || !strings.Contains(output, "Hello world") || strings.Contains(output, "hidden") {
 		t.Fatalf("read_url = %q, %v", output, err)
 	}
 }
 
 func TestSearchUsesConfiguredEndpoint(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		_, _ = w.Write([]byte(req.URL.Query().Get("q")))
+	httpServer := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		_, _ = responseWriter.Write([]byte(request.URL.Query().Get("q")))
 	}))
-	defer server.Close()
-	items, err := NewWebTools(context.Background(), &WebConfig{EnableWebSearch: true, SearchURL: server.URL})
-	if err != nil || len(items) != 1 {
-		t.Fatalf("tools = %d, %v", len(items), err)
+	defer httpServer.Close()
+	toolDescriptors, err := NewWebTools(context.Background(), &WebConfig{EnableWebSearch: true, SearchURL: httpServer.URL})
+	if err != nil || len(toolDescriptors) != 1 {
+		t.Fatalf("tools = %d, %v", len(toolDescriptors), err)
 	}
-	output, err := items[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"deep agent"}`)
+	output, err := toolDescriptors[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"deep agent"}`)
 	if err != nil || !strings.Contains(output, "deep agent") {
 		t.Fatalf("web_search = %q, %v", output, err)
 	}

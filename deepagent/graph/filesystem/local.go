@@ -36,11 +36,11 @@ type LocalFilesystemConfig struct {
 	MaxFileSizeMB int
 }
 
-func NewLocalFilesystem(cfg *LocalFilesystemConfig, threadID string) (*LocalFilesystem, error) {
-	if cfg == nil || threadID == "" {
+func NewLocalFilesystem(filesystemConfig *LocalFilesystemConfig, threadID string) (*LocalFilesystem, error) {
+	if filesystemConfig == nil || threadID == "" {
 		return nil, fmt.Errorf("local filesystem config and thread ID are required")
 	}
-	rootDir := cfg.RootDir
+	rootDir := filesystemConfig.RootDir
 	if rootDir == "" {
 		var err error
 		rootDir, err = os.Getwd()
@@ -52,98 +52,100 @@ func NewLocalFilesystem(cfg *LocalFilesystemConfig, threadID string) (*LocalFile
 	if err != nil {
 		return nil, err
 	}
-	maxFileSize := cfg.MaxFileSizeMB
+	maxFileSize := filesystemConfig.MaxFileSizeMB
 	if maxFileSize <= 0 {
 		maxFileSize = MaxFileSizeMB
 	}
-	b := &LocalFilesystem{rootDir: rootDir, virtualMode: cfg.VirtualMode, maxFileSizeMB: maxFileSize}
-	info, err := os.Stat(b.Root())
+	localFilesystem := &LocalFilesystem{rootDir: rootDir, virtualMode: filesystemConfig.VirtualMode, maxFileSizeMB: maxFileSize}
+	rootInfo, err := os.Stat(localFilesystem.GetRoot())
 	if err != nil {
 		return nil, err
 	}
-	if !info.IsDir() {
+	if !rootInfo.IsDir() {
 		return nil, fmt.Errorf("workspace root is not a directory")
 	}
-	b.commands = NewCommands(threadID, b)
-	return b, nil
+	localFilesystem.commands = NewCommands(threadID, localFilesystem)
+	return localFilesystem, nil
 }
 
-func (b *LocalFilesystem) Execute(ctx context.Context, req CommandRequest) (*CommandResult, error) {
-	return b.commands.Execute(ctx, req)
+func (localFilesystem *LocalFilesystem) Execute(ctx context.Context, request CommandRequest) (*CommandResult, error) {
+	return localFilesystem.commands.Execute(ctx, request)
 }
-func (b *LocalFilesystem) Start(ctx context.Context, req CommandRequest) (string, error) {
-	return b.commands.Start(ctx, req)
+func (localFilesystem *LocalFilesystem) Start(ctx context.Context, request CommandRequest) (string, error) {
+	return localFilesystem.commands.Start(ctx, request)
 }
-func (b *LocalFilesystem) Wait(ctx context.Context, id, pattern string, offset int) (*CommandSnapshot, error) {
-	return b.commands.Wait(ctx, id, pattern, offset)
+func (localFilesystem *LocalFilesystem) Wait(ctx context.Context, id, pattern string, offset int) (*CommandSnapshot, error) {
+	return localFilesystem.commands.Wait(ctx, id, pattern, offset)
 }
-func (b *LocalFilesystem) Cancel(ctx context.Context, id string) error {
-	return b.commands.Cancel(ctx, id)
+func (localFilesystem *LocalFilesystem) Cancel(ctx context.Context, id string) error {
+	return localFilesystem.commands.Cancel(ctx, id)
 }
-func (b *LocalFilesystem) Close(ctx context.Context) error { return b.commands.Close(ctx) }
+func (localFilesystem *LocalFilesystem) Close(ctx context.Context) error {
+	return localFilesystem.commands.Close(ctx)
+}
 
 var _ Filesystem = (*LocalFilesystem)(nil)
 var _ CommandService = (*LocalFilesystem)(nil)
 var _ ToolFilesystem = (*LocalFilesystem)(nil)
 var _ patchFilesystem = (*LocalFilesystem)(nil)
 
-func (b *LocalFilesystem) resolvePath(path string) (string, error) {
+func (localFilesystem *LocalFilesystem) resolvePath(path string) (string, error) {
 	// 安全检查：禁止路径遍历
-	clean := filepath.Clean(path)
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	cleanPath := filepath.Clean(path)
+	if cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
 		return "", ErrInvalidPath
 	}
 
 	// 处理相对路径
-	var absPath string
+	var absolutePath string
 	if filepath.IsAbs(path) {
-		if b.virtualMode {
-			cleaned := filepath.Clean(path)
-			if pathWithinRoot(cleaned, b.rootDir) {
+		if localFilesystem.virtualMode {
+			cleanAbsolutePath := filepath.Clean(path)
+			if isPathWithinRoot(cleanAbsolutePath, localFilesystem.rootDir) {
 				// Models may echo the absolute workspace path supplied in their
 				// runtime context. Keep an already sandboxed path unchanged.
-				absPath = cleaned
+				absolutePath = cleanAbsolutePath
 			} else {
 				// Other absolute paths retain the virtual-root behavior: /etc/x
 				// addresses <rootDir>/etc/x rather than the host filesystem.
-				absPath = filepath.Join(b.rootDir, strings.TrimLeft(cleaned, string(filepath.Separator)))
+				absolutePath = filepath.Join(localFilesystem.rootDir, strings.TrimLeft(cleanAbsolutePath, string(filepath.Separator)))
 			}
 		} else {
-			absPath = path
+			absolutePath = path
 		}
 	} else {
-		absPath = filepath.Join(b.rootDir, path)
+		absolutePath = filepath.Join(localFilesystem.rootDir, path)
 	}
 
-	absPath = filepath.Clean(absPath)
+	absolutePath = filepath.Clean(absolutePath)
 
 	// 虚拟模式下，确保路径在 rootDir 下
-	if b.virtualMode {
-		if !pathWithinRoot(absPath, b.rootDir) {
+	if localFilesystem.virtualMode {
+		if !isPathWithinRoot(absolutePath, localFilesystem.rootDir) {
 			return "", ErrInvalidPath
 		}
 	}
 
-	return absPath, nil
+	return absolutePath, nil
 }
 
-func pathWithinRoot(path, root string) bool {
-	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+func isPathWithinRoot(path, root string) bool {
+	relativePath, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
 	if err != nil {
 		return false
 	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	return relativePath == "." || (relativePath != ".." && !strings.HasPrefix(relativePath, ".."+string(filepath.Separator)))
 }
 
-func (b *LocalFilesystem) ApplyPatch(ctx context.Context, patch string) (string, error) {
-	return ApplyWorkspacePatch(ctx, b, patch)
+func (localFilesystem *LocalFilesystem) ApplyPatch(ctx context.Context, patch string) (string, error) {
+	return ApplyWorkspacePatch(ctx, localFilesystem, patch)
 }
 
 // globMaxResults glob 工具最大返回结果数
 const globMaxResults = 1000
 
-// shouldSkipDir 判断是否跳过某些大型或无关目录
-func shouldSkipDir(name string) bool {
+// isExcludedDirectory 判断是否跳过某些大型或无关目录
+func isExcludedDirectory(name string) bool {
 	switch name {
 	case ".git", "node_modules", ".svn", ".hg", "__pycache__", ".tox", ".eggs", ".mypy_cache":
 		return true
@@ -151,22 +153,22 @@ func shouldSkipDir(name string) bool {
 	return false
 }
 
-// globMatch 匹配 glob 模式，支持 ** 递归匹配
+// matchGlob 匹配 glob 模式，支持 ** 递归匹配
 // pattern 和 name 都使用 / 作为分隔符
-func globMatch(pattern, name string) bool {
+func matchGlob(pattern, name string) bool {
 	// 统一使用 / 分隔符
 	pattern = filepath.ToSlash(pattern)
 	name = filepath.ToSlash(name)
 
-	return doGlobMatch(strings.Split(pattern, "/"), strings.Split(name, "/"))
+	return matchGlobSegments(strings.Split(pattern, "/"), strings.Split(name, "/"))
 }
 
 // doGlobMatch 递归匹配 glob 模式的各段
-func doGlobMatch(patternParts, nameParts []string) bool {
+func matchGlobSegments(patternParts, nameParts []string) bool {
 	for len(patternParts) > 0 && len(nameParts) > 0 {
-		p := patternParts[0]
+		patternPart := patternParts[0]
 
-		if p == "**" {
+		if patternPart == "**" {
 			// ** 可以匹配零个或多个路径段
 			patternParts = patternParts[1:]
 			if len(patternParts) == 0 {
@@ -174,7 +176,7 @@ func doGlobMatch(patternParts, nameParts []string) bool {
 			}
 			// 尝试 ** 匹配 0 到 N 个路径段
 			for i := 0; i <= len(nameParts); i++ {
-				if doGlobMatch(patternParts, nameParts[i:]) {
+				if matchGlobSegments(patternParts, nameParts[i:]) {
 					return true
 				}
 			}
@@ -182,7 +184,7 @@ func doGlobMatch(patternParts, nameParts []string) bool {
 		}
 
 		// 使用 filepath.Match 匹配单个路径段
-		matched, _ := filepath.Match(p, nameParts[0])
+		matched, _ := filepath.Match(patternPart, nameParts[0])
 		if !matched {
 			return false
 		}
@@ -192,8 +194,8 @@ func doGlobMatch(patternParts, nameParts []string) bool {
 	}
 
 	// 处理 pattern 末尾的 **
-	for _, p := range patternParts {
-		if p != "**" {
+	for _, patternPart := range patternParts {
+		if patternPart != "**" {
 			return false
 		}
 	}
@@ -201,55 +203,55 @@ func doGlobMatch(patternParts, nameParts []string) bool {
 	return len(nameParts) == 0
 }
 
-func (b *LocalFilesystem) Root() string { return b.rootDir }
+func (localFilesystem *LocalFilesystem) GetRoot() string { return localFilesystem.rootDir }
 
 // Every file operation uses os.Root, so an intermediate symlink replacement
 // cannot turn a previously validated path into a host filesystem access.
-func (b *LocalFilesystem) openRoot(ctx context.Context, path string) (*os.Root, string, error) {
+func (localFilesystem *LocalFilesystem) openRoot(ctx context.Context, path string) (*os.Root, string, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, "", err
 	}
-	absolute, err := b.resolvePath(path)
+	absolutePath, err := localFilesystem.resolvePath(path)
 	if err != nil {
 		return nil, "", err
 	}
-	relative, err := filepath.Rel(b.rootDir, absolute)
-	if err != nil || !filepath.IsLocal(relative) {
+	relativePath, err := filepath.Rel(localFilesystem.rootDir, absolutePath)
+	if err != nil || !filepath.IsLocal(relativePath) {
 		return nil, "", ErrInvalidPath
 	}
-	root, err := os.OpenRoot(b.rootDir)
+	workspaceRoot, err := os.OpenRoot(localFilesystem.rootDir)
 	if err != nil {
 		return nil, "", err
 	}
-	return root, relative, nil
+	return workspaceRoot, relativePath, nil
 }
-func (b *LocalFilesystem) Resolve(ctx context.Context, path string, write bool) (string, error) {
-	root, relative, err := b.openRoot(ctx, path)
+func (localFilesystem *LocalFilesystem) Resolve(ctx context.Context, path string, write bool) (string, error) {
+	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return "", err
 	}
-	defer root.Close()
-	check := relative
+	defer workspaceRoot.Close()
+	existingPath := relativePath
 	for {
-		_, err = root.Stat(check)
+		_, err = workspaceRoot.Stat(existingPath)
 		if err == nil {
 			break
 		}
-		if !write || !os.IsNotExist(err) || check == "." {
+		if !write || !os.IsNotExist(err) || existingPath == "." {
 			return "", err
 		}
-		check = filepath.Dir(check)
+		existingPath = filepath.Dir(existingPath)
 	}
-	return filepath.Join(b.rootDir, relative), nil
+	return filepath.Join(localFilesystem.rootDir, relativePath), nil
 }
-func (b *LocalFilesystem) FileExists(ctx context.Context, path string) (bool, error) {
-	root, relative, err := b.openRoot(ctx, path)
+func (localFilesystem *LocalFilesystem) HasFile(ctx context.Context, path string) (bool, error) {
+	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return false, err
 	}
-	defer root.Close()
-	_, err = root.Lstat(relative)
+	defer workspaceRoot.Close()
+	_, err = workspaceRoot.Lstat(relativePath)
 	if err == nil {
 		return true, nil
 	}
@@ -258,91 +260,91 @@ func (b *LocalFilesystem) FileExists(ctx context.Context, path string) (bool, er
 	}
 	return false, err
 }
-func (b *LocalFilesystem) readBytes(ctx context.Context, path string) ([]byte, error) {
-	root, relative, err := b.openRoot(ctx, path)
+func (localFilesystem *LocalFilesystem) readBytes(ctx context.Context, path string) ([]byte, error) {
+	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
-	file, err := root.Open(relative)
+	defer workspaceRoot.Close()
+	file, err := workspaceRoot.Open(relativePath)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-	info, err := file.Stat()
+	fileInfo, err := file.Stat()
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() {
+	if !fileInfo.Mode().IsRegular() {
 		return nil, fmt.Errorf("not a regular file: %s", path)
 	}
-	limit := int64(b.maxFileSizeMB) << 20
-	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	maxContentBytes := int64(localFilesystem.maxFileSizeMB) << 20
+	contentBytes, err := io.ReadAll(io.LimitReader(file, maxContentBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("file exceeds %d MiB", b.maxFileSizeMB)
+	if int64(len(contentBytes)) > maxContentBytes {
+		return nil, fmt.Errorf("file exceeds %d MiB", localFilesystem.maxFileSizeMB)
 	}
 	err = ctx.Err()
 	if err != nil {
 		return nil, err
 	}
-	return data, nil
+	return contentBytes, nil
 }
-func (b *LocalFilesystem) Read(ctx context.Context, path string, offset, limit *int) (string, error) {
-	data, err := b.readBytes(ctx, path)
+func (localFilesystem *LocalFilesystem) Read(ctx context.Context, path string, offset, limit *int) (string, error) {
+	contentBytes, err := localFilesystem.readBytes(ctx, path)
 	if err != nil {
 		return "", err
 	}
-	return ReadFileLines(string(data), offset, limit), nil
+	return ReadFileLines(string(contentBytes), offset, limit), nil
 }
-func (b *LocalFilesystem) Write(ctx context.Context, path, content string) (*WriteResult, error) {
-	root, relative, err := b.openRoot(ctx, path)
+func (localFilesystem *LocalFilesystem) Write(ctx context.Context, path, content string) (*WriteResult, error) {
+	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
-	err = root.MkdirAll(filepath.Dir(relative), 0755)
+	defer workspaceRoot.Close()
+	err = workspaceRoot.MkdirAll(filepath.Dir(relativePath), 0755)
 	if err != nil {
 		return nil, err
 	}
-	err = root.WriteFile(relative, []byte(content), 0644)
+	err = workspaceRoot.WriteFile(relativePath, []byte(content), 0644)
 	if err != nil {
 		return nil, err
 	}
 	return &WriteResult{Path: path}, nil
 }
-func (b *LocalFilesystem) CreateFileNoReplace(ctx context.Context, path, content string) (*WriteResult, error) {
-	root, relative, err := b.openRoot(ctx, path)
+func (localFilesystem *LocalFilesystem) CreateFileNoReplace(ctx context.Context, path, content string) (*WriteResult, error) {
+	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
-	err = root.MkdirAll(filepath.Dir(relative), 0755)
+	defer workspaceRoot.Close()
+	err = workspaceRoot.MkdirAll(filepath.Dir(relativePath), 0755)
 	if err != nil {
 		return nil, err
 	}
-	parent, err := root.OpenRoot(filepath.Dir(relative))
+	parentRoot, err := workspaceRoot.OpenRoot(filepath.Dir(relativePath))
 	if err != nil {
 		return nil, err
 	}
-	defer parent.Close()
-	root = parent
-	relative = filepath.Base(relative)
-	temporary := ".patch-" + rand.Text()
-	file, err := root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	defer parentRoot.Close()
+	workspaceRoot = parentRoot
+	relativePath = filepath.Base(relativePath)
+	temporaryPath := ".patch-" + rand.Text()
+	file, err := workspaceRoot.OpenFile(temporaryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return nil, err
 	}
-	defer root.Remove(temporary)
+	defer workspaceRoot.Remove(temporaryPath)
 	_, writeErr := file.WriteString(content)
 	closeErr := file.Close()
 	err = errors.Join(writeErr, closeErr, ctx.Err())
 	if err != nil {
 		return nil, err
 	}
-	err = root.Link(temporary, relative)
+	err = workspaceRoot.Link(temporaryPath, relativePath)
 	if err != nil {
 		if os.IsExist(err) {
 			return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, path)
@@ -352,53 +354,53 @@ func (b *LocalFilesystem) CreateFileNoReplace(ctx context.Context, path, content
 	return &WriteResult{Path: path}, nil
 }
 
-func (b *LocalFilesystem) Edit(ctx context.Context, path, old, new string, all bool) (*EditResult, error) {
-	if old == "" {
+func (localFilesystem *LocalFilesystem) Edit(ctx context.Context, path, oldText, newText string, replaceAll bool) (*EditResult, error) {
+	if oldText == "" {
 		return nil, fmt.Errorf("old text is required")
 	}
-	data, err := b.readBytes(ctx, path)
+	contentBytes, err := localFilesystem.readBytes(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	updated, count, err := ReplaceFileText(string(data), old, new, all)
+	updatedContent, occurrences, err := ReplaceFileText(string(contentBytes), oldText, newText, replaceAll)
 	if err != nil {
-		return &EditResult{Path: path, Occurrences: count}, err
+		return &EditResult{Path: path, Occurrences: occurrences}, err
 	}
-	_, err = b.Write(ctx, path, updated)
+	_, err = localFilesystem.Write(ctx, path, updatedContent)
 	if err != nil {
 		return nil, err
 	}
-	return &EditResult{Path: path, Occurrences: count}, nil
+	return &EditResult{Path: path, Occurrences: occurrences}, nil
 }
-func (b *LocalFilesystem) Delete(ctx context.Context, path string) (string, error) {
-	root, relative, err := b.openRoot(ctx, path)
+func (localFilesystem *LocalFilesystem) Delete(ctx context.Context, path string) (string, error) {
+	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return "", err
 	}
-	defer root.Close()
-	info, err := root.Lstat(relative)
+	defer workspaceRoot.Close()
+	fileInfo, err := workspaceRoot.Lstat(relativePath)
 	if os.IsNotExist(err) {
 		return "File does not exist: " + path, nil
 	}
 	if err != nil {
 		return "", err
 	}
-	if info.IsDir() {
+	if fileInfo.IsDir() {
 		return "", fmt.Errorf("refusing to delete directory: %s", path)
 	}
-	err = root.Remove(relative)
+	err = workspaceRoot.Remove(relativePath)
 	if err != nil {
 		return "", err
 	}
 	return "Deleted file " + path, nil
 }
-func (b *LocalFilesystem) List(ctx context.Context, path string) ([]FileInfo, error) {
-	root, relative, err := b.openRoot(ctx, path)
+func (localFilesystem *LocalFilesystem) List(ctx context.Context, path string) ([]FileInfo, error) {
+	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
-	directory, err := root.Open(relative)
+	defer workspaceRoot.Close()
+	directory, err := workspaceRoot.Open(relativePath)
 	if err != nil {
 		return nil, err
 	}
@@ -407,34 +409,34 @@ func (b *LocalFilesystem) List(ctx context.Context, path string) ([]FileInfo, er
 	if err != nil {
 		return nil, err
 	}
-	out := make([]FileInfo, 0, len(entries))
+	fileInfos := make([]FileInfo, 0, len(entries))
 	for _, entry := range entries {
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr
 		}
-		info, err := entry.Info()
+		fileInfo, err := entry.Info()
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, FileInfo{Path: filepath.Join(path, entry.Name()), IsDir: entry.IsDir(), IsSymlink: entry.Type()&os.ModeSymlink != 0, Size: info.Size(), ModifiedAt: info.ModTime()})
+		fileInfos = append(fileInfos, FileInfo{Path: filepath.Join(path, entry.Name()), IsDir: entry.IsDir(), IsSymlink: entry.Type()&os.ModeSymlink != 0, Size: fileInfo.Size(), ModifiedAt: fileInfo.ModTime()})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].IsDir != out[j].IsDir {
-			return out[i].IsDir
+	sort.Slice(fileInfos, func(i, j int) bool {
+		if fileInfos[i].IsDir != fileInfos[j].IsDir {
+			return fileInfos[i].IsDir
 		}
-		return out[i].Path < out[j].Path
+		return fileInfos[i].Path < fileInfos[j].Path
 	})
-	return out, nil
+	return fileInfos, nil
 }
-func (b *LocalFilesystem) Glob(ctx context.Context, pattern, path string) ([]FileInfo, error) {
-	root, relative, err := b.openRoot(ctx, path)
+func (localFilesystem *LocalFilesystem) Glob(ctx context.Context, pattern, path string) ([]FileInfo, error) {
+	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
-	var out []FileInfo
-	err = fs.WalkDir(root.FS(), filepath.ToSlash(relative), func(name string, entry fs.DirEntry, err error) error {
+	defer workspaceRoot.Close()
+	var fileInfos []FileInfo
+	err = fs.WalkDir(workspaceRoot.FS(), filepath.ToSlash(relativePath), func(entryPath string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -442,22 +444,22 @@ func (b *LocalFilesystem) Glob(ctx context.Context, pattern, path string) ([]Fil
 		if contextErr != nil {
 			return contextErr
 		}
-		if name != relative && entry.IsDir() && shouldSkipDir(entry.Name()) {
+		if entryPath != relativePath && entry.IsDir() && isExcludedDirectory(entry.Name()) {
 			return fs.SkipDir
 		}
-		local, err := filepath.Rel(relative, name)
+		relativeEntryPath, err := filepath.Rel(relativePath, entryPath)
 		if err != nil {
 			return err
 		}
-		if local == "." || !globMatch(pattern, local) {
+		if relativeEntryPath == "." || !matchGlob(pattern, relativeEntryPath) {
 			return nil
 		}
-		info, err := entry.Info()
+		fileInfo, err := entry.Info()
 		if err != nil {
 			return err
 		}
-		out = append(out, FileInfo{Path: name, IsDir: entry.IsDir(), IsSymlink: entry.Type()&os.ModeSymlink != 0, Size: info.Size(), ModifiedAt: info.ModTime()})
-		if len(out) >= globMaxResults {
+		fileInfos = append(fileInfos, FileInfo{Path: entryPath, IsDir: entry.IsDir(), IsSymlink: entry.Type()&os.ModeSymlink != 0, Size: fileInfo.Size(), ModifiedAt: fileInfo.ModTime()})
+		if len(fileInfos) >= globMaxResults {
 			return fs.SkipAll
 		}
 		return nil
@@ -465,21 +467,21 @@ func (b *LocalFilesystem) Glob(ctx context.Context, pattern, path string) ([]Fil
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out, nil
+	sort.Slice(fileInfos, func(i, j int) bool { return fileInfos[i].Path < fileInfos[j].Path })
+	return fileInfos, nil
 }
-func (b *LocalFilesystem) Grep(ctx context.Context, pattern, path, glob string) ([]GrepMatch, error) {
-	re, err := regexp.Compile(pattern)
+func (localFilesystem *LocalFilesystem) Grep(ctx context.Context, pattern, path, glob string) ([]GrepMatch, error) {
+	patternRegexp, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, err
 	}
-	root, relative, err := b.openRoot(ctx, path)
+	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
-	var out []GrepMatch
-	err = fs.WalkDir(root.FS(), filepath.ToSlash(relative), func(name string, entry fs.DirEntry, err error) error {
+	defer workspaceRoot.Close()
+	var grepMatches []GrepMatch
+	err = fs.WalkDir(workspaceRoot.FS(), filepath.ToSlash(relativePath), func(entryPath string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -488,7 +490,7 @@ func (b *LocalFilesystem) Grep(ctx context.Context, pattern, path, glob string) 
 			return contextErr
 		}
 		if entry.IsDir() {
-			if name != relative && shouldSkipDir(entry.Name()) {
+			if entryPath != relativePath && isExcludedDirectory(entry.Name()) {
 				return fs.SkipDir
 			}
 			return nil
@@ -496,79 +498,79 @@ func (b *LocalFilesystem) Grep(ctx context.Context, pattern, path, glob string) 
 		if entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
-		if glob != "" && !globMatch(glob, entry.Name()) && !globMatch(glob, name) {
+		if glob != "" && !matchGlob(glob, entry.Name()) && !matchGlob(glob, entryPath) {
 			return nil
 		}
-		info, err := entry.Info()
+		fileInfo, err := entry.Info()
 		if err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() || info.Size() > int64(b.maxFileSizeMB)<<20 {
+		if !fileInfo.Mode().IsRegular() || fileInfo.Size() > int64(localFilesystem.maxFileSizeMB)<<20 {
 			return nil
 		}
-		file, err := root.Open(name)
+		file, err := workspaceRoot.Open(entryPath)
 		if err != nil {
 			return err
 		}
 		defer file.Close()
-		scanner := bufio.NewScanner(io.LimitReader(file, int64(b.maxFileSizeMB)<<20))
+		scanner := bufio.NewScanner(io.LimitReader(file, int64(localFilesystem.maxFileSizeMB)<<20))
 		scanner.Buffer(make([]byte, 4096), 1<<20)
-		line := 0
+		lineNumber := 0
 		for scanner.Scan() {
 			contextErr := ctx.Err()
 			if contextErr != nil {
 				return contextErr
 			}
-			line++
+			lineNumber++
 			text := scanner.Text()
 			if strings.ContainsRune(text, 0) {
 				return nil
 			}
-			if re.MatchString(text) {
-				out = append(out, GrepMatch{Path: name, Line: line, Text: text})
-				if len(out) >= 100 {
+			if patternRegexp.MatchString(text) {
+				grepMatches = append(grepMatches, GrepMatch{Path: entryPath, Line: lineNumber, Text: text})
+				if len(grepMatches) >= 100 {
 					return fs.SkipAll
 				}
 			}
 		}
 		return scanner.Err()
 	})
-	return out, err
+	return grepMatches, err
 }
-func (b *LocalFilesystem) UploadFiles(ctx context.Context, files []struct {
+func (localFilesystem *LocalFilesystem) UploadFiles(ctx context.Context, files []struct {
 	Path    string
 	Content []byte
 }) ([]FileUploadResponse, error) {
-	out := make([]FileUploadResponse, 0, len(files))
+	uploadResponses := make([]FileUploadResponse, 0, len(files))
 	for _, file := range files {
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr
 		}
-		result, err := b.Write(ctx, file.Path, string(file.Content))
+		writeResult, err := localFilesystem.Write(ctx, file.Path, string(file.Content))
 		response := FileUploadResponse{Path: file.Path}
 		if err != nil {
 			response.Error = ErrInvalidPath
-		} else if result != nil {
-			response.Error = result.Error
+		} else if writeResult != nil {
+			response.Error = writeResult.Error
 		}
-		out = append(out, response)
+		uploadResponses = append(uploadResponses, response)
 	}
-	return out, nil
+	return uploadResponses, nil
 }
-func (b *LocalFilesystem) DownloadFiles(ctx context.Context, paths []string) ([]FileDownloadResponse, error) {
-	out := make([]FileDownloadResponse, 0, len(paths))
+func (localFilesystem *LocalFilesystem) DownloadFiles(ctx context.Context, paths []string) ([]FileDownloadResponse, error) {
+	downloadResponses := make([]FileDownloadResponse, 0, len(paths))
 	for _, path := range paths {
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr
 		}
-		data, err := b.readBytes(ctx, path)
-		response := FileDownloadResponse{Path: path, Content: data}
+		contentBytes, err := localFilesystem.readBytes(ctx, path)
+		response := FileDownloadResponse{Path: path, Content: contentBytes}
 		if err != nil {
 			response.Error = ErrInvalidPath
 		}
-		out = append(out, response)
+		downloadResponses = append(downloadResponses, response)
 	}
-	return out, nil
+	return downloadResponses, nil
 }

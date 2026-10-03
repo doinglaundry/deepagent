@@ -13,69 +13,69 @@ import (
 
 type testLoader struct{ items []*skillspkg.SkillMetadata }
 
-func (l testLoader) ListSkills(context.Context) ([]*skillspkg.SkillMetadata, error) {
-	return l.items, nil
+func (skillLoader testLoader) ListSkills(context.Context) ([]*skillspkg.SkillMetadata, error) {
+	return skillLoader.items, nil
 }
 
 func TestBuildPromptIgnoresInvalidSkillMetadata(t *testing.T) {
-	items := []*skillspkg.SkillMetadata{
+	availableSkills := []*skillspkg.SkillMetadata{
 		nil,
 		{Name: " ", Description: "invalid skill"},
 		{Name: "review", Description: "Review code", Path: "/skills/review/SKILL.md"},
 		{Name: "build", Description: "Build code", Path: "/skills/build/SKILL.md"},
 	}
-	middleware := NewSkillMiddleware(testLoader{items: items})
-	prompt, err := middleware.BuildPrompt(context.Background())
-	if err != nil || len(prompt) != 1 || !strings.Contains(prompt[0].Content, "review") {
-		t.Fatalf("prompt = %+v, %v", prompt, err)
+	skillMiddleware := NewSkillMiddleware(testLoader{items: availableSkills})
+	promptMessages, err := skillMiddleware.BuildPrompt(context.Background())
+	if err != nil || len(promptMessages) != 1 || !strings.Contains(promptMessages[0].Content, "review") {
+		t.Fatalf("prompt = %+v, %v", promptMessages, err)
 	}
-	text := prompt[0].Content
-	if strings.Contains(text, "invalid skill") || strings.Index(text, "- build:") < 0 || strings.Index(text, "- build:") > strings.Index(text, "- review:") {
-		t.Fatalf("unexpected skill list: %s", text)
+	promptText := promptMessages[0].Content
+	if strings.Contains(promptText, "invalid skill") || strings.Index(promptText, "- build:") < 0 || strings.Index(promptText, "- build:") > strings.Index(promptText, "- review:") {
+		t.Fatalf("unexpected skill list: %s", promptText)
 	}
-	if items[0] != nil || items[1].Name != " " || items[2].Name != "review" || items[3].Name != "build" {
-		t.Fatalf("loader-owned slice was modified: %+v", items)
+	if availableSkills[0] != nil || availableSkills[1].Name != " " || availableSkills[2].Name != "review" || availableSkills[3].Name != "build" {
+		t.Fatalf("loader-owned slice was modified: %+v", availableSkills)
 	}
 }
 
 func TestProjectInstructionsOnlyLoadDiscipline(t *testing.T) {
-	root := t.TempDir()
-	files := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
-	mw := NewProjectInstructions(files)
-	buildPromptOut, mwBuildPromptErr := mw.BuildPrompt(context.Background())
-	if mwBuildPromptErr != nil || len(buildPromptOut) != 0 {
-		t.Fatalf("missing file: %v %v", buildPromptOut, mwBuildPromptErr)
+	workspaceRoot := t.TempDir()
+	filesystem := newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: workspaceRoot, VirtualMode: true})
+	projectInstructions := NewProjectInstructions(filesystem)
+	missingFileMessages, missingFileErr := projectInstructions.BuildPrompt(context.Background())
+	if missingFileErr != nil || len(missingFileMessages) != 0 {
+		t.Fatalf("missing file: %v %v", missingFileMessages, missingFileErr)
 	}
-	cases := []struct{ text, want string }{
+	testCases := []struct{ text, want string }{
 		{"## Other\nstyle only", ""},
 		{"## Agent Working Discipline extra\nwrong section", ""},
 		{"## Other\nstyle only\n## Agent Working Discipline\nfollow project\n### Nested\nretain\n## Other\nomit", "follow project\n### Nested\nretain"},
 		{strings.Repeat("line\n", 2100) + "## Agent Working Discipline\nlate section", "late section"},
 		{"## Agent Working Discipline\r\nwindows\r\n## Other\r\nomit", "windows"},
 	}
-	for _, tc := range cases {
-		writeErr := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(tc.text), 0600)
+	for _, testCase := range testCases {
+		writeErr := os.WriteFile(filepath.Join(workspaceRoot, "AGENTS.md"), []byte(testCase.text), 0600)
 		if writeErr != nil {
 			t.Fatal(writeErr)
 		}
-		out, err := mw.BuildPrompt(context.Background())
+		promptMessages, err := projectInstructions.BuildPrompt(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if tc.want == "" {
-			if len(out) != 0 {
-				t.Fatal(out)
+		if testCase.want == "" {
+			if len(promptMessages) != 0 {
+				t.Fatal(promptMessages)
 			}
 			continue
 		}
-		if len(out) != 1 || out[0].Content != "<agent_discipline>\n"+tc.want+"\n</agent_discipline>" {
-			t.Fatalf("output=%v want=%q", out, tc.want)
+		if len(promptMessages) != 1 || promptMessages[0].Content != "<agent_discipline>\n"+testCase.want+"\n</agent_discipline>" {
+			t.Fatalf("output=%v want=%q", promptMessages, testCase.want)
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, buildPromptErr := mw.BuildPrompt(ctx)
-	if buildPromptErr != context.Canceled {
-		t.Fatalf("cancel=%v", buildPromptErr)
+	_, canceledReadErr := projectInstructions.BuildPrompt(ctx)
+	if canceledReadErr != context.Canceled {
+		t.Fatalf("cancel=%v", canceledReadErr)
 	}
 }

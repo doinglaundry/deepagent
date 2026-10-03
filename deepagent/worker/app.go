@@ -60,7 +60,7 @@ func Run(ctx context.Context, cfg Config) error {
 		},
 		conversation.NewRedisSeqGenerator(redisClient, "deepagent:history:seq"),
 	)
-	err = history.AutoMigrate(ctx)
+	err = history.MigrateSchema(ctx)
 	if err != nil {
 		return fmt.Errorf("migrate thread history: %w", err)
 	}

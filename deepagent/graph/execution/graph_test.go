@@ -20,37 +20,37 @@ import (
 func TestRun_ModelToolModel(t *testing.T) {
 	ctx := context.Background()
 	call := schema.ToolCall{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}
-	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{call})}, {schema.AssistantMessage("done", nil)}}}
+	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{call})}, {schema.AssistantMessage("done", nil)}}}
 	tool := &countingTool{}
-	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}}))
+	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := a.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	out, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Content != "done" || m.calls != 2 || tool.count.Load() != 1 {
-		t.Fatalf("out=%v calls=%d tool=%d", out, m.calls, tool.count.Load())
+	if out.Content != "done" || chatModel.calls != 2 || tool.count.Load() != 1 {
+		t.Fatalf("out=%v calls=%d tool=%d", out, chatModel.calls, tool.count.Load())
 	}
-	if len(m.inputs[1]) != 3 || m.inputs[1][2].Role != schema.Tool || m.inputs[1][2].ToolCallID != "call" {
-		t.Fatalf("tool result not in next context: %v", m.inputs[1])
+	if len(chatModel.inputs[1]) != 3 || chatModel.inputs[1][2].Role != schema.Tool || chatModel.inputs[1][2].ToolCallID != "call" {
+		t.Fatalf("tool result not in next context: %v", chatModel.inputs[1])
 	}
 }
 
 func TestRun_ReturnDirectDoesNotCallModelAgain(t *testing.T) {
 	ctx := context.Background()
-	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "direct"}}})}}}
-	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, ReturnDirect: true}}}))
+	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "direct"}}})}}}
+	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, ReturnDirect: true}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := a.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	out, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Content != "direct" || m.calls != 1 {
-		t.Fatalf("result=%v modelcalls=%d", out, m.calls)
+	if out.Content != "direct" || chatModel.calls != 1 {
+		t.Fatalf("result=%v modelcalls=%d", out, chatModel.calls)
 	}
 }
 
@@ -59,8 +59,8 @@ func TestRun_ApprovalDenyNeverExecutesTool(t *testing.T) {
 	store := &checkpointMemory{}
 	tool := &countingTool{}
 	model := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "approved-call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}, {schema.AssistantMessage("denied acknowledged", nil)}}}
-	cfg := Config{Model: model, RunID: "run", ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
-	first, err := New(ctx, WithConfig(&cfg))
+	config := Config{Model: model, RunID: "run", ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
+	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +76,8 @@ func TestRun_ApprovalDenyNeverExecutesTool(t *testing.T) {
 	if !ok || approval.CallID != "approved-call" {
 		t.Fatalf("approval lost tool identity: %+v", info.InterruptContexts[0].Info)
 	}
-	cfg.Conversation = first.conversation
-	restored, err := New(ctx, WithConfig(&cfg))
+	config.Conversation = first.conversation
+	restored, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,25 +108,25 @@ func TestRun_FilesystemWriteRequiresApprovalWithoutExplicitPolicy(t *testing.T) 
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "write", Type: "function", Function: schema.FunctionCall{Name: "write_file", Arguments: `{"path":"result.txt","content":"approved"}`}}})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	cfg := Config{ThreadID: "thread", RunID: "run", Model: model, CheckpointStore: store,
-		Filesystem:       mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: root, VirtualMode: true}),
+	config := Config{ThreadID: "thread", RunID: "run", Model: model, CheckpointStore: store,
+		Filesystem:       newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: root, VirtualMode: true}),
 		FilesystemConfig: &FilesystemConfig{DisableExecute: true, DisableApplyPatch: true}}
-	first, err := New(ctx, WithConfig(&cfg))
+	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("write")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
-		descriptor, found := first.tools.Lookup("write_file")
-		t.Fatalf("expected approval interrupt, got %+v: %v; tool found=%v requires_approval=%v history=%v", info, err, found, descriptor.RequiresApproval, first.conversation.History(ctx))
+		descriptor, found := first.toolSet.GetToolDescriptor("write_file")
+		t.Fatalf("expected approval interrupt, got %+v: %v; tool found=%v requires_approval=%v history=%v", info, err, found, descriptor.RequiresApproval, first.conversation.GetHistory(ctx))
 	}
 	_, statErr := os.Stat(filepath.Join(root, "result.txt"))
 	if !os.IsNotExist(statErr) {
 		t.Fatalf("write ran before approval: %v", statErr)
 	}
-	cfg.Conversation = first.conversation
-	restored, err := New(ctx, WithConfig(&cfg))
+	config.Conversation = first.conversation
+	restored, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,12 +147,12 @@ func TestRun_FilesystemWriteRequiresApprovalWithoutExplicitPolicy(t *testing.T) 
 
 func TestCheckpoint_SaveFailureDoesNotPublishBlocked(t *testing.T) {
 	ctx := context.Background()
-	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	a, err := New(ctx, WithConfig(&Config{Model: m, CheckpointStore: &checkpointMemory{fail: true}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}))
+	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
+	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, CheckpointStore: &checkpointMemory{fail: true}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = a.Invoke(ctx, []*schema.Message{schema.UserMessage("input")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("input")}, WithCheckpointID("checkpoint"))
 	if err == nil {
 		t.Fatal("checkpoint failure swallowed")
 	}
@@ -160,10 +160,10 @@ func TestCheckpoint_SaveFailureDoesNotPublishBlocked(t *testing.T) {
 	if ok {
 		t.Fatal("failed checkpoint published as resumable interruption")
 	}
-	if a.state.Phase != types.PhaseFailed {
-		t.Fatalf("failed checkpoint left phase %s", a.state.Phase)
+	if graph.runState.Phase != types.PhaseFailed {
+		t.Fatalf("failed checkpoint left phase %s", graph.runState.Phase)
 	}
-	if m.calls != 0 {
+	if chatModel.calls != 0 {
 		t.Fatal("model ran before the initial checkpoint was durable")
 	}
 }
@@ -173,13 +173,13 @@ func TestRun_ResumeDoesNotRepeatCompletedTool(t *testing.T) {
 	store := &checkpointMemory{}
 	firstTool := &namedCountingTool{name: "first"}
 	approvalTool := &namedCountingTool{name: "approval"}
-	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "1", Type: "function", Function: schema.FunctionCall{Name: "first", Arguments: "{}"}}, {ID: "2", Type: "function", Function: schema.FunctionCall{Name: "approval", Arguments: "{}"}}})}, {schema.AssistantMessage("done", nil)}}}
-	cfg := Config{Model: m, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: firstTool}, {Tool: approvalTool, RequiresApproval: true}}}
-	a, err := New(ctx, WithConfig(&cfg))
+	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "1", Type: "function", Function: schema.FunctionCall{Name: "first", Arguments: "{}"}}, {ID: "2", Type: "function", Function: schema.FunctionCall{Name: "approval", Arguments: "{}"}}})}, {schema.AssistantMessage("done", nil)}}}
+	config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: firstTool}, {Tool: approvalTool, RequiresApproval: true}}}
+	graph, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = a.Invoke(ctx, []*schema.Message{schema.UserMessage("input")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("input")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -187,8 +187,8 @@ func TestRun_ResumeDoesNotRepeatCompletedTool(t *testing.T) {
 	if firstTool.count != 1 || approvalTool.count != 0 {
 		t.Fatal("wrong pre-interrupt side effects")
 	}
-	cfg.Conversation = a.conversation
-	restored, err := New(ctx, WithConfig(&cfg))
+	config.Conversation = graph.conversation
+	restored, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,14 +199,14 @@ func TestRun_ResumeDoesNotRepeatCompletedTool(t *testing.T) {
 	if firstTool.count != 1 || approvalTool.count != 1 {
 		t.Fatalf("replayed tools first=%d approved=%d", firstTool.count, approvalTool.count)
 	}
-	replay, err := New(ctx, WithConfig(&cfg))
+	replay, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer replay.Close(ctx)
 	_, err = replay.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{Approved: true}}))
-	if err == nil || firstTool.count != 1 || approvalTool.count != 1 || m.calls != 2 {
-		t.Fatalf("completed checkpoint replayed: err=%v first=%d approved=%d model=%d", err, firstTool.count, approvalTool.count, m.calls)
+	if err == nil || firstTool.count != 1 || approvalTool.count != 1 || chatModel.calls != 2 {
+		t.Fatalf("completed checkpoint replayed: err=%v first=%d approved=%d model=%d", err, firstTool.count, approvalTool.count, chatModel.calls)
 	}
 }
 
@@ -216,25 +216,25 @@ func TestRun_EagerExecutesBeforeModelStreamEnds(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			tool := &countingTool{started: make(chan struct{})}
-			m := &eagerModel{toolStarted: tool.started}
+			chatModel := &eagerModel{toolStarted: tool.started}
 			starts, policyCalls := 0, 0
-			cfg := &Config{Model: m, EnableEagerTools: true, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ParallelSafe: true}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+			config := &Config{Model: chatModel, EnableEagerTools: true, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ParallelSafe: true}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
 				if e.Kind == "tool_start" {
 					starts++
 				}
 				return nil
 			}}
 			if withPolicy {
-				cfg.Policy = tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
+				config.Policy = tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
 					policyCalls++
 					return tools.Decision{Action: tools.Allow}, nil
 				})
 			}
-			a, err := New(ctx, WithConfig(cfg))
+			graph, err := New(ctx, WithConfig(config))
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := a.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+			result, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -247,10 +247,10 @@ func TestRun_EagerExecutesBeforeModelStreamEnds(t *testing.T) {
 
 func TestRun_EmitsTokensAndReturnsFinalMessage(t *testing.T) {
 	ctx := context.Background()
-	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("hel", nil), schema.AssistantMessage("lo", nil)}}}
+	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("hel", nil), schema.AssistantMessage("lo", nil)}}}
 	var text string
-	a, err := New(ctx, WithConfig(&Config{
-		Model: m,
+	graph, err := New(ctx, WithConfig(&Config{
+		Model: chatModel,
 		Emit: func(_ context.Context, event types.RuntimeEvent) error {
 			if event.Kind == "llm_token" {
 				text += event.Data.(types.LLMTokenChunk).Text
@@ -261,15 +261,15 @@ func TestRun_EmitsTokensAndReturnsFinalMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close(ctx)
-	result, err := a.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	defer graph.Close(ctx)
+	result, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != "hello" || result.Content != text || m.calls != 1 {
-		t.Fatalf("tokens=%q result=%v calls=%d", text, result, m.calls)
+	if text != "hello" || result.Content != text || chatModel.calls != 1 {
+		t.Fatalf("tokens=%q result=%v calls=%d", text, result, chatModel.calls)
 	}
-	if len(a.conversation.History(ctx)) != 2 {
+	if len(graph.conversation.GetHistory(ctx)) != 2 {
 		t.Fatal("missing input or assistant history")
 	}
 }
@@ -279,25 +279,25 @@ func TestRun_CancelAndAgentCloseReleaseResources(t *testing.T) {
 		t.Run(fmt.Sprint(closeAgent), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			m := &cancelModel{started: make(chan struct{}), stopped: make(chan struct{})}
-			a, err := New(ctx, WithModel(m))
+			chatModel := &cancelModel{started: make(chan struct{}), stopped: make(chan struct{})}
+			graph, err := New(ctx, WithModel(chatModel))
 			if err != nil {
 				t.Fatal(err)
 			}
 			finished := make(chan error, 1)
 			go func() {
-				_, runErr := a.Invoke(ctx, []*schema.Message{schema.UserMessage("wait")})
+				_, runErr := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("wait")})
 				finished <- runErr
 			}()
 			select {
-			case <-m.started:
+			case <-chatModel.started:
 			case <-time.After(time.Second):
 				t.Fatal("model did not start")
 			}
 			cleanup, cancelCleanup := context.WithTimeout(context.Background(), time.Second)
 			defer cancelCleanup()
 			if closeAgent {
-				err = a.Close(cleanup)
+				err = graph.Close(cleanup)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -313,11 +313,11 @@ func TestRun_CancelAndAgentCloseReleaseResources(t *testing.T) {
 				t.Fatal("run did not stop")
 			}
 			select {
-			case <-m.stopped:
+			case <-chatModel.stopped:
 			default:
 				t.Fatal("Run returned before model stopped")
 			}
-			err = a.Close(cleanup)
+			err = graph.Close(cleanup)
 			if err != nil {
 				t.Fatal(err)
 			}

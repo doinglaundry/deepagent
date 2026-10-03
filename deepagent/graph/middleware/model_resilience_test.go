@@ -10,34 +10,34 @@ import (
 )
 
 func TestModelRetryOnlyRetriesBeforeStream(t *testing.T) {
-	sentinel := errors.New("temporary model failure")
-	retry := &ModelRetry{MaxAttempts: 3, Retryable: func(err error) bool { return errors.Is(err, sentinel) }}
-	attempts := 0
-	endpoint := retry.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		attempts++
-		if attempts == 1 {
-			return nil, sentinel
+	modelErr := errors.New("temporary model failure")
+	modelRetry := &ModelRetry{MaxAttempts: 3, Retryable: func(err error) bool { return errors.Is(err, modelErr) }}
+	attemptCount := 0
+	modelHandler := modelRetry.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+		attemptCount++
+		if attemptCount == 1 {
+			return nil, modelErr
 		}
 		return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("done", nil)}), nil
 	})
-	stream, err := endpoint(context.Background(), nil)
+	stream, err := modelHandler(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stream.Close()
-	if attempts != 2 {
-		t.Fatalf("attempts=%d", attempts)
+	if attemptCount != 2 {
+		t.Fatalf("attempts=%d", attemptCount)
 	}
-	attempts = 0
-	endpoint = retry.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		attempts++
+	attemptCount = 0
+	modelHandler = modelRetry.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+		attemptCount++
 		reader, writer := schema.Pipe[*schema.Message](2)
 		writer.Send(schema.AssistantMessage("partial", nil), nil)
-		writer.Send(nil, sentinel)
+		writer.Send(nil, modelErr)
 		writer.Close()
 		return reader, nil
 	})
-	stream, err = endpoint(context.Background(), nil)
+	stream, err = modelHandler(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,43 +47,43 @@ func TestModelRetryOnlyRetriesBeforeStream(t *testing.T) {
 		t.Fatalf("chunk=%v err=%v", chunk, streamRecvErr)
 	}
 	_, recvErr := stream.Recv()
-	if !errors.Is(recvErr, sentinel) {
+	if !errors.Is(recvErr, modelErr) {
 		t.Fatalf("stream error=%v", recvErr)
 	}
-	if attempts != 1 {
-		t.Fatalf("stream replayed %d times", attempts)
+	if attemptCount != 1 {
+		t.Fatalf("stream replayed %d times", attemptCount)
 	}
 }
 
 func TestModelRetryNeverRetriesCancellation(t *testing.T) {
 	for _, cancellation := range []error{context.Canceled, context.DeadlineExceeded} {
-		attempts := 0
-		retry := &ModelRetry{MaxAttempts: 3, Retryable: func(error) bool { return true }}
-		_, err := retry.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-			attempts++
+		attemptCount := 0
+		modelRetry := &ModelRetry{MaxAttempts: 3, Retryable: func(error) bool { return true }}
+		_, err := modelRetry.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+			attemptCount++
 			return nil, cancellation
 		})(context.Background(), nil)
-		if !errors.Is(err, cancellation) || attempts != 1 {
-			t.Fatalf("err=%v attempts=%d", err, attempts)
+		if !errors.Is(err, cancellation) || attemptCount != 1 {
+			t.Fatalf("err=%v attempts=%d", err, attemptCount)
 		}
 	}
 }
 
 func TestModelRetryExhaustionPreservesError(t *testing.T) {
-	failure := errors.New("provider unavailable")
-	for _, retryable := range []bool{true, false} {
-		calls := 0
-		retry := &ModelRetry{MaxAttempts: 3, Retryable: func(error) bool { return retryable }}
-		stream, err := retry.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-			calls++
-			return nil, failure
+	providerErr := errors.New("provider unavailable")
+	for _, isRetryable := range []bool{true, false} {
+		attemptCount := 0
+		modelRetry := &ModelRetry{MaxAttempts: 3, Retryable: func(error) bool { return isRetryable }}
+		stream, err := modelRetry.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+			attemptCount++
+			return nil, providerErr
 		})(context.Background(), nil)
-		want := 1
-		if retryable {
-			want = 3
+		expectedAttempts := 1
+		if isRetryable {
+			expectedAttempts = 3
 		}
-		if stream != nil || !errors.Is(err, failure) || calls != want {
-			t.Fatalf("retryable=%t stream=%v err=%v calls=%d", retryable, stream, err, calls)
+		if stream != nil || !errors.Is(err, providerErr) || attemptCount != expectedAttempts {
+			t.Fatalf("retryable=%t stream=%v err=%v calls=%d", isRetryable, stream, err, attemptCount)
 		}
 	}
 }
@@ -91,29 +91,29 @@ func TestModelRetryExhaustionPreservesError(t *testing.T) {
 func TestModelRetryCancellationDuringBackoff(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	entered := make(chan struct{})
-	done := make(chan error, 1)
-	calls := 0
-	retry := &ModelRetry{MaxAttempts: 3, Delay: time.Hour, Retryable: func(error) bool {
-		close(entered)
+	backoffEntered := make(chan struct{})
+	retryDone := make(chan error, 1)
+	attemptCount := 0
+	modelRetry := &ModelRetry{MaxAttempts: 3, Delay: time.Hour, Retryable: func(error) bool {
+		close(backoffEntered)
 		return true
 	}}
 	go func() {
-		stream, err := retry.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-			calls++
+		stream, err := modelRetry.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+			attemptCount++
 			return nil, errors.New("temporary failure")
 		})(ctx, nil)
 		if stream != nil {
 			stream.Close()
 		}
-		done <- err
+		retryDone <- err
 	}()
-	<-entered
+	<-backoffEntered
 	cancel()
 	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) || calls != 1 {
-			t.Fatalf("err=%v calls=%d", err, calls)
+	case err := <-retryDone:
+		if !errors.Is(err, context.Canceled) || attemptCount != 1 {
+			t.Fatalf("err=%v calls=%d", err, attemptCount)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancellation did not release model retry backoff")
@@ -121,87 +121,87 @@ func TestModelRetryCancellationDuringBackoff(t *testing.T) {
 }
 
 func TestCircuitBreakerThresholdRestoreAndRunIsolation(t *testing.T) {
-	m := &CircuitBreaker{Threshold: 2, Recovery: time.Hour}
-	failure := errors.New("provider unavailable")
-	calls := 0
-	handler := m.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		calls++
-		return nil, failure
+	circuitBreaker := &CircuitBreaker{Threshold: 2, Recovery: time.Hour}
+	providerErr := errors.New("provider unavailable")
+	attemptCount := 0
+	modelHandler := circuitBreaker.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+		attemptCount++
+		return nil, providerErr
 	})
 	for range 2 {
-		_, err := handler(context.Background(), nil)
-		if !errors.Is(err, failure) {
+		_, err := modelHandler(context.Background(), nil)
+		if !errors.Is(err, providerErr) {
 			t.Fatal(err)
 		}
 	}
-	_, handlerErr := handler(context.Background(), nil)
-	if !errors.Is(handlerErr, ErrCircuitOpen) || calls != 2 {
-		t.Fatalf("calls=%d err=%v", calls, handlerErr)
+	_, handlerErr := modelHandler(context.Background(), nil)
+	if !errors.Is(handlerErr, ErrCircuitOpen) || attemptCount != 2 {
+		t.Fatalf("calls=%d err=%v", attemptCount, handlerErr)
 	}
-	restored := m.NewRun().(*CircuitBreaker)
-	unmarshalRuntimeStateErr := restored.UnmarshalRuntimeState(m.MarshalRuntimeState())
-	if unmarshalRuntimeStateErr != nil {
-		t.Fatal(unmarshalRuntimeStateErr)
+	restoredBreaker := circuitBreaker.NewRun().(*CircuitBreaker)
+	restoreErr := restoredBreaker.UnmarshalRuntimeState(circuitBreaker.MarshalRuntimeState())
+	if restoreErr != nil {
+		t.Fatal(restoreErr)
 	}
-	_, wrapModelErr2 := restored.WrapModel(nil)(context.Background(), nil)
-	if !errors.Is(wrapModelErr2, ErrCircuitOpen) {
-		t.Fatal(wrapModelErr2)
+	_, restoredCallErr := restoredBreaker.WrapModel(nil)(context.Background(), nil)
+	if !errors.Is(restoredCallErr, ErrCircuitOpen) {
+		t.Fatal(restoredCallErr)
 	}
-	fresh := m.NewRun().(*CircuitBreaker)
-	_, wrapModelErr := fresh.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		return nil, failure
+	freshBreaker := circuitBreaker.NewRun().(*CircuitBreaker)
+	_, freshCallErr := freshBreaker.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+		return nil, providerErr
 	})(context.Background(), nil)
-	if !errors.Is(wrapModelErr, failure) {
-		t.Fatal(wrapModelErr)
+	if !errors.Is(freshCallErr, providerErr) {
+		t.Fatal(freshCallErr)
 	}
 }
 
 func TestCircuitBreakerOnlyOneRecoveryProbe(t *testing.T) {
-	m := &CircuitBreaker{Threshold: 1, failures: 1, openUntil: time.Now().Add(-time.Second)}
-	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-	handler := m.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		close(entered)
-		<-release
+	circuitBreaker := &CircuitBreaker{Threshold: 1, failures: 1, openUntil: time.Now().Add(-time.Second)}
+	probeStarted, releaseProbe, probeDone := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	modelHandler := circuitBreaker.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+		close(probeStarted)
+		<-releaseProbe
 		return schema.StreamReaderFromArray([]*schema.Message{{Content: "ok"}}), nil
 	})
 	go func() {
-		stream, err := handler(context.Background(), nil)
+		stream, err := modelHandler(context.Background(), nil)
 		if stream != nil {
 			stream.Close()
 		}
-		done <- err
+		probeDone <- err
 	}()
-	<-entered
-	_, err := handler(context.Background(), nil)
-	close(release)
+	<-probeStarted
+	_, err := modelHandler(context.Background(), nil)
+	close(releaseProbe)
 	if !errors.Is(err, ErrCircuitOpen) {
 		t.Fatal(err)
 	}
-	checkErr := <-done
-	if checkErr != nil {
-		t.Fatal(checkErr)
+	probeErr := <-probeDone
+	if probeErr != nil {
+		t.Fatal(probeErr)
 	}
-	failure := errors.New("probe passed, next provider call")
-	_, wrapModelErr := m.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		return nil, failure
+	providerErr := errors.New("probe passed, next provider call")
+	_, nextCallErr := circuitBreaker.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+		return nil, providerErr
 	})(context.Background(), nil)
-	if !errors.Is(wrapModelErr, failure) {
-		t.Fatal(wrapModelErr)
+	if !errors.Is(nextCallErr, providerErr) {
+		t.Fatal(nextCallErr)
 	}
 }
 
 func TestCircuitBreakerCancellationDoesNotCountAsFailure(t *testing.T) {
-	m := &CircuitBreaker{Threshold: 1}
-	handler := m.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	circuitBreaker := &CircuitBreaker{Threshold: 1}
+	modelHandler := circuitBreaker.WrapModel(func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
 		return nil, context.Canceled
 	})
 	for range 2 {
-		_, err := handler(context.Background(), nil)
+		_, err := modelHandler(context.Background(), nil)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatal(err)
 		}
 	}
-	if m.failures != 0 {
-		t.Fatal(m.failures)
+	if circuitBreaker.failures != 0 {
+		t.Fatal(circuitBreaker.failures)
 	}
 }

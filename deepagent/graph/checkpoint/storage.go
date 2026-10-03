@@ -19,83 +19,83 @@ func NewFile(root string) (*File, error) {
 	if root == "" {
 		return nil, errors.New("checkpoint directory required")
 	}
-	p, e := filepath.Abs(root)
-	if e != nil {
-		return nil, e
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
 	}
-	e = os.MkdirAll(p, 0700)
-	if e != nil {
-		return nil, e
+	err = os.MkdirAll(absoluteRoot, 0700)
+	if err != nil {
+		return nil, err
 	}
-	return &File{root: p}, nil
+	return &File{root: absoluteRoot}, nil
 }
 
-func (f *File) path(key string) string {
-	h := sha256.Sum256([]byte(key))
-	return filepath.Join(f.root, hex.EncodeToString(h[:])+".json")
+func (fileStore *File) buildCheckpointPath(key string) string {
+	keyHash := sha256.Sum256([]byte(key))
+	return filepath.Join(fileStore.root, hex.EncodeToString(keyHash[:])+".json")
 }
 
-func (f *File) Get(ctx context.Context, key string) ([]byte, bool, error) {
-	e := ctx.Err()
-	if e != nil {
-		return nil, false, e
+func (fileStore *File) Get(ctx context.Context, key string) ([]byte, bool, error) {
+	contextErr := ctx.Err()
+	if contextErr != nil {
+		return nil, false, contextErr
 	}
-	validKeyE := validKey(key)
-	if validKeyE != nil {
-		return nil, false, validKeyE
+	keyErr := validateCheckpointKey(key)
+	if keyErr != nil {
+		return nil, false, keyErr
 	}
-	data, err := os.ReadFile(f.path(key))
+	data, err := os.ReadFile(fileStore.buildCheckpointPath(key))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
 	return data, err == nil, err
 }
 
-func (f *File) Set(ctx context.Context, key string, data []byte) error {
-	contextE := ctx.Err()
-	if contextE != nil {
-		return contextE
+func (fileStore *File) Set(ctx context.Context, key string, data []byte) error {
+	contextErr := ctx.Err()
+	if contextErr != nil {
+		return contextErr
 	}
-	validKeyE := validKey(key)
-	if validKeyE != nil {
-		return validKeyE
+	keyErr := validateCheckpointKey(key)
+	if keyErr != nil {
+		return keyErr
 	}
-	temp, e := os.CreateTemp(f.root, ".checkpoint-*")
-	if e != nil {
-		return e
+	temporaryFile, err := os.CreateTemp(fileStore.root, ".checkpoint-*")
+	if err != nil {
+		return err
 	}
-	name := temp.Name()
-	defer os.Remove(name)
-	_, e = temp.Write(data)
-	if e != nil {
-		temp.Close()
-		return e
+	temporaryPath := temporaryFile.Name()
+	defer os.Remove(temporaryPath)
+	_, err = temporaryFile.Write(data)
+	if err != nil {
+		temporaryFile.Close()
+		return err
 	}
-	e = temp.Sync()
-	if e != nil {
-		temp.Close()
-		return e
+	err = temporaryFile.Sync()
+	if err != nil {
+		temporaryFile.Close()
+		return err
 	}
-	e = temp.Close()
-	if e != nil {
-		return e
+	err = temporaryFile.Close()
+	if err != nil {
+		return err
 	}
-	e = ctx.Err()
-	if e != nil {
-		return e
+	err = ctx.Err()
+	if err != nil {
+		return err
 	}
-	e = os.Rename(name, f.path(key))
-	if e != nil {
-		return e
+	err = os.Rename(temporaryPath, fileStore.buildCheckpointPath(key))
+	if err != nil {
+		return err
 	}
-	dir, e := os.Open(f.root)
-	if e != nil {
-		return e
+	directory, err := os.Open(fileStore.root)
+	if err != nil {
+		return err
 	}
-	defer dir.Close()
-	return dir.Sync()
+	defer directory.Close()
+	return directory.Sync()
 }
-func validKey(key string) error {
+func validateCheckpointKey(key string) error {
 	if key == "" || key == "." || key == ".." || filepath.Base(key) != key || strings.ContainsAny(key, "/\\") {
 		return errors.New("checkpoint ID must be a nonempty path-free identifier")
 	}
@@ -114,12 +114,12 @@ type rawClient interface {
 
 type universalRawClient struct{ redis.UniversalClient }
 
-func (c universalRawClient) GetRaw(ctx context.Context, key string) ([]byte, error) {
-	return c.Get(ctx, key).Bytes()
+func (redisClient universalRawClient) GetRaw(ctx context.Context, key string) ([]byte, error) {
+	return redisClient.Get(ctx, key).Bytes()
 }
 
-func (c universalRawClient) SetRaw(ctx context.Context, key string, value []byte, ttl time.Duration) error {
-	return c.Set(ctx, key, value, ttl).Err()
+func (redisClient universalRawClient) SetRaw(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	return redisClient.Set(ctx, key, value, ttl).Err()
 }
 
 func NewRedis(client redis.UniversalClient, prefix string) (*Redis, error) {
@@ -136,22 +136,22 @@ func NewRaw(client rawClient, prefix string) (*Redis, error) {
 	return &Redis{client: client, prefix: strings.TrimSuffix(prefix, ":") + ":"}, nil
 }
 
-func (r *Redis) Get(ctx context.Context, key string) ([]byte, bool, error) {
-	e := validKey(key)
-	if e != nil {
-		return nil, false, e
+func (redisStore *Redis) Get(ctx context.Context, key string) ([]byte, bool, error) {
+	keyErr := validateCheckpointKey(key)
+	if keyErr != nil {
+		return nil, false, keyErr
 	}
-	data, err := r.client.GetRaw(ctx, r.prefix+key)
+	data, err := redisStore.client.GetRaw(ctx, redisStore.prefix+key)
 	if errors.Is(err, redis.Nil) {
 		return nil, false, nil
 	}
 	return data, err == nil, err
 }
 
-func (r *Redis) Set(ctx context.Context, key string, data []byte) error {
-	e := validKey(key)
-	if e != nil {
-		return e
+func (redisStore *Redis) Set(ctx context.Context, key string, data []byte) error {
+	err := validateCheckpointKey(key)
+	if err != nil {
+		return err
 	}
-	return r.client.SetRaw(ctx, r.prefix+key, data, 0)
+	return redisStore.client.SetRaw(ctx, redisStore.prefix+key, data, 0)
 }

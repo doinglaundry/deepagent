@@ -19,7 +19,7 @@ type ToolDescriptor struct {
 	ParallelSafe     bool
 	ReturnDirect     bool
 
-	info *schema.ToolInfo // Cached by NewToolSet; not supplied by callers.
+	toolInfo *schema.ToolInfo // Cached by NewToolSet; not supplied by callers.
 }
 
 // ToolSet is immutable after construction; filtered sets share their tool definitions.
@@ -29,88 +29,88 @@ type ToolSet struct {
 }
 
 func NewToolSet(ctx context.Context, toolDescriptors []ToolDescriptor) (*ToolSet, error) {
-	s := &ToolSet{toolsByName: make(map[string]ToolDescriptor)}
+	toolSet := &ToolSet{toolsByName: make(map[string]ToolDescriptor)}
 	for _, toolDescriptor := range toolDescriptors {
 		if toolDescriptor.Tool == nil {
 			return nil, fmt.Errorf("nil tool")
 		}
-		info, err := toolDescriptor.Tool.Info(ctx)
+		toolInfo, err := toolDescriptor.Tool.Info(ctx)
 		if err != nil {
 			return nil, err
 		}
-		if info == nil || strings.TrimSpace(info.Name) == "" {
+		if toolInfo == nil || strings.TrimSpace(toolInfo.Name) == "" {
 			return nil, fmt.Errorf("tool name is required")
 		}
-		_, exists := s.toolsByName[info.Name]
+		_, exists := toolSet.toolsByName[toolInfo.Name]
 		if exists {
-			return nil, fmt.Errorf("duplicate tool %q", info.Name)
+			return nil, fmt.Errorf("duplicate tool %q", toolInfo.Name)
 		}
-		info, err = cloneToolInfo(info)
+		toolInfo, err = cloneToolInfo(toolInfo)
 		if err != nil {
 			return nil, err
 		}
-		toolDescriptor.info = info
-		s.toolsByName[info.Name] = toolDescriptor
-		s.toolNames = append(s.toolNames, info.Name)
+		toolDescriptor.toolInfo = toolInfo
+		toolSet.toolsByName[toolInfo.Name] = toolDescriptor
+		toolSet.toolNames = append(toolSet.toolNames, toolInfo.Name)
 	}
-	return s, nil
+	return toolSet, nil
 }
 
-func (s *ToolSet) Lookup(name string) (ToolDescriptor, bool) {
-	toolDescriptor, ok := s.toolsByName[name]
-	return toolDescriptor, ok
+func (toolSet *ToolSet) GetToolDescriptor(toolName string) (ToolDescriptor, bool) {
+	toolDescriptor, exists := toolSet.toolsByName[toolName]
+	return toolDescriptor, exists
 }
 
-func (s *ToolSet) ModelTools(ctx context.Context) ([]*schema.ToolInfo, error) {
+func (toolSet *ToolSet) GetToolInfos(ctx context.Context) ([]*schema.ToolInfo, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*schema.ToolInfo, 0, len(s.toolNames))
-	for _, name := range s.toolNames {
-		i, err := cloneToolInfo(s.toolsByName[name].info)
+	toolInfos := make([]*schema.ToolInfo, 0, len(toolSet.toolNames))
+	for _, toolName := range toolSet.toolNames {
+		toolInfo, err := cloneToolInfo(toolSet.toolsByName[toolName].toolInfo)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, i)
+		toolInfos = append(toolInfos, toolInfo)
 	}
-	return out, nil
+	return toolInfos, nil
 }
 
-func (s *ToolSet) Filter(ctx context.Context, readOnly bool, mask Mask) (*ToolSet, error) {
-	out := &ToolSet{toolsByName: make(map[string]ToolDescriptor)}
-	for _, name := range s.toolNames {
+func (toolSet *ToolSet) FilterTools(ctx context.Context, readOnly bool, mask Mask) (*ToolSet, error) {
+	filteredToolSet := &ToolSet{toolsByName: make(map[string]ToolDescriptor)}
+	for _, toolName := range toolSet.toolNames {
 		err := ctx.Err()
 		if err != nil {
 			return nil, err
 		}
-		toolDescriptor := s.toolsByName[name]
+		toolDescriptor := toolSet.toolsByName[toolName]
 		if readOnly && !toolDescriptor.ReadOnly {
 			continue
 		}
-		info, err := cloneToolInfo(s.toolsByName[name].info)
+		toolInfo, err := cloneToolInfo(toolSet.toolsByName[toolName].toolInfo)
 		if err != nil {
 			return nil, err
 		}
-		if mask != nil && !mask(ctx, info) {
+		if mask != nil && !mask(ctx, toolInfo) {
 			continue
 		}
 		// The mask receives a copy; the immutable registered toolDescriptor can be shared.
-		out.toolsByName[name] = toolDescriptor
-		out.toolNames = append(out.toolNames, name)
+		filteredToolSet.toolsByName[toolName] = toolDescriptor
+		filteredToolSet.toolNames = append(filteredToolSet.toolNames, toolName)
 	}
-	return out, nil
+	return filteredToolSet, nil
 }
 
-func cloneToolInfo(info *schema.ToolInfo) (*schema.ToolInfo, error) {
-	raw, err := json.Marshal(info)
+func cloneToolInfo(toolInfo *schema.ToolInfo) (*schema.ToolInfo, error) {
+	encodedToolInfo, err := json.Marshal(toolInfo)
 	if err != nil {
 		return nil, fmt.Errorf("encode tool schema: %w", err)
 	}
-	var copy schema.ToolInfo
-	err = json.Unmarshal(raw, &copy)
+	var clonedToolInfo schema.ToolInfo
+	err = json.Unmarshal(encodedToolInfo, &clonedToolInfo)
 	if err != nil {
 		return nil, fmt.Errorf("decode tool schema: %w", err)
 	}
-	return &copy, nil
+	return &clonedToolInfo, nil
 }

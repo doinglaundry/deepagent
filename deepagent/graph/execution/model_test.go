@@ -29,12 +29,12 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 		}},
 		{ResponseMeta: &schema.ResponseMeta{Usage: &schema.TokenUsage{TotalTokens: 12}}},
 	}
-	m := &sequenceModel{responses: [][]*schema.Message{chunks,
+	chatModel := &sequenceModel{responses: [][]*schema.Message{chunks,
 		{schema.AssistantMessage("done", nil)}, {schema.AssistantMessage("new", nil)},
 	}}
 	seen := 0
 	var complete *schema.Message
-	cfg := Config{Model: m, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+	config := Config{Model: chatModel, Emit: func(_ context.Context, event types.RuntimeEvent) error {
 		if complete == nil && event.Kind == "llm_token" {
 			seen++
 		}
@@ -46,12 +46,12 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 		}
 		return nil
 	}}
-	a, err := New(context.Background(), WithConfig(&cfg))
+	graph, err := New(context.Background(), WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close(context.Background())
-	_, err = a.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	defer graph.Close(context.Background())
+	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +70,8 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 		t.Fatalf("fragment lost: %+v", complete.ToolCalls[0])
 	}
 	// Fresh Graphs must not retain any collector state from earlier streams.
-	cfg.Emit = nil
-	next, err := New(context.Background(), WithConfig(&cfg))
+	config.Emit = nil
+	next, err := New(context.Background(), WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,9 +87,9 @@ type failedModelStream struct {
 	reader *schema.StreamReader[*schema.Message]
 }
 
-func (m *failedModelStream) Stream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	m.calls++
-	return m.reader, nil
+func (chatModel *failedModelStream) Stream(context.Context, []*schema.Message, ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	chatModel.calls++
+	return chatModel.reader, nil
 }
 
 func TestModelStreamPropagatesStreamFailureWithoutReplay(t *testing.T) {
@@ -98,17 +98,17 @@ func TestModelStreamPropagatesStreamFailureWithoutReplay(t *testing.T) {
 	writer.Send(schema.AssistantMessage("partial", nil), nil)
 	writer.Send(nil, want)
 	writer.Close()
-	m := &failedModelStream{reader: stream}
-	a, err := New(context.Background(), WithModel(m))
+	chatModel := &failedModelStream{reader: stream}
+	graph, err := New(context.Background(), WithModel(chatModel))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close(context.Background())
-	_, err = a.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
-	if !errors.Is(err, want) || m.calls != 1 {
-		t.Fatalf("stream error swallowed or replayed: err=%v calls=%d", err, m.calls)
+	defer graph.Close(context.Background())
+	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	if !errors.Is(err, want) || chatModel.calls != 1 {
+		t.Fatalf("stream error swallowed or replayed: err=%v calls=%d", err, chatModel.calls)
 	}
-	if len(a.conversation.History(context.Background())) != 1 {
+	if len(graph.conversation.GetHistory(context.Background())) != 1 {
 		t.Fatal("partial model response committed to history")
 	}
 }
@@ -130,13 +130,13 @@ func TestRepairToolArgumentsOnlyUnambiguousSyntax(t *testing.T) {
 
 func TestCollectorRepairsOnlyUnambiguousJSONAtStreamEnd(t *testing.T) {
 	collector := &toolCallBuffer{}
-	_, err := collector.add([]schema.ToolCall{{
+	_, err := collector.appendToolCallFragments([]schema.ToolCall{{
 		ID: "call", Function: schema.FunctionCall{Name: "read_file", Arguments: "```json\n{\"path\":\"a.go\",}\n```"},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls, err := collector.finish()
+	calls, err := collector.buildToolCalls()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,13 +144,13 @@ func TestCollectorRepairsOnlyUnambiguousJSONAtStreamEnd(t *testing.T) {
 		t.Fatalf("repaired calls = %+v", calls)
 	}
 
-	_, err = collector.add([]schema.ToolCall{{
+	_, err = collector.appendToolCallFragments([]schema.ToolCall{{
 		ID: "bad", Function: schema.FunctionCall{Name: "read_file", Arguments: `{path:"a.go"}`},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls, err = collector.finish()
+	calls, err = collector.buildToolCalls()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,12 +161,12 @@ func TestCollectorRepairsOnlyUnambiguousJSONAtStreamEnd(t *testing.T) {
 
 func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 	ctx := context.Background()
-	m := &sequenceModel{responses: [][]*schema.Message{
-		{usageReply("", schema.ToolCall{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}})},
-		{usageReply("done")}, {usageReply("new run")},
+	chatModel := &sequenceModel{responses: [][]*schema.Message{
+		{newUsageReply("", schema.ToolCall{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}})},
+		{newUsageReply("done")}, {newUsageReply("new run")},
 	}}
 	var totals []types.Usage
-	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
 		if e.Kind == "tokens" {
 			totals = append(totals, e.Data.(types.Usage))
 		}
@@ -175,25 +175,25 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close(ctx)
+	defer graph.Close(ctx)
 	for i, want := range []int64{10, 5} {
 		if i > 0 {
-			cfg := a.cfg
-			cfg.Conversation = a.conversation
-			a, err = New(ctx, WithConfig(&cfg))
+			config := graph.config
+			config.Conversation = graph.conversation
+			graph, err = New(ctx, WithConfig(&config))
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer a.Close(ctx)
+			defer graph.Close(ctx)
 		}
-		_, err = a.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+		_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if a.state.Usage.TotalTokens != want {
-			t.Fatalf("run %d cumulative=%+v", i, a.state.Usage)
+		if graph.runState.Usage.TotalTokens != want {
+			t.Fatalf("run %d cumulative=%+v", i, graph.runState.Usage)
 		}
-		got := a.conversation.ContextUsage()
+		got := graph.conversation.GetContextUsage()
 		if got.LastModelTotal != 5 || got.CurrentTotal != 5 {
 			t.Fatalf("context usage must remain last request: %+v", got)
 		}
@@ -205,12 +205,12 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 
 func TestCheckpoint_ResumeContinuesCumulativeUsage(t *testing.T) {
 	ctx := context.Background()
-	m := &sequenceModel{responses: [][]*schema.Message{
-		{usageReply("", schema.ToolCall{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}})},
-		{usageReply("done")},
+	chatModel := &sequenceModel{responses: [][]*schema.Message{
+		{newUsageReply("", schema.ToolCall{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}})},
+		{newUsageReply("done")},
 	}}
-	cfg := Config{ThreadID: "thread", RunID: "run", Model: m, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
-	first, err := New(ctx, WithConfig(&cfg))
+	config := Config{ThreadID: "thread", RunID: "run", Model: chatModel, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
+	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,12 +224,12 @@ func TestCheckpoint_ResumeContinuesCumulativeUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A different Conversation forces restoration from the checkpoint snapshot.
-	next, err := New(ctx, WithConfig(&cfg))
+	next, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer next.Close(ctx)
-	err = next.conversation.AddHistory(ctx, "run", first.conversation.History(ctx)...)
+	err = next.conversation.AddHistory(ctx, "run", first.conversation.GetHistory(ctx)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,8 +237,8 @@ func TestCheckpoint_ResumeContinuesCumulativeUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.state.Usage != (types.Usage{PromptTokens: 6, CompletionTokens: 4, TotalTokens: 10}) {
-		t.Fatalf("restored usage=%+v", next.state.Usage)
+	if next.runState.Usage != (types.Usage{PromptTokens: 6, CompletionTokens: 4, TotalTokens: 10}) {
+		t.Fatalf("restored usage=%+v", next.runState.Usage)
 	}
 }
 
@@ -253,7 +253,7 @@ func TestRun_LegacyExtraUsageUsesConversation(t *testing.T) {
 				want = 5
 			}
 			var totals []types.Usage
-			a, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{responses: [][]*schema.Message{{response}}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+			graph, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{responses: [][]*schema.Message{{response}}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
 				if event.Kind == "tokens" {
 					totals = append(totals, event.Data.(types.Usage))
 				}
@@ -262,13 +262,13 @@ func TestRun_LegacyExtraUsageUsesConversation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer a.Close(context.Background())
-			_, executeErr := a.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+			defer graph.Close(context.Background())
+			_, executeErr := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
 			if executeErr != nil {
 				t.Fatal(executeErr)
 			}
-			if len(totals) != 1 || totals[0].TotalTokens != want || a.state.Usage != totals[0] || a.conversation.RunUsage() != totals[0] || a.conversation.ContextUsage().LastModelTotal != want {
-				t.Fatalf("events=%+v snapshot=%+v context=%+v", totals, a.state.Usage, a.conversation.ContextUsage())
+			if len(totals) != 1 || totals[0].TotalTokens != want || graph.runState.Usage != totals[0] || graph.conversation.GetRunUsage() != totals[0] || graph.conversation.GetContextUsage().LastModelTotal != want {
+				t.Fatalf("events=%+v snapshot=%+v context=%+v", totals, graph.runState.Usage, graph.conversation.GetContextUsage())
 			}
 		})
 	}
@@ -276,12 +276,12 @@ func TestRun_LegacyExtraUsageUsesConversation(t *testing.T) {
 
 func TestRootResumeRestoresProviderContextBeforeNextModel(t *testing.T) {
 	ctx := context.Background()
-	m := &sequenceModel{responses: [][]*schema.Message{
-		{usageReply("", schema.ToolCall{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}})},
-		{usageReply("done")},
+	chatModel := &sequenceModel{responses: [][]*schema.Message{
+		{newUsageReply("", schema.ToolCall{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}})},
+		{newUsageReply("done")},
 	}}
-	cfg := Config{ThreadID: "thread", RunID: "run", Model: m, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
-	first, err := New(ctx, WithConfig(&cfg))
+	config := Config{ThreadID: "thread", RunID: "run", Model: chatModel, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
+	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,16 +290,16 @@ func TestRootResumeRestoresProviderContextBeforeNextModel(t *testing.T) {
 	if !ok {
 		t.Fatal(err)
 	}
-	saved := first.conversation.ContextUsage()
+	saved := first.conversation.GetContextUsage()
 	err = first.Close(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	checked := false
 	var next *Graph
-	cfg.Emit = func(_ context.Context, event types.RuntimeEvent) error {
+	config.Emit = func(_ context.Context, event types.RuntimeEvent) error {
 		if event.Kind == "run_state_restored" {
-			got := next.conversation.ContextUsage()
+			got := next.conversation.GetContextUsage()
 			if got != saved {
 				return fmt.Errorf("provider baseline not restored: got=%+v saved=%+v", got, saved)
 			}
@@ -307,12 +307,12 @@ func TestRootResumeRestoresProviderContextBeforeNextModel(t *testing.T) {
 		}
 		return nil
 	}
-	next, err = New(ctx, WithConfig(&cfg))
+	next, err = New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer next.Close(ctx)
-	err = next.conversation.AddHistory(ctx, "run", first.conversation.History(ctx)...)
+	err = next.conversation.AddHistory(ctx, "run", first.conversation.GetHistory(ctx)...)
 	if err != nil {
 		t.Fatal(err)
 	}

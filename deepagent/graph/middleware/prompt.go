@@ -19,84 +19,84 @@ type projectInstructions struct {
 	files filesystempkg.Filesystem
 }
 
-func NewProjectInstructions(files filesystempkg.Filesystem) Middleware {
-	return &projectInstructions{files: files}
+func NewProjectInstructions(filesystem filesystempkg.Filesystem) Middleware {
+	return &projectInstructions{files: filesystem}
 }
 
-func (*projectInstructions) Name() string { return "project_instructions" }
+func (*projectInstructions) GetName() string { return "project_instructions" }
 
-func (m *projectInstructions) BuildPrompt(ctx context.Context) ([]*schema.Message, error) {
+func (projectInstructions *projectInstructions) BuildPrompt(ctx context.Context) ([]*schema.Message, error) {
 	// Read the complete bounded backend file rather than the tool's default
 	// 2000-line window; the requested section may occur near the end.
-	limit := int(^uint(0) >> 1)
-	text, err := m.files.Read(ctx, "AGENTS.md", nil, &limit)
+	lineLimit := int(^uint(0) >> 1)
+	instructionsText, err := projectInstructions.files.Read(ctx, "AGENTS.md", nil, &lineLimit)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, filesystempkg.ErrFileNotFound) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	body := projectInstructionSection(text, "Agent Working Discipline")
-	if body == "" {
+	disciplineInstructions := extractProjectInstructionSection(instructionsText, "Agent Working Discipline")
+	if disciplineInstructions == "" {
 		return nil, nil
 	}
-	return []*schema.Message{schema.SystemMessage("<agent_discipline>\n" + body + "\n</agent_discipline>")}, nil
+	return []*schema.Message{schema.SystemMessage("<agent_discipline>\n" + disciplineInstructions + "\n</agent_discipline>")}, nil
 }
 
-func projectInstructionSection(text, title string) string {
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	start := -1
+func extractProjectInstructionSection(instructionsText, sectionTitle string) string {
+	lines := strings.Split(strings.ReplaceAll(instructionsText, "\r\n", "\n"), "\n")
+	sectionStart := -1
 	for i, line := range lines {
-		if start < 0 {
-			if strings.TrimSpace(line) == "## "+title {
-				start = i + 1
+		if sectionStart < 0 {
+			if strings.TrimSpace(line) == "## "+sectionTitle {
+				sectionStart = i + 1
 			}
 			continue
 		}
 		if strings.HasPrefix(line, "## ") {
-			return strings.TrimSpace(strings.Join(lines[start:i], "\n"))
+			return strings.TrimSpace(strings.Join(lines[sectionStart:i], "\n"))
 		}
 	}
-	if start >= 0 {
-		return strings.TrimSpace(strings.Join(lines[start:], "\n"))
+	if sectionStart >= 0 {
+		return strings.TrimSpace(strings.Join(lines[sectionStart:], "\n"))
 	}
 	return ""
 }
 
 type SkillMiddleware struct {
 	BaseMiddleware
-	loader skillspkg.SkillLoader
+	skillLoader skillspkg.SkillLoader
 }
 
-func NewSkillMiddleware(loader skillspkg.SkillLoader) Middleware {
-	return &SkillMiddleware{loader: loader}
+func NewSkillMiddleware(skillLoader skillspkg.SkillLoader) Middleware {
+	return &SkillMiddleware{skillLoader: skillLoader}
 }
 
-func (m *SkillMiddleware) Name() string { return "skill" }
+func (skillMiddleware *SkillMiddleware) GetName() string { return "skill" }
 
-func (m *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*schema.Message, error) {
+func (skillMiddleware *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*schema.Message, error) {
 
-	if m == nil || m.loader == nil {
+	if skillMiddleware == nil || skillMiddleware.skillLoader == nil {
 		return nil, nil
 	}
 
-	items, err := m.loader.ListSkills(ctx)
+	availableSkills, err := skillMiddleware.skillLoader.ListSkills(ctx)
 	if err != nil {
 		return nil, err
 	}
-	skillMetaList := make([]*skillspkg.SkillMetadata, 0, len(items))
-	for _, item := range items {
-		if item != nil && strings.TrimSpace(item.Name) != "" {
-			skillMetaList = append(skillMetaList, item)
+	validSkills := make([]*skillspkg.SkillMetadata, 0, len(availableSkills))
+	for _, skill := range availableSkills {
+		if skill != nil && strings.TrimSpace(skill.Name) != "" {
+			validSkills = append(validSkills, skill)
 		}
 	}
 
-	sort.Slice(skillMetaList, func(i, j int) bool { return skillMetaList[i].Name < skillMetaList[j].Name })
+	sort.Slice(validSkills, func(i, j int) bool { return validSkills[i].Name < validSkills[j].Name })
 
-	var prompt strings.Builder
-	prompt.WriteString("Available project skills. When a skill applies, call activate_skill with its exact name before using it. The tool returns its full instructions and source path.\n")
-	for _, item := range skillMetaList {
-		fmt.Fprintf(&prompt, "- %s: %s (source: %s)\n", item.Name, item.Description, item.Path)
+	var skillPrompt strings.Builder
+	skillPrompt.WriteString("Available project skills. When a skill applies, call activate_skill with its exact name before using it. The tool returns its full instructions and source path.\n")
+	for _, skill := range validSkills {
+		fmt.Fprintf(&skillPrompt, "- %s: %s (source: %s)\n", skill.Name, skill.Description, skill.Path)
 	}
-	return []*schema.Message{schema.SystemMessage(prompt.String())}, nil
+	return []*schema.Message{schema.SystemMessage(skillPrompt.String())}, nil
 }

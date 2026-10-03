@@ -30,7 +30,7 @@ type terminalWriteFailureStore struct {
 	failure error
 }
 
-func (s *terminalWriteFailureStore) Set(ctx context.Context, id string, raw []byte) error {
+func (terminalWriteFailureStore *terminalWriteFailureStore) Set(ctx context.Context, id string, raw []byte) error {
 	var envelope checkpointer.Envelope
 	err := json.Unmarshal(raw, &envelope)
 	if err != nil {
@@ -43,10 +43,10 @@ func (s *terminalWriteFailureStore) Set(ctx context.Context, id string, raw []by
 	if decodeErr != nil {
 		return decodeErr
 	}
-	if snapshot.MapValues["State"].JSONValue.Phase == types.PhaseCompleted && s.failure != nil {
-		return s.failure
+	if snapshot.MapValues["State"].JSONValue.Phase == types.PhaseCompleted && terminalWriteFailureStore.failure != nil {
+		return terminalWriteFailureStore.failure
 	}
-	return s.checkpointMemory.Set(ctx, id, raw)
+	return terminalWriteFailureStore.checkpointMemory.Set(ctx, id, raw)
 }
 
 type checkpointLifecycle struct {
@@ -54,13 +54,13 @@ type checkpointLifecycle struct {
 	before, after *int
 }
 
-func (m *checkpointLifecycle) BeforeRun(context.Context, *types.RunState) error {
-	*m.before++
+func (checkpointLifecycle *checkpointLifecycle) PrepareRun(context.Context, *types.RunState) error {
+	*checkpointLifecycle.before++
 	return nil
 }
 
-func (m *checkpointLifecycle) AfterRun(context.Context, *types.RunState, error) error {
-	*m.after++
+func (checkpointLifecycle *checkpointLifecycle) FinishRun(context.Context, *types.RunState, error) error {
+	*checkpointLifecycle.after++
 	return nil
 }
 
@@ -70,12 +70,12 @@ type compactionEventConversation struct {
 	err   error
 }
 
-func (*compactionEventConversation) CompactNeeded(context.Context) bool { return true }
+func (*compactionEventConversation) NeedsCompaction(context.Context) bool { return true }
 
-func (c *compactionEventConversation) Compact(context.Context, string) (*conversation.ContextCompactedPayload, error) {
-	c.calls++
-	if c.err != nil {
-		return nil, c.err
+func (compactionEventConversation *compactionEventConversation) Compact(context.Context, string) (*conversation.ContextCompactedPayload, error) {
+	compactionEventConversation.calls++
+	if compactionEventConversation.err != nil {
+		return nil, compactionEventConversation.err
 	}
 	return &conversation.ContextCompactedPayload{StrategyID: "test"}, nil
 }
@@ -88,14 +88,14 @@ func (*paritySummaryModel) Generate(context.Context, []*schema.Message, ...model
 
 type fakeToolCounter struct{ total int }
 
-func (t *fakeToolCounter) Info(context.Context) (*schema.ToolInfo, error) {
+func (fakeToolCounter *fakeToolCounter) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{Name: "counter", ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 		"delta": {Type: schema.Integer, Required: true},
 	})}, nil
 }
 
-func (t *fakeToolCounter) InvokableRun(_ context.Context, _ string, _ ...tool.Option) (string, error) {
-	t.total++
+func (fakeToolCounter *fakeToolCounter) InvokableRun(_ context.Context, _ string, _ ...tool.Option) (string, error) {
+	fakeToolCounter.total++
 	return "ok", nil
 }
 
@@ -120,11 +120,11 @@ type inputEventConversation struct {
 	failure error
 }
 
-func (c *inputEventConversation) AddHistory(ctx context.Context, run string, messages ...*schema.Message) error {
-	if c.failure != nil && messages[0].Content == "second" {
-		return c.failure
+func (inputEventConversation *inputEventConversation) AddHistory(ctx context.Context, run string, messages ...*schema.Message) error {
+	if inputEventConversation.failure != nil && messages[0].Content == "second" {
+		return inputEventConversation.failure
 	}
-	return c.Conversation.AddHistory(ctx, run, messages...)
+	return inputEventConversation.Conversation.AddHistory(ctx, run, messages...)
 }
 
 type sequenceModel struct {
@@ -133,22 +133,22 @@ type sequenceModel struct {
 	responses [][]*schema.Message
 }
 
-func (m *sequenceModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	return m, nil
+func (sequenceModel *sequenceModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return sequenceModel, nil
 }
 
-func (m *sequenceModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+func (sequenceModel *sequenceModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	return nil, fmt.Errorf("unexpected non-stream model call")
 }
 
-func (m *sequenceModel) Stream(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	m.inputs = append(m.inputs, append([]*schema.Message(nil), input...))
-	index := m.calls
-	m.calls++
-	if index >= len(m.responses) {
+func (sequenceModel *sequenceModel) Stream(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	sequenceModel.inputs = append(sequenceModel.inputs, append([]*schema.Message(nil), input...))
+	index := sequenceModel.calls
+	sequenceModel.calls++
+	if index >= len(sequenceModel.responses) {
 		return nil, fmt.Errorf("unexpected model call %d", index)
 	}
-	return schema.StreamReaderFromArray(m.responses[index]), nil
+	return schema.StreamReaderFromArray(sequenceModel.responses[index]), nil
 }
 
 type checkpointMemory struct {
@@ -156,19 +156,19 @@ type checkpointMemory struct {
 	fail   bool
 }
 
-func (s *checkpointMemory) Get(_ context.Context, id string) ([]byte, bool, error) {
-	value, ok := s.values[id]
+func (checkpointMemory *checkpointMemory) Get(_ context.Context, id string) ([]byte, bool, error) {
+	value, ok := checkpointMemory.values[id]
 	return value, ok, nil
 }
 
-func (s *checkpointMemory) Set(_ context.Context, id string, value []byte) error {
-	if s.fail {
+func (checkpointMemory *checkpointMemory) Set(_ context.Context, id string, value []byte) error {
+	if checkpointMemory.fail {
 		return fmt.Errorf("checkpoint save failed")
 	}
-	if s.values == nil {
-		s.values = map[string][]byte{}
+	if checkpointMemory.values == nil {
+		checkpointMemory.values = map[string][]byte{}
 	}
-	s.values[id] = append([]byte(nil), value...)
+	checkpointMemory.values[id] = append([]byte(nil), value...)
 	return nil
 }
 
@@ -177,13 +177,13 @@ type namedCountingTool struct {
 	count int
 }
 
-func (t *namedCountingTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return &schema.ToolInfo{Name: t.name}, nil
+func (namedCountingTool *namedCountingTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: namedCountingTool.name}, nil
 }
 
-func (t *namedCountingTool) InvokableRun(context.Context, string, ...tool.Option) (string, error) {
-	t.count++
-	return t.name, nil
+func (namedCountingTool *namedCountingTool) InvokableRun(context.Context, string, ...tool.Option) (string, error) {
+	namedCountingTool.count++
+	return namedCountingTool.name, nil
 }
 
 type eagerModel struct {
@@ -191,15 +191,17 @@ type eagerModel struct {
 	calls       int
 }
 
-func (m *eagerModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) { return m, nil }
+func (eagerModel *eagerModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return eagerModel, nil
+}
 
-func (m *eagerModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+func (eagerModel *eagerModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	return nil, fmt.Errorf("unexpected Generate")
 }
 
-func (m *eagerModel) Stream(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	m.calls++
-	if m.calls == 2 {
+func (eagerModel *eagerModel) Stream(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	eagerModel.calls++
+	if eagerModel.calls == 2 {
 		return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("done", nil)}), nil
 	}
 	reader, writer := schema.Pipe[*schema.Message](1)
@@ -208,7 +210,7 @@ func (m *eagerModel) Stream(ctx context.Context, _ []*schema.Message, _ ...model
 		index := 9
 		writer.Send(schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Index: &index, Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}}), nil)
 		select {
-		case <-m.toolStarted:
+		case <-eagerModel.toolStarted:
 		case <-ctx.Done():
 			writer.Send(nil, ctx.Err())
 		}
@@ -221,18 +223,18 @@ type cancelModel struct {
 	stopped chan struct{}
 }
 
-func (m *cancelModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	return m, nil
+func (cancelModel *cancelModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return cancelModel, nil
 }
 
-func (m *cancelModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+func (cancelModel *cancelModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	return nil, fmt.Errorf("unexpected Generate")
 }
 
-func (m *cancelModel) Stream(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	close(m.started)
+func (cancelModel *cancelModel) Stream(ctx context.Context, _ []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	close(cancelModel.started)
 	<-ctx.Done()
-	close(m.stopped)
+	close(cancelModel.stopped)
 	return nil, ctx.Err()
 }
 
@@ -243,26 +245,26 @@ type legacyParityMemoryCheckpoints struct {
 
 var _ compose.CheckPointStore = (*legacyParityMemoryCheckpoints)(nil)
 
-func (s *legacyParityMemoryCheckpoints) Get(_ context.Context, id string) ([]byte, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	value, ok := s.data[id]
+func (legacyParityMemoryCheckpoints *legacyParityMemoryCheckpoints) Get(_ context.Context, id string) ([]byte, bool, error) {
+	legacyParityMemoryCheckpoints.mu.Lock()
+	defer legacyParityMemoryCheckpoints.mu.Unlock()
+	value, ok := legacyParityMemoryCheckpoints.data[id]
 	return append([]byte(nil), value...), ok, nil
 }
 
-func (s *legacyParityMemoryCheckpoints) Set(_ context.Context, id string, value []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.data == nil {
-		s.data = make(map[string][]byte)
+func (legacyParityMemoryCheckpoints *legacyParityMemoryCheckpoints) Set(_ context.Context, id string, value []byte) error {
+	legacyParityMemoryCheckpoints.mu.Lock()
+	defer legacyParityMemoryCheckpoints.mu.Unlock()
+	if legacyParityMemoryCheckpoints.data == nil {
+		legacyParityMemoryCheckpoints.data = make(map[string][]byte)
 	}
-	s.data[id] = append([]byte(nil), value...)
+	legacyParityMemoryCheckpoints.data[id] = append([]byte(nil), value...)
 	return nil
 }
 
-func mustLocalFilesystem(t *testing.T, cfg *filesystempkg.LocalFilesystemConfig) *filesystempkg.LocalFilesystem {
+func newTestLocalFilesystem(t *testing.T, config *filesystempkg.LocalFilesystemConfig) *filesystempkg.LocalFilesystem {
 	t.Helper()
-	filesystem, err := filesystempkg.NewLocalFilesystem(cfg, t.Name())
+	filesystem, err := filesystempkg.NewLocalFilesystem(config, t.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,21 +278,21 @@ type orderedMiddleware struct {
 	order *[]string
 }
 
-func (m *orderedMiddleware) Name() string { return m.name }
+func (orderedMiddleware *orderedMiddleware) GetName() string { return orderedMiddleware.name }
 
-func (m *orderedMiddleware) BeforeRun(context.Context, *types.RunState) error {
-	*m.order = append(*m.order, "before:"+m.name)
+func (orderedMiddleware *orderedMiddleware) PrepareRun(context.Context, *types.RunState) error {
+	*orderedMiddleware.order = append(*orderedMiddleware.order, "before:"+orderedMiddleware.name)
 	return nil
 }
 
-func (m *orderedMiddleware) AfterRun(context.Context, *types.RunState, error) error {
-	*m.order = append(*m.order, "after:"+m.name)
+func (orderedMiddleware *orderedMiddleware) FinishRun(context.Context, *types.RunState, error) error {
+	*orderedMiddleware.order = append(*orderedMiddleware.order, "after:"+orderedMiddleware.name)
 	return nil
 }
 
-func (m *orderedMiddleware) WrapModel(next middleware.ModelHandler) middleware.ModelHandler {
+func (orderedMiddleware *orderedMiddleware) WrapModel(next middleware.ModelHandler) middleware.ModelHandler {
 	return func(ctx context.Context, input []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		*m.order = append(*m.order, "model:"+m.name)
+		*orderedMiddleware.order = append(*orderedMiddleware.order, "model:"+orderedMiddleware.name)
 		return next(ctx, input)
 	}
 }
@@ -300,10 +302,10 @@ type endOrderMiddleware struct {
 	after bool
 }
 
-func (*endOrderMiddleware) BeforeRun(context.Context, *types.RunState) error { return nil }
+func (*endOrderMiddleware) PrepareRun(context.Context, *types.RunState) error { return nil }
 
-func (m *endOrderMiddleware) AfterRun(context.Context, *types.RunState, error) error {
-	m.after = true
+func (endOrderMiddleware *endOrderMiddleware) FinishRun(context.Context, *types.RunState, error) error {
+	endOrderMiddleware.after = true
 	return nil
 }
 
@@ -313,16 +315,16 @@ type modelTransformMiddleware struct {
 	failure       error
 }
 
-func (m *modelTransformMiddleware) ModifyModelRequest(_ context.Context, _ []*schema.Message, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
-	m.before++
-	if m.failure != nil {
-		return nil, m.failure
+func (modelTransformMiddleware *modelTransformMiddleware) ModifyModelRequest(_ context.Context, _ []*schema.Message, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
+	modelTransformMiddleware.before++
+	if modelTransformMiddleware.failure != nil {
+		return nil, modelTransformMiddleware.failure
 	}
 	return append([]*schema.Message{schema.SystemMessage("middleware prompt")}, messages...), nil
 }
 
-func (m *modelTransformMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schema.StreamReader[*schema.Message], _ *types.GraphState) (*schema.StreamReader[*schema.Message], error) {
-	m.after++
+func (modelTransformMiddleware *modelTransformMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schema.StreamReader[*schema.Message], _ *types.GraphState) (*schema.StreamReader[*schema.Message], error) {
+	modelTransformMiddleware.after++
 	return schema.StreamReaderWithConvert(stream, func(message *schema.Message) (*schema.Message, error) {
 		copy := *message
 		copy.Content = "rewritten"
@@ -336,17 +338,17 @@ type transcriptWriter struct {
 	fail   error
 }
 
-func (w *transcriptWriter) Write(p []byte) (int, error) {
-	if w.closes != 0 {
+func (transcriptWriter *transcriptWriter) Write(p []byte) (int, error) {
+	if transcriptWriter.closes != 0 {
 		return 0, errors.New("write after close")
 	}
-	if w.fail != nil {
-		return 0, w.fail
+	if transcriptWriter.fail != nil {
+		return 0, transcriptWriter.fail
 	}
-	return w.Buffer.Write(p)
+	return transcriptWriter.Buffer.Write(p)
 }
 
-func (w *transcriptWriter) Close() error { w.closes++; return nil }
+func (transcriptWriter *transcriptWriter) Close() error { transcriptWriter.closes++; return nil }
 
 type pendingWriteFailure struct {
 	checkpointMemory
@@ -355,7 +357,7 @@ type pendingWriteFailure struct {
 	initial []byte
 }
 
-func (s *pendingWriteFailure) Set(ctx context.Context, id string, raw []byte) error {
+func (pendingWriteFailure *pendingWriteFailure) Set(ctx context.Context, id string, raw []byte) error {
 	var envelope checkpointer.Envelope
 	err := json.Unmarshal(raw, &envelope)
 	if err != nil {
@@ -369,16 +371,16 @@ func (s *pendingWriteFailure) Set(ctx context.Context, id string, raw []byte) er
 		return decodeErr
 	}
 	if len(snapshot.MapValues["State"].JSONValue.Pending) == 0 {
-		return s.checkpointMemory.Set(ctx, id, raw)
+		return pendingWriteFailure.checkpointMemory.Set(ctx, id, raw)
 	}
-	s.writes++
-	if s.writes == 1 {
-		s.initial = append([]byte(nil), raw...)
+	pendingWriteFailure.writes++
+	if pendingWriteFailure.writes == 1 {
+		pendingWriteFailure.initial = append([]byte(nil), raw...)
 	}
-	if s.writes == 2 {
-		return s.failure
+	if pendingWriteFailure.writes == 2 {
+		return pendingWriteFailure.failure
 	}
-	return s.checkpointMemory.Set(ctx, id, raw)
+	return pendingWriteFailure.checkpointMemory.Set(ctx, id, raw)
 }
 
 // Capture both Eino's original write and the later interrupt-ID enrichment.
@@ -388,17 +390,17 @@ type pendingSnapshotStore struct {
 	writes [][]byte
 }
 
-func (s *pendingSnapshotStore) Set(ctx context.Context, id string, raw []byte) error {
-	s.writes = append(s.writes, append([]byte(nil), raw...))
-	return s.checkpointMemory.Set(ctx, id, raw)
+func (pendingSnapshotStore *pendingSnapshotStore) Set(ctx context.Context, id string, raw []byte) error {
+	pendingSnapshotStore.writes = append(pendingSnapshotStore.writes, append([]byte(nil), raw...))
+	return pendingSnapshotStore.checkpointMemory.Set(ctx, id, raw)
 }
 
-func buildCreateConfig(opts ...Option) *Config {
-	cfg := &Config{}
+func buildTestConfig(opts ...Option) *Config {
+	config := &Config{}
 	for _, opt := range opts {
-		opt(cfg)
+		opt(config)
 	}
-	return cfg
+	return config
 }
 
 type publicModel struct {
@@ -407,19 +409,19 @@ type publicModel struct {
 	call   bool
 }
 
-func (m *publicModel) WithTools(infos []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	m.infos = infos
-	return m, nil
+func (publicModel *publicModel) WithTools(infos []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	publicModel.infos = infos
+	return publicModel, nil
 }
 
-func (m *publicModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+func (publicModel *publicModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	return nil, errors.New("unexpected Generate")
 }
 
-func (m *publicModel) Stream(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	m.inputs = append(m.inputs, input)
+func (publicModel *publicModel) Stream(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	publicModel.inputs = append(publicModel.inputs, input)
 	message := schema.AssistantMessage("done", nil)
-	if m.call && len(m.inputs) == 1 {
+	if publicModel.call && len(publicModel.inputs) == 1 {
 		message = schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: `{"delta":3}`}}})
 	}
 	return schema.StreamReaderFromArray([]*schema.Message{message}), nil
@@ -430,17 +432,17 @@ type promptContractMiddleware struct {
 	seen bool
 }
 
-func (m *promptContractMiddleware) Name() string { return "prompt_contract" }
+func (promptContractMiddleware *promptContractMiddleware) GetName() string { return "prompt_contract" }
 
-func (m *promptContractMiddleware) BuildPrompt(context.Context) ([]*schema.Message, error) {
+func (promptContractMiddleware *promptContractMiddleware) BuildPrompt(context.Context) ([]*schema.Message, error) {
 	return []*schema.Message{schema.SystemMessage("instructions")}, nil
 }
 
-func (m *promptContractMiddleware) ModifyModelRequest(_ context.Context, initial, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
+func (promptContractMiddleware *promptContractMiddleware) ModifyModelRequest(_ context.Context, initial, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
 	if len(initial) != 1 || initial[0].Role != schema.System {
 		return nil, errors.New("initialContext no longer contains middleware prompts")
 	}
-	m.seen = true
+	promptContractMiddleware.seen = true
 	return messages, nil
 }
 
@@ -450,28 +452,28 @@ type overlappingRunModel struct {
 	calls   atomic.Int32
 }
 
-func (m *overlappingRunModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	return m, nil
+func (overlappingRunModel *overlappingRunModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return overlappingRunModel, nil
 }
 
 func (*overlappingRunModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	return nil, fmt.Errorf("unexpected non-stream model call")
 }
 
-func (m *overlappingRunModel) Stream(ctx context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	m.calls.Add(1)
+func (overlappingRunModel *overlappingRunModel) Stream(ctx context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	overlappingRunModel.calls.Add(1)
 	for _, message := range input {
 		if message.Role == schema.Tool {
 			return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("done", nil)}), nil
 		}
 	}
 	select {
-	case m.ready <- struct{}{}:
+	case overlappingRunModel.ready <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 	select {
-	case <-m.release:
+	case <-overlappingRunModel.release:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -485,9 +487,9 @@ type blockingResourceMiddleware struct {
 	release chan struct{}
 }
 
-func (m *blockingResourceMiddleware) Close(context.Context) error {
-	close(m.entered)
-	<-m.release
+func (blockingResourceMiddleware *blockingResourceMiddleware) Close(context.Context) error {
+	close(blockingResourceMiddleware.entered)
+	<-blockingResourceMiddleware.release
 	return nil
 }
 
@@ -499,21 +501,25 @@ type resourceMiddleware struct {
 	closed              int
 }
 
-func (m *resourceMiddleware) Name() string { return m.name }
+func (resourceMiddleware *resourceMiddleware) GetName() string { return resourceMiddleware.name }
 
-func (m *resourceMiddleware) BeforeRun(context.Context, *types.RunState) error { return m.beforeErr }
+func (resourceMiddleware *resourceMiddleware) PrepareRun(context.Context, *types.RunState) error {
+	return resourceMiddleware.beforeErr
+}
 
-func (m *resourceMiddleware) AfterRun(context.Context, *types.RunState, error) error { return nil }
+func (resourceMiddleware *resourceMiddleware) FinishRun(context.Context, *types.RunState, error) error {
+	return nil
+}
 
-func (m *resourceMiddleware) Close(ctx context.Context) error {
-	m.closed++
-	if m.order != nil {
-		*m.order = append(*m.order, m.name)
+func (resourceMiddleware *resourceMiddleware) Close(ctx context.Context) error {
+	resourceMiddleware.closed++
+	if resourceMiddleware.order != nil {
+		*resourceMiddleware.order = append(*resourceMiddleware.order, resourceMiddleware.name)
 	}
 	if ctx.Err() != nil {
 		return errors.New("cleanup received canceled context")
 	}
-	return m.closeErr
+	return resourceMiddleware.closeErr
 }
 
 // Checkpoint reads must not hold the Agent mutex: Close needs it to cancel.
@@ -521,8 +527,8 @@ type cancelableCheckpointRead struct {
 	entered chan struct{}
 }
 
-func (s *cancelableCheckpointRead) Get(ctx context.Context, _ string) ([]byte, bool, error) {
-	close(s.entered)
+func (cancelableCheckpointRead *cancelableCheckpointRead) Get(ctx context.Context, _ string) ([]byte, bool, error) {
+	close(cancelableCheckpointRead.entered)
 	<-ctx.Done()
 	return nil, false, ctx.Err()
 }
@@ -537,11 +543,11 @@ type streamErrorMiddleware struct {
 	err    error
 }
 
-func (*streamErrorMiddleware) Name() string { return "stream_open_error" }
+func (*streamErrorMiddleware) GetName() string { return "stream_open_error" }
 
-func (m *streamErrorMiddleware) WrapModel(middleware.ModelHandler) middleware.ModelHandler {
+func (streamErrorMiddleware *streamErrorMiddleware) WrapModel(middleware.ModelHandler) middleware.ModelHandler {
 	return func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		return m.reader, m.err
+		return streamErrorMiddleware.reader, streamErrorMiddleware.err
 	}
 }
 
@@ -551,41 +557,41 @@ func (*streamErrorTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{Name: "stream_error"}, nil
 }
 
-func (s *streamErrorTool) StreamableRun(context.Context, string, ...tool.Option) (*schema.StreamReader[string], error) {
-	return s.reader, errors.New("tool opening failed")
+func (streamErrorTool *streamErrorTool) StreamableRun(context.Context, string, ...tool.Option) (*schema.StreamReader[string], error) {
+	return streamErrorTool.reader, errors.New("tool opening failed")
 }
 
 func testChildApprovalResume(t *testing.T, allow bool) {
 	ctx := context.Background()
 	first, approved := &namedCountingTool{name: "first"}, &namedCountingTool{name: "approved"}
-	m := &sequenceModel{responses: [][]*schema.Message{
+	chatModel := &sequenceModel{responses: [][]*schema.Message{
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "child-task", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"perform child work"}`}}})},
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "first", Function: schema.FunctionCall{Name: "first", Arguments: "{}"}}, {ID: "approved", Function: schema.FunctionCall{Name: "approved", Arguments: "{}"}}})},
 		{schema.AssistantMessage("child done", nil)},
 		{schema.AssistantMessage("parent done", nil)},
 	}}
 	store := &checkpointMemory{}
-	cfg := Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: m, ThreadID: "parent", RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: first}, {Tool: approved, RequiresApproval: true}}}
-	a, err := New(ctx, WithConfig(&cfg))
+	graphConfig := Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: chatModel, ThreadID: "parent", RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: first}, {Tool: approved, RequiresApproval: true}}}
+	graph, err := New(ctx, WithConfig(&graphConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = a.Invoke(ctx, []*schema.Message{schema.UserMessage("delegate")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("delegate")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
 		t.Fatalf("missing child approval: %v %+v", err, info)
 	}
-	if first.count != 1 || approved.count != 0 || m.calls != 2 {
-		t.Fatalf("before resume counts=%d/%d model=%d", first.count, approved.count, m.calls)
+	if first.count != 1 || approved.count != 0 || chatModel.calls != 2 {
+		t.Fatalf("before resume counts=%d/%d model=%d", first.count, approved.count, chatModel.calls)
 	}
 	if len(store.values) != 1 {
 		t.Fatalf("child created external sidecar: %d entries", len(store.values))
 	}
-	if len(a.state.Extensions["child_checkpoint/child-task"]) == 0 {
+	if len(graph.runState.Extensions["child_checkpoint/child-task"]) == 0 {
 		t.Fatal("child checkpoint not embedded")
 	}
-	cfg.Conversation = a.conversation
-	restored, err := New(ctx, WithConfig(&cfg))
+	graphConfig.Conversation = graph.conversation
+	restored, err := New(ctx, WithConfig(&graphConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,13 +603,13 @@ func testChildApprovalResume(t *testing.T, allow bool) {
 	if allow {
 		wantApproved = 1
 	}
-	if out.Content != "parent done" || m.calls != 4 || first.count != 1 || approved.count != wantApproved {
-		t.Fatalf("out=%v model=%d counts=%d/%d phase=%s", out, m.calls, first.count, approved.count, restored.state.Phase)
+	if out.Content != "parent done" || chatModel.calls != 4 || first.count != 1 || approved.count != wantApproved {
+		t.Fatalf("out=%v model=%d counts=%d/%d phase=%s", out, chatModel.calls, first.count, approved.count, restored.runState.Phase)
 	}
-	if len(restored.state.Extensions["child_checkpoint/child-task"]) != 0 {
+	if len(restored.runState.Extensions["child_checkpoint/child-task"]) != 0 {
 		t.Fatal("completed child retained stale checkpoint")
 	}
-	childInput := m.inputs[2]
+	childInput := chatModel.inputs[2]
 	foundPrompt, foundAssistant, foundFirst, foundApproved := false, false, false, false
 	for _, message := range childInput {
 		if message.Role == schema.User && message.Content == "perform child work" {
@@ -630,15 +636,15 @@ type parallelChildModel struct {
 	both    chan struct{}
 }
 
-func (m *parallelChildModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	return m, nil
+func (parallelChildModel *parallelChildModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return parallelChildModel, nil
 }
 
 func (*parallelChildModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	panic("must stream")
 }
 
-func (m *parallelChildModel) Stream(ctx context.Context, messages []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+func (parallelChildModel *parallelChildModel) Stream(ctx context.Context, messages []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	for _, msg := range messages {
 		if msg.Role == schema.Tool {
 			return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("child done", nil)}), nil
@@ -650,14 +656,14 @@ func (m *parallelChildModel) Stream(ctx context.Context, messages []*schema.Mess
 			name = msg.Content
 		}
 	}
-	m.mu.Lock()
-	m.started++
-	if m.started == 2 {
-		close(m.both)
+	parallelChildModel.mu.Lock()
+	parallelChildModel.started++
+	if parallelChildModel.started == 2 {
+		close(parallelChildModel.both)
 	}
-	m.mu.Unlock()
+	parallelChildModel.mu.Unlock()
 	select {
-	case <-m.both:
+	case <-parallelChildModel.both:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -669,27 +675,29 @@ type childUsageModel struct {
 	check func()
 }
 
-func (m *childUsageModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	return m, nil
+func (childUsageModel *childUsageModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return childUsageModel, nil
 }
 
-func (m *childUsageModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	if m.calls == 1 {
-		m.check()
+func (childUsageModel *childUsageModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	if childUsageModel.calls == 1 {
+		childUsageModel.check()
 	}
-	return m.sequenceModel.Stream(ctx, input, opts...)
+	return childUsageModel.sequenceModel.Stream(ctx, input, opts...)
 }
 
 type childModel struct{ inputs [][]*schema.Message }
 
-func (m *childModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) { return m, nil }
+func (childModel *childModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return childModel, nil
+}
 
-func (m *childModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
+func (childModel *childModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	return nil, fmt.Errorf("unexpected Generate")
 }
 
-func (m *childModel) Stream(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	m.inputs = append(m.inputs, append([]*schema.Message(nil), input...))
+func (childModel *childModel) Stream(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	childModel.inputs = append(childModel.inputs, append([]*schema.Message(nil), input...))
 	if input[len(input)-1].Role == schema.Tool {
 		return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("child done", nil)}), nil
 	}
@@ -703,24 +711,24 @@ type boundedChildRunner struct {
 	release      chan struct{}
 }
 
-func (r *boundedChildRunner) Run(ctx context.Context, req tools.ChildRequest, _ types.ModelChunkSink) (*schema.Message, error) {
-	r.mu.Lock()
-	r.active++
-	if r.active > r.peak {
-		r.peak = r.active
+func (boundedChildRunner *boundedChildRunner) Run(ctx context.Context, req tools.ChildRequest, _ types.ModelChunkSink) (*schema.Message, error) {
+	boundedChildRunner.mu.Lock()
+	boundedChildRunner.active++
+	if boundedChildRunner.active > boundedChildRunner.peak {
+		boundedChildRunner.peak = boundedChildRunner.active
 	}
-	r.mu.Unlock()
-	defer func() { r.mu.Lock(); r.active--; r.mu.Unlock() }()
-	r.started <- req.Prompt
+	boundedChildRunner.mu.Unlock()
+	defer func() { boundedChildRunner.mu.Lock(); boundedChildRunner.active--; boundedChildRunner.mu.Unlock() }()
+	boundedChildRunner.started <- req.Prompt
 	select {
-	case <-r.release:
+	case <-boundedChildRunner.release:
 		return schema.AssistantMessage(req.Prompt, nil), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-func writeSpec(t *testing.T, root, name, content string) {
+func writeSubAgentSpec(t *testing.T, root, name, content string) {
 	t.Helper()
 	dir := filepath.Join(root, name)
 	err := os.MkdirAll(dir, 0700)
@@ -750,14 +758,14 @@ func (*countingTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{Name: "counter"}, nil
 }
 
-func (t *countingTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
-	t.count.Add(1)
-	if t.started != nil {
-		t.once.Do(func() { close(t.started) })
+func (countingTool *countingTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
+	countingTool.count.Add(1)
+	if countingTool.started != nil {
+		countingTool.once.Do(func() { close(countingTool.started) })
 	}
-	if t.release != nil {
+	if countingTool.release != nil {
 		select {
-		case <-t.release:
+		case <-countingTool.release:
 		case <-ctx.Done():
 			return "", ctx.Err()
 		}
@@ -776,14 +784,14 @@ type failingContractTool struct {
 	failure error
 }
 
-func (t *failingContractTool) InvokableRun(context.Context, string, ...tool.Option) (string, error) {
-	return "", t.failure
+func (failingContractTool *failingContractTool) InvokableRun(context.Context, string, ...tool.Option) (string, error) {
+	return "", failingContractTool.failure
 }
 
 type countingStreamTool struct{ countingTool }
 
-func (t *countingStreamTool) StreamableRun(context.Context, string, ...tool.Option) (*schema.StreamReader[string], error) {
-	t.count.Add(1)
+func (countingStreamTool *countingStreamTool) StreamableRun(context.Context, string, ...tool.Option) (*schema.StreamReader[string], error) {
+	countingStreamTool.count.Add(1)
 	return schema.StreamReaderFromArray([]string{"done"}), nil
 }
 
@@ -793,7 +801,7 @@ type executionFenceStore struct {
 	failure error
 }
 
-func (s *executionFenceStore) Set(ctx context.Context, id string, raw []byte) error {
+func (executionFenceStore *executionFenceStore) Set(ctx context.Context, id string, raw []byte) error {
 	var envelope checkpointer.Envelope
 	err := json.Unmarshal(raw, &envelope)
 	if err != nil {
@@ -808,13 +816,13 @@ func (s *executionFenceStore) Set(ctx context.Context, id string, raw []byte) er
 	}
 	for _, call := range snapshot.MapValues["State"].JSONValue.Calls {
 		if call.Status == types.CallOutcomeUnknown {
-			s.fenced = append([]byte(nil), raw...)
-			if s.failure != nil {
-				return s.failure
+			executionFenceStore.fenced = append([]byte(nil), raw...)
+			if executionFenceStore.failure != nil {
+				return executionFenceStore.failure
 			}
 		}
 	}
-	return s.checkpointMemory.Set(ctx, id, raw)
+	return executionFenceStore.checkpointMemory.Set(ctx, id, raw)
 }
 
 type imageTool struct{ calls int }
@@ -823,8 +831,8 @@ func (*imageTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{Name: "image"}, nil
 }
 
-func (t *imageTool) InvokableRun(context.Context, *schema.ToolArgument, ...tool.Option) (*schema.ToolResult, error) {
-	t.calls++
+func (imageTool *imageTool) InvokableRun(context.Context, *schema.ToolArgument, ...tool.Option) (*schema.ToolResult, error) {
+	imageTool.calls++
 	url := "https://example.test/image.png"
 	return &schema.ToolResult{Parts: []schema.ToolOutputPart{
 		{Type: schema.ToolPartTypeText, Text: "image description"},
@@ -842,11 +850,11 @@ func (*imageStreamTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{Name: "image_stream"}, nil
 }
 
-func (t *imageStreamTool) StreamableRun(ctx context.Context, args *schema.ToolArgument, _ ...tool.Option) (*schema.StreamReader[*schema.ToolResult], error) {
-	t.calls++
-	t.arguments = args.Text
-	if t.run != nil {
-		return t.run(ctx)
+func (imageStreamTool *imageStreamTool) StreamableRun(ctx context.Context, args *schema.ToolArgument, _ ...tool.Option) (*schema.StreamReader[*schema.ToolResult], error) {
+	imageStreamTool.calls++
+	imageStreamTool.arguments = args.Text
+	if imageStreamTool.run != nil {
+		return imageStreamTool.run(ctx)
 	}
 	url := "https://example.test/stream.png"
 	return schema.StreamReaderFromArray([]*schema.ToolResult{
@@ -855,22 +863,22 @@ func (t *imageStreamTool) StreamableRun(ctx context.Context, args *schema.ToolAr
 	}), nil
 }
 
-func enhancedStreamModel() *sequenceModel {
+func newEnhancedStreamModel() *sequenceModel {
 	return &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "image-call", Function: schema.FunctionCall{Name: "image_stream", Arguments: "{}"}}})}}}
 }
 
-func usageReply(text string, calls ...schema.ToolCall) *schema.Message {
-	m := schema.AssistantMessage(text, calls)
-	m.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5}}
-	return m
+func newUsageReply(text string, calls ...schema.ToolCall) *schema.Message {
+	message := schema.AssistantMessage(text, calls)
+	message.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5}}
+	return message
 }
 
 type webMaskTestTool struct{ name string }
 
 type graphWebMaskContextKey struct{}
 
-func (t *webMaskTestTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return &schema.ToolInfo{Name: t.name}, nil
+func (webMaskTestTool *webMaskTestTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: webMaskTestTool.name}, nil
 }
 
 func (*webMaskTestTool) InvokableRun(context.Context, string, ...tool.Option) (string, error) {
@@ -882,6 +890,6 @@ type failingInfoTool struct {
 	err error
 }
 
-func (t *failingInfoTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return nil, t.err
+func (failingInfoTool *failingInfoTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return nil, failingInfoTool.err
 }

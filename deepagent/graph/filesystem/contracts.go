@@ -18,8 +18,8 @@ const (
 	ErrSandboxFsFailed  FileOperationError = "sandbox_fs_failed"
 )
 
-func (e FileOperationError) Error() string {
-	return string(e)
+func (fileOperationError FileOperationError) Error() string {
+	return string(fileOperationError)
 }
 
 // FileInfo 文件信息
@@ -32,19 +32,19 @@ type FileInfo struct {
 }
 
 // Name 返回文件名（不包含路径）
-func (f *FileInfo) Name() string {
+func (fileInfo *FileInfo) GetName() string {
 	// 如果 Path 是空字符串，返回空
-	if f.Path == "" {
+	if fileInfo.Path == "" {
 		return ""
 	}
 	// 路径可能使用 / 或 \ 作为分隔符
 	// 从路径中提取最后一部分
-	for i := len(f.Path) - 1; i >= 0; i-- {
-		if f.Path[i] == '/' || f.Path[i] == '\\' {
-			return f.Path[i+1:]
+	for i := len(fileInfo.Path) - 1; i >= 0; i-- {
+		if fileInfo.Path[i] == '/' || fileInfo.Path[i] == '\\' {
+			return fileInfo.Path[i+1:]
 		}
 	}
-	return f.Path
+	return fileInfo.Path
 }
 
 // FileData 文件数据（用于状态存储）
@@ -102,7 +102,7 @@ const (
 )
 
 type Filesystem interface {
-	Root() string
+	GetRoot() string
 	Resolve(context.Context, string, bool) (string, error)
 	List(context.Context, string) ([]FileInfo, error)
 	Read(context.Context, string, *int, *int) (string, error)
@@ -118,7 +118,7 @@ type Filesystem interface {
 // patch without treating a content read as an existence check.
 type patchFilesystem interface {
 	Filesystem
-	FileExists(context.Context, string) (bool, error)
+	HasFile(context.Context, string) (bool, error)
 	CreateFileNoReplace(context.Context, string, string) (*WriteResult, error)
 }
 

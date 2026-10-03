@@ -104,7 +104,7 @@ func (t *Thread) callThreadOutputObserver(ctx context.Context, obs ThreadOutputO
 }
 
 func (t *Thread) forwardAgentEvent(ctx context.Context, ev run.Event) bool {
-	usage := t.ContextManager().ContextUsage()
+	usage := t.ContextManager().GetContextUsage()
 	item, err := threadOutputItem(t.sessionID, t.ThreadID, ev, &usage)
 	if err != nil {
 		return t.outputBridge.deliver(ctx, t, TransportThreadOutputItem{Err: err})
@@ -126,7 +126,7 @@ func (t *Thread) emitAgentEvent(ctx context.Context, ev run.Event) {
 	if bridge == nil {
 		return
 	}
-	usage := t.ContextManager().ContextUsage()
+	usage := t.ContextManager().GetContextUsage()
 	item, err := threadOutputItem(t.sessionID, t.ThreadID, ev, &usage)
 	if err != nil {
 		bridge.send(ctx, TransportThreadOutputItem{Err: err})

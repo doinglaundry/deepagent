@@ -9,41 +9,41 @@ import (
 
 func TestWorkspace_PathAndSymlinkBoundaries(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
-	outside := t.TempDir()
-	secret := filepath.Join(outside, "secret.txt")
-	writeErr2 := os.WriteFile(secret, []byte("outside"), 0600)
-	if writeErr2 != nil {
-		t.Fatal(writeErr2)
+	rootDir := t.TempDir()
+	outsideDir := t.TempDir()
+	secretPath := filepath.Join(outsideDir, "secret.txt")
+	secretWriteErr := os.WriteFile(secretPath, []byte("outside"), 0600)
+	if secretWriteErr != nil {
+		t.Fatal(secretWriteErr)
 	}
-	symlinkErr2 := os.Symlink(outside, filepath.Join(root, "escape"))
-	if symlinkErr2 != nil {
-		t.Fatal(symlinkErr2)
+	escapeSymlinkErr := os.Symlink(outsideDir, filepath.Join(rootDir, "escape"))
+	if escapeSymlinkErr != nil {
+		t.Fatal(escapeSymlinkErr)
 	}
-	b := mustLocalFilesystem(t, &LocalFilesystemConfig{RootDir: root, VirtualMode: true})
+	localFilesystem := newTestLocalFilesystem(t, &LocalFilesystemConfig{RootDir: rootDir, VirtualMode: true})
 	for _, path := range []string{"../secret.txt", "escape/secret.txt"} {
-		_, readErr := b.Read(ctx, path, nil, nil)
+		_, readErr := localFilesystem.Read(ctx, path, nil, nil)
 		if readErr == nil {
 			t.Errorf("read escaped workspace: %q", path)
 		}
-		result, err := b.Write(ctx, path, "changed")
+		result, err := localFilesystem.Write(ctx, path, "changed")
 		if err == nil && (result == nil || result.Error == "") {
 			t.Errorf("write escaped workspace: %q", path)
 		}
 	}
-	content, err := os.ReadFile(secret)
+	content, err := os.ReadFile(secretPath)
 	if err != nil || string(content) != "outside" {
 		t.Fatalf("outside file changed: %q %v", content, err)
 	}
-	_, writeErr := b.Write(ctx, "inside.txt", "inside")
+	_, writeErr := localFilesystem.Write(ctx, "inside.txt", "inside")
 	if writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	symlinkErr := os.Symlink("inside.txt", filepath.Join(root, "safe-link"))
+	symlinkErr := os.Symlink("inside.txt", filepath.Join(rootDir, "safe-link"))
 	if symlinkErr != nil {
 		t.Fatal(symlinkErr)
 	}
-	contentText, err := b.Read(ctx, "safe-link", nil, nil)
+	contentText, err := localFilesystem.Read(ctx, "safe-link", nil, nil)
 	if err != nil || contentText != "inside" {
 		t.Fatalf("in-root symlink should work: %q %v", contentText, err)
 	}
@@ -54,8 +54,8 @@ func TestReadFileLinesClampsMaxIntLimit(t *testing.T) {
 	offset := 1
 	limit := int(^uint(0) >> 1)
 
-	got := ReadFileLines(content, &offset, &limit)
-	if got != "second\nthird\n" {
-		t.Fatalf("window = %q", got)
+	window := ReadFileLines(content, &offset, &limit)
+	if window != "second\nthird\n" {
+		t.Fatalf("window = %q", window)
 	}
 }

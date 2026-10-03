@@ -11,57 +11,57 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func (c *Conversation) ContextUsage() types.ContextUsageSnapshot {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.usage.snapshot
+func (conversation *Conversation) GetContextUsage() types.ContextUsageSnapshot {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	return conversation.usage.snapshot
 }
 
-func (c *Conversation) RecordModelUsage(_ context.Context, usage *model.TokenUsage) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.usage.record(usage)
+func (conversation *Conversation) RecordModelUsage(_ context.Context, modelUsage *model.TokenUsage) {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	conversation.usage.recordModelUsage(modelUsage)
 }
 
-func (c *Conversation) RunUsage() types.Usage { return c.usage.RunUsage() }
+func (conversation *Conversation) GetRunUsage() types.Usage { return conversation.usage.GetRunUsage() }
 
-func (c *Conversation) RestoreRunUsage(ctx context.Context, usage types.Usage) error {
-	return c.usage.RestoreRunUsage(ctx, usage)
+func (conversation *Conversation) RestoreRunUsage(ctx context.Context, usage types.Usage) error {
+	return conversation.usage.RestoreRunUsage(ctx, usage)
 }
 
 // SnapshotContext captures usage and its durable history boundary together.
-func (c *Conversation) SnapshotContext() types.ContextSnapshot {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return types.ContextSnapshot{HistoryCursor: c.cursor, Usage: c.usage.snapshot}
+func (conversation *Conversation) SnapshotContext() types.ContextSnapshot {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	return types.ContextSnapshot{HistoryCursor: conversation.cursor, Usage: conversation.usage.snapshot}
 }
 
 // RestoreContext never applies a provider baseline to a different history window.
-func (c *Conversation) RestoreContext(ctx context.Context, snapshot types.ContextSnapshot) error {
+func (conversation *Conversation) RestoreContext(ctx context.Context, snapshot types.ContextSnapshot) error {
 	err := validateUsageSnapshot(ctx, snapshot.Usage)
 	if err != nil {
 		return err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if snapshot.HistoryCursor < 0 || snapshot.HistoryCursor > c.cursor {
-		return fmt.Errorf("checkpoint history cursor %d exceeds durable cursor %d", snapshot.HistoryCursor, c.cursor)
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	if snapshot.HistoryCursor < 0 || snapshot.HistoryCursor > conversation.cursor {
+		return fmt.Errorf("checkpoint history cursor %d exceeds durable cursor %d", snapshot.HistoryCursor, conversation.cursor)
 	}
-	if snapshot.HistoryCursor == c.cursor {
-		c.usage.snapshot = snapshot.Usage
+	if snapshot.HistoryCursor == conversation.cursor {
+		conversation.usage.snapshot = snapshot.Usage
 	}
 	return nil
 }
 
 // RestoreUsage restores isolated child context whose history is in the checkpoint.
-func (c *Conversation) RestoreUsage(ctx context.Context, snapshot types.ContextUsageSnapshot) error {
+func (conversation *Conversation) RestoreUsage(ctx context.Context, snapshot types.ContextUsageSnapshot) error {
 	err := validateUsageSnapshot(ctx, snapshot)
 	if err != nil {
 		return err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.usage.snapshot = snapshot
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	conversation.usage.snapshot = snapshot
 	return nil
 }
 
@@ -92,13 +92,13 @@ type UsageTracker struct {
 
 // RunUsage is cumulative provider usage, independent of the context-window
 // estimate. Compaction must never reset this counter.
-func (u *UsageTracker) RunUsage() types.Usage {
-	u.runMu.Lock()
-	defer u.runMu.Unlock()
-	return u.run
+func (usageTracker *UsageTracker) GetRunUsage() types.Usage {
+	usageTracker.runMu.Lock()
+	defer usageTracker.runMu.Unlock()
+	return usageTracker.run
 }
 
-func (u *UsageTracker) RestoreRunUsage(ctx context.Context, usage types.Usage) error {
+func (usageTracker *UsageTracker) RestoreRunUsage(ctx context.Context, usage types.Usage) error {
 	err := ctx.Err()
 	if err != nil {
 		return err
@@ -106,52 +106,52 @@ func (u *UsageTracker) RestoreRunUsage(ctx context.Context, usage types.Usage) e
 	if usage.PromptTokens < 0 || usage.CompletionTokens < 0 || usage.TotalTokens < 0 {
 		return fmt.Errorf("invalid negative cumulative usage")
 	}
-	u.runMu.Lock()
-	defer u.runMu.Unlock()
-	u.run = usage
+	usageTracker.runMu.Lock()
+	defer usageTracker.runMu.Unlock()
+	usageTracker.run = usage
 	return nil
 }
 
-func (u *UsageTracker) RecordRunUsage(usage *model.TokenUsage) {
-	if usage == nil {
+func (usageTracker *UsageTracker) RecordRunUsage(modelUsage *model.TokenUsage) {
+	if modelUsage == nil {
 		return
 	}
-	u.runMu.Lock()
-	defer u.runMu.Unlock()
-	u.run.PromptTokens += int64(usage.PromptTokens)
-	u.run.CompletionTokens += int64(usage.CompletionTokens)
-	total := usage.TotalTokens
+	usageTracker.runMu.Lock()
+	defer usageTracker.runMu.Unlock()
+	usageTracker.run.PromptTokens += int64(modelUsage.PromptTokens)
+	usageTracker.run.CompletionTokens += int64(modelUsage.CompletionTokens)
+	total := modelUsage.TotalTokens
 	if total == 0 {
-		total = usage.PromptTokens + usage.CompletionTokens
+		total = modelUsage.PromptTokens + modelUsage.CompletionTokens
 	}
-	u.run.TotalTokens += int64(total)
+	usageTracker.run.TotalTokens += int64(total)
 }
 
-func (u *UsageTracker) recompute(messages []*schema.Message) {
-	window := u.snapshot.ContextWindow
-	u.snapshot = types.ContextUsageSnapshot{ContextWindow: window, Source: types.ContextUsageSourceEstimated, CurrentTotal: int64(u.counter(messages))}
+func (usageTracker *UsageTracker) recomputeContextUsage(messages []*schema.Message) {
+	contextWindow := usageTracker.snapshot.ContextWindow
+	usageTracker.snapshot = types.ContextUsageSnapshot{ContextWindow: contextWindow, Source: types.ContextUsageSourceEstimated, CurrentTotal: int64(usageTracker.counter(messages))}
 }
 
-func (u *UsageTracker) add(message *schema.Message) {
-	delta := int64(u.counter([]*schema.Message{message}))
-	if u.snapshot.Source == types.ContextUsageSourceModelUsage {
-		u.snapshot.EstimatedAfterLastModel += delta
+func (usageTracker *UsageTracker) addMessageUsage(message *schema.Message) {
+	estimatedTokens := int64(usageTracker.counter([]*schema.Message{message}))
+	if usageTracker.snapshot.Source == types.ContextUsageSourceModelUsage {
+		usageTracker.snapshot.EstimatedAfterLastModel += estimatedTokens
 	}
-	u.snapshot.CurrentTotal += delta
+	usageTracker.snapshot.CurrentTotal += estimatedTokens
 }
 
-func (u *UsageTracker) record(usage *model.TokenUsage) {
-	if usage == nil {
+func (usageTracker *UsageTracker) recordModelUsage(modelUsage *model.TokenUsage) {
+	if modelUsage == nil {
 		return
 	}
-	u.RecordRunUsage(usage)
-	u.snapshot.Source = types.ContextUsageSourceModelUsage
-	u.snapshot.LastModelPromptTokens = int64(usage.PromptTokens)
-	u.snapshot.LastModelCompletionTokens = int64(usage.CompletionTokens)
-	u.snapshot.LastModelTotal = int64(usage.TotalTokens)
-	if u.snapshot.LastModelTotal == 0 {
-		u.snapshot.LastModelTotal = int64(usage.PromptTokens + usage.CompletionTokens)
+	usageTracker.RecordRunUsage(modelUsage)
+	usageTracker.snapshot.Source = types.ContextUsageSourceModelUsage
+	usageTracker.snapshot.LastModelPromptTokens = int64(modelUsage.PromptTokens)
+	usageTracker.snapshot.LastModelCompletionTokens = int64(modelUsage.CompletionTokens)
+	usageTracker.snapshot.LastModelTotal = int64(modelUsage.TotalTokens)
+	if usageTracker.snapshot.LastModelTotal == 0 {
+		usageTracker.snapshot.LastModelTotal = int64(modelUsage.PromptTokens + modelUsage.CompletionTokens)
 	}
-	u.snapshot.EstimatedAfterLastModel = 0
-	u.snapshot.CurrentTotal = u.snapshot.LastModelTotal
+	usageTracker.snapshot.EstimatedAfterLastModel = 0
+	usageTracker.snapshot.CurrentTotal = usageTracker.snapshot.LastModelTotal
 }

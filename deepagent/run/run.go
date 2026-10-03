@@ -53,7 +53,7 @@ func (r *Run) Execute(ctx context.Context) (result *schema.Message, err error) {
 		}
 		if err == nil && r.config.RunCompleted != nil {
 			cfg := r.config.Graph
-			r.config.RunCompleted(ctx, cfg.ThreadID, r.id, cfg.Model, cfg.Conversation.History(ctx))
+			r.config.RunCompleted(ctx, cfg.ThreadID, r.id, cfg.Model, cfg.Conversation.GetHistory(ctx))
 		}
 		r.mu.Lock()
 		if r.interruptTimer != nil {

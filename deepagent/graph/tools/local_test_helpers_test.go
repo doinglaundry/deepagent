@@ -7,9 +7,9 @@ import (
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 )
 
-func mustLocalFilesystem(t *testing.T, cfg *filesystempkg.LocalFilesystemConfig) *filesystempkg.LocalFilesystem {
+func newTestLocalFilesystem(t *testing.T, config *filesystempkg.LocalFilesystemConfig) *filesystempkg.LocalFilesystem {
 	t.Helper()
-	filesystem, err := filesystempkg.NewLocalFilesystem(cfg, t.Name())
+	filesystem, err := filesystempkg.NewLocalFilesystem(config, t.Name())
 	if err != nil {
 		t.Fatal(err)
 	}

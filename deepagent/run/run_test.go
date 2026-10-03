@@ -35,8 +35,8 @@ type lifecycleResource struct {
 	after  int
 }
 
-func (m *lifecycleResource) BeforeRun(context.Context, *types.RunState) error { return nil }
-func (m *lifecycleResource) AfterRun(context.Context, *types.RunState, error) error {
+func (m *lifecycleResource) PrepareRun(context.Context, *types.RunState) error { return nil }
+func (m *lifecycleResource) FinishRun(context.Context, *types.RunState, error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.after++
@@ -119,8 +119,8 @@ type pausedAfterRun struct {
 	release chan struct{}
 }
 
-func (m *pausedAfterRun) BeforeRun(context.Context, *types.RunState) error { return nil }
-func (m *pausedAfterRun) AfterRun(context.Context, *types.RunState, error) error {
+func (m *pausedAfterRun) PrepareRun(context.Context, *types.RunState) error { return nil }
+func (m *pausedAfterRun) FinishRun(context.Context, *types.RunState, error) error {
 	close(m.entered)
 	<-m.release
 	return nil

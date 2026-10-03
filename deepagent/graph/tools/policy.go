@@ -24,14 +24,16 @@ type ApprovalResult struct {
 	DisapproveReason *string
 }
 
-func CombineMasks(a, b Mask) Mask {
-	if a == nil {
-		return b
+func CombineMasks(firstMask, secondMask Mask) Mask {
+	if firstMask == nil {
+		return secondMask
 	}
-	if b == nil {
-		return a
+	if secondMask == nil {
+		return firstMask
 	}
-	return func(ctx context.Context, info *schema.ToolInfo) bool { return a(ctx, info) && b(ctx, info) }
+	return func(ctx context.Context, toolInfo *schema.ToolInfo) bool {
+		return firstMask(ctx, toolInfo) && secondMask(ctx, toolInfo)
+	}
 }
 
 func init() {
@@ -45,8 +47,8 @@ type Policy interface {
 
 type PolicyFunc func(context.Context, types.ToolCall, ToolDescriptor) (Decision, error)
 
-func (f PolicyFunc) Decide(ctx context.Context, call types.ToolCall, descriptor ToolDescriptor) (Decision, error) {
-	return f(ctx, call, descriptor)
+func (policyFunc PolicyFunc) Decide(ctx context.Context, toolCall types.ToolCall, toolDescriptor ToolDescriptor) (Decision, error) {
+	return policyFunc(ctx, toolCall, toolDescriptor)
 }
 
 type Action string

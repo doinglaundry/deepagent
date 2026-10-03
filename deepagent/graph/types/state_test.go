@@ -11,12 +11,12 @@ type stateFixture struct {
 	restoreErr error
 }
 
-func (s *stateFixture) MarshalRuntimeState() string { return s.value }
-func (s *stateFixture) UnmarshalRuntimeState(data string) error {
-	if s.restoreErr != nil {
-		return s.restoreErr
+func (stateFixture *stateFixture) MarshalRuntimeState() string { return stateFixture.value }
+func (stateFixture *stateFixture) UnmarshalRuntimeState(data string) error {
+	if stateFixture.restoreErr != nil {
+		return stateFixture.restoreErr
 	}
-	s.value = data
+	stateFixture.value = data
 	return nil
 }
 
@@ -60,7 +60,7 @@ func TestGraphStateExtensionPersistenceBoundary(t *testing.T) {
 
 func TestGraphStateExtensionRestoreErrors(t *testing.T) {
 	failure := errors.New("restore failed")
-	for _, tc := range []struct {
+	for _, testCase := range []struct {
 		name       string
 		raw        json.RawMessage
 		restoreErr error
@@ -71,20 +71,20 @@ func TestGraphStateExtensionRestoreErrors(t *testing.T) {
 		{name: "invalid value", raw: json.RawMessage(`17`), wantError: true},
 		{name: "component rejects state", raw: json.RawMessage(`"new"`), restoreErr: failure, wantError: true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			registry := NewGraphState()
-			value := &stateFixture{value: "original", restoreErr: tc.restoreErr}
-			registry.RegisterStateful("saved", value)
+		t.Run(testCase.name, func(t *testing.T) {
+			graphState := NewGraphState()
+			stateFixture := &stateFixture{value: "original", restoreErr: testCase.restoreErr}
+			graphState.RegisterStateful("saved", stateFixture)
 			snapshot := &RunState{Extensions: map[string]json.RawMessage{"middleware:unknown": json.RawMessage(`"ignored"`)}}
-			if tc.raw != nil {
-				snapshot.Extensions["middleware:saved"] = tc.raw
+			if testCase.raw != nil {
+				snapshot.Extensions["middleware:saved"] = testCase.raw
 			}
-			err := registry.RestoreExtensions(snapshot)
-			if (err != nil) != tc.wantError {
-				t.Fatalf("error=%v want=%v", err, tc.wantError)
+			err := graphState.RestoreExtensions(snapshot)
+			if (err != nil) != testCase.wantError {
+				t.Fatalf("error=%v want=%v", err, testCase.wantError)
 			}
-			if value.value != "original" {
-				t.Fatalf("value mutated: %q", value.value)
+			if stateFixture.value != "original" {
+				t.Fatalf("value mutated: %q", stateFixture.value)
 			}
 		})
 	}

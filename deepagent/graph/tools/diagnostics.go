@@ -19,77 +19,77 @@ type readLintsArgs struct {
 }
 
 type readLintsTool struct {
-	workspace filesystempkg.Filesystem
-	commands  filesystempkg.CommandService
+	filesystem     filesystempkg.Filesystem
+	commandService filesystempkg.CommandService
 }
 
-func NewReadLintsTool(workspace filesystempkg.Filesystem, commands filesystempkg.CommandService) (ToolDescriptor, error) {
-	if workspace == nil || commands == nil {
+func NewReadLintsTool(filesystem filesystempkg.Filesystem, commandService filesystempkg.CommandService) (ToolDescriptor, error) {
+	if filesystem == nil || commandService == nil {
 		return ToolDescriptor{}, fmt.Errorf("workspace and command service are required")
 	}
 	// Go diagnostics execute project tests and require approval, like commands.
-	return ToolDescriptor{Tool: &readLintsTool{workspace: workspace, commands: commands}, RequiresApproval: true}, nil
+	return ToolDescriptor{Tool: &readLintsTool{filesystem: filesystem, commandService: commandService}, RequiresApproval: true}, nil
 }
 
 func (*readLintsTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfo("read_lints", "Run Go diagnostics for workspace packages.", map[string]*schema.ParameterInfo{"paths": {Type: schema.Array, ElemInfo: &schema.ParameterInfo{Type: schema.String}}})
+	return newToolInfo("read_lints", "Run Go diagnostics for workspace packages.", map[string]*schema.ParameterInfo{"paths": {Type: schema.Array, ElemInfo: &schema.ParameterInfo{Type: schema.String}}})
 }
 
-func (t *readLintsTool) InvokableRun(ctx context.Context, raw string, _ ...tool.Option) (string, error) {
-	var input readLintsArgs
-	err := json.Unmarshal([]byte(raw), &input)
+func (readLintsTool *readLintsTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	var lintArgs readLintsArgs
+	err := json.Unmarshal([]byte(arguments), &lintArgs)
 	if err != nil {
 		return "", err
 	}
-	args := []string{}
-	if len(input.Paths) == 0 {
-		args = append(args, "./...")
+	packagePatterns := []string{}
+	if len(lintArgs.Paths) == 0 {
+		packagePatterns = append(packagePatterns, "./...")
 	}
-	seen := map[string]bool{}
-	for _, path := range input.Paths {
-		resolved, err := t.workspace.Resolve(ctx, path, false)
+	seenPackages := map[string]bool{}
+	for _, path := range lintArgs.Paths {
+		resolvedPath, err := readLintsTool.filesystem.Resolve(ctx, path, false)
 		if err != nil {
 			return "", err
 		}
-		_, listErr := t.workspace.List(ctx, path)
+		_, listErr := readLintsTool.filesystem.List(ctx, path)
 		if listErr != nil {
-			if filepath.Ext(resolved) != ".go" {
+			if filepath.Ext(resolvedPath) != ".go" {
 				continue
 			}
-			resolved = filepath.Dir(resolved)
+			resolvedPath = filepath.Dir(resolvedPath)
 		}
-		relative, err := filepath.Rel(t.workspace.Root(), resolved)
-		if err != nil || !filepath.IsLocal(relative) {
+		relativePath, err := filepath.Rel(readLintsTool.filesystem.GetRoot(), resolvedPath)
+		if err != nil || !filepath.IsLocal(relativePath) {
 			return "", fmt.Errorf("diagnostic path outside workspace")
 		}
-		pkg := "./..."
-		if relative != "." {
-			pkg = "./" + filepath.ToSlash(relative) + "/..."
+		packagePattern := "./..."
+		if relativePath != "." {
+			packagePattern = "./" + filepath.ToSlash(relativePath) + "/..."
 		}
-		if !seen[pkg] {
-			seen[pkg] = true
-			args = append(args, pkg)
+		if !seenPackages[packagePattern] {
+			seenPackages[packagePattern] = true
+			packagePatterns = append(packagePatterns, packagePattern)
 		}
 	}
-	if len(args) == 0 {
+	if len(packagePatterns) == 0 {
 		return "No diagnostics provider for the selected paths", nil
 	}
 	command := "go test"
-	for _, arg := range args {
-		command += " '" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
+	for _, packageArgument := range packagePatterns {
+		command += " '" + strings.ReplaceAll(packageArgument, "'", "'\"'\"'") + "'"
 	}
-	result, err := t.commands.Execute(ctx, filesystempkg.CommandRequest{Command: command, Timeout: 2 * time.Minute, MaxOutputBytes: 64 << 10})
+	commandResult, err := readLintsTool.commandService.Execute(ctx, filesystempkg.CommandRequest{Command: command, Timeout: 2 * time.Minute, MaxOutputBytes: 64 << 10})
 	if err != nil {
 		return "", err
 	}
-	if result == nil {
+	if commandResult == nil {
 		return "", fmt.Errorf("diagnostics command returned no result")
 	}
-	if result.TimedOut {
-		return "", fmt.Errorf("diagnostics timed out: %s", result.Output)
+	if commandResult.TimedOut {
+		return "", fmt.Errorf("diagnostics timed out: %s", commandResult.Output)
 	}
-	if result.ExitCode != 0 {
-		return strings.TrimSpace(result.Output), nil
+	if commandResult.ExitCode != 0 {
+		return strings.TrimSpace(commandResult.Output), nil
 	}
 	return "No diagnostics", nil
 }

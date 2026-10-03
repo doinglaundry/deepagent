@@ -17,23 +17,23 @@ import (
 	"github.com/google/uuid"
 )
 
-func (p *memoryService) key(scope, suffix string) string {
+func (memoryService *memoryService) buildMemoryKey(scope, suffix string) string {
 	return scope + "/" + suffix
 }
 
 // Independent renewable leases protect long-term jobs; a lost lease cancels model work
 // and CompleteMemory fences every artifact/baseline mutation against the live token.
-func (p *memoryService) job(ctx context.Context, key string, work func(context.Context, memorypkg.Lease) error) error {
-	lease, e := p.c.Store.ClaimMemory(ctx, key, uuid.NewString(), p.c.LeaseTTL)
-	if e != nil {
-		return e
+func (memoryService *memoryService) runLeasedJob(ctx context.Context, key string, work func(context.Context, memorypkg.Lease) error) error {
+	lease, operationErr := memoryService.c.Store.ClaimMemory(ctx, key, uuid.NewString(), memoryService.c.LeaseTTL)
+	if operationErr != nil {
+		return operationErr
 	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	done := make(chan struct{})
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		ticker := time.NewTicker(p.c.LeaseTTL / 3)
+		ticker := time.NewTicker(memoryService.c.LeaseTTL / 3)
 		defer ticker.Stop()
 		for {
 			select {
@@ -42,9 +42,9 @@ func (p *memoryService) job(ctx context.Context, key string, work func(context.C
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				_, e := p.c.Store.RenewMemory(ctx, lease, p.c.LeaseTTL)
-				if e != nil {
-					cancel(e)
+				_, operationErr := memoryService.c.Store.RenewMemory(ctx, lease, memoryService.c.LeaseTTL)
+				if operationErr != nil {
+					cancel(operationErr)
 					return
 				}
 			}
@@ -54,112 +54,115 @@ func (p *memoryService) job(ctx context.Context, key string, work func(context.C
 		close(done)
 		cancel(nil)
 		<-stopped
-		releaseCtx, cc := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cc()
-		_ = p.c.Store.ReleaseMemory(releaseCtx, lease)
+		releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelRelease()
+		_ = memoryService.c.Store.ReleaseMemory(releaseCtx, lease)
 	}()
 	err := work(ctx, lease)
 	return errors.Join(err, context.Cause(ctx))
 }
 
-func (p *memoryService) sharedState(ctx context.Context, scope string) (consolidated, error) {
-	s := consolidated{Baselines: map[string]string{}}
-	a, e := p.c.Store.GetMemory(ctx, p.key(scope, "consolidation"))
-	if errors.Is(e, memorypkg.ErrNotFound) {
-		return s, nil
+func (memoryService *memoryService) readSharedState(ctx context.Context, scope string) (consolidated, error) {
+	memoryState := consolidated{Baselines: map[string]string{}}
+	artifact, operationErr := memoryService.c.Store.GetMemory(ctx, memoryService.buildMemoryKey(scope, "consolidation"))
+	if errors.Is(operationErr, memorypkg.ErrNotFound) {
+		return memoryState, nil
 	}
-	if e != nil {
-		return s, e
+	if operationErr != nil {
+		return memoryState, operationErr
 	}
-	if len(a.Data) > 0 {
-		e = json.Unmarshal(a.Data, &s)
+	if len(artifact.Data) > 0 {
+		operationErr = json.Unmarshal(artifact.Data, &memoryState)
 	}
-	return s, e
+	return memoryState, operationErr
 }
 
-func hash(b []byte) string { v := sha256.Sum256(b); return hex.EncodeToString(v[:]) }
-
-func (p *memoryService) scopeRoot(scope string) string {
-	return filepath.Join(p.c.Root, hash([]byte(scope)))
+func hashBytes(data []byte) string {
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
 }
 
-func (p *memoryService) state(scope string) (consolidated, error) {
+func (memoryService *memoryService) buildScopeRoot(scope string) string {
+	return filepath.Join(memoryService.c.Root, hashBytes([]byte(scope)))
+}
+
+func (memoryService *memoryService) readLocalState(scope string) (consolidated, error) {
 	state := consolidated{Baselines: map[string]string{}}
-	err := readJSON(filepath.Join(p.scopeRoot(scope), "memory.json"), &state)
+	err := readJSON(filepath.Join(memoryService.buildScopeRoot(scope), "memory.json"), &state)
 	if errors.Is(err, os.ErrNotExist) {
 		err = nil
 	}
 	return state, err
 }
 
-func readJSON(path string, v any) error {
-	b, e := os.ReadFile(path)
-	if e != nil {
-		return e
+func readJSON(path string, value any) error {
+	encodedJSON, operationErr := os.ReadFile(path)
+	if operationErr != nil {
+		return operationErr
 	}
-	e = json.Unmarshal(b, v)
-	if e != nil {
-		return fmt.Errorf("read %s: %w", path, e)
+	operationErr = json.Unmarshal(encodedJSON, value)
+	if operationErr != nil {
+		return fmt.Errorf("read %s: %w", path, operationErr)
 	}
 	return nil
 }
 
-func atomicJSON(path string, v any) error {
-	b, e := json.MarshalIndent(v, "", "  ")
-	if e != nil {
-		return e
+func writeAtomicJSON(path string, value any) error {
+	encodedJSON, operationErr := json.MarshalIndent(value, "", "  ")
+	if operationErr != nil {
+		return operationErr
 	}
-	f, e := os.CreateTemp(filepath.Dir(path), ".memory-*")
-	if e != nil {
-		return e
+	temporaryFile, operationErr := os.CreateTemp(filepath.Dir(path), ".memory-*")
+	if operationErr != nil {
+		return operationErr
 	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	_, e = f.Write(b)
-	if e != nil {
-		f.Close()
-		return e
+	temporaryPath := temporaryFile.Name()
+	defer os.Remove(temporaryPath)
+	_, operationErr = temporaryFile.Write(encodedJSON)
+	if operationErr != nil {
+		temporaryFile.Close()
+		return operationErr
 	}
-	e = f.Sync()
-	if e != nil {
-		f.Close()
-		return e
+	operationErr = temporaryFile.Sync()
+	if operationErr != nil {
+		temporaryFile.Close()
+		return operationErr
 	}
-	e = f.Close()
-	if e != nil {
-		return e
+	operationErr = temporaryFile.Close()
+	if operationErr != nil {
+		return operationErr
 	}
-	e = os.Rename(tmp, path)
-	if e != nil {
-		return e
+	operationErr = os.Rename(temporaryPath, path)
+	if operationErr != nil {
+		return operationErr
 	}
-	d, e := os.Open(filepath.Dir(path))
-	if e != nil {
-		return e
+	directory, operationErr := os.Open(filepath.Dir(path))
+	if operationErr != nil {
+		return operationErr
 	}
-	defer d.Close()
-	return d.Sync()
+	defer directory.Close()
+	return directory.Sync()
 }
 
-func lock(ctx context.Context, path string) (func(), error) {
-	f, e := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
-	if e != nil {
-		return nil, e
+func acquireFileLock(ctx context.Context, path string) (func(), error) {
+	lockFile, operationErr := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if operationErr != nil {
+		return nil, operationErr
 	}
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if e == nil {
-			return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+		operationErr = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if operationErr == nil {
+			return func() { _ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); _ = lockFile.Close() }, nil
 		}
-		if !errors.Is(e, syscall.EWOULDBLOCK) && !errors.Is(e, syscall.EAGAIN) {
-			f.Close()
-			return nil, e
+		if !errors.Is(operationErr, syscall.EWOULDBLOCK) && !errors.Is(operationErr, syscall.EAGAIN) {
+			lockFile.Close()
+			return nil, operationErr
 		}
 		select {
 		case <-ctx.Done():
-			f.Close()
+			lockFile.Close()
 			return nil, ctx.Err()
 		case <-ticker.C:
 		}

@@ -14,10 +14,10 @@ import (
 // toolExecution owns one attempt and its durable call state.
 // A resumed blocked call gets a new execution record so previous waiters keep their result.
 type toolExecution struct {
-	state  types.ToolCallState
-	done   chan struct{}
-	cancel context.CancelFunc
-	err    error
+	toolCallState types.ToolCallState
+	done          chan struct{}
+	cancel        context.CancelFunc
+	err           error
 }
 
 type toolExecutor struct {
@@ -26,7 +26,7 @@ type toolExecutor struct {
 	onToolStart                    func(context.Context, types.ToolCallState) error
 	persistToolExecutionFence      func(context.Context, types.ToolCall) error
 	eagerToolWaitGroup             sync.WaitGroup
-	toolset                        *tools.ToolSet
+	toolSet                        *tools.ToolSet
 	maxParallelTools               int
 	toolPolicy                     tools.Policy
 	toolExecutionsByCallID         map[string]*toolExecution
@@ -40,218 +40,218 @@ func newToolExecutor(toolSet *tools.ToolSet, maxParallelTools int, toolPolicy to
 		maxParallelTools = 1
 	}
 	return &toolExecutor{
-		toolset: toolSet, maxParallelTools: maxParallelTools, toolPolicy: toolPolicy,
+		toolSet: toolSet, maxParallelTools: maxParallelTools, toolPolicy: toolPolicy,
 		toolExecutionsByCallID:         make(map[string]*toolExecution),
 		approvedEagerArgumentsByCallID: make(map[string]string),
 	}
 }
 
-func (e *toolExecutor) execute(ctx context.Context, call types.ToolCall, emit types.ToolChunkSink) (*types.ToolResult, error) {
-	if call.ID == "" {
+func (toolExecutor *toolExecutor) executeToolCall(ctx context.Context, toolCall types.ToolCall, emitToolChunk types.ToolChunkSink) (*types.ToolResult, error) {
+	if toolCall.ID == "" {
 		return nil, fmt.Errorf("tool call ID is required")
 	}
-	callID := call.ID
-	e.mu.Lock()
-	execution := e.toolExecutionsByCallID[callID]
-	if execution != nil {
-		original := execution.state.Call
-		if original.Name != call.Name || original.Arguments != call.Arguments {
-			e.mu.Unlock()
-			return nil, fmt.Errorf("tool call %s changed after execution started", call.ID)
+	callID := toolCall.ID
+	toolExecutor.mu.Lock()
+	toolExecutionRecord := toolExecutor.toolExecutionsByCallID[callID]
+	if toolExecutionRecord != nil {
+		originalToolCall := toolExecutionRecord.toolCallState.Call
+		if originalToolCall.Name != toolCall.Name || originalToolCall.Arguments != toolCall.Arguments {
+			toolExecutor.mu.Unlock()
+			return nil, fmt.Errorf("tool call %s changed after execution started", toolCall.ID)
 		}
-		switch execution.state.Status {
+		switch toolExecutionRecord.toolCallState.Status {
 		case types.CallCompleted:
-			result := copyToolResult(execution.state.Result)
-			e.mu.Unlock()
-			return result, nil
+			toolResult := copyToolResult(toolExecutionRecord.toolCallState.Result)
+			toolExecutor.mu.Unlock()
+			return toolResult, nil
 		case types.CallRunning:
-			e.mu.Unlock()
+			toolExecutor.mu.Unlock()
 			select {
-			case <-execution.done:
-				return copyToolResult(execution.state.Result), execution.err
+			case <-toolExecutionRecord.done:
+				return copyToolResult(toolExecutionRecord.toolCallState.Result), toolExecutionRecord.err
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
 		}
 	}
-	if e.isClosed {
-		e.mu.Unlock()
+	if toolExecutor.isClosed {
+		toolExecutor.mu.Unlock()
 		return nil, context.Canceled
 	}
-	if execution != nil && execution.state.Status == types.CallOutcomeUnknown {
-		e.mu.Unlock()
-		return nil, fmt.Errorf("tool call %s has unknown outcome; explicit reconciliation required", call.ID)
+	if toolExecutionRecord != nil && toolExecutionRecord.toolCallState.Status == types.CallOutcomeUnknown {
+		toolExecutor.mu.Unlock()
+		return nil, fmt.Errorf("tool call %s has unknown outcome; explicit reconciliation required", toolCall.ID)
 	}
-	runCtx, cancel := context.WithCancel(ctx)
-	state := types.ToolCallState{Call: call, Status: types.CallRunning, StartedAt: time.Now()}
-	execution = &toolExecution{state: state, done: make(chan struct{}), cancel: cancel}
-	e.toolExecutionsByCallID[callID] = execution
-	e.mu.Unlock()
+	toolCtx, cancel := context.WithCancel(ctx)
+	toolCallState := types.ToolCallState{Call: toolCall, Status: types.CallRunning, StartedAt: time.Now()}
+	toolExecutionRecord = &toolExecution{toolCallState: toolCallState, done: make(chan struct{}), cancel: cancel}
+	toolExecutor.toolExecutionsByCallID[callID] = toolExecutionRecord
+	toolExecutor.mu.Unlock()
 
-	result, err := e.invokeTool(runCtx, state, emit)
+	toolResult, err := toolExecutor.invokeTool(toolCtx, toolCallState, emitToolChunk)
 	cancel()
-	e.mu.Lock()
-	execution.state.Result = copyToolResult(result)
-	execution.err = err
-	execution.state.Status = types.CallCompleted
+	toolExecutor.mu.Lock()
+	toolExecutionRecord.toolCallState.Result = copyToolResult(toolResult)
+	toolExecutionRecord.err = err
+	toolExecutionRecord.toolCallState.Status = types.CallCompleted
 	if err != nil {
-		_, interrupt := compose.IsInterruptRerunError(err)
-		_, nested := compose.ExtractInterruptInfo(err)
-		execution.state.Status = types.CallOutcomeUnknown
-		if interrupt || nested {
-			execution.state.Status = types.CallBlocked
+		_, isToolInterrupted := compose.IsInterruptRerunError(err)
+		_, hasNestedInterrupt := compose.ExtractInterruptInfo(err)
+		toolExecutionRecord.toolCallState.Status = types.CallOutcomeUnknown
+		if isToolInterrupted || hasNestedInterrupt {
+			toolExecutionRecord.toolCallState.Status = types.CallBlocked
 		}
 	}
-	close(execution.done)
-	e.mu.Unlock()
-	return result, err
+	close(toolExecutionRecord.done)
+	toolExecutor.mu.Unlock()
+	return toolResult, err
 }
 
-func copyToolResult(result *types.ToolResult) *types.ToolResult {
-	if result == nil {
+func copyToolResult(toolResult *types.ToolResult) *types.ToolResult {
+	if toolResult == nil {
 		return nil
 	}
-	copy := *result
-	return &copy
+	resultCopy := *toolResult
+	return &resultCopy
 }
 
-func (e *toolExecutor) executeBatch(ctx context.Context, toolCalls []types.ToolCall, emit types.ToolChunkSink) error {
-	ordered := append([]types.ToolCall(nil), toolCalls...)
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Index < ordered[j].Index })
-	errs := make([]error, len(ordered))
-	execute := func(i int) {
-		_, err := e.execute(ctx, ordered[i], emit)
-		errs[i] = err
+func (toolExecutor *toolExecutor) executeToolBatch(ctx context.Context, toolCalls []types.ToolCall, emitToolChunk types.ToolChunkSink) error {
+	orderedToolCalls := append([]types.ToolCall(nil), toolCalls...)
+	sort.SliceStable(orderedToolCalls, func(i, j int) bool { return orderedToolCalls[i].Index < orderedToolCalls[j].Index })
+	executionErrors := make([]error, len(orderedToolCalls))
+	executeCall := func(i int) {
+		_, err := toolExecutor.executeToolCall(ctx, orderedToolCalls[i], emitToolChunk)
+		executionErrors[i] = err
 	}
-	for start := 0; start < len(ordered); {
-		toolDescriptor, _ := e.toolset.Lookup(ordered[start].Name)
+	for batchStart := 0; batchStart < len(orderedToolCalls); {
+		toolDescriptor, _ := toolExecutor.toolSet.GetToolDescriptor(orderedToolCalls[batchStart].Name)
 		if !toolDescriptor.ParallelSafe || toolDescriptor.RequiresApproval {
-			execute(start)
-			if errs[start] != nil {
-				return errs[start]
+			executeCall(batchStart)
+			if executionErrors[batchStart] != nil {
+				return executionErrors[batchStart]
 			}
-			start++
+			batchStart++
 			continue
 		}
-		end := start
-		for end < len(ordered) {
-			toolDescriptor, _ := e.toolset.Lookup(ordered[end].Name)
+		batchEnd := batchStart
+		for batchEnd < len(orderedToolCalls) {
+			toolDescriptor, _ := toolExecutor.toolSet.GetToolDescriptor(orderedToolCalls[batchEnd].Name)
 			if !toolDescriptor.ParallelSafe || toolDescriptor.RequiresApproval {
 				break
 			}
-			end++
+			batchEnd++
 		}
-		var wg sync.WaitGroup
-		semaphore := make(chan struct{}, e.maxParallelTools)
-		for i := start; i < end; i++ {
+		var toolWaitGroup sync.WaitGroup
+		semaphore := make(chan struct{}, toolExecutor.maxParallelTools)
+		for i := batchStart; i < batchEnd; i++ {
 			semaphore <- struct{}{}
-			wg.Add(1)
-			go func(index int) { defer wg.Done(); defer func() { <-semaphore }(); execute(index) }(i)
+			toolWaitGroup.Add(1)
+			go func(index int) { defer toolWaitGroup.Done(); defer func() { <-semaphore }(); executeCall(index) }(i)
 		}
-		wg.Wait()
-		var interrupts []error
-		for i := start; i < end; i++ {
-			if errs[i] == nil {
+		toolWaitGroup.Wait()
+		var interruptErrors []error
+		for i := batchStart; i < batchEnd; i++ {
+			if executionErrors[i] == nil {
 				continue
 			}
-			_, rerun := compose.IsInterruptRerunError(errs[i])
-			_, interrupted := compose.ExtractInterruptInfo(errs[i])
+			_, rerun := compose.IsInterruptRerunError(executionErrors[i])
+			_, interrupted := compose.ExtractInterruptInfo(executionErrors[i])
 			if !rerun && !interrupted {
-				return errs[i]
+				return executionErrors[i]
 			}
-			interrupts = append(interrupts, errs[i])
+			interruptErrors = append(interruptErrors, executionErrors[i])
 		}
-		if len(interrupts) > 0 {
-			return compose.CompositeInterrupt(ctx, nil, nil, interrupts...)
+		if len(interruptErrors) > 0 {
+			return compose.CompositeInterrupt(ctx, nil, nil, interruptErrors...)
 		}
-		start = end
+		batchStart = batchEnd
 	}
 	return nil
 }
 
-func (e *toolExecutor) restore(toolCalls []types.ToolCallState) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	for _, state := range toolCalls {
-		state.Result = copyToolResult(state.Result)
-		switch state.Status {
+func (toolExecutor *toolExecutor) restoreToolExecutions(toolCalls []types.ToolCallState) {
+	toolExecutor.mu.Lock()
+	defer toolExecutor.mu.Unlock()
+	for _, toolCallState := range toolCalls {
+		toolCallState.Result = copyToolResult(toolCallState.Result)
+		switch toolCallState.Status {
 		case types.CallRunning:
 			// The process that owned this invocation is gone; do not replay it.
-			state.Status = types.CallOutcomeUnknown
+			toolCallState.Status = types.CallOutcomeUnknown
 		case types.CallCompleted:
-			if state.Result == nil {
-				state.Status = types.CallPending
+			if toolCallState.Result == nil {
+				toolCallState.Status = types.CallPending
 			}
 		}
-		e.toolExecutionsByCallID[state.Call.ID] = &toolExecution{state: state}
+		toolExecutor.toolExecutionsByCallID[toolCallState.Call.ID] = &toolExecution{toolCallState: toolCallState}
 	}
 }
 
-func (e *toolExecutor) cancel(ctx context.Context) error {
-	e.mu.Lock()
-	e.isClosed = true
-	var active []*toolExecution
-	for _, toolExecutionRecord := range e.toolExecutionsByCallID {
-		if toolExecutionRecord.state.Status == types.CallRunning {
+func (toolExecutor *toolExecutor) cancelToolExecutions(ctx context.Context) error {
+	toolExecutor.mu.Lock()
+	toolExecutor.isClosed = true
+	var activeToolExecutions []*toolExecution
+	for _, toolExecutionRecord := range toolExecutor.toolExecutionsByCallID {
+		if toolExecutionRecord.toolCallState.Status == types.CallRunning {
 			toolExecutionRecord.cancel()
-			active = append(active, toolExecutionRecord)
+			activeToolExecutions = append(activeToolExecutions, toolExecutionRecord)
 		}
 	}
-	e.mu.Unlock()
-	for _, toolExecutionRecord := range active {
+	toolExecutor.mu.Unlock()
+	for _, toolExecutionRecord := range activeToolExecutions {
 		select {
 		case <-toolExecutionRecord.done:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	e.eagerToolWaitGroup.Wait()
+	toolExecutor.eagerToolWaitGroup.Wait()
 	return nil
 }
 
-// snapshot copies the ledger into the existing graph call order.
-func (e *toolExecutor) snapshot(toolCalls []types.ToolCallState) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+// snapshotToolExecutions copies the ledger into the existing graph call order.
+func (toolExecutor *toolExecutor) snapshotToolExecutions(toolCalls []types.ToolCallState) {
+	toolExecutor.mu.Lock()
+	defer toolExecutor.mu.Unlock()
 	for i := range toolCalls {
-		execution := e.toolExecutionsByCallID[toolCalls[i].Call.ID]
-		if execution == nil {
+		toolExecutionRecord := toolExecutor.toolExecutionsByCallID[toolCalls[i].Call.ID]
+		if toolExecutionRecord == nil {
 			toolCalls[i].Status = types.CallPending
 			continue
 		}
-		toolCalls[i].Status = execution.state.Status
-		toolCalls[i].StartedAt = execution.state.StartedAt
-		toolCalls[i].Result = copyToolResult(execution.state.Result)
+		toolCalls[i].Status = toolExecutionRecord.toolCallState.Status
+		toolCalls[i].StartedAt = toolExecutionRecord.toolCallState.StartedAt
+		toolCalls[i].Result = copyToolResult(toolExecutionRecord.toolCallState.Result)
 	}
 }
 
-func (e *toolExecutor) startEagerIfAllowed(ctx context.Context, call types.ToolCall, emit types.ToolChunkSink) (bool, error) {
-	toolDescriptor, ok := e.toolset.Lookup(call.Name)
+func (toolExecutor *toolExecutor) startEagerToolIfAllowed(ctx context.Context, toolCall types.ToolCall, emitToolChunk types.ToolChunkSink) (bool, error) {
+	toolDescriptor, ok := toolExecutor.toolSet.GetToolDescriptor(toolCall.Name)
 	if !ok || !toolDescriptor.ParallelSafe || toolDescriptor.RequiresApproval {
 		return false, nil
 	}
-	if e.toolPolicy != nil {
-		decision, err := e.toolPolicy.Decide(ctx, call, toolDescriptor)
+	if toolExecutor.toolPolicy != nil {
+		policyDecision, err := toolExecutor.toolPolicy.Decide(ctx, toolCall, toolDescriptor)
 		if err != nil {
 			return false, err
 		}
-		if decision.Action != tools.Allow {
+		if policyDecision.Action != tools.Allow {
 			return false, nil
 		}
-		e.mu.Lock()
-		e.approvedEagerArgumentsByCallID[call.ID] = call.Arguments
-		e.mu.Unlock()
+		toolExecutor.mu.Lock()
+		toolExecutor.approvedEagerArgumentsByCallID[toolCall.ID] = toolCall.Arguments
+		toolExecutor.mu.Unlock()
 	}
-	e.mu.Lock()
-	if e.isClosed {
-		e.mu.Unlock()
+	toolExecutor.mu.Lock()
+	if toolExecutor.isClosed {
+		toolExecutor.mu.Unlock()
 		return false, nil
 	}
-	e.eagerToolWaitGroup.Add(1)
-	e.mu.Unlock()
+	toolExecutor.eagerToolWaitGroup.Add(1)
+	toolExecutor.mu.Unlock()
 	go func() {
-		defer e.eagerToolWaitGroup.Done()
-		_, _ = e.execute(ctx, call, emit)
+		defer toolExecutor.eagerToolWaitGroup.Done()
+		_, _ = toolExecutor.executeToolCall(ctx, toolCall, emitToolChunk)
 	}()
 	return true, nil
 }

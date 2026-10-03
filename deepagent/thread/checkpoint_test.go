@@ -154,7 +154,7 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			if fail {
 				store.failure = failure
 			}
-			cfg := &runpkg.Config{Graph: execution.Config{Model: &resumeModel{}, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{tools.GetFollowUpTool()}}}
+			cfg := &runpkg.Config{Graph: execution.Config{Model: &resumeModel{}, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{tools.NewFollowUpTool()}}}
 			history := &historyMemory{}
 			events := make(chan runpkg.Event, 64)
 			first := newTestThread("thread", cfg, events, ThreadOptions{HistoryStore: history})
@@ -280,7 +280,7 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			}
 			history := &pendingHistoryStore{}
 			m := &pendingQuestionModel{started: make(chan struct{}), release: make(chan struct{})}
-			cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{tools.GetFollowUpTool()}}}
+			cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{tools.NewFollowUpTool()}}}
 			events := make(chan runpkg.Event, 64)
 			first := newTestThread("thread", cfg, events, ThreadOptions{HistoryStore: history})
 			firstInitHistoryErr := first.InitHistory(ctx)
@@ -334,7 +334,7 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 				if !errors.Is(err, expected) || question.InterruptID != "" {
 					t.Fatalf("failed save published blocked: err=%v question=%+v", err, question)
 				}
-				got := first.ContextManager().History(ctx)
+				got := first.ContextManager().GetHistory(ctx)
 				if len(got) != 3 || got[2].Content != "pending question" {
 					t.Fatalf("failed checkpoint lost accepted input: %v", got)
 				}
@@ -343,7 +343,7 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			if err != nil || question.InterruptID == "" {
 				t.Fatalf("missing block: err=%v question=%+v", err, question)
 			}
-			if len(first.ContextManager().History(ctx)) != 2 {
+			if len(first.ContextManager().GetHistory(ctx)) != 2 {
 				t.Fatal("pending input inserted before tool completion")
 			}
 			restored := newTestThread("thread", cfg, make(chan runpkg.Event, 64), ThreadOptions{HistoryStore: history})
@@ -429,7 +429,7 @@ func TestThread_CancelPersistsAcceptedPendingBeforeFinalEventAndWait(t *testing.
 			if !errors.Is(err, context.Canceled) || (fail && !errors.Is(err, failure)) {
 				t.Fatalf("lost failure cause: %v", err)
 			}
-			history := thread.ContextManager().History(ctx)
+			history := thread.ContextManager().GetHistory(ctx)
 			want := 2
 			if fail {
 				want = 1

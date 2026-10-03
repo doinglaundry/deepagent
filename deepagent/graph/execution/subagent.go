@@ -19,37 +19,37 @@ import (
 
 // LoadSubAgents reads dir/name/SUBAGENT.yaml in deterministic name order.
 func LoadSubAgents(ctx context.Context, dir string) ([]*SubAgent, error) {
-	ctxErrErr := ctx.Err()
-	if ctxErrErr != nil {
-		return nil, ctxErrErr
+	contextErr := ctx.Err()
+	if contextErr != nil {
+		return nil, contextErr
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer root.Close()
-	entries, err := fs.ReadDir(root.FS(), ".")
+	directoryEntries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return nil, err
 	}
-	var result []*SubAgent
-	for _, entry := range entries {
-		contextErr := ctx.Err()
-		if contextErr != nil {
-			return nil, contextErr
+	var subAgents []*SubAgent
+	for _, directoryEntry := range directoryEntries {
+		iterationContextErr := ctx.Err()
+		if iterationContextErr != nil {
+			return nil, iterationContextErr
 		}
-		if !entry.IsDir() {
+		if !directoryEntry.IsDir() {
 			continue
 		}
-		path := filepath.Join(entry.Name(), "SUBAGENT.yaml")
-		file, err := root.Open(path)
+		configPath := filepath.Join(directoryEntry.Name(), "SUBAGENT.yaml")
+		file, err := root.Open(configPath)
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("subagent %s: %w", path, err)
+			return nil, fmt.Errorf("subagent %s: %w", configPath, err)
 		}
-		data, readErr := io.ReadAll(io.LimitReader(file, 64*1024+1))
+		configBytes, readErr := io.ReadAll(io.LimitReader(file, 64*1024+1))
 		closeErr := file.Close()
 		if readErr != nil {
 			return nil, readErr
@@ -57,10 +57,10 @@ func LoadSubAgents(ctx context.Context, dir string) ([]*SubAgent, error) {
 		if closeErr != nil {
 			return nil, closeErr
 		}
-		if len(data) > 64*1024 {
-			return nil, fmt.Errorf("subagent %s exceeds 64 KiB", path)
+		if len(configBytes) > 64*1024 {
+			return nil, fmt.Errorf("subagent %s exceeds 64 KiB", configPath)
 		}
-		var spec struct {
+		var subAgentConfig struct {
 			Name             string   `yaml:"name"`
 			SystemPrompt     string   `yaml:"system_prompt"`
 			MaxSteps         int      `yaml:"max_steps"`
@@ -69,37 +69,37 @@ func LoadSubAgents(ctx context.Context, dir string) ([]*SubAgent, error) {
 			ReadOnly         bool     `yaml:"read_only"`
 			Tools            []string `yaml:"tools"`
 		}
-		decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+		decoder := yaml.NewDecoder(strings.NewReader(string(configBytes)))
 		decoder.KnownFields(true)
-		decoderDecodeErr := decoder.Decode(&spec)
-		if decoderDecodeErr != nil {
-			return nil, fmt.Errorf("subagent %s: %w", path, decoderDecodeErr)
+		configDecodeErr := decoder.Decode(&subAgentConfig)
+		if configDecodeErr != nil {
+			return nil, fmt.Errorf("subagent %s: %w", configPath, configDecodeErr)
 		}
-		var extra any
-		decodeErr := decoder.Decode(&extra)
+		var extraDocument any
+		decodeErr := decoder.Decode(&extraDocument)
 		if decodeErr != io.EOF {
-			return nil, fmt.Errorf("subagent %s must contain one YAML document", path)
+			return nil, fmt.Errorf("subagent %s must contain one YAML document", configPath)
 		}
-		if spec.Name == "" {
-			spec.Name = entry.Name()
+		if subAgentConfig.Name == "" {
+			subAgentConfig.Name = directoryEntry.Name()
 		}
-		if strings.TrimSpace(spec.Name) == "" || strings.TrimSpace(spec.SystemPrompt) == "" || spec.MaxSteps < 0 {
-			return nil, fmt.Errorf("subagent %s requires a name, system_prompt and non-negative max_steps", path)
+		if strings.TrimSpace(subAgentConfig.Name) == "" || strings.TrimSpace(subAgentConfig.SystemPrompt) == "" || subAgentConfig.MaxSteps < 0 {
+			return nil, fmt.Errorf("subagent %s requires a name, system_prompt and non-negative max_steps", configPath)
 		}
 		var mask tools.Mask
-		if spec.Tools != nil {
-			names := make(map[string]bool, len(spec.Tools))
-			for _, name := range spec.Tools {
-				if strings.TrimSpace(name) == "" || names[name] {
-					return nil, fmt.Errorf("subagent %s has empty or duplicate tool name", path)
+		if subAgentConfig.Tools != nil {
+			allowedToolNames := make(map[string]bool, len(subAgentConfig.Tools))
+			for _, toolName := range subAgentConfig.Tools {
+				if strings.TrimSpace(toolName) == "" || allowedToolNames[toolName] {
+					return nil, fmt.Errorf("subagent %s has empty or duplicate tool name", configPath)
 				}
-				names[name] = true
+				allowedToolNames[toolName] = true
 			}
-			mask = func(_ context.Context, info *schema.ToolInfo) bool { return names[info.Name] }
+			mask = func(_ context.Context, toolInfo *schema.ToolInfo) bool { return allowedToolNames[toolInfo.Name] }
 		}
-		result = append(result, &SubAgent{Name: spec.Name, SystemPrompt: spec.SystemPrompt, MaxSteps: spec.MaxSteps, EnableFilesystem: spec.EnableFilesystem, EnableWeb: spec.EnableWeb, ReadOnly: spec.ReadOnly, ToolMask: mask})
+		subAgents = append(subAgents, &SubAgent{Name: subAgentConfig.Name, SystemPrompt: subAgentConfig.SystemPrompt, MaxSteps: subAgentConfig.MaxSteps, EnableFilesystem: subAgentConfig.EnableFilesystem, EnableWeb: subAgentConfig.EnableWeb, ReadOnly: subAgentConfig.ReadOnly, ToolMask: mask})
 	}
-	return result, nil
+	return subAgents, nil
 }
 
 type SubAgent struct {
@@ -111,60 +111,60 @@ type SubAgent struct {
 }
 
 // validateSubAgents checks the explicit list before task registration.
-func validateSubAgents(agents []*SubAgent) error {
-	names := map[string]bool{}
-	for _, spec := range agents {
-		if spec == nil || strings.TrimSpace(spec.Name) == "" {
+func validateSubAgents(subAgents []*SubAgent) error {
+	subAgentNames := map[string]bool{}
+	for _, subAgent := range subAgents {
+		if subAgent == nil || strings.TrimSpace(subAgent.Name) == "" {
 			return fmt.Errorf("subagent name is required")
 		}
-		if names[spec.Name] {
-			return fmt.Errorf("duplicate subagent name %q", spec.Name)
+		if subAgentNames[subAgent.Name] {
+			return fmt.Errorf("duplicate subagent name %q", subAgent.Name)
 		}
-		names[spec.Name] = true
+		subAgentNames[subAgent.Name] = true
 	}
 	return nil
 }
 
 type childRunner struct{ config Config }
 
-func NewChildRunner(cfg Config) tools.ChildRunner { return &childRunner{config: *cfg.Clone()} }
+func NewChildRunner(config Config) tools.ChildRunner { return &childRunner{config: *config.Clone()} }
 
-func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit types.ModelChunkSink) (*schema.Message, error) {
-	if r.config.Depth >= 4 {
+func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.ChildRequest, emit types.ModelChunkSink) (*schema.Message, error) {
+	if childRunner.config.Depth >= 4 {
 		return nil, fmt.Errorf("maximum child depth reached")
 	}
-	cfg := *r.config.Clone()
-	agents := cfg.SubAgents
-	cfg.ThreadID = ""
-	cfg.RunID = ""
-	cfg.Depth++
-	cfg.Name = request.Name
-	cfg.Conversation = nil
-	cfg.CheckpointStore = nil
-	executor, _ := ctx.Value(toolExecutorKey{}).(*toolExecutor)
+	config := *childRunner.config.Clone()
+	subAgents := config.SubAgents
+	config.ThreadID = ""
+	config.RunID = ""
+	config.Depth++
+	config.Name = childRequest.Name
+	config.Conversation = nil
+	config.CheckpointStore = nil
+	parentToolExecutor, _ := ctx.Value(toolExecutorKey{}).(*toolExecutor)
 	callID, _ := ctx.Value(toolCallIDKey{}).(string)
-	var checkpoint *childCheckpointStore
-	resuming := false
-	if executor != nil && callID != "" {
-		checkpoint = executor.childCheckpoint(callID)
-		cfg.CheckpointStore = checkpoint
-		_, resuming, _ = checkpoint.Get(ctx, "child")
+	var checkpointStore *childCheckpointStore
+	isResuming := false
+	if parentToolExecutor != nil && callID != "" {
+		checkpointStore = parentToolExecutor.getChildCheckpointStore(callID)
+		config.CheckpointStore = checkpointStore
+		_, isResuming, _ = checkpointStore.Get(ctx, "child")
 		ctx = compose.AppendAddressSegment(ctx, compose.AddressSegmentTool, callID)
 	}
-	cfg.DrainInput = nil
-	cfg.Emit = nil
-	var chunks []*schema.Message
-	emitted := false
+	config.DrainInput = nil
+	config.Emit = nil
+	var messageChunks []*schema.Message
+	hasEmittedOutput := false
 	if emit != nil {
-		cfg.Emit = func(ctx context.Context, event types.RuntimeEvent) error {
+		config.Emit = func(ctx context.Context, event types.RuntimeEvent) error {
 			if event.Kind == "llm_requesting" {
-				chunks = nil
+				messageChunks = nil
 			}
 			if event.Kind == "llm_token" {
 				payload, ok := event.Data.(types.LLMTokenChunk)
 				message := payload.Message
 				if ok {
-					chunks = append(chunks, types.CopyMessage(message))
+					messageChunks = append(messageChunks, types.CopyMessage(message))
 				}
 				return nil
 			}
@@ -176,98 +176,98 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 			if !ok || len(message.ToolCalls) != 0 {
 				return nil
 			}
-			var text strings.Builder
-			for _, chunk := range chunks {
-				text.WriteString(chunk.Content)
+			var contentBuilder strings.Builder
+			for _, chunk := range messageChunks {
+				contentBuilder.WriteString(chunk.Content)
 			}
-			if text.String() != message.Content {
-				chunks = []*schema.Message{message}
+			if contentBuilder.String() != message.Content {
+				messageChunks = []*schema.Message{message}
 			}
-			for _, chunk := range chunks {
+			for _, chunk := range messageChunks {
 				err := emit(ctx, chunk)
 				if err != nil {
 					return err
 				}
 			}
-			emitted = true
+			hasEmittedOutput = true
 			return nil
 		}
 	}
-	cfg.Callbacks = nil
-	cfg.SubAgents = nil
-	cfg.MaxModelCalls = request.MaxModelCalls
-	if cfg.MaxModelCalls <= 0 {
-		cfg.MaxModelCalls = 8
+	config.Callbacks = nil
+	config.SubAgents = nil
+	config.MaxModelCalls = childRequest.MaxModelCalls
+	if config.MaxModelCalls <= 0 {
+		config.MaxModelCalls = 8
 	}
-	cfg.MaxSteps = 64
+	config.MaxSteps = 64
 	// Stateful middleware needs its explicit RunFactory; static prompts can be
 	// shared. Each new Run invokes the factories before building its Graph.
-	cfg.Middlewares = nil
-	for _, mw := range r.config.Middlewares {
-		_, ok := mw.(middleware.RunFactory)
+	config.Middlewares = nil
+	for _, currentMiddleware := range childRunner.config.Middlewares {
+		_, ok := currentMiddleware.(middleware.RunFactory)
 		if ok {
-			cfg.Middlewares = append(cfg.Middlewares, mw)
+			config.Middlewares = append(config.Middlewares, currentMiddleware)
 			continue
 		}
-		if mw.BuildStateHandler() != nil {
-			return nil, fmt.Errorf("child middleware %q requires NewRun", mw.Name())
+		if currentMiddleware.GetStateHandler() != nil {
+			return nil, fmt.Errorf("child middleware %q requires NewRun", currentMiddleware.GetName())
 		}
-		cfg.Middlewares = append(cfg.Middlewares, mw)
+		config.Middlewares = append(config.Middlewares, currentMiddleware)
 	}
-	if request.Name == "" {
-		request.Name = "general-purpose"
-		cfg.Name = request.Name
+	if childRequest.Name == "" {
+		childRequest.Name = "general-purpose"
+		config.Name = childRequest.Name
 	}
-	found := false
-	for _, spec := range agents {
-		if spec == nil || spec.Name != request.Name {
+	hasSubAgent := false
+	for _, subAgent := range subAgents {
+		if subAgent == nil || subAgent.Name != childRequest.Name {
 			continue
 		}
-		found = true
-		if spec.SystemPrompt != "" {
-			cfg.Prompts = append(cfg.Prompts, schema.SystemMessage(spec.SystemPrompt))
+		hasSubAgent = true
+		if subAgent.SystemPrompt != "" {
+			config.Prompts = append(config.Prompts, schema.SystemMessage(subAgent.SystemPrompt))
 		}
-		cfg.ReadOnlyToolsOnly = cfg.ReadOnlyToolsOnly || spec.ReadOnly
-		if !spec.EnableFilesystem {
-			cfg.FilesystemConfig = nil
+		config.ReadOnlyToolsOnly = config.ReadOnlyToolsOnly || subAgent.ReadOnly
+		if !subAgent.EnableFilesystem {
+			config.FilesystemConfig = nil
 		}
-		if !spec.EnableWeb {
-			cfg.WebConfig = nil
+		if !subAgent.EnableWeb {
+			config.WebConfig = nil
 		}
-		cfg.ToolMask = tools.CombineMasks(cfg.ToolMask, spec.ToolMask)
-		if len(spec.Tools) > 0 {
-			cfg.ToolDescriptors = append([]tools.ToolDescriptor(nil), spec.Tools...)
+		config.ToolMask = tools.CombineMasks(config.ToolMask, subAgent.ToolMask)
+		if len(subAgent.Tools) > 0 {
+			config.ToolDescriptors = append([]tools.ToolDescriptor(nil), subAgent.Tools...)
 		}
-		if spec.MaxSteps > 0 {
-			cfg.MaxSteps = spec.MaxSteps
+		if subAgent.MaxSteps > 0 {
+			config.MaxSteps = subAgent.MaxSteps
 		}
 	}
-	if !found {
-		return nil, fmt.Errorf("unknown subagent %q", request.Name)
+	if !hasSubAgent {
+		return nil, fmt.Errorf("unknown subagent %q", childRequest.Name)
 	}
-	oldMask := cfg.ToolMask
-	cfg.ToolMask = tools.CombineMasks(oldMask, func(_ context.Context, info *schema.ToolInfo) bool {
-		return info.Name != "task" && info.Name != "ask_user"
+	oldMask := config.ToolMask
+	config.ToolMask = tools.CombineMasks(oldMask, func(_ context.Context, toolInfo *schema.ToolInfo) bool {
+		return toolInfo.Name != "task" && toolInfo.Name != "ask_user"
 	})
-	a, err := New(ctx, WithConfig(&cfg))
+	childGraph, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		return nil, err
 	}
-	defer a.Close(context.Background())
-	var input []*schema.Message
-	if !resuming {
-		input = append(input, schema.UserMessage(request.Prompt))
+	defer childGraph.Close(context.Background())
+	var inputMessages []*schema.Message
+	if !isResuming {
+		inputMessages = append(inputMessages, schema.UserMessage(childRequest.Prompt))
 	}
-	result, err := a.Invoke(ctx, input, func(o *RunOptions) {
-		if checkpoint != nil {
-			o.CheckpointID = "child"
+	response, err := childGraph.Invoke(ctx, inputMessages, func(runOptions *RunOptions) {
+		if checkpointStore != nil {
+			runOptions.CheckpointID = "child"
 		}
 
 	})
-	if checkpoint != nil {
+	if checkpointStore != nil {
 		_, blocked := compose.ExtractInterruptInfo(err)
 		if blocked {
-			_, exists, saveErr := checkpoint.Get(context.WithoutCancel(ctx), "child")
+			_, exists, saveErr := checkpointStore.Get(context.WithoutCancel(ctx), "child")
 			if saveErr != nil {
 				return nil, saveErr
 			}
@@ -277,11 +277,11 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 			return nil, compose.CompositeInterrupt(ctx, nil, nil, err)
 		}
 		if err == nil {
-			_ = checkpoint.Set(context.WithoutCancel(ctx), "child", nil)
+			_ = checkpointStore.Set(context.WithoutCancel(ctx), "child", nil)
 		}
 	}
-	if err == nil && emit != nil && !emitted {
-		err = emit(ctx, result)
+	if err == nil && emit != nil && !hasEmittedOutput {
+		err = emit(ctx, response)
 	}
-	return result, err
+	return response, err
 }

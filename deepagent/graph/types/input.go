@@ -45,45 +45,45 @@ type persistedInput struct {
 	Meta      []byte
 }
 
-func (i Input) MarshalJSON() ([]byte, error) {
+func (input Input) MarshalJSON() ([]byte, error) {
 	var encoded bytes.Buffer
-	if i.Meta != nil {
-		err := gob.NewEncoder(&encoded).Encode(&i.Meta)
+	if input.Meta != nil {
+		err := gob.NewEncoder(&encoded).Encode(&input.Meta)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return json.Marshal(persistedInput{MessageID: i.MessageID, Message: i.Message, Meta: encoded.Bytes()})
+	return json.Marshal(persistedInput{MessageID: input.MessageID, Message: input.Message, Meta: encoded.Bytes()})
 }
-func (i *Input) UnmarshalJSON(raw []byte) error {
+func (input *Input) UnmarshalJSON(raw []byte) error {
 	var persisted persistedInput
 	err := json.Unmarshal(raw, &persisted)
 	if err != nil {
 		return err
 	}
-	var meta any
+	var metadata any
 	if len(persisted.Meta) > 0 {
-		err = gob.NewDecoder(bytes.NewReader(persisted.Meta)).Decode(&meta)
+		err = gob.NewDecoder(bytes.NewReader(persisted.Meta)).Decode(&metadata)
 		if err != nil {
 			return err
 		}
 	}
-	i.MessageID = persisted.MessageID
-	i.Message = persisted.Message
-	i.Meta = meta
+	input.MessageID = persisted.MessageID
+	input.Message = persisted.Message
+	input.Meta = metadata
 	return nil
 }
-func CopyMessage(msg *schema.Message) *schema.Message {
-	if msg == nil {
+func CopyMessage(message *schema.Message) *schema.Message {
+	if message == nil {
 		return nil
 	}
-	b, err := json.Marshal(msg)
+	encodedMessage, err := json.Marshal(message)
 	if err != nil {
 		return nil
 	}
-	var out schema.Message
-	if json.Unmarshal(b, &out) != nil {
+	var copiedMessage schema.Message
+	if json.Unmarshal(encodedMessage, &copiedMessage) != nil {
 		return nil
 	}
-	return &out
+	return &copiedMessage
 }

@@ -19,16 +19,16 @@ type skillCatalog struct {
 }
 
 func DiscoverSkills(workDir string, configured []string) (SkillLoader, error) {
-	catalog := &skillCatalog{skills: map[string]projectSkill{}}
+	skillCatalog := &skillCatalog{skills: map[string]projectSkill{}}
 	paths := append([]string(nil), configured...)
 	if len(paths) == 0 {
 		paths = []string{filepath.Join(workDir, ".agents", "skills"), filepath.Join(workDir, ".codex", "skills")}
 	}
-	seen := map[string]bool{}
-	directories := map[string]bool{}
+	seenFiles := map[string]bool{}
+	seenDirectories := map[string]bool{}
 	totalBytes := 0
-	var load func(string, bool) error
-	load = func(path string, required bool) error {
+	var loadSkillPath func(string, bool) error
+	loadSkillPath = func(path string, required bool) error {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(workDir, path)
 		}
@@ -39,22 +39,22 @@ func DiscoverSkills(workDir string, configured []string) (SkillLoader, error) {
 		if err != nil {
 			return err
 		}
-		canonical, err := filepath.EvalSymlinks(path)
+		canonicalPath, err := filepath.EvalSymlinks(path)
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
-			if directories[canonical] {
+			if seenDirectories[canonicalPath] {
 				return nil
 			}
-			directories[canonical] = true
-			if len(directories) > 1024 {
+			seenDirectories[canonicalPath] = true
+			if len(seenDirectories) > 1024 {
 				return fmt.Errorf("skill directory scan exceeds 1024 directories")
 			}
-			direct := filepath.Join(path, "SKILL.md")
-			_, statErr := os.Stat(direct)
+			skillPath := filepath.Join(path, "SKILL.md")
+			_, statErr := os.Stat(skillPath)
 			if statErr == nil {
-				return load(direct, true)
+				return loadSkillPath(skillPath, true)
 			}
 			entries, err := os.ReadDir(path)
 			if err != nil {
@@ -62,7 +62,7 @@ func DiscoverSkills(workDir string, configured []string) (SkillLoader, error) {
 			}
 			for _, entry := range entries {
 				if entry.IsDir() {
-					err := load(filepath.Join(path, entry.Name()), false)
+					err := loadSkillPath(filepath.Join(path, entry.Name()), false)
 					if err != nil {
 						return err
 					}
@@ -70,11 +70,11 @@ func DiscoverSkills(workDir string, configured []string) (SkillLoader, error) {
 			}
 			return nil
 		}
-		if seen[canonical] {
+		if seenFiles[canonicalPath] {
 			return nil
 		}
-		seen[canonical] = true
-		if len(seen) > 64 || info.Size() > 128<<10 {
+		seenFiles[canonicalPath] = true
+		if len(seenFiles) > 64 || info.Size() > 128<<10 {
 			return fmt.Errorf("configured skills exceed 64 files or 128 KiB per skill")
 		}
 		file, err := os.Open(path)
@@ -116,41 +116,41 @@ func DiscoverSkills(workDir string, configured []string) (SkillLoader, error) {
 		if len(skill.description) > 1000 {
 			skill.description = skill.description[:1000] + "…"
 		}
-		_, exists := catalog.skills[skill.name]
+		_, exists := skillCatalog.skills[skill.name]
 		if exists {
 			return fmt.Errorf("duplicate skill name %q; configure an unambiguous collection", skill.name)
 		}
-		catalog.skills[skill.name] = skill
-		catalog.names = append(catalog.names, skill.name)
+		skillCatalog.skills[skill.name] = skill
+		skillCatalog.names = append(skillCatalog.names, skill.name)
 		return nil
 	}
 	for _, path := range paths {
-		err := load(path, len(configured) > 0)
+		err := loadSkillPath(path, len(configured) > 0)
 		if err != nil {
 			return nil, fmt.Errorf("load skill catalog: %w", err)
 		}
 	}
-	sort.Strings(catalog.names)
-	return catalog, nil
+	sort.Strings(skillCatalog.names)
+	return skillCatalog, nil
 }
-func (c *skillCatalog) ListSkills(ctx context.Context) ([]*SkillMetadata, error) {
+func (skillCatalog *skillCatalog) ListSkills(ctx context.Context) ([]*SkillMetadata, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, err
 	}
-	items := make([]*SkillMetadata, 0, len(c.names))
-	for _, name := range c.names {
-		s := c.skills[name]
-		items = append(items, &SkillMetadata{Name: s.name, Description: s.description, Path: s.path})
+	skillMetadata := make([]*SkillMetadata, 0, len(skillCatalog.names))
+	for _, name := range skillCatalog.names {
+		skill := skillCatalog.skills[name]
+		skillMetadata = append(skillMetadata, &SkillMetadata{Name: skill.name, Description: skill.description, Path: skill.path})
 	}
-	return items, nil
+	return skillMetadata, nil
 }
-func (c *skillCatalog) LoadSkill(ctx context.Context, name string) (string, error) {
+func (skillCatalog *skillCatalog) LoadSkill(ctx context.Context, name string) (string, error) {
 	err := ctx.Err()
 	if err != nil {
 		return "", err
 	}
-	skill, ok := c.skills[name]
+	skill, ok := skillCatalog.skills[name]
 	if !ok {
 		return "", fmt.Errorf("skill %q is not in the configured catalog", name)
 	}

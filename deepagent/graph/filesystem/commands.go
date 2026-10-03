@@ -16,13 +16,13 @@ import (
 
 // Commands owns jobs for exactly one thread. There is no process-global job map.
 type Commands struct {
-	mu         sync.Mutex
-	threadID   string
-	workspace  Filesystem
-	command    func(context.Context, CommandRequest, string, string) (*exec.Cmd, error)
-	killRemote func(context.Context, string) error
-	jobs       map[string]*commandJob
-	closed     bool
+	mu           sync.Mutex
+	threadID     string
+	filesystem   Filesystem
+	buildCommand func(context.Context, CommandRequest, string, string) (*exec.Cmd, error)
+	killRemote   func(context.Context, string) error
+	jobsByID     map[string]*commandJob
+	closed       bool
 }
 type commandJob struct {
 	mu             sync.Mutex
@@ -43,53 +43,53 @@ type commandJob struct {
 	started        time.Time
 }
 
-func NewCommands(threadID string, workspace Filesystem) *Commands {
-	return &Commands{threadID: threadID, workspace: workspace, jobs: map[string]*commandJob{}}
+func NewCommands(threadID string, filesystem Filesystem) *Commands {
+	return &Commands{threadID: threadID, filesystem: filesystem, jobsByID: map[string]*commandJob{}}
 }
 
 // NewDockerCommands runs every job in the named container. The job ledger is
 // still thread scoped and shared by execute, shell and await_shell.
-func NewDockerCommands(threadID string, workspace Filesystem, containerID string) *Commands {
-	s := NewCommands(threadID, workspace)
-	s.command = func(ctx context.Context, request CommandRequest, dir, jobID string) (*exec.Cmd, error) {
+func NewDockerCommands(threadID string, filesystem Filesystem, containerID string) *Commands {
+	commands := NewCommands(threadID, filesystem)
+	commands.buildCommand = func(ctx context.Context, request CommandRequest, workDir, jobID string) (*exec.Cmd, error) {
 		if containerID == "" {
 			return nil, fmt.Errorf("docker container ID is required")
 		}
-		args := []string{"exec", "-i", "-w", dir}
-		for _, pair := range envPairs(request.Env) {
-			args = append(args, "-e", pair)
+		dockerArgs := []string{"exec", "-i", "-w", workDir}
+		for _, pair := range buildEnvPairs(request.Env) {
+			dockerArgs = append(dockerArgs, "-e", pair)
 		}
-		marker := "/tmp/deepagent-command-" + jobID + ".pid"
+		pidFile := "/tmp/deepagent-command-" + jobID + ".pid"
 		const script = `marker=$1; shift; printf '%s' "$$" > "$marker"; /bin/sh -c "$1"; code=$?; rm -f "$marker"; exit "$code"`
-		args = append(args, containerID, "/bin/sh", "-c", script, "sh", marker, request.Command)
-		return exec.CommandContext(ctx, "docker", args...), nil
+		dockerArgs = append(dockerArgs, containerID, "/bin/sh", "-c", script, "sh", pidFile, request.Command)
+		return exec.CommandContext(ctx, "docker", dockerArgs...), nil
 	}
-	s.killRemote = func(ctx context.Context, jobID string) error {
-		marker := "/tmp/deepagent-command-" + jobID + ".pid"
+	commands.killRemote = func(ctx context.Context, jobID string) error {
+		pidFile := "/tmp/deepagent-command-" + jobID + ".pid"
 		const script = `marker=$1; n=0; while [ ! -s "$marker" ] && [ "$n" -lt 40 ]; do sleep .05; n=$((n+1)); done; [ -s "$marker" ] || exit 0; pid=$(cat "$marker"); case "$pid" in ''|*[!0-9]*) exit 2;; esac; kill_tree() { for status in /proc/[0-9]*/status; do [ -r "$status" ] || continue; while read -r key value rest; do [ "$key" = PPid: ] && break; done < "$status"; if [ "$value" = "$1" ]; then child=${status#/proc/}; child=${child%/status}; kill_tree "$child"; fi; done; kill -KILL "$1" 2>/dev/null || true; }; kill_tree "$pid"; rm -f "$marker"`
-		cmd := exec.CommandContext(ctx, "docker", "exec", containerID, "/bin/sh", "-c", script, "sh", marker)
-		out, err := cmd.CombinedOutput()
+		shellCommand := exec.CommandContext(ctx, "docker", "exec", containerID, "/bin/sh", "-c", script, "sh", pidFile)
+		commandOutput, err := shellCommand.CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("stop Docker job %s: %s: %w", jobID, strings.TrimSpace(string(out)), err)
+			return fmt.Errorf("stop Docker job %s: %s: %w", jobID, strings.TrimSpace(string(commandOutput)), err)
 		}
 		return nil
 	}
-	return s
+	return commands
 }
 
-func (s *Commands) stopRemote(job *commandJob) error {
-	if s.killRemote == nil {
+func (commands *Commands) stopRemoteJob(commandJobRecord *commandJob) error {
+	if commands.killRemote == nil {
 		return nil
 	}
-	job.stopRemoteOnce.Do(func() {
+	commandJobRecord.stopRemoteOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		job.stopRemoteErr = s.killRemote(ctx, job.id)
+		commandJobRecord.stopRemoteErr = commands.killRemote(ctx, commandJobRecord.id)
 	})
-	return job.stopRemoteErr
+	return commandJobRecord.stopRemoteErr
 }
-func (s *Commands) Start(ctx context.Context, request CommandRequest) (string, error) {
-	if s.workspace == nil || s.threadID == "" {
+func (commands *Commands) Start(ctx context.Context, request CommandRequest) (string, error) {
+	if commands.filesystem == nil || commands.threadID == "" {
 		return "", fmt.Errorf("thread and workspace are required")
 	}
 	contextErr := ctx.Err()
@@ -99,250 +99,250 @@ func (s *Commands) Start(ctx context.Context, request CommandRequest) (string, e
 	if strings.TrimSpace(request.Command) == "" {
 		return "", fmt.Errorf("command is required")
 	}
-	dir := request.WorkDir
-	if dir == "" {
-		dir = "."
+	workDir := request.WorkDir
+	if workDir == "" {
+		workDir = "."
 	}
-	dir, err := s.workspace.Resolve(ctx, dir, false)
+	workDir, err := commands.filesystem.Resolve(ctx, workDir, false)
 	if err != nil {
 		return "", err
 	}
-	if s.command == nil {
-		info, err := os.Stat(dir)
+	if commands.buildCommand == nil {
+		directoryInfo, err := os.Stat(workDir)
 		if err != nil {
 			return "", err
 		}
-		if !info.IsDir() {
+		if !directoryInfo.IsDir() {
 			return "", fmt.Errorf("command working directory is not a directory")
 		}
 	} else {
-		_, err := s.workspace.List(ctx, dir)
+		_, err := commands.filesystem.List(ctx, workDir)
 		if err != nil {
 			return "", fmt.Errorf("command working directory: %w", err)
 		}
 	}
-	var jobCtx context.Context
+	var jobContext context.Context
 	var cancel context.CancelFunc
 	if request.Timeout > 0 {
-		jobCtx, cancel = context.WithTimeout(ctx, request.Timeout)
+		jobContext, cancel = context.WithTimeout(ctx, request.Timeout)
 	} else {
-		jobCtx, cancel = context.WithCancel(ctx)
+		jobContext, cancel = context.WithCancel(ctx)
 	}
-	limit := request.MaxOutputBytes
-	if limit <= 0 {
-		limit = 64 << 10
+	outputLimit := request.MaxOutputBytes
+	if outputLimit <= 0 {
+		outputLimit = 64 << 10
 	}
-	job := &commandJob{id: uuid.NewString(), threadID: s.threadID, limit: limit, keepPrefix: request.KeepOutputPrefix, done: make(chan struct{}), changed: make(chan struct{}), cancel: cancel, started: time.Now()}
-	var cmd *exec.Cmd
-	if s.command != nil {
-		cmd, err = s.command(jobCtx, request, dir, job.id)
+	commandJobRecord := &commandJob{id: uuid.NewString(), threadID: commands.threadID, limit: outputLimit, keepPrefix: request.KeepOutputPrefix, done: make(chan struct{}), changed: make(chan struct{}), cancel: cancel, started: time.Now()}
+	var shellCommand *exec.Cmd
+	if commands.buildCommand != nil {
+		shellCommand, err = commands.buildCommand(jobContext, request, workDir, commandJobRecord.id)
 		if err != nil {
 			cancel()
 			return "", err
 		}
 	} else {
-		cmd = exec.CommandContext(jobCtx, "/bin/bash", "-c", request.Command)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), envPairs(request.Env)...)
+		shellCommand = exec.CommandContext(jobContext, "/bin/bash", "-c", request.Command)
+		shellCommand.Dir = workDir
+		shellCommand.Env = append(os.Environ(), buildEnvPairs(request.Env)...)
 	}
-	cmd.Stdout = job
-	cmd.Stderr = job
-	configureShellCommandCancel(cmd)
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
+	shellCommand.Stdout = commandJobRecord
+	shellCommand.Stderr = commandJobRecord
+	configureShellCommandCancel(shellCommand)
+	commands.mu.Lock()
+	if commands.closed {
+		commands.mu.Unlock()
 		cancel()
 		return "", fmt.Errorf("command service closed")
 	}
-	if len(s.jobs) >= 32 {
-		var oldest *commandJob
-		for _, candidate := range s.jobs {
-			candidate.mu.Lock()
-			finished := candidate.finished
-			candidate.mu.Unlock()
-			if finished && (oldest == nil || candidate.started.Before(oldest.started)) {
-				oldest = candidate
+	if len(commands.jobsByID) >= 32 {
+		var oldestJob *commandJob
+		for _, candidateJob := range commands.jobsByID {
+			candidateJob.mu.Lock()
+			finished := candidateJob.finished
+			candidateJob.mu.Unlock()
+			if finished && (oldestJob == nil || candidateJob.started.Before(oldestJob.started)) {
+				oldestJob = candidateJob
 			}
 		}
-		if oldest != nil {
-			delete(s.jobs, oldest.id)
+		if oldestJob != nil {
+			delete(commands.jobsByID, oldestJob.id)
 		} else {
-			s.mu.Unlock()
+			commands.mu.Unlock()
 			cancel()
 			return "", fmt.Errorf("thread has too many running commands")
 		}
 	}
-	startErr := cmd.Start()
+	startErr := shellCommand.Start()
 	if startErr != nil {
-		s.mu.Unlock()
+		commands.mu.Unlock()
 		cancel()
 		return "", startErr
 	}
-	s.jobs[job.id] = job
-	s.mu.Unlock()
+	commands.jobsByID[commandJobRecord.id] = commandJobRecord
+	commands.mu.Unlock()
 	go func() {
-		err := cmd.Wait()
-		if jobCtx.Err() != nil {
-			_ = s.stopRemote(job)
+		err := shellCommand.Wait()
+		if jobContext.Err() != nil {
+			_ = commands.stopRemoteJob(commandJobRecord)
 		}
-		code := 0
+		exitCode := 0
 		if err != nil {
-			var exit *exec.ExitError
-			if errors.As(err, &exit) {
-				code = exit.ExitCode()
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				exitCode = exitErr.ExitCode()
 			} else {
-				code = -1
+				exitCode = -1
 			}
 		}
-		job.mu.Lock()
-		job.exitCode = code
-		job.timedOut = errors.Is(jobCtx.Err(), context.DeadlineExceeded)
-		job.finished = true
-		close(job.changed)
-		close(job.done)
-		job.mu.Unlock()
+		commandJobRecord.mu.Lock()
+		commandJobRecord.exitCode = exitCode
+		commandJobRecord.timedOut = errors.Is(jobContext.Err(), context.DeadlineExceeded)
+		commandJobRecord.finished = true
+		close(commandJobRecord.changed)
+		close(commandJobRecord.done)
+		commandJobRecord.mu.Unlock()
 		cancel()
 	}()
-	return job.id, nil
+	return commandJobRecord.id, nil
 }
-func (j *commandJob) Write(data []byte) (int, error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	n := len(data)
-	j.total += n
-	if j.keepPrefix {
-		remaining := j.limit - len(j.output)
-		j.output = append(j.output, data[:min(n, remaining)]...)
-	} else if n >= j.limit {
-		j.output = append(j.output[:0], data[n-j.limit:]...)
+func (commandJob *commandJob) Write(data []byte) (int, error) {
+	commandJob.mu.Lock()
+	defer commandJob.mu.Unlock()
+	byteCount := len(data)
+	commandJob.total += byteCount
+	if commandJob.keepPrefix {
+		remainingCapacity := commandJob.limit - len(commandJob.output)
+		commandJob.output = append(commandJob.output, data[:min(byteCount, remainingCapacity)]...)
+	} else if byteCount >= commandJob.limit {
+		commandJob.output = append(commandJob.output[:0], data[byteCount-commandJob.limit:]...)
 	} else {
-		j.output = append(j.output, data...)
-		if len(j.output) > j.limit {
-			j.output = append(j.output[:0], j.output[len(j.output)-j.limit:]...)
+		commandJob.output = append(commandJob.output, data...)
+		if len(commandJob.output) > commandJob.limit {
+			commandJob.output = append(commandJob.output[:0], commandJob.output[len(commandJob.output)-commandJob.limit:]...)
 		}
 	}
-	close(j.changed)
-	j.changed = make(chan struct{})
-	return n, nil
+	close(commandJob.changed)
+	commandJob.changed = make(chan struct{})
+	return byteCount, nil
 }
-func (s *Commands) find(id string) (*commandJob, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	job, ok := s.jobs[id]
+func (commands *Commands) findJob(jobID string) (*commandJob, error) {
+	commands.mu.Lock()
+	defer commands.mu.Unlock()
+	commandJobRecord, ok := commands.jobsByID[jobID]
 	if !ok {
-		return nil, fmt.Errorf("unknown task_id for thread %s: %s", s.threadID, id)
+		return nil, fmt.Errorf("unknown task_id for thread %s: %s", commands.threadID, jobID)
 	}
-	return job, nil
+	return commandJobRecord, nil
 }
-func (j *commandJob) snapshot(offset int) (*CommandSnapshot, <-chan struct{}, error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if offset < 0 || offset > j.total {
+func (commandJob *commandJob) buildSnapshot(offset int) (*CommandSnapshot, <-chan struct{}, error) {
+	commandJob.mu.Lock()
+	defer commandJob.mu.Unlock()
+	if offset < 0 || offset > commandJob.total {
 		return nil, nil, fmt.Errorf("invalid output offset %d", offset)
 	}
-	start := offset - (j.total - len(j.output))
-	truncated := offset < j.total-len(j.output)
-	if j.keepPrefix {
-		start = min(offset, len(j.output))
-		truncated = j.total > len(j.output)
+	outputStart := offset - (commandJob.total - len(commandJob.output))
+	truncated := offset < commandJob.total-len(commandJob.output)
+	if commandJob.keepPrefix {
+		outputStart = min(offset, len(commandJob.output))
+		truncated = commandJob.total > len(commandJob.output)
 	}
-	if start < 0 {
-		start = 0
+	if outputStart < 0 {
+		outputStart = 0
 	}
-	return &CommandSnapshot{ID: j.id, ThreadID: j.threadID, Output: string(j.output[start:]), ExitCode: j.exitCode, Done: j.finished, Offset: j.total, Truncated: truncated, TimedOut: j.timedOut}, j.changed, nil
+	return &CommandSnapshot{ID: commandJob.id, ThreadID: commandJob.threadID, Output: string(commandJob.output[outputStart:]), ExitCode: commandJob.exitCode, Done: commandJob.finished, Offset: commandJob.total, Truncated: truncated, TimedOut: commandJob.timedOut}, commandJob.changed, nil
 }
-func (s *Commands) Wait(ctx context.Context, id, pattern string, offset int) (*CommandSnapshot, error) {
-	job, err := s.find(id)
+func (commands *Commands) Wait(ctx context.Context, jobID, pattern string, offset int) (*CommandSnapshot, error) {
+	commandJobRecord, err := commands.findJob(jobID)
 	if err != nil {
 		return nil, err
 	}
-	var re *regexp.Regexp
+	var patternRegexp *regexp.Regexp
 	if pattern != "" {
-		re, err = regexp.Compile(pattern)
+		patternRegexp, err = regexp.Compile(pattern)
 		if err != nil {
 			return nil, err
 		}
 	}
 	for {
-		snapshot, changed, err := job.snapshot(offset)
+		commandSnapshot, changed, err := commandJobRecord.buildSnapshot(offset)
 		if err != nil {
 			return nil, err
 		}
-		if snapshot.Done || (re != nil && re.MatchString(snapshot.Output)) {
-			return snapshot, nil
+		if commandSnapshot.Done || (patternRegexp != nil && patternRegexp.MatchString(commandSnapshot.Output)) {
+			return commandSnapshot, nil
 		}
 		select {
 		case <-changed:
 		case <-ctx.Done():
-			return snapshot, ctx.Err()
+			return commandSnapshot, ctx.Err()
 		}
 	}
 }
 
 // stop requests termination without waiting, so Close can stop every job before joining them.
-func (s *Commands) stop(job *commandJob) error {
-	job.mu.Lock()
-	finished := job.finished
-	job.mu.Unlock()
+func (commands *Commands) stopJob(commandJobRecord *commandJob) error {
+	commandJobRecord.mu.Lock()
+	finished := commandJobRecord.finished
+	commandJobRecord.mu.Unlock()
 	var stopErr error
 	if !finished {
-		stopErr = s.stopRemote(job)
+		stopErr = commands.stopRemoteJob(commandJobRecord)
 	}
-	job.cancel()
+	commandJobRecord.cancel()
 	return stopErr
 }
 
-func (s *Commands) Cancel(ctx context.Context, id string) error {
-	job, err := s.find(id)
+func (commands *Commands) Cancel(ctx context.Context, jobID string) error {
+	commandJobRecord, err := commands.findJob(jobID)
 	if err != nil {
 		return err
 	}
-	stopErr := s.stop(job)
+	stopErr := commands.stopJob(commandJobRecord)
 	select {
-	case <-job.done:
+	case <-commandJobRecord.done:
 		return stopErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
-func (s *Commands) Close(ctx context.Context) error {
-	s.mu.Lock()
-	s.closed = true
-	jobs := make([]*commandJob, 0, len(s.jobs))
-	for _, job := range s.jobs {
-		jobs = append(jobs, job)
+func (commands *Commands) Close(ctx context.Context) error {
+	commands.mu.Lock()
+	commands.closed = true
+	jobs := make([]*commandJob, 0, len(commands.jobsByID))
+	for _, commandJobRecord := range commands.jobsByID {
+		jobs = append(jobs, commandJobRecord)
 	}
-	s.mu.Unlock()
+	commands.mu.Unlock()
 	var stopErr error
-	for _, job := range jobs {
-		stopErr = errors.Join(stopErr, s.stop(job))
+	for _, commandJobRecord := range jobs {
+		stopErr = errors.Join(stopErr, commands.stopJob(commandJobRecord))
 	}
-	for _, job := range jobs {
+	for _, commandJobRecord := range jobs {
 		select {
-		case <-job.done:
+		case <-commandJobRecord.done:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
 	return stopErr
 }
-func (s *Commands) Execute(ctx context.Context, request CommandRequest) (*CommandResult, error) {
-	id, err := s.Start(ctx, request)
+func (commands *Commands) Execute(ctx context.Context, request CommandRequest) (*CommandResult, error) {
+	jobID, err := commands.Start(ctx, request)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := s.Wait(ctx, id, "", 0)
+	commandSnapshot, err := commands.Wait(ctx, jobID, "", 0)
 	if err != nil {
-		_ = s.Cancel(context.Background(), id)
+		_ = commands.Cancel(context.Background(), jobID)
 		return nil, err
 	}
-	return &CommandResult{Output: snapshot.Output, ExitCode: snapshot.ExitCode, TimedOut: snapshot.TimedOut, Truncated: snapshot.Truncated, ShellSessionID: id}, nil
+	return &CommandResult{Output: commandSnapshot.Output, ExitCode: commandSnapshot.ExitCode, TimedOut: commandSnapshot.TimedOut, Truncated: commandSnapshot.Truncated, ShellSessionID: jobID}, nil
 }
 
-func envPairs(env map[string]string) []string {
+func buildEnvPairs(env map[string]string) []string {
 	pairs := make([]string, 0, len(env))
-	for k, v := range env {
-		pairs = append(pairs, k+"="+v)
+	for variableName, value := range env {
+		pairs = append(pairs, variableName+"="+value)
 	}
 	return pairs
 }

@@ -12,9 +12,9 @@ import (
 // Middleware is the lifecycle contract for one graph middleware.
 // BaseMiddleware supplies no-op implementations for optional hooks.
 type Middleware interface {
-	Name() string
-	BeforeAgent(context.Context) error
-	BuildStateHandler() types.RunTimeStateful
+	GetName() string
+	PrepareAgent(context.Context) error
+	GetStateHandler() types.RunTimeStateful
 	BuildPrompt(context.Context) ([]*schema.Message, error)
 	ModifyModelRequest(context.Context, []*schema.Message, []*schema.Message, *types.GraphState) ([]*schema.Message, error)
 	ModifyModelResponse(context.Context, *schema.Message, *types.GraphState) (*schema.Message, error)
@@ -25,11 +25,11 @@ type Middleware interface {
 // override the callbacks relevant to its feature.
 type BaseMiddleware struct{}
 
-func (BaseMiddleware) Name() string { return "" }
+func (BaseMiddleware) GetName() string { return "" }
 
-func (BaseMiddleware) BeforeAgent(context.Context) error { return nil }
+func (BaseMiddleware) PrepareAgent(context.Context) error { return nil }
 
-func (BaseMiddleware) BuildStateHandler() types.RunTimeStateful { return nil }
+func (BaseMiddleware) GetStateHandler() types.RunTimeStateful { return nil }
 
 func (BaseMiddleware) BuildPrompt(context.Context) ([]*schema.Message, error) { return nil, nil }
 
@@ -48,8 +48,8 @@ func (BaseMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schem
 // Optional capabilities are detected directly by Graph; there is no second
 // middleware pipeline or intermediate execution object.
 type RunMiddleware interface {
-	BeforeRun(context.Context, *types.RunState) error
-	AfterRun(context.Context, *types.RunState, error) error
+	PrepareRun(context.Context, *types.RunState) error
+	FinishRun(context.Context, *types.RunState, error) error
 }
 
 type EventObserver interface {
@@ -65,5 +65,5 @@ type ModelMiddleware interface {
 // RunFactory creates fresh mutable state when a configured middleware is reused.
 type RunFactory interface{ NewRun() Middleware }
 
-// ResourceCloser releases resources acquired during setup or execution. Close must tolerate construction without BeforeRun.
+// ResourceCloser releases resources acquired during setup or execution. Close must tolerate construction without PrepareRun.
 type ResourceCloser interface{ Close(context.Context) error }

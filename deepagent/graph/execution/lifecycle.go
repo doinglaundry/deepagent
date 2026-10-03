@@ -22,46 +22,46 @@ func closeMiddlewareResources(ctx context.Context, middlewares []middleware.Midd
 	return err
 }
 
-func (a *Graph) closeResources(ctx context.Context) error {
-	a.mu.Lock()
-	closing := a.resourcesClosing
-	if closing != nil {
-		a.mu.Unlock()
+func (graph *Graph) closeResources(ctx context.Context) error {
+	graph.mu.Lock()
+	resourcesClosing := graph.resourcesClosing
+	if resourcesClosing != nil {
+		graph.mu.Unlock()
 		select {
-		case <-closing:
-			a.mu.Lock()
-			err := a.resourcesCloseErr
-			a.mu.Unlock()
+		case <-resourcesClosing:
+			graph.mu.Lock()
+			err := graph.resourcesCloseErr
+			graph.mu.Unlock()
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	if !a.resourcesOpen {
-		a.mu.Unlock()
+	if !graph.resourcesOpen {
+		graph.mu.Unlock()
 		return nil
 	}
-	a.resourcesOpen = false
-	closing = make(chan struct{})
-	a.resourcesClosing = closing
-	middlewares := a.middlewares
-	a.mu.Unlock()
+	graph.resourcesOpen = false
+	resourcesClosing = make(chan struct{})
+	graph.resourcesClosing = resourcesClosing
+	middlewares := graph.middlewares
+	graph.mu.Unlock()
 	err := closeMiddlewareResources(context.WithoutCancel(ctx), middlewares)
-	a.mu.Lock()
-	a.resourcesCloseErr = err
-	a.resourcesClosing = nil
-	close(closing)
-	a.mu.Unlock()
+	graph.mu.Lock()
+	graph.resourcesCloseErr = err
+	graph.resourcesClosing = nil
+	close(resourcesClosing)
+	graph.mu.Unlock()
 	return err
 }
 
-func (a *Graph) event(ctx context.Context, state *types.RunState, kind, callID string, data any) error {
-	a.eventMu.Lock()
-	defer a.eventMu.Unlock()
-	state.EventSeq++
-	event := types.RuntimeEvent{Sequence: state.EventSeq, Kind: kind, CallID: callID, Data: data}
-	for _, mw := range a.middlewares {
-		observer, ok := mw.(middleware.EventObserver)
+func (graph *Graph) emitEvent(ctx context.Context, runState *types.RunState, kind, callID string, data any) error {
+	graph.eventMu.Lock()
+	defer graph.eventMu.Unlock()
+	runState.EventSeq++
+	event := types.RuntimeEvent{Sequence: runState.EventSeq, Kind: kind, CallID: callID, Data: data}
+	for _, currentMiddleware := range graph.middlewares {
+		observer, ok := currentMiddleware.(middleware.EventObserver)
 		if ok {
 			err := observer.Observe(ctx, event)
 			if err != nil {
@@ -69,40 +69,40 @@ func (a *Graph) event(ctx context.Context, state *types.RunState, kind, callID s
 			}
 		}
 	}
-	if a.cfg.Emit == nil {
+	if graph.config.Emit == nil {
 		return nil
 	}
-	return a.cfg.Emit(ctx, event)
+	return graph.config.Emit(ctx, event)
 }
 
 // Reserve execution before storage or resource work, so Close can cancel and wait.
-func (a *Graph) beginInvoke(ctx context.Context) (context.Context, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.closed || a.invoked {
+func (graph *Graph) beginInvoke(ctx context.Context) (context.Context, error) {
+	graph.mu.Lock()
+	defer graph.mu.Unlock()
+	if graph.closed || graph.invoked {
 		return ctx, errors.New("agent is closed or has already run")
 	}
-	a.invoked = true
-	a.invoking = true
-	if a.done == nil {
-		a.done = make(chan struct{})
+	graph.invoked = true
+	graph.invoking = true
+	if graph.done == nil {
+		graph.done = make(chan struct{})
 	}
-	if a.cancel == nil {
-		ctx, a.cancel = context.WithCancelCause(ctx)
+	if graph.cancel == nil {
+		ctx, graph.cancel = context.WithCancelCause(ctx)
 	}
-	ctx, a.interrupt = compose.WithGraphInterrupt(ctx)
+	ctx, graph.interrupt = compose.WithGraphInterrupt(ctx)
 	return ctx, nil
 }
 
-func (a *Graph) beforeRun(ctx context.Context, state *types.RunState) error {
-	for _, mw := range a.middlewares {
-		err := mw.BeforeAgent(ctx)
+func (graph *Graph) prepareRun(ctx context.Context, runState *types.RunState) error {
+	for _, currentMiddleware := range graph.middlewares {
+		err := currentMiddleware.PrepareAgent(ctx)
 		if err != nil {
 			return err
 		}
-		lifecycle, ok := mw.(middleware.RunMiddleware)
+		runMiddleware, ok := currentMiddleware.(middleware.RunMiddleware)
 		if ok {
-			err = lifecycle.BeforeRun(ctx, state)
+			err = runMiddleware.PrepareRun(ctx, runState)
 			if err != nil {
 				return err
 			}
@@ -112,41 +112,41 @@ func (a *Graph) beforeRun(ctx context.Context, state *types.RunState) error {
 	return nil
 }
 
-// AfterRun precedes resource cleanup, persistence, and the final event.
-func (a *Graph) finishInvoke(ctx context.Context, state *types.RunState, options RunOptions, initialCheckpointSaved bool, err error) error {
-	current := a.state
-	if current == nil {
-		current = state
+// FinishRun precedes resource cleanup, persistence, and the final event.
+func (graph *Graph) finishInvoke(ctx context.Context, runState *types.RunState, runOptions RunOptions, initialCheckpointSaved bool, err error) error {
+	currentRunState := graph.runState
+	if currentRunState == nil {
+		currentRunState = runState
 	}
-	for i := len(a.middlewares) - 1; i >= 0; i-- {
-		mw, ok := a.middlewares[i].(middleware.RunMiddleware)
+	for i := len(graph.middlewares) - 1; i >= 0; i-- {
+		currentMiddleware, ok := graph.middlewares[i].(middleware.RunMiddleware)
 		if ok {
-			err = errors.Join(err, mw.AfterRun(ctx, current, err))
+			err = errors.Join(err, currentMiddleware.FinishRun(ctx, currentRunState, err))
 		}
 	}
-	cleanupErr := a.executor.cancel(context.Background())
-	err = errors.Join(err, cleanupErr, a.closeResources(ctx))
+	cleanupErr := graph.toolExecutor.cancelToolExecutions(context.Background())
+	err = errors.Join(err, cleanupErr, graph.closeResources(ctx))
 	// A terminal failure must not discard accepted inputs embedded in a
 	// checkpoint. Interrupts retain them in the Eino snapshot.
 	_, interrupted := compose.ExtractInterruptInfo(err)
-	if err != nil && !interrupted && a.state != nil {
-		pending := hasPendingInputs(current)
+	if err != nil && !interrupted && graph.runState != nil {
+		pending := hasPendingInputs(currentRunState)
 		if pending {
 			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-			err = errors.Join(err, a.persistInputs(saveCtx, current))
+			err = errors.Join(err, graph.persistInputs(saveCtx, currentRunState))
 			cancel()
 		}
 	}
-	markRunError(ctx, current, err)
+	markRunError(ctx, currentRunState, err)
 	_, interrupted = compose.ExtractInterruptInfo(err)
 	// Only finalize a state actually entered by the Graph. A rejected resume
-	// or a BeforeRun failure must not overwrite the saved state with a new one.
-	if !interrupted && a.state != nil && a.cfg.CheckpointStore != nil && (!options.ForceNewRun || initialCheckpointSaved) {
-		checkpointID := options.outputCheckpointID()
+	// or a PrepareRun failure must not overwrite the saved state with a new one.
+	if !interrupted && graph.runState != nil && graph.config.CheckpointStore != nil && (!runOptions.ForceNewRun || initialCheckpointSaved) {
+		checkpointID := runOptions.getOutputCheckpointID()
 		if checkpointID != "" {
 			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-			required := current != state && checkpointID == options.CheckpointID
-			saveErr := checkpointer.New(a.cfg.CheckpointStore, a.cfg.ThreadID, a.runID, "core-graph-v1").Finalize(saveCtx, checkpointID, current, required)
+			required := currentRunState != runState && checkpointID == runOptions.CheckpointID
+			saveErr := checkpointer.New(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID, "core-graph-v1").Finalize(saveCtx, checkpointID, currentRunState, required)
 			cancel()
 			if saveErr != nil {
 				err = errors.Join(err, fmt.Errorf("persist terminal checkpoint: %w", saveErr))
@@ -154,28 +154,28 @@ func (a *Graph) finishInvoke(ctx context.Context, state *types.RunState, options
 		}
 	}
 	if err == nil {
-		err = a.event(ctx, current, "turn_end", "", nil)
+		err = graph.emitEvent(ctx, currentRunState, "turn_end", "", nil)
 	}
-	markRunError(ctx, current, err)
+	markRunError(ctx, currentRunState, err)
 
 	return err
 }
 
-func (a *Graph) Name() string { return a.cfg.Name }
+func (graph *Graph) GetName() string { return graph.config.Name }
 
-func (a *Graph) Depth() int { return a.cfg.Depth }
+func (graph *Graph) GetDepth() int { return graph.config.Depth }
 
-func (a *Graph) GraphState() *types.GraphState { return a.graphState }
+func (graph *Graph) GetGraphState() *types.GraphState { return graph.graphState }
 
-func (a *Graph) Close(ctx context.Context) error {
-	a.mu.Lock()
-	a.closed = true
+func (graph *Graph) Close(ctx context.Context) error {
+	graph.mu.Lock()
+	graph.closed = true
 	var done chan struct{}
-	if a.invoking {
-		a.cancel(context.Canceled)
-		done = a.done
+	if graph.invoking {
+		graph.cancel(context.Canceled)
+		done = graph.done
 	}
-	a.mu.Unlock()
+	graph.mu.Unlock()
 	if done != nil {
 		select {
 		case <-done:
@@ -183,49 +183,49 @@ func (a *Graph) Close(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
-	return a.closeResources(ctx)
+	return graph.closeResources(ctx)
 }
 
-func (a *Graph) Interrupt(opts ...compose.GraphInterruptOption) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if !a.invoking || a.interrupt == nil {
+func (graph *Graph) Interrupt(opts ...compose.GraphInterruptOption) bool {
+	graph.mu.Lock()
+	defer graph.mu.Unlock()
+	if !graph.invoking || graph.interrupt == nil {
 		return false
 	}
-	a.interrupt(opts...)
+	graph.interrupt(opts...)
 	// Eino's interrupt function closes a channel and is one-shot.
-	a.interrupt = nil
+	graph.interrupt = nil
 	return true
 }
 
 // endInvoke releases the invocation gate after Graph resources are cleaned up.
-func (a *Graph) endInvoke(err error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.cancel(err)
-	a.invoking = false
-	a.interrupt = nil
-	close(a.done)
+func (graph *Graph) endInvoke(err error) {
+	graph.mu.Lock()
+	defer graph.mu.Unlock()
+	graph.cancel(err)
+	graph.invoking = false
+	graph.interrupt = nil
+	close(graph.done)
 }
 
 // GetGraph 从节点上下文中获取当前 Graph。
 func GetGraph(ctx context.Context) *Graph {
-	ins := ctx.Value("graph")
-	if ins == nil {
+	contextValue := ctx.Value("graph")
+	if contextValue == nil {
 		return nil
 	}
-	agent, ok := ins.(*Graph)
+	graph, ok := contextValue.(*Graph)
 	if !ok {
 		return nil
 	}
-	return agent
+	return graph
 }
 
 // GetWholeGraphState 获取当前 Agent 的完整图状态。
 func GetWholeGraphState(ctx context.Context) *types.GraphState {
-	a := GetGraph(ctx)
-	if a == nil {
+	graph := GetGraph(ctx)
+	if graph == nil {
 		return nil
 	}
-	return a.GraphState()
+	return graph.GetGraphState()
 }

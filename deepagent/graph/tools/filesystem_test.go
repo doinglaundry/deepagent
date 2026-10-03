@@ -17,75 +17,75 @@ import (
 
 func TestTools_AllRegisteredNamesSchemasAndArgumentAliases(t *testing.T) {
 	ctx := context.Background()
-	b, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
+	filesystem, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.Close(ctx)
-	registered := map[string]einotool.InvokableTool{}
-	descriptors := map[string]ToolDescriptor{}
-	items, err := NewFilesystemTools(b, FilesystemToolOptions{EnableCommands: true, EnablePatch: true})
+	defer filesystem.Close(ctx)
+	toolsByName := map[string]einotool.InvokableTool{}
+	descriptorsByName := map[string]ToolDescriptor{}
+	toolDescriptors, err := NewFilesystemTools(filesystem, FilesystemToolOptions{EnableCommands: true, EnablePatch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range items {
-		info, err := tool.Tool.Info(ctx)
+	for _, toolDescriptor := range toolDescriptors {
+		toolInfo, err := toolDescriptor.Tool.Info(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info == nil || info.Name == "" || info.ParamsOneOf == nil {
-			t.Fatalf("tool has incomplete schema: %+v", info)
+		if toolInfo == nil || toolInfo.Name == "" || toolInfo.ParamsOneOf == nil {
+			t.Fatalf("tool has incomplete schema: %+v", toolInfo)
 		}
-		if registered[info.Name] != nil {
-			t.Fatalf("duplicate tool name %q", info.Name)
+		if toolsByName[toolInfo.Name] != nil {
+			t.Fatalf("duplicate tool name %q", toolInfo.Name)
 		}
-		registered[info.Name] = tool.Tool.(einotool.InvokableTool)
-		descriptors[info.Name] = tool
+		toolsByName[toolInfo.Name] = toolDescriptor.Tool.(einotool.InvokableTool)
+		descriptorsByName[toolInfo.Name] = toolDescriptor
 	}
 	for _, name := range []string{"list_files", "read_file", "write_file", "edit_file", "delete_file", "glob", "grep", "rg", "semantic_search", "read_lints", "apply_patch", "execute", "shell", "await_shell"} {
-		if registered[name] == nil {
+		if toolsByName[name] == nil {
 			t.Fatalf("missing %s", name)
 		}
 	}
 	for _, name := range []string{"write_file", "edit_file", "delete_file", "apply_patch", "read_lints", "execute", "shell"} {
-		if !descriptors[name].RequiresApproval || descriptors[name].ReadOnly || descriptors[name].ParallelSafe {
+		if !descriptorsByName[name].RequiresApproval || descriptorsByName[name].ReadOnly || descriptorsByName[name].ParallelSafe {
 			t.Fatalf("%s must execute serially with approval", name)
 		}
 	}
-	toolSet, err := NewToolSet(ctx, items)
+	toolSet, err := NewToolSet(ctx, toolDescriptors)
 	if err != nil {
 		t.Fatal(err)
 	}
-	readOnly, err := toolSet.Filter(ctx, true, nil)
+	readOnlyToolSet, err := toolSet.FilterTools(ctx, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	infos, err := readOnly.ModelTools(ctx)
+	toolInfos, err := readOnlyToolSet.GetToolInfos(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var names []string
-	for _, info := range infos {
-		names = append(names, info.Name)
+	var toolNames []string
+	for _, toolInfo := range toolInfos {
+		toolNames = append(toolNames, toolInfo.Name)
 	}
-	want := []string{"list_files", "read_file", "glob", "grep", "rg", "semantic_search", "await_shell"}
-	if !reflect.DeepEqual(names, want) {
-		t.Fatalf("read-only model tools = %v, want %v", names, want)
+	expectedToolNames := []string{"list_files", "read_file", "glob", "grep", "rg", "semantic_search", "await_shell"}
+	if !reflect.DeepEqual(toolNames, expectedToolNames) {
+		t.Fatalf("read-only model tools = %v, want %v", toolNames, expectedToolNames)
 	}
 	for _, step := range []struct{ name, args string }{
 		{"write_file", `{"path":"a.txt","content":"first\nsecond\n"}`},
 		{"edit_file", `{"path":"a.txt","old":"second","new":"changed"}`},
 	} {
-		_, err := registered[step.name].InvokableRun(ctx, step.args)
+		_, err := toolsByName[step.name].InvokableRun(ctx, step.args)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	text, err := registered["read_file"].InvokableRun(ctx, `{"path":"a.txt","offset":2,"limit":1}`)
-	if err != nil || !strings.Contains(text, "changed") || strings.Contains(text, "first") {
-		t.Fatalf("read=%q err=%v", text, err)
+	fileContent, err := toolsByName["read_file"].InvokableRun(ctx, `{"path":"a.txt","offset":2,"limit":1}`)
+	if err != nil || !strings.Contains(fileContent, "changed") || strings.Contains(fileContent, "first") {
+		t.Fatalf("read=%q err=%v", fileContent, err)
 	}
-	_, invokableRunErr := registered["delete_file"].InvokableRun(ctx, `{"path":"a.txt"}`)
+	_, invokableRunErr := toolsByName["delete_file"].InvokableRun(ctx, `{"path":"a.txt"}`)
 	if invokableRunErr != nil {
 		t.Fatal(invokableRunErr)
 	}
@@ -93,150 +93,150 @@ func TestTools_AllRegisteredNamesSchemasAndArgumentAliases(t *testing.T) {
 
 func TestFilesystemPreservesWorkerReadAndExactEditContracts(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
-	b := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: root, VirtualMode: true, MaxFileSizeMB: 1})
-	read := NewReadFileTool(b).Tool.(einotool.InvokableTool)
-	edit := NewEditFileTool(b).Tool.(einotool.InvokableTool)
-	writeErr3 := os.WriteFile(filepath.Join(root, "data.txt"), []byte("hello world"), 0600)
-	if writeErr3 != nil {
-		t.Fatal(writeErr3)
+	workspaceRoot := t.TempDir()
+	filesystem := newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: workspaceRoot, VirtualMode: true, MaxFileSizeMB: 1})
+	readFileTool := NewReadFileTool(filesystem).Tool.(einotool.InvokableTool)
+	editFileTool := NewEditFileTool(filesystem).Tool.(einotool.InvokableTool)
+	initialWriteErr := os.WriteFile(filepath.Join(workspaceRoot, "data.txt"), []byte("hello world"), 0600)
+	if initialWriteErr != nil {
+		t.Fatal(initialWriteErr)
 	}
-	_, invokableRunErr3 := edit.InvokableRun(ctx, `{"path":"data.txt","old":"world","new":"Go"}`)
-	if invokableRunErr3 != nil {
-		t.Fatal(invokableRunErr3)
+	_, replaceWorldErr := editFileTool.InvokableRun(ctx, `{"path":"data.txt","old":"world","new":"Go"}`)
+	if replaceWorldErr != nil {
+		t.Fatal(replaceWorldErr)
 	}
-	result, invokableRunErr2 := read.InvokableRun(ctx, `{"path":"data.txt"}`)
-	if invokableRunErr2 != nil || result != "hello Go" {
-		t.Fatalf("read=%q err=%v", result, invokableRunErr2)
+	editedContent, readEditedFileErr := readFileTool.InvokableRun(ctx, `{"path":"data.txt"}`)
+	if readEditedFileErr != nil || editedContent != "hello Go" {
+		t.Fatalf("read=%q err=%v", editedContent, readEditedFileErr)
 	}
-	for _, old := range []string{"missing", ""} {
-		_, err := edit.InvokableRun(ctx, `{"path":"data.txt","old":"`+old+`","new":"bad"}`)
+	for _, oldText := range []string{"missing", ""} {
+		_, err := editFileTool.InvokableRun(ctx, `{"path":"data.txt","old":"`+oldText+`","new":"bad"}`)
 		if err == nil {
-			t.Fatalf("invalid edit accepted: old=%q", old)
+			t.Fatalf("invalid edit accepted: old=%q", oldText)
 		}
 	}
-	writeErr2 := os.WriteFile(filepath.Join(root, "data.txt"), []byte("twice twice"), 0600)
-	if writeErr2 != nil {
-		t.Fatal(writeErr2)
+	duplicateWriteErr := os.WriteFile(filepath.Join(workspaceRoot, "data.txt"), []byte("twice twice"), 0600)
+	if duplicateWriteErr != nil {
+		t.Fatal(duplicateWriteErr)
 	}
-	_, editInvokableRunErr := edit.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"bad"}`)
-	if editInvokableRunErr == nil {
+	_, ambiguousEditErr := editFileTool.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"bad"}`)
+	if ambiguousEditErr == nil {
 		t.Fatal("ambiguous edit accepted")
 	}
-	invokableRunResult, readInvokableRunErr := read.InvokableRun(ctx, `{"path":"data.txt"}`)
-	if readInvokableRunErr != nil || invokableRunResult != "twice twice" {
-		t.Fatalf("rejected edit changed file: %q %v", invokableRunResult, readInvokableRunErr)
+	unchangedContent, readUnchangedFileErr := readFileTool.InvokableRun(ctx, `{"path":"data.txt"}`)
+	if readUnchangedFileErr != nil || unchangedContent != "twice twice" {
+		t.Fatalf("rejected edit changed file: %q %v", unchangedContent, readUnchangedFileErr)
 	}
-	writeErr := os.WriteFile(filepath.Join(root, "large.txt"), []byte(strings.Repeat("x", (1<<20)+1)), 0600)
-	if writeErr != nil {
-		t.Fatal(writeErr)
+	largeFileWriteErr := os.WriteFile(filepath.Join(workspaceRoot, "large.txt"), []byte(strings.Repeat("x", (1<<20)+1)), 0600)
+	if largeFileWriteErr != nil {
+		t.Fatal(largeFileWriteErr)
 	}
-	_, invokableRunErr := read.InvokableRun(ctx, `{"path":"large.txt"}`)
-	if invokableRunErr == nil {
+	_, readLargeFileErr := readFileTool.InvokableRun(ctx, `{"path":"large.txt"}`)
+	if readLargeFileErr == nil {
 		t.Fatal("oversized file accepted")
 	}
 }
 
 func TestFilesystemToolArgumentPresenceAndReplaceAll(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
-	b := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
-	write := NewWriteFileTool(b).Tool.(einotool.InvokableTool)
-	edit := NewEditFileTool(b).Tool.(einotool.InvokableTool)
-	read := NewReadFileTool(b).Tool.(einotool.InvokableTool)
-	err := os.WriteFile(filepath.Join(root, "data.txt"), []byte("twice twice"), 0600)
+	workspaceRoot := t.TempDir()
+	filesystem := newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: workspaceRoot, VirtualMode: true})
+	writeFileTool := NewWriteFileTool(filesystem).Tool.(einotool.InvokableTool)
+	editFileTool := NewEditFileTool(filesystem).Tool.(einotool.InvokableTool)
+	readFileTool := NewReadFileTool(filesystem).Tool.(einotool.InvokableTool)
+	err := os.WriteFile(filepath.Join(workspaceRoot, "data.txt"), []byte("twice twice"), 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	for _, args := range []string{
+	for _, arguments := range []string{
 		`{"path":"data.txt"}`,
 		`{"path":"data.txt","content":null}`,
 	} {
-		_, err = write.InvokableRun(ctx, args)
+		_, err = writeFileTool.InvokableRun(ctx, arguments)
 		if err == nil {
-			t.Fatalf("accepted write arguments: %s", args)
+			t.Fatalf("accepted write arguments: %s", arguments)
 		}
 	}
-	result, err := read.InvokableRun(ctx, `{"path":"data.txt"}`)
-	if err != nil || result != "twice twice" {
-		t.Fatalf("invalid write changed file: %q %v", result, err)
+	fileContent, err := readFileTool.InvokableRun(ctx, `{"path":"data.txt"}`)
+	if err != nil || fileContent != "twice twice" {
+		t.Fatalf("invalid write changed file: %q %v", fileContent, err)
 	}
 
-	for _, args := range []string{
+	for _, arguments := range []string{
 		`{"path":"data.txt","old":"twice"}`,
 		`{"path":"data.txt","old":"twice","new":null}`,
 	} {
-		_, err = edit.InvokableRun(ctx, args)
+		_, err = editFileTool.InvokableRun(ctx, arguments)
 		if err == nil {
-			t.Fatalf("accepted edit arguments: %s", args)
+			t.Fatalf("accepted edit arguments: %s", arguments)
 		}
 	}
-	result, err = read.InvokableRun(ctx, `{"path":"data.txt"}`)
-	if err != nil || result != "twice twice" {
-		t.Fatalf("invalid edit changed file: %q %v", result, err)
+	fileContent, err = readFileTool.InvokableRun(ctx, `{"path":"data.txt"}`)
+	if err != nil || fileContent != "twice twice" {
+		t.Fatalf("invalid edit changed file: %q %v", fileContent, err)
 	}
 
-	_, err = write.InvokableRun(ctx, `{"path":"empty.txt","content":""}`)
+	_, err = writeFileTool.InvokableRun(ctx, `{"path":"empty.txt","content":""}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err = read.InvokableRun(ctx, `{"path":"empty.txt"}`)
-	if err != nil || result != "" {
-		t.Fatalf("explicit empty write failed: %q %v", result, err)
+	fileContent, err = readFileTool.InvokableRun(ctx, `{"path":"empty.txt"}`)
+	if err != nil || fileContent != "" {
+		t.Fatalf("explicit empty write failed: %q %v", fileContent, err)
 	}
 
-	err = os.WriteFile(filepath.Join(root, "remove.txt"), []byte("remove me"), 0600)
+	err = os.WriteFile(filepath.Join(workspaceRoot, "remove.txt"), []byte("remove me"), 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = edit.InvokableRun(ctx, `{"path":"remove.txt","old":"remove","new":""}`)
+	_, err = editFileTool.InvokableRun(ctx, `{"path":"remove.txt","old":"remove","new":""}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err = read.InvokableRun(ctx, `{"path":"remove.txt"}`)
-	if err != nil || result != " me" {
-		t.Fatalf("explicit empty edit failed: %q %v", result, err)
+	fileContent, err = readFileTool.InvokableRun(ctx, `{"path":"remove.txt"}`)
+	if err != nil || fileContent != " me" {
+		t.Fatalf("explicit empty edit failed: %q %v", fileContent, err)
 	}
 
-	_, err = edit.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":false}`)
+	_, err = editFileTool.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":false}`)
 	if err == nil {
 		t.Fatal("replace_all=false accepted ambiguous edit")
 	}
-	result, err = read.InvokableRun(ctx, `{"path":"data.txt"}`)
-	if err != nil || result != "twice twice" {
-		t.Fatalf("ambiguous edit changed file: %q %v", result, err)
+	fileContent, err = readFileTool.InvokableRun(ctx, `{"path":"data.txt"}`)
+	if err != nil || fileContent != "twice twice" {
+		t.Fatalf("ambiguous edit changed file: %q %v", fileContent, err)
 	}
-	_, err = edit.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":true}`)
+	_, err = editFileTool.InvokableRun(ctx, `{"path":"data.txt","old":"twice","new":"once","replace_all":true}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err = read.InvokableRun(ctx, `{"path":"data.txt"}`)
-	if err != nil || result != "once once" {
-		t.Fatalf("replace_all edit failed: %q %v", result, err)
+	fileContent, err = readFileTool.InvokableRun(ctx, `{"path":"data.txt"}`)
+	if err != nil || fileContent != "once once" {
+		t.Fatalf("replace_all edit failed: %q %v", fileContent, err)
 	}
 
-	info, err := edit.Info(ctx)
+	toolInfo, err := editFileTool.Info(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(info)
+	encodedToolInfo, err := json.Marshal(toolInfo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var encoded struct {
+	var toolSchema struct {
 		Params map[string]struct {
 			Type     string `json:"Type"`
 			Required bool   `json:"Required"`
 		} `json:"params"`
 	}
-	err = json.Unmarshal(data, &encoded)
+	err = json.Unmarshal(encodedToolInfo, &toolSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replaceAll, ok := encoded.Params["replace_all"]
-	if !ok || replaceAll.Type != "boolean" || replaceAll.Required {
-		t.Fatalf("replace_all schema = %+v", replaceAll)
+	replaceAllParameter, ok := toolSchema.Params["replace_all"]
+	if !ok || replaceAllParameter.Type != "boolean" || replaceAllParameter.Required {
+		t.Fatalf("replace_all schema = %+v", replaceAllParameter)
 	}
 }
 
@@ -245,27 +245,27 @@ type pathValidationFilesystem struct {
 	calls int
 }
 
-func (f *pathValidationFilesystem) Write(context.Context, string, string) (*filesystempkg.WriteResult, error) {
-	f.calls++
+func (filesystem *pathValidationFilesystem) Write(context.Context, string, string) (*filesystempkg.WriteResult, error) {
+	filesystem.calls++
 	return &filesystempkg.WriteResult{}, nil
 }
 
-func (f *pathValidationFilesystem) Edit(context.Context, string, string, string, bool) (*filesystempkg.EditResult, error) {
-	f.calls++
+func (filesystem *pathValidationFilesystem) Edit(context.Context, string, string, string, bool) (*filesystempkg.EditResult, error) {
+	filesystem.calls++
 	return &filesystempkg.EditResult{}, nil
 }
 
 func TestFileMutationRequiresPathBeforeBackendInvocation(t *testing.T) {
 	filesystem := &pathValidationFilesystem{}
-	for _, item := range []ToolDescriptor{NewWriteFileTool(filesystem), NewEditFileTool(filesystem)} {
-		info, err := item.Tool.Info(context.Background())
+	for _, toolDescriptor := range []ToolDescriptor{NewWriteFileTool(filesystem), NewEditFileTool(filesystem)} {
+		toolInfo, err := toolDescriptor.Tool.Info(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, path := range []string{"", `,"path":null`, `,"path":""`, `,"path":"  "`} {
-			t.Run(info.Name+path, func(t *testing.T) {
-				args := `{"content":"value","old":"old","new":"new"` + path + `}`
-				_, err := item.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), args)
+		for _, pathArgument := range []string{"", `,"path":null`, `,"path":""`, `,"path":"  "`} {
+			t.Run(toolInfo.Name+pathArgument, func(t *testing.T) {
+				arguments := `{"content":"value","old":"old","new":"new"` + pathArgument + `}`
+				_, err := toolDescriptor.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), arguments)
 				if err == nil || err.Error() != "path is required" {
 					t.Fatalf("path validation error = %v", err)
 				}
@@ -279,47 +279,47 @@ func TestFileMutationRequiresPathBeforeBackendInvocation(t *testing.T) {
 
 type dockerToolProvider struct{ sandbox.Sandbox }
 
-func (*dockerToolProvider) DockerExecTarget() (string, bool) { return "test-container", true }
+func (*dockerToolProvider) GetDockerExecTarget() (string, bool) { return "test-container", true }
 
-func (*dockerToolProvider) ResolveContainerPath(_ context.Context, p string) (string, error) {
-	return p, nil
+func (*dockerToolProvider) ResolveContainerPath(_ context.Context, path string) (string, error) {
+	return path, nil
 }
 
 func TestWorkspaceToolSchemasMatchLocalAndDocker(t *testing.T) {
 	ctx := context.Background()
-	local, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "local")
+	localFilesystem, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "local")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer local.Close(ctx)
-	docker, err := filesystempkg.NewDockerFilesystem(&dockerToolProvider{}, "/workspace", "docker", nil)
+	defer localFilesystem.Close(ctx)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(&dockerToolProvider{}, "/workspace", "docker", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer docker.Close(ctx)
-	for _, opts := range []FilesystemToolOptions{{ReadOnly: true}, {EnableCommands: true, EnablePatch: true}} {
-		infos := make([]map[string]any, 0, 2)
-		for _, ws := range []filesystempkg.ToolFilesystem{local, docker} {
-			items, err := NewFilesystemTools(ws, opts)
+	defer dockerFilesystem.Close(ctx)
+	for _, options := range []FilesystemToolOptions{{ReadOnly: true}, {EnableCommands: true, EnablePatch: true}} {
+		toolSchemas := make([]map[string]any, 0, 2)
+		for _, filesystem := range []filesystempkg.ToolFilesystem{localFilesystem, dockerFilesystem} {
+			toolDescriptors, err := NewFilesystemTools(filesystem, options)
 			if err != nil {
 				t.Fatal(err)
 			}
-			byName := map[string]any{}
-			for _, item := range items {
-				info, err := item.Tool.Info(ctx)
+			toolsByName := map[string]any{}
+			for _, toolDescriptor := range toolDescriptors {
+				toolInfo, err := toolDescriptor.Tool.Info(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
-				_, exists := byName[info.Name]
+				_, exists := toolsByName[toolInfo.Name]
 				if exists {
-					t.Fatalf("duplicate tool %s", info.Name)
+					t.Fatalf("duplicate tool %s", toolInfo.Name)
 				}
-				byName[info.Name] = info
+				toolsByName[toolInfo.Name] = toolInfo
 			}
-			infos = append(infos, byName)
+			toolSchemas = append(toolSchemas, toolsByName)
 		}
-		if !reflect.DeepEqual(infos[0], infos[1]) {
-			t.Fatalf("local and Docker tool schemas differ: %v / %v", infos[0], infos[1])
+		if !reflect.DeepEqual(toolSchemas[0], toolSchemas[1]) {
+			t.Fatalf("local and Docker tool schemas differ: %v / %v", toolSchemas[0], toolSchemas[1])
 		}
 	}
 }
@@ -329,63 +329,63 @@ type applyPatchProbe struct {
 	patch string
 }
 
-func (p *applyPatchProbe) ApplyPatch(_ context.Context, patch string) (string, error) {
-	p.patch = patch
+func (patchProbe *applyPatchProbe) ApplyPatch(_ context.Context, patch string) (string, error) {
+	patchProbe.patch = patch
 	return "patched", nil
 }
 
 func TestReadOnlyFilesystemOmitsMutations(t *testing.T) {
-	filesystem := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
-	items, err := NewFilesystemTools(filesystem, FilesystemToolOptions{ReadOnly: true, EnableCommands: true, EnablePatch: true})
+	filesystem := newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
+	toolDescriptors, err := NewFilesystemTools(filesystem, FilesystemToolOptions{ReadOnly: true, EnableCommands: true, EnablePatch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var names []string
-	for _, item := range items {
-		info, err := item.Tool.Info(context.Background())
+	var toolNames []string
+	for _, toolDescriptor := range toolDescriptors {
+		toolInfo, err := toolDescriptor.Tool.Info(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		descriptor := item
+		descriptor := toolDescriptor
 		if !descriptor.ReadOnly || descriptor.RequiresApproval {
-			t.Fatalf("read-only factory exposed mutation: %s", info.Name)
+			t.Fatalf("read-only factory exposed mutation: %s", toolInfo.Name)
 		}
-		names = append(names, info.Name)
+		toolNames = append(toolNames, toolInfo.Name)
 	}
-	want := []string{"list_files", "read_file", "glob", "grep", "rg", "semantic_search"}
-	if !reflect.DeepEqual(names, want) {
-		t.Fatalf("read-only tools = %v, want %v", names, want)
+	expectedToolNames := []string{"list_files", "read_file", "glob", "grep", "rg", "semantic_search"}
+	if !reflect.DeepEqual(toolNames, expectedToolNames) {
+		t.Fatalf("read-only tools = %v, want %v", toolNames, expectedToolNames)
 	}
 }
 
 func TestApplyPatchDelegatesToFilesystem(t *testing.T) {
-	filesystem := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
-	probe := &applyPatchProbe{LocalFilesystem: filesystem}
-	item := NewApplyPatchTool(probe).Tool.(einotool.InvokableTool)
-	output, err := item.InvokableRun(context.Background(), `{"patch":"*** Begin Patch\\n*** End Patch"}`)
-	if err != nil || output != "patched" || probe.patch == "" {
-		t.Fatalf("apply_patch = %q, %v, patch=%q", output, err, probe.patch)
+	filesystem := newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
+	patchProbe := &applyPatchProbe{LocalFilesystem: filesystem}
+	applyPatchTool := NewApplyPatchTool(patchProbe).Tool.(einotool.InvokableTool)
+	output, err := applyPatchTool.InvokableRun(context.Background(), `{"patch":"*** Begin Patch\\n*** End Patch"}`)
+	if err != nil || output != "patched" || patchProbe.patch == "" {
+		t.Fatalf("apply_patch = %q, %v, patch=%q", output, err, patchProbe.patch)
 	}
 }
 
 func TestDeleteFileRefusesDirectories(t *testing.T) {
-	root := t.TempDir()
-	filesystem := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
-	item := NewDeleteFileTool(filesystem).Tool.(einotool.InvokableTool)
-	_, err := item.InvokableRun(context.Background(), `{"path":"."}`)
+	workspaceRoot := t.TempDir()
+	filesystem := newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: workspaceRoot, VirtualMode: true})
+	deleteFileTool := NewDeleteFileTool(filesystem).Tool.(einotool.InvokableTool)
+	_, err := deleteFileTool.InvokableRun(context.Background(), `{"path":"."}`)
 	if err == nil {
 		t.Fatal("delete_file accepted a directory")
 	}
-	path := filepath.Join(root, "remove.txt")
-	err = os.WriteFile(path, []byte("x"), 0600)
+	filePath := filepath.Join(workspaceRoot, "remove.txt")
+	err = os.WriteFile(filePath, []byte("x"), 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = item.InvokableRun(context.Background(), `{"path":"remove.txt"}`)
+	_, err = deleteFileTool.InvokableRun(context.Background(), `{"path":"remove.txt"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = os.Stat(path)
+	_, err = os.Stat(filePath)
 	if !os.IsNotExist(err) {
 		t.Fatalf("file still exists: %v", err)
 	}

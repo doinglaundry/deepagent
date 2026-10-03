@@ -18,26 +18,26 @@ import (
 )
 
 type fileSearchTool struct {
-	backend filesystempkg.Filesystem
-	name    string
+	filesystem filesystempkg.Filesystem
+	toolName   string
 }
 
-func newFileSearchTool(filesystem filesystempkg.Filesystem, name string) ToolDescriptor {
-	return ToolDescriptor{Tool: &fileSearchTool{backend: filesystem, name: name}, ReadOnly: true, ParallelSafe: true}
+func newFileSearchTool(filesystem filesystempkg.Filesystem, toolName string) ToolDescriptor {
+	return ToolDescriptor{Tool: &fileSearchTool{filesystem: filesystem, toolName: toolName}, ReadOnly: true, ParallelSafe: true}
 }
 
-func (t *fileSearchTool) Info(context.Context) (*schema.ToolInfo, error) {
-	params := map[string]*schema.ParameterInfo{"pattern": {Type: schema.String, Required: t.name == "glob"}, "path": {Type: schema.String}, "glob": {Type: schema.String}, "ignore_case": {Type: schema.Boolean}, "head_limit": {Type: schema.Integer}}
+func (fileSearchTool *fileSearchTool) Info(context.Context) (*schema.ToolInfo, error) {
+	parameters := map[string]*schema.ParameterInfo{"pattern": {Type: schema.String, Required: fileSearchTool.toolName == "glob"}, "path": {Type: schema.String}, "glob": {Type: schema.String}, "ignore_case": {Type: schema.Boolean}, "head_limit": {Type: schema.Integer}}
 	description := "Find workspace paths matching a glob pattern."
-	if t.name != "glob" {
-		params["query"] = &schema.ParameterInfo{Type: schema.String}
+	if fileSearchTool.toolName != "glob" {
+		parameters["query"] = &schema.ParameterInfo{Type: schema.String}
 		description = "Search workspace text. pattern is a regular expression; query matches literal text."
 	}
-	return toolInfo(t.name, description, params)
+	return newToolInfo(fileSearchTool.toolName, description, parameters)
 }
 
-func (t *fileSearchTool) InvokableRun(ctx context.Context, raw string, _ ...tool.Option) (string, error) {
-	var input struct {
+func (fileSearchTool *fileSearchTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	var searchArgs struct {
 		Pattern    string `json:"pattern"`
 		Query      string `json:"query"`
 		Path       string `json:"path"`
@@ -45,43 +45,43 @@ func (t *fileSearchTool) InvokableRun(ctx context.Context, raw string, _ ...tool
 		IgnoreCase bool   `json:"ignore_case"`
 		HeadLimit  int    `json:"head_limit"`
 	}
-	err := json.Unmarshal([]byte(raw), &input)
+	err := json.Unmarshal([]byte(arguments), &searchArgs)
 	if err != nil {
 		return "", err
 	}
-	if input.Pattern == "" {
-		input.Pattern = input.Query
-		if t.name != "glob" {
-			input.Pattern = regexp.QuoteMeta(input.Query)
-			if input.Query != "" && input.HeadLimit <= 0 {
-				input.HeadLimit = 100
+	if searchArgs.Pattern == "" {
+		searchArgs.Pattern = searchArgs.Query
+		if fileSearchTool.toolName != "glob" {
+			searchArgs.Pattern = regexp.QuoteMeta(searchArgs.Query)
+			if searchArgs.Query != "" && searchArgs.HeadLimit <= 0 {
+				searchArgs.HeadLimit = 100
 			}
 		}
 	}
-	if input.Pattern == "" {
+	if searchArgs.Pattern == "" {
 		return "", fmt.Errorf("pattern is required")
 	}
-	if t.name == "glob" {
-		files, err := t.backend.Glob(ctx, input.Pattern, input.Path)
+	if fileSearchTool.toolName == "glob" {
+		files, err := fileSearchTool.filesystem.Glob(ctx, searchArgs.Pattern, searchArgs.Path)
 		if err != nil {
 			return "", err
 		}
-		data, err := json.Marshal(files)
-		return string(data), err
+		encodedFiles, err := json.Marshal(files)
+		return string(encodedFiles), err
 	}
-	if input.IgnoreCase {
-		input.Pattern = "(?i)" + input.Pattern
+	if searchArgs.IgnoreCase {
+		searchArgs.Pattern = "(?i)" + searchArgs.Pattern
 	}
-	matches, err := t.backend.Grep(ctx, input.Pattern, input.Path, input.Glob)
+	matches, err := fileSearchTool.filesystem.Grep(ctx, searchArgs.Pattern, searchArgs.Path, searchArgs.Glob)
 	if err != nil {
 		return "", err
 	}
-	if input.HeadLimit > 0 && len(matches) > input.HeadLimit {
-		matches = matches[:input.HeadLimit]
+	if searchArgs.HeadLimit > 0 && len(matches) > searchArgs.HeadLimit {
+		matches = matches[:searchArgs.HeadLimit]
 	}
 	lines := make([]string, len(matches))
-	for i, m := range matches {
-		lines[i] = fmt.Sprintf("%s:%d:%s", m.Path, m.Line, m.Text)
+	for i, match := range matches {
+		lines[i] = fmt.Sprintf("%s:%d:%s", match.Path, match.Line, match.Text)
 	}
 	return strings.Join(lines, "\n"), nil
 }
@@ -108,25 +108,25 @@ func NewSemanticSearchTool(filesystem filesystempkg.Filesystem) (ToolDescriptor,
 type semanticSearchTool struct{ filesystem filesystempkg.Filesystem }
 
 func (*semanticSearchTool) Info(context.Context) (*schema.ToolInfo, error) {
-	return toolInfo("semantic_search", "Rank code paths and lines by query-term matches.", map[string]*schema.ParameterInfo{"query": {Type: schema.String, Required: true}, "path": {Type: schema.String}})
+	return newToolInfo("semantic_search", "Rank code paths and lines by query-term matches.", map[string]*schema.ParameterInfo{"query": {Type: schema.String, Required: true}, "path": {Type: schema.String}})
 }
 
-func (t *semanticSearchTool) InvokableRun(ctx context.Context, raw string, _ ...tool.Option) (string, error) {
-	var input semanticSearchArgs
-	err := json.Unmarshal([]byte(raw), &input)
+func (semanticSearchTool *semanticSearchTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	var searchArgs semanticSearchArgs
+	err := json.Unmarshal([]byte(arguments), &searchArgs)
 	if err != nil {
 		return "", err
 	}
-	terms := semanticTerms(input.Query)
-	if len(terms) == 0 {
+	queryTerms := extractSemanticTerms(searchArgs.Query)
+	if len(queryTerms) == 0 {
 		return "", fmt.Errorf("query must include searchable terms")
 	}
-	matches, err := t.findMatches(ctx, input.Path, terms)
+	matches, err := semanticSearchTool.findMatches(ctx, searchArgs.Path, queryTerms)
 	if err != nil {
 		return "", err
 	}
-	slices.SortStableFunc(matches, func(a, b semanticMatch) int {
-		return cmp.Or(cmp.Compare(b.score, a.score), cmp.Compare(a.path, b.path), cmp.Compare(a.line, b.line))
+	slices.SortStableFunc(matches, func(firstMatch, secondMatch semanticMatch) int {
+		return cmp.Or(cmp.Compare(secondMatch.score, firstMatch.score), cmp.Compare(firstMatch.path, secondMatch.path), cmp.Compare(firstMatch.line, secondMatch.line))
 	})
 	if len(matches) > 10 {
 		matches = matches[:10]
@@ -135,29 +135,29 @@ func (t *semanticSearchTool) InvokableRun(ctx context.Context, raw string, _ ...
 		return "No semantic matches found", nil
 	}
 	lines := make([]string, len(matches))
-	for i, m := range matches {
-		lines[i] = fmt.Sprintf("%s:%d: %s", m.path, m.line, m.text)
+	for i, match := range matches {
+		lines[i] = fmt.Sprintf("%s:%d: %s", match.path, match.line, match.text)
 	}
 	return strings.Join(lines, "\n"), nil
 }
 
-func (t *semanticSearchTool) findMatches(ctx context.Context, start string, terms []string) ([]semanticMatch, error) {
+func (semanticSearchTool *semanticSearchTool) findMatches(ctx context.Context, startPath string, terms []string) ([]semanticMatch, error) {
 	type fileToRead struct {
 		path     string
 		required bool
 	}
-	pending := []string{start}
-	var files []fileToRead
-	for len(pending) > 0 {
+	pendingPaths := []string{startPath}
+	var filesToRead []fileToRead
+	for len(pendingPaths) > 0 {
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr
 		}
-		path := pending[0]
-		pending = pending[1:]
-		entries, err := t.filesystem.List(ctx, path)
+		path := pendingPaths[0]
+		pendingPaths = pendingPaths[1:]
+		entries, err := semanticSearchTool.filesystem.List(ctx, path)
 		if err != nil {
-			files = append(files, fileToRead{path: path, required: true})
+			filesToRead = append(filesToRead, fileToRead{path: path, required: true})
 			continue
 		}
 		for _, entry := range entries {
@@ -165,20 +165,20 @@ func (t *semanticSearchTool) findMatches(ctx context.Context, start string, term
 				continue
 			}
 			if entry.IsDir {
-				switch entry.Name() {
+				switch entry.GetName() {
 				case ".git", "node_modules", "vendor", ".cache":
 					continue
 				}
-				pending = append(pending, entry.Path)
+				pendingPaths = append(pendingPaths, entry.Path)
 				continue
 			}
-			files = append(files, fileToRead{path: entry.Path})
+			filesToRead = append(filesToRead, fileToRead{path: entry.Path})
 		}
 	}
 	var matches []semanticMatch
-	limit := math.MaxInt
-	for _, file := range files {
-		content, err := t.filesystem.Read(ctx, file.path, nil, &limit)
+	lineLimit := math.MaxInt
+	for _, file := range filesToRead {
+		content, err := semanticSearchTool.filesystem.Read(ctx, file.path, nil, &lineLimit)
 		if err != nil {
 			if file.required {
 				return nil, err
@@ -203,15 +203,17 @@ func (t *semanticSearchTool) findMatches(ctx context.Context, start string, term
 	return matches, nil
 }
 
-func semanticTerms(query string) []string {
-	var result []string
-	for _, term := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }) {
-		if len(term) < 3 || slices.Contains(result, term) {
+func extractSemanticTerms(query string) []string {
+	var terms []string
+	for _, term := range strings.FieldsFunc(strings.ToLower(query), func(character rune) bool {
+		return !unicode.IsLetter(character) && !unicode.IsDigit(character) && character != '_'
+	}) {
+		if len(term) < 3 || slices.Contains(terms, term) {
 			continue
 		}
-		result = append(result, term)
+		terms = append(terms, term)
 	}
-	return result
+	return terms
 }
 
 func scoreTerms(text string, terms []string) int {

@@ -116,7 +116,7 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 	agentConfig := execution.Config{
 		Model: chatModel, MaxSteps: w.Runtime.MaxSteps, MaxModelCalls: w.Runtime.MaxModelCalls,
 		CheckpointStore:  w.Deps.Checkpoint,
-		ToolDescriptors:  []tools.ToolDescriptor{tools.GetFollowUpTool()},
+		ToolDescriptors:  []tools.ToolDescriptor{tools.NewFollowUpTool()},
 		SubAgents:        []*execution.SubAgent{{Name: "general-purpose", EnableFilesystem: true, EnableWeb: true}},
 		SkillLoader:      w.Deps.SkillLoader,
 		WebConfig:        w.Runtime.Web,

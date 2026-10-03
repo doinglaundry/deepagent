@@ -14,21 +14,21 @@ func LoadSkillContent(ctx context.Context, loader SkillLoader, name string) (str
 	if contextErr != nil {
 		return "", contextErr
 	}
-	custom, ok := loader.(interface {
+	contentLoader, ok := loader.(interface {
 		LoadSkill(context.Context, string) (string, error)
 	})
 	if ok {
-		return custom.LoadSkill(ctx, name)
+		return contentLoader.LoadSkill(ctx, name)
 	}
-	items, err := loader.ListSkills(ctx)
+	skillMetadata, err := loader.ListSkills(ctx)
 	if err != nil {
 		return "", err
 	}
-	for _, item := range items {
-		if item == nil || item.Name != name {
+	for _, skill := range skillMetadata {
+		if skill == nil || skill.Name != name {
 			continue
 		}
-		file, err := os.Open(item.Path)
+		file, err := os.Open(skill.Path)
 		if err != nil {
 			return "", err
 		}
@@ -40,7 +40,7 @@ func LoadSkillContent(ctx context.Context, loader SkillLoader, name string) (str
 		if len(data) > 128<<10 {
 			return "", fmt.Errorf("skill %q exceeds 128 KiB", name)
 		}
-		return fmt.Sprintf("Skill: %s\nSource: %s\n\n%s", item.Name, item.Path, data), nil
+		return fmt.Sprintf("Skill: %s\nSource: %s\n\n%s", skill.Name, skill.Path, data), nil
 	}
 	return "", fmt.Errorf("skill %q is unavailable", name)
 }

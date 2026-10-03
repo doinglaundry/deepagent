@@ -18,15 +18,15 @@ import (
 type Conversation interface {
 	ReloadHistory(context.Context) error
 	AddHistory(context.Context, string, ...*schema.Message) error
-	History(context.Context) []*schema.Message
+	GetHistory(context.Context) []*schema.Message
 	BuildRequest(context.Context, []*schema.Message) ([]*schema.Message, error)
-	ContextUsage() types.ContextUsageSnapshot
+	GetContextUsage() types.ContextUsageSnapshot
 	SnapshotContext() types.ContextSnapshot
 	RestoreContext(context.Context, types.ContextSnapshot) error
 	RecordModelUsage(context.Context, *model.TokenUsage)
-	RunUsage() types.Usage
+	GetRunUsage() types.Usage
 	RestoreRunUsage(context.Context, types.Usage) error
-	CompactNeeded(context.Context) bool
+	NeedsCompaction(context.Context) bool
 	Compact(context.Context, string) (*conversation.ContextCompactedPayload, error)
 }
 
@@ -60,9 +60,11 @@ type Config struct {
 
 type Option func(*Config)
 
-func WithConfig(source *Config) Option { return func(c *Config) { *c = *source.Clone() } }
+func WithConfig(source *Config) Option { return func(config *Config) { *config = *source.Clone() } }
 
-func WithModel(m model.ToolCallingChatModel) Option { return func(c *Config) { c.Model = m } }
+func WithModel(chatModel model.ToolCallingChatModel) Option {
+	return func(config *Config) { config.Model = chatModel }
+}
 
 type RunOptions struct {
 	InputIDs            []string
@@ -78,38 +80,46 @@ type RunOptions struct {
 type RunOptionFunc func(*RunOptions)
 
 func WithCallbacks(handlers ...callbacks.Handler) RunOptionFunc {
-	return func(o *RunOptions) { o.composeOpts = append(o.composeOpts, compose.WithCallbacks(handlers...)) }
+	return func(runOptions *RunOptions) {
+		runOptions.composeOpts = append(runOptions.composeOpts, compose.WithCallbacks(handlers...))
+	}
 }
 
-func WithCheckpointID(id string) RunOptionFunc { return func(o *RunOptions) { o.CheckpointID = id } }
+func WithCheckpointID(id string) RunOptionFunc {
+	return func(runOptions *RunOptions) { runOptions.CheckpointID = id }
+}
 
 func WithWriteToCheckpointID(id string) RunOptionFunc {
-	return func(o *RunOptions) { o.WriteToCheckpointID = id }
+	return func(runOptions *RunOptions) { runOptions.WriteToCheckpointID = id }
 }
 
-func WithForceNewRun() RunOptionFunc { return func(o *RunOptions) { o.ForceNewRun = true } }
+func WithForceNewRun() RunOptionFunc {
+	return func(runOptions *RunOptions) { runOptions.ForceNewRun = true }
+}
 
 func WithResume(ids ...string) RunOptionFunc {
-	return func(o *RunOptions) { o.ResumeInterruptIDs = append(o.ResumeInterruptIDs, ids...) }
+	return func(runOptions *RunOptions) {
+		runOptions.ResumeInterruptIDs = append(runOptions.ResumeInterruptIDs, ids...)
+	}
 }
 
 func WithResumeData(data map[string]any) RunOptionFunc {
-	return func(o *RunOptions) {
-		if o.ResumeData == nil {
-			o.ResumeData = make(map[string]any)
+	return func(runOptions *RunOptions) {
+		if runOptions.ResumeData == nil {
+			runOptions.ResumeData = make(map[string]any)
 		}
 		for id, value := range data {
-			o.ResumeData[id] = value
+			runOptions.ResumeData[id] = value
 		}
 	}
 }
 
 func WithInputIDs(ids ...string) RunOptionFunc {
-	return func(o *RunOptions) { o.InputIDs = append([]string(nil), ids...) }
+	return func(runOptions *RunOptions) { runOptions.InputIDs = append([]string(nil), ids...) }
 }
 
 func WithInputMetadata(meta ...any) RunOptionFunc {
-	return func(o *RunOptions) { o.InputMeta = append([]any(nil), meta...) }
+	return func(runOptions *RunOptions) { runOptions.InputMeta = append([]any(nil), meta...) }
 }
 
 type FilesystemConfig struct {
@@ -120,166 +130,166 @@ type FilesystemConfig struct {
 	CommandTimeout        time.Duration
 }
 
-func (c *Config) Clone() (cloned *Config) {
-	if c == nil {
+func (config *Config) Clone() (cloned *Config) {
+	if config == nil {
 		return &Config{}
 	}
-	value := *c
+	value := *config
 	cloned = &value
-	cloned.ToolDescriptors = append([]tools.ToolDescriptor(nil), c.ToolDescriptors...)
-	cloned.Prompts = append([]*schema.Message(nil), c.Prompts...)
-	cloned.SubAgents = append([]*SubAgent(nil), c.SubAgents...)
-	cloned.Middlewares = append([]middleware.Middleware(nil), c.Middlewares...)
-	cloned.Callbacks = append([]callbacks.Handler(nil), c.Callbacks...)
+	cloned.ToolDescriptors = append([]tools.ToolDescriptor(nil), config.ToolDescriptors...)
+	cloned.Prompts = append([]*schema.Message(nil), config.Prompts...)
+	cloned.SubAgents = append([]*SubAgent(nil), config.SubAgents...)
+	cloned.Middlewares = append([]middleware.Middleware(nil), config.Middlewares...)
+	cloned.Callbacks = append([]callbacks.Handler(nil), config.Callbacks...)
 
-	if c.FilesystemConfig != nil {
-		filesystem := *c.FilesystemConfig
+	if config.FilesystemConfig != nil {
+		filesystem := *config.FilesystemConfig
 		cloned.FilesystemConfig = &filesystem
 	}
-	if c.WebConfig != nil {
-		webConfig := *c.WebConfig
+	if config.WebConfig != nil {
+		webConfig := *config.WebConfig
 		cloned.WebConfig = &webConfig
 	}
 
 	return cloned
 }
 
-func WithMaxSteps(steps int) Option {
-	return func(c *Config) {
-		c.MaxSteps = steps
+func WithMaxSteps(maxSteps int) Option {
+	return func(config *Config) {
+		config.MaxSteps = maxSteps
 	}
 }
 
-func WithMaxModelCalls(calls int) Option {
-	return func(c *Config) {
-		c.MaxModelCalls = calls
+func WithMaxModelCalls(maxModelCalls int) Option {
+	return func(config *Config) {
+		config.MaxModelCalls = maxModelCalls
 	}
 }
 
-func WithTools(items ...tools.ToolDescriptor) Option {
-	return func(c *Config) {
-		c.ToolDescriptors = append(c.ToolDescriptors, items...)
+func WithTools(toolDescriptors ...tools.ToolDescriptor) Option {
+	return func(config *Config) {
+		config.ToolDescriptors = append(config.ToolDescriptors, toolDescriptors...)
 	}
 }
 
-func WithToolMask(mask tools.Mask) Option {
-	return func(c *Config) {
-		c.ToolMask = mask
+func WithToolMask(toolMask tools.Mask) Option {
+	return func(config *Config) {
+		config.ToolMask = toolMask
 	}
 }
 
-func WithSubAgents(agents ...*SubAgent) Option {
-	return func(c *Config) {
-		c.SubAgents = append(c.SubAgents, agents...)
+func WithSubAgents(subAgents ...*SubAgent) Option {
+	return func(config *Config) {
+		config.SubAgents = append(config.SubAgents, subAgents...)
 	}
 }
 
-func WithSkillLoader(loader skillspkg.SkillLoader) Option {
-	return func(c *Config) {
-		c.SkillLoader = loader
+func WithSkillLoader(skillLoader skillspkg.SkillLoader) Option {
+	return func(config *Config) {
+		config.SkillLoader = skillLoader
 	}
 }
 
 // WithPlan enables the plan tool and its prompt independently.
 func WithPlan(onUpdate tools.PlanUpdateHandler) Option {
-	return func(c *Config) {
-		c.ToolDescriptors = append(c.ToolDescriptors, tools.NewUpdatePlanTool(onUpdate))
-		c.Middlewares = append(c.Middlewares, middleware.NewPlan())
+	return func(config *Config) {
+		config.ToolDescriptors = append(config.ToolDescriptors, tools.NewUpdatePlanTool(onUpdate))
+		config.Middlewares = append(config.Middlewares, middleware.NewPlan())
 	}
 }
 
 func WithFilesystem(filesystem filesystempkg.ToolFilesystem) Option {
-	return func(c *Config) {
-		c.Filesystem = filesystem
-		if c.FilesystemConfig == nil {
-			c.FilesystemConfig = &FilesystemConfig{}
+	return func(config *Config) {
+		config.Filesystem = filesystem
+		if config.FilesystemConfig == nil {
+			config.FilesystemConfig = &FilesystemConfig{}
 		}
 	}
 }
 
-func WithFilesystemConfig(cfg *FilesystemConfig) (option Option) {
-	option = func(c *Config) {
-		if cfg == nil {
-			c.FilesystemConfig = &FilesystemConfig{}
+func WithFilesystemConfig(filesystemConfig *FilesystemConfig) (option Option) {
+	option = func(config *Config) {
+		if filesystemConfig == nil {
+			config.FilesystemConfig = &FilesystemConfig{}
 			return
 		}
-		cloned := *cfg
-		c.FilesystemConfig = &cloned
+		cloned := *filesystemConfig
+		config.FilesystemConfig = &cloned
 	}
 	return option
 }
 
 func WithDisableUploadDownload() Option {
-	return func(c *Config) {
-		if c.FilesystemConfig == nil {
-			c.FilesystemConfig = &FilesystemConfig{}
+	return func(config *Config) {
+		if config.FilesystemConfig == nil {
+			config.FilesystemConfig = &FilesystemConfig{}
 		}
-		c.FilesystemConfig.DisableUploadDownload = true
+		config.FilesystemConfig.DisableUploadDownload = true
 	}
 }
 
 func WithDisableExecute() Option {
-	return func(c *Config) {
-		if c.FilesystemConfig == nil {
-			c.FilesystemConfig = &FilesystemConfig{}
+	return func(config *Config) {
+		if config.FilesystemConfig == nil {
+			config.FilesystemConfig = &FilesystemConfig{}
 		}
-		c.FilesystemConfig.DisableExecute = true
+		config.FilesystemConfig.DisableExecute = true
 	}
 }
 
 func WithEagerTools() Option {
-	return func(c *Config) {
-		c.EnableEagerTools = true
+	return func(config *Config) {
+		config.EnableEagerTools = true
 	}
 }
 
 func WithWeb() (option Option) {
-	option = func(c *Config) {
-		c.WebConfig = tools.DefaultWebConfig()
+	option = func(config *Config) {
+		config.WebConfig = tools.NewDefaultWebConfig()
 	}
 	return option
 }
 
-func WithWebConfig(config *tools.WebConfig) (option Option) {
-	option = func(c *Config) {
-		if config == nil {
-			c.WebConfig = tools.DefaultWebConfig()
+func WithWebConfig(webConfig *tools.WebConfig) (option Option) {
+	option = func(config *Config) {
+		if webConfig == nil {
+			config.WebConfig = tools.NewDefaultWebConfig()
 			return
 		}
-		cloned := *config
-		c.WebConfig = &cloned
+		cloned := *webConfig
+		config.WebConfig = &cloned
 	}
 	return option
 }
 
-func WithMiddleware(m middleware.Middleware) Option {
-	return func(c *Config) {
-		c.Middlewares = append(c.Middlewares, m)
+func WithMiddleware(currentMiddleware middleware.Middleware) Option {
+	return func(config *Config) {
+		config.Middlewares = append(config.Middlewares, currentMiddleware)
 	}
 }
 
 func WithDefaultCallbacks(handlers ...callbacks.Handler) Option {
-	return func(c *Config) {
+	return func(config *Config) {
 		for _, handler := range handlers {
 			if handler != nil {
-				c.Callbacks = append(c.Callbacks, handler)
+				config.Callbacks = append(config.Callbacks, handler)
 			}
 		}
 	}
 }
 
-func WithCheckpointStore(store compose.CheckPointStore) Option {
-	return func(c *Config) {
-		c.CheckpointStore = store
+func WithCheckpointStore(checkpointStore compose.CheckPointStore) Option {
+	return func(config *Config) {
+		config.CheckpointStore = checkpointStore
 	}
 }
 
 func WithAllFeatures() (option Option) {
-	option = func(c *Config) {
-		if c.FilesystemConfig == nil {
-			c.FilesystemConfig = &FilesystemConfig{}
+	option = func(config *Config) {
+		if config.FilesystemConfig == nil {
+			config.FilesystemConfig = &FilesystemConfig{}
 		}
-		c.WebConfig = tools.DefaultWebConfig()
+		config.WebConfig = tools.NewDefaultWebConfig()
 	}
 	return option
 }

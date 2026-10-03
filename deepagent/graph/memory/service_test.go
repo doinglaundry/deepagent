@@ -9,12 +9,12 @@ import (
 
 func TestService_OneInstanceKeepsScopesSeparate(t *testing.T) {
 	for _, shared := range []bool{false, true} {
-		cfg := Config{Root: t.TempDir(), Model: &memoryModel{}, Consolidator: func(_ context.Context, _ string, sources string) (string, error) { return sources, nil }}
+		config := Config{Root: t.TempDir(), Model: &memoryModel{}, Consolidator: func(_ context.Context, _ string, sources string) (string, error) { return sources, nil }}
 		if shared {
-			cfg.Store = newMemoryStore()
+			config.Store = newMemoryStore()
 		}
 		var service Service
-		service, err := New(cfg)
+		service, err := New(config)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -36,9 +36,9 @@ func TestService_OneInstanceKeepsScopesSeparate(t *testing.T) {
 			t.Fatalf("scope leak: %+v %v", second, err)
 		}
 		first.Summary = "modified by caller"
-		again, err := service.Read(ctx, "user/one")
-		if err != nil || again.Summary == first.Summary {
-			t.Fatalf("snapshot mutated stored memory: %+v %v", again, err)
+		reloadedSnapshot, err := service.Read(ctx, "user/one")
+		if err != nil || reloadedSnapshot.Summary == first.Summary {
+			t.Fatalf("snapshot mutated stored memory: %+v %v", reloadedSnapshot, err)
 		}
 		for _, scope := range []string{"", " ", "user/one/"} {
 			_, err := service.Read(ctx, scope)

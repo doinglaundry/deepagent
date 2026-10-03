@@ -16,90 +16,90 @@ import (
 
 var ErrExceedMaxModelCalls = errors.New("exceeds max model calls")
 
-func (a *Graph) callModel(ctx context.Context, s *types.RunState) (*types.RunState, error) {
-	if a.cfg.MaxModelCalls > 0 && s.ModelCalls >= a.cfg.MaxModelCalls {
-		return nil, fmt.Errorf("%w: maximum model calls exceeded: %d", ErrExceedMaxModelCalls, a.cfg.MaxModelCalls)
+func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*types.RunState, error) {
+	if graph.config.MaxModelCalls > 0 && runState.ModelCalls >= graph.config.MaxModelCalls {
+		return nil, fmt.Errorf("%w: maximum model calls exceeded: %d", ErrExceedMaxModelCalls, graph.config.MaxModelCalls)
 	}
-	if hasPendingInputs(s) {
-		_, err := a.prepare(ctx, s)
+	if hasPendingInputs(runState) {
+		_, err := graph.prepareConversation(ctx, runState)
 		if err != nil {
 			return nil, err
 		}
 	}
 	// prepare handles new user input; tool results can independently cross the
 	// context limit before the next sampling boundary in the same graph loop.
-	if s.Phase == types.PhaseTools {
-		err := a.compactContext(ctx, s)
+	if runState.Phase == types.PhaseTools {
+		err := graph.compactContext(ctx, runState)
 		if err != nil {
 			return nil, err
 		}
 	}
-	s.Phase = types.PhaseModeling
-	s.ModelCalls++
-	prompts := append([]*schema.Message(nil), a.cfg.Prompts...)
-	for _, mw := range a.middlewares {
-		built, err := mw.BuildPrompt(ctx)
+	runState.Phase = types.PhaseModeling
+	runState.ModelCalls++
+	prompts := append([]*schema.Message(nil), graph.config.Prompts...)
+	for _, currentMiddleware := range graph.middlewares {
+		promptMessages, err := currentMiddleware.BuildPrompt(ctx)
 		if err != nil {
 			return nil, err
 		}
-		prompts = append(prompts, built...)
+		prompts = append(prompts, promptMessages...)
 	}
-	request, err := a.conversation.BuildRequest(ctx, prompts)
+	requestMessages, err := graph.conversation.BuildRequest(ctx, prompts)
 	if err != nil {
 		return nil, err
 	}
-	for _, mw := range a.middlewares {
-		request, err = mw.ModifyModelRequest(ctx, prompts, request, a.graphState)
+	for _, currentMiddleware := range graph.middlewares {
+		requestMessages, err = currentMiddleware.ModifyModelRequest(ctx, prompts, requestMessages, graph.graphState)
 		if err != nil {
 			return nil, err
 		}
 	}
-	err = a.event(ctx, s, "llm_requesting", "", types.LLMRequestingPayload{Messages: request})
+	err = graph.emitEvent(ctx, runState, "llm_requesting", "", types.LLMRequestingPayload{Messages: requestMessages})
 	if err != nil {
 		return nil, err
 	}
-	endpoint := middleware.ModelHandler(func(ctx context.Context, input []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		return a.model.Stream(ctx, input)
+	modelHandler := middleware.ModelHandler(func(ctx context.Context, input []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+		return graph.chatModel.Stream(ctx, input)
 	})
-	for i := len(a.middlewares) - 1; i >= 0; i-- {
-		wrapper, ok := a.middlewares[i].(middleware.ModelMiddleware)
+	for i := len(graph.middlewares) - 1; i >= 0; i-- {
+		modelMiddleware, ok := graph.middlewares[i].(middleware.ModelMiddleware)
 		if ok {
-			endpoint = wrapper.WrapModel(endpoint)
+			modelHandler = modelMiddleware.WrapModel(modelHandler)
 		}
 	}
-	stream, err := endpoint(ctx, request)
+	messageStream, err := modelHandler(ctx, requestMessages)
 	if err != nil {
-		if stream != nil {
-			stream.Close()
+		if messageStream != nil {
+			messageStream.Close()
 		}
 		return nil, err
 	}
-	if stream == nil {
+	if messageStream == nil {
 		return nil, fmt.Errorf("model returned nil stream")
 	}
 	// Middleware transfers ownership through the returned stream.
 	// Close only the outermost reader: Eino wrappers close their source, and
 	// the underlying reader does not support repeated Close calls.
-	defer func() { stream.Close() }()
-	for _, mw := range a.middlewares {
-		next, modifyErr := mw.ModifyModelStreamResponse(ctx, stream, a.graphState)
+	defer func() { messageStream.Close() }()
+	for _, currentMiddleware := range graph.middlewares {
+		modifiedStream, modifyErr := currentMiddleware.ModifyModelStreamResponse(ctx, messageStream, graph.graphState)
 		if modifyErr != nil {
 			return nil, modifyErr
 		}
-		if next == nil {
+		if modifiedStream == nil {
 			return nil, fmt.Errorf("middleware returned nil model stream")
 		}
-		stream = next
+		messageStream = modifiedStream
 	}
-	var chunks []*schema.Message
-	buffer := toolCallBuffer{}
-	defer func() { a.executor.snapshot(s.Calls) }()
+	var messageChunks []*schema.Message
+	toolCallBuffer := toolCallBuffer{}
+	defer func() { graph.toolExecutor.snapshotToolExecutions(runState.Calls) }()
 	for {
 		err := ctx.Err()
 		if err != nil {
 			return nil, err
 		}
-		chunk, err := stream.Recv()
+		chunk, err := messageStream.Recv()
 		if err == io.EOF {
 			break
 		}
@@ -109,27 +109,27 @@ func (a *Graph) callModel(ctx context.Context, s *types.RunState) (*types.RunSta
 		if chunk == nil {
 			continue
 		}
-		ready, collectErr := buffer.add(chunk.ToolCalls)
+		readyToolCalls, collectErr := toolCallBuffer.appendToolCallFragments(chunk.ToolCalls)
 		if collectErr != nil {
 			return nil, collectErr
 		}
 		messagePart := *chunk
 		messagePart.ToolCalls = nil
-		chunks = append(chunks, &messagePart)
-		if a.eager {
-			for _, call := range ready {
-				started, err := a.executor.startEagerIfAllowed(ctx, call, func(ctx context.Context, call types.ToolCall, chunk string) error {
-					return a.event(ctx, s, "tool_call_output_chunk", call.ID, types.ToolCallOutputChunkPayload{Name: call.Name, CallID: call.ID, Chunk: chunk})
+		messageChunks = append(messageChunks, &messagePart)
+		if graph.enableEagerTools {
+			for _, toolCall := range readyToolCalls {
+				hasStartedEagerTool, err := graph.toolExecutor.startEagerToolIfAllowed(ctx, toolCall, func(ctx context.Context, toolCall types.ToolCall, chunk string) error {
+					return graph.emitEvent(ctx, runState, "tool_call_output_chunk", toolCall.ID, types.ToolCallOutputChunkPayload{Name: toolCall.Name, CallID: toolCall.ID, Chunk: chunk})
 				})
 				if err != nil {
 					return nil, err
 				}
-				if started {
-					buffer.started[call.ID] = true
+				if hasStartedEagerTool {
+					toolCallBuffer.eagerStartedByCallID[toolCall.ID] = true
 				}
 			}
 		}
-		err = a.event(ctx, s, "llm_token", "", types.LLMTokenChunk{Message: chunk, Text: chunk.Content, ReasoningText: chunk.ReasoningContent})
+		err = graph.emitEvent(ctx, runState, "llm_token", "", types.LLMTokenChunk{Message: chunk, Text: chunk.Content, ReasoningText: chunk.ReasoningContent})
 		if err != nil {
 			return nil, err
 		}
@@ -139,14 +139,14 @@ func (a *Graph) callModel(ctx context.Context, s *types.RunState) (*types.RunSta
 	if err != nil {
 		return nil, err
 	}
-	if len(chunks) == 0 {
+	if len(messageChunks) == 0 {
 		return nil, fmt.Errorf("empty model response")
 	}
-	response, err := schema.ConcatMessages(chunks)
+	response, err := schema.ConcatMessages(messageChunks)
 	if err != nil {
 		return nil, err
 	}
-	response.ToolCalls, err = buffer.finish()
+	response.ToolCalls, err = toolCallBuffer.buildToolCalls()
 	if err != nil {
 		return nil, err
 	}
@@ -156,8 +156,8 @@ func (a *Graph) callModel(ctx context.Context, s *types.RunState) (*types.RunSta
 	if response.Role != schema.Assistant {
 		return nil, fmt.Errorf("invalid model role %q", response.Role)
 	}
-	for _, mw := range a.middlewares {
-		response, err = mw.ModifyModelResponse(ctx, response, a.graphState)
+	for _, currentMiddleware := range graph.middlewares {
+		response, err = currentMiddleware.ModifyModelResponse(ctx, response, graph.graphState)
 		if err != nil {
 			return nil, err
 		}
@@ -165,45 +165,45 @@ func (a *Graph) callModel(ctx context.Context, s *types.RunState) (*types.RunSta
 			return nil, fmt.Errorf("middleware returned nil model message")
 		}
 	}
-	err = a.conversation.AddHistory(ctx, s.RunID, response)
+	err = graph.conversation.AddHistory(ctx, runState.RunID, response)
 	if err != nil {
 		return nil, err
 	}
-	usage := responseUsage(response)
-	if usage != nil {
-		a.conversation.RecordModelUsage(ctx, usage)
+	tokenUsage := getResponseUsage(response)
+	if tokenUsage != nil {
+		graph.conversation.RecordModelUsage(ctx, tokenUsage)
 	}
-	s.Usage = a.conversation.RunUsage()
-	s.Calls = nil
-	seen := make(map[string]bool)
-	for i, call := range response.ToolCalls {
-		if call.ID == "" || seen[call.ID] {
-			return nil, fmt.Errorf("missing or duplicate tool call ID %q", call.ID)
+	runState.Usage = graph.conversation.GetRunUsage()
+	runState.Calls = nil
+	seenCallIDs := make(map[string]bool)
+	for i, toolCall := range response.ToolCalls {
+		if toolCall.ID == "" || seenCallIDs[toolCall.ID] {
+			return nil, fmt.Errorf("missing or duplicate tool call ID %q", toolCall.ID)
 		}
-		seen[call.ID] = true
-		s.Calls = append(s.Calls, types.ToolCallState{Call: types.ToolCall{ID: call.ID, Index: i, Name: call.Function.Name, Arguments: call.Function.Arguments}, Status: types.CallPending})
+		seenCallIDs[toolCall.ID] = true
+		runState.Calls = append(runState.Calls, types.ToolCallState{Call: types.ToolCall{ID: toolCall.ID, Index: i, Name: toolCall.Function.Name, Arguments: toolCall.Function.Arguments}, Status: types.CallPending})
 	}
-	err = a.event(ctx, s, "llm_end", "", types.LLMEnd{CallbackOutput: model.CallbackOutput{Message: response}})
+	err = graph.emitEvent(ctx, runState, "llm_end", "", types.LLMEnd{CallbackOutput: model.CallbackOutput{Message: response}})
 	if err != nil {
 		return nil, err
 	}
-	if usage != nil {
-		err = a.event(ctx, s, "tokens", "", s.Usage)
+	if tokenUsage != nil {
+		err = graph.emitEvent(ctx, runState, "tokens", "", runState.Usage)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return s, nil
+	return runState, nil
 }
 
-// responseUsage parses provider metadata only; Conversation owns accumulation.
+// getResponseUsage parses provider metadata only; Conversation owns accumulation.
 // Older adapters put usage in Extra. Explicit Eino metadata takes precedence.
-func responseUsage(message *schema.Message) *model.TokenUsage {
+func getResponseUsage(message *schema.Message) *model.TokenUsage {
 	if message.ResponseMeta != nil && message.ResponseMeta.Usage != nil {
-		u := message.ResponseMeta.Usage
-		return &model.TokenUsage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+		providerUsage := message.ResponseMeta.Usage
+		return &model.TokenUsage{PromptTokens: providerUsage.PromptTokens, CompletionTokens: providerUsage.CompletionTokens, TotalTokens: providerUsage.TotalTokens}
 	}
-	number := func(value any) int {
+	parseTokenCount := func(value any) int {
 		switch n := value.(type) {
 		case int:
 			return n
@@ -216,45 +216,45 @@ func responseUsage(message *schema.Message) *model.TokenUsage {
 		}
 		return 0
 	}
-	_, prompt := message.Extra["prompt_tokens"]
-	_, completion := message.Extra["completion_tokens"]
-	_, total := message.Extra["total_tokens"]
-	if !prompt && !completion && !total {
+	_, hasPromptTokens := message.Extra["prompt_tokens"]
+	_, hasCompletionTokens := message.Extra["completion_tokens"]
+	_, hasTotalTokens := message.Extra["total_tokens"]
+	if !hasPromptTokens && !hasCompletionTokens && !hasTotalTokens {
 		return nil
 	}
-	usage := &model.TokenUsage{PromptTokens: number(message.Extra["prompt_tokens"]), CompletionTokens: number(message.Extra["completion_tokens"]), TotalTokens: number(message.Extra["total_tokens"])}
-	if usage.TotalTokens == 0 {
-		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	tokenUsage := &model.TokenUsage{PromptTokens: parseTokenCount(message.Extra["prompt_tokens"]), CompletionTokens: parseTokenCount(message.Extra["completion_tokens"]), TotalTokens: parseTokenCount(message.Extra["total_tokens"])}
+	if tokenUsage.TotalTokens == 0 {
+		tokenUsage.TotalTokens = tokenUsage.PromptTokens + tokenUsage.CompletionTokens
 	}
-	return usage
+	return tokenUsage
 }
 
 // toolCallBuffer lives for exactly one model stream. Provider indexes are map
 // keys; the index used by the executor is always the contiguous arrival order.
 type toolCallBuffer struct {
-	calls      []types.ToolCall
-	byProvider map[int]int
-	byID       map[string]int
-	started    map[string]bool
+	toolCalls                  []types.ToolCall
+	callIndexesByProviderIndex map[int]int
+	callIndexesByCallID        map[string]int
+	eagerStartedByCallID       map[string]bool
 }
 
-func (b *toolCallBuffer) add(deltas []schema.ToolCall) ([]types.ToolCall, error) {
-	if b.byProvider == nil {
-		b.byProvider = map[int]int{}
-		b.byID = map[string]int{}
-		b.started = map[string]bool{}
+func (toolCallBuffer *toolCallBuffer) appendToolCallFragments(deltas []schema.ToolCall) ([]types.ToolCall, error) {
+	if toolCallBuffer.callIndexesByProviderIndex == nil {
+		toolCallBuffer.callIndexesByProviderIndex = map[int]int{}
+		toolCallBuffer.callIndexesByCallID = map[string]int{}
+		toolCallBuffer.eagerStartedByCallID = map[string]bool{}
 	}
-	var ready []types.ToolCall
+	var readyToolCalls []types.ToolCall
 	for _, delta := range deltas {
 		index := -1
 		if delta.Index != nil {
-			found, ok := b.byProvider[*delta.Index]
+			found, ok := toolCallBuffer.callIndexesByProviderIndex[*delta.Index]
 			if ok {
 				index = found
 			}
 		}
 		if delta.ID != "" {
-			found, ok := b.byID[delta.ID]
+			found, ok := toolCallBuffer.callIndexesByCallID[delta.ID]
 			if ok {
 				if index >= 0 && index != found {
 					return nil, fmt.Errorf("conflicting tool ID and provider index")
@@ -264,25 +264,25 @@ func (b *toolCallBuffer) add(deltas []schema.ToolCall) ([]types.ToolCall, error)
 		}
 		if index < 0 {
 			if delta.Index == nil && delta.ID == "" {
-				if len(b.calls) != 1 {
+				if len(toolCallBuffer.toolCalls) != 1 {
 					return nil, fmt.Errorf("ambiguous tool fragment without identity")
 				}
 				index = 0
 			} else {
-				index = len(b.calls)
-				b.calls = append(b.calls, types.ToolCall{Index: index})
+				index = len(toolCallBuffer.toolCalls)
+				toolCallBuffer.toolCalls = append(toolCallBuffer.toolCalls, types.ToolCall{Index: index})
 			}
 		}
-		call := &b.calls[index]
+		call := &toolCallBuffer.toolCalls[index]
 		if delta.Index != nil {
-			b.byProvider[*delta.Index] = index
+			toolCallBuffer.callIndexesByProviderIndex[*delta.Index] = index
 		}
 		if delta.ID != "" {
 			if call.ID != "" && call.ID != delta.ID {
 				return nil, fmt.Errorf("tool call ID changed")
 			}
 			call.ID = delta.ID
-			b.byID[delta.ID] = index
+			toolCallBuffer.callIndexesByCallID[delta.ID] = index
 		}
 		if delta.Function.Name != "" {
 			if call.Name == "" {
@@ -291,33 +291,33 @@ func (b *toolCallBuffer) add(deltas []schema.ToolCall) ([]types.ToolCall, error)
 				call.Name += delta.Function.Name
 			}
 		}
-		if b.started[call.ID] && strings.TrimSpace(delta.Function.Arguments) != "" {
+		if toolCallBuffer.eagerStartedByCallID[call.ID] && strings.TrimSpace(delta.Function.Arguments) != "" {
 			return nil, fmt.Errorf("tool arguments changed after eager execution")
 		}
 		call.Arguments += delta.Function.Arguments
-		if call.ID != "" && call.Name != "" && json.Valid([]byte(call.Arguments)) && !b.started[call.ID] {
-			ready = append(ready, *call)
+		if call.ID != "" && call.Name != "" && json.Valid([]byte(call.Arguments)) && !toolCallBuffer.eagerStartedByCallID[call.ID] {
+			readyToolCalls = append(readyToolCalls, *call)
 		}
 	}
-	return ready, nil
+	return readyToolCalls, nil
 }
 
-func (b *toolCallBuffer) finish() ([]schema.ToolCall, error) {
-	result := make([]schema.ToolCall, 0, len(b.calls))
-	for _, call := range b.calls {
-		if call.ID == "" || call.Name == "" {
+func (toolCallBuffer *toolCallBuffer) buildToolCalls() ([]schema.ToolCall, error) {
+	result := make([]schema.ToolCall, 0, len(toolCallBuffer.toolCalls))
+	for _, toolCall := range toolCallBuffer.toolCalls {
+		if toolCall.ID == "" || toolCall.Name == "" {
 			return nil, fmt.Errorf("incomplete tool call identity")
 		}
 		// Only repair after EOF: a partial fragment may still change. Preserve
 		// unrepairable arguments so the tool can report its validation error.
-		if !json.Valid([]byte(call.Arguments)) {
-			repaired, err := repairToolArguments(call.Arguments)
+		if !json.Valid([]byte(toolCall.Arguments)) {
+			repaired, err := repairToolArguments(toolCall.Arguments)
 			if err == nil && json.Valid([]byte(repaired)) {
-				call.Arguments = repaired
+				toolCall.Arguments = repaired
 			}
 		}
-		index := call.Index
-		result = append(result, schema.ToolCall{ID: call.ID, Index: &index, Type: "function", Function: schema.FunctionCall{Name: call.Name, Arguments: call.Arguments}})
+		index := toolCall.Index
+		result = append(result, schema.ToolCall{ID: toolCall.ID, Index: &index, Type: "function", Function: schema.FunctionCall{Name: toolCall.Name, Arguments: toolCall.Arguments}})
 	}
 	return result, nil
 }
@@ -325,18 +325,18 @@ func (b *toolCallBuffer) finish() ([]schema.ToolCall, error) {
 // repairToolArguments strips an enclosing Markdown code fence and trailing commas only.
 // It never invents missing field names, quotes, values, or delimiters.
 func repairToolArguments(input string) (string, error) {
-	s := strings.TrimSpace(input)
-	if strings.HasPrefix(s, "```") && strings.HasSuffix(s, "```") {
-		i := strings.IndexByte(s, '\n')
+	arguments := strings.TrimSpace(input)
+	if strings.HasPrefix(arguments, "```") && strings.HasSuffix(arguments, "```") {
+		i := strings.IndexByte(arguments, '\n')
 		if i >= 0 {
-			s = strings.TrimSpace(s[i+1 : len(s)-3])
+			arguments = strings.TrimSpace(arguments[i+1 : len(arguments)-3])
 		}
 	}
-	var b strings.Builder
+	var argumentsBuilder strings.Builder
 	quoted, escaped := false, false
-	for i, r := range s {
+	for i, r := range arguments {
 		if quoted {
-			b.WriteRune(r)
+			argumentsBuilder.WriteRune(r)
 			if escaped {
 				escaped = false
 			} else if r == '\\' {
@@ -348,23 +348,23 @@ func repairToolArguments(input string) (string, error) {
 		}
 		if r == '"' {
 			quoted = true
-			b.WriteRune(r)
+			argumentsBuilder.WriteRune(r)
 			continue
 		}
 		if r == ',' {
 			j := i + 1
-			for j < len(s) && unicode.IsSpace(rune(s[j])) {
+			for j < len(arguments) && unicode.IsSpace(rune(arguments[j])) {
 				j++
 			}
-			if j < len(s) && (s[j] == '}' || s[j] == ']') {
+			if j < len(arguments) && (arguments[j] == '}' || arguments[j] == ']') {
 				continue
 			}
 		}
-		b.WriteRune(r)
+		argumentsBuilder.WriteRune(r)
 	}
-	out := b.String()
-	if !json.Valid([]byte(out)) {
+	repairedArguments := argumentsBuilder.String()
+	if !json.Valid([]byte(repairedArguments)) {
 		return "", errors.New("invalid JSON arguments; only code fences and trailing commas can be repaired")
 	}
-	return out, nil
+	return repairedArguments, nil
 }

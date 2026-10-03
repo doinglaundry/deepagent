@@ -160,7 +160,7 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 		RunID:    runID,
 		Type:     run.EventContextCompactStarted,
 		Payload: conversation.ContextCompactStartedPayload{
-			ContextUsage: t.ContextManager().ContextUsage(),
+			ContextUsage: t.ContextManager().GetContextUsage(),
 		},
 		ConsumedInputs:     cmd.consumedInputs,
 		ConsumedInputsMeta: cmd.consumedInputsMeta,
@@ -200,7 +200,7 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 		return nil
 	}
 	if payload == nil {
-		usage := t.ContextManager().ContextUsage()
+		usage := t.ContextManager().GetContextUsage()
 		payload = &conversation.ContextCompactedPayload{Before: usage, After: usage}
 	}
 

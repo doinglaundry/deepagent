@@ -14,7 +14,7 @@ type patchToolCalls struct{ BaseMiddleware }
 
 func NewPatchToolCalls() Middleware { return &patchToolCalls{} }
 
-func (*patchToolCalls) Name() string { return "patch_tool_calls" }
+func (*patchToolCalls) GetName() string { return "patch_tool_calls" }
 
 func (*patchToolCalls) ModifyModelRequest(_ context.Context, _ []*schema.Message, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
 	return PatchDanglingToolCalls(messages), nil
@@ -24,41 +24,41 @@ func (*patchToolCalls) ModifyModelRequest(_ context.Context, _ []*schema.Message
 // crashed or interrupted Worker. The repaired copy is model-visible only; the
 // durable original remains an accurate record of what was persisted.
 func PatchDanglingToolCalls(messages []*schema.Message) []*schema.Message {
-	result := make([]*schema.Message, 0, len(messages))
-	pending := make(map[string]schema.ToolCall)
-	order := make([]string, 0)
-	flush := func() {
-		for _, id := range order {
-			call, exists := pending[id]
+	patchedMessages := make([]*schema.Message, 0, len(messages))
+	pendingCalls := make(map[string]schema.ToolCall)
+	pendingCallIDs := make([]string, 0)
+	appendInterruptedResults := func() {
+		for _, callID := range pendingCallIDs {
+			toolCall, exists := pendingCalls[callID]
 			if !exists {
 				continue
 			}
-			result = append(result, schema.ToolMessage(interruptedToolResult, id, schema.WithToolName(call.Function.Name)))
+			patchedMessages = append(patchedMessages, schema.ToolMessage(interruptedToolResult, callID, schema.WithToolName(toolCall.Function.Name)))
 		}
-		clear(pending)
-		order = order[:0]
+		clear(pendingCalls)
+		pendingCallIDs = pendingCallIDs[:0]
 	}
 	for _, message := range messages {
 		if message == nil {
 			continue
 		}
-		if len(pending) > 0 && message.Role != schema.Tool {
-			flush()
+		if len(pendingCalls) > 0 && message.Role != schema.Tool {
+			appendInterruptedResults()
 		}
-		result = append(result, message)
+		patchedMessages = append(patchedMessages, message)
 		switch message.Role {
 		case schema.Assistant:
-			for _, call := range message.ToolCalls {
-				if call.ID == "" {
+			for _, toolCall := range message.ToolCalls {
+				if toolCall.ID == "" {
 					continue
 				}
-				pending[call.ID] = call
-				order = append(order, call.ID)
+				pendingCalls[toolCall.ID] = toolCall
+				pendingCallIDs = append(pendingCallIDs, toolCall.ID)
 			}
 		case schema.Tool:
-			delete(pending, message.ToolCallID)
+			delete(pendingCalls, message.ToolCallID)
 		}
 	}
-	flush()
-	return result
+	appendInterruptedResults()
+	return patchedMessages
 }

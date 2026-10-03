@@ -21,9 +21,9 @@ type promptService struct {
 	err     error
 }
 
-func (s *promptService) Read(_ context.Context, scope string) (*Snapshot, error) {
-	s.reads++
-	return &Snapshot{Scope: scope, Summary: s.summary}, s.err
+func (promptService *promptService) Read(_ context.Context, scope string) (*Snapshot, error) {
+	promptService.reads++
+	return &Snapshot{Scope: scope, Summary: promptService.summary}, promptService.err
 }
 
 func (*promptService) Observe(context.Context, string, string, []*schema.Message) error { return nil }
@@ -32,17 +32,17 @@ func (*promptService) Consolidate(context.Context, string) error { return nil }
 
 type promptModel struct{ inputs [][]*schema.Message }
 
-func (m *promptModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	return m, nil
+func (chatModel *promptModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return chatModel, nil
 }
 
 func (*promptModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	return nil, errors.New("bypassed Graph")
 }
 
-func (m *promptModel) Stream(_ context.Context, messages []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
-	m.inputs = append(m.inputs, messages)
-	if len(m.inputs) == 1 {
+func (chatModel *promptModel) Stream(_ context.Context, messages []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	chatModel.inputs = append(chatModel.inputs, messages)
+	if len(chatModel.inputs) == 1 {
 		return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("", []schema.ToolCall{{ID: "change", Function: schema.FunctionCall{Name: "change_memory", Arguments: "{}"}}})}), nil
 	}
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("done", nil)}), nil
@@ -58,22 +58,22 @@ func TestMemoryPrompt_ReadsCurrentScopeBeforeEachModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &promptModel{}
-	agent, err := execution.New(ctx, execution.WithConfig(&execution.Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
+	chatModel := &promptModel{}
+	graph, err := execution.New(ctx, execution.WithConfig(&execution.Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer agent.Close(ctx)
-	_, executeErr := agent.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	defer graph.Close(ctx)
+	_, executeErr := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
-	if service.reads != 2 || len(m.inputs) != 2 {
-		t.Fatalf("reads=%d model=%d", service.reads, len(m.inputs))
+	if service.reads != 2 || len(chatModel.inputs) != 2 {
+		t.Fatalf("reads=%d model=%d", service.reads, len(chatModel.inputs))
 	}
 	for i, want := range []string{"first snapshot", "second snapshot"} {
 		count := 0
-		for _, message := range m.inputs[i] {
+		for _, message := range chatModel.inputs[i] {
 			if strings.Contains(message.Content, "Prior memory") {
 				count++
 				if !strings.Contains(message.Content, want) {
@@ -90,14 +90,14 @@ func TestMemoryPrompt_ReadsCurrentScopeBeforeEachModel(t *testing.T) {
 func TestMemoryPrompt_ReadFailurePreventsModel(t *testing.T) {
 	want := errors.New("memory store unavailable")
 	service := &promptService{err: want}
-	m := &promptModel{}
-	a, err := execution.New(context.Background(), execution.WithConfig(&execution.Config{Model: m, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
+	chatModel := &promptModel{}
+	graph, err := execution.New(context.Background(), execution.WithConfig(&execution.Config{Model: chatModel, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close(context.Background())
-	_, err = a.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
-	if !errors.Is(err, want) || len(m.inputs) != 0 {
-		t.Fatalf("err=%v model=%d", err, len(m.inputs))
+	defer graph.Close(context.Background())
+	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	if !errors.Is(err, want) || len(chatModel.inputs) != 0 {
+		t.Fatalf("err=%v model=%d", err, len(chatModel.inputs))
 	}
 }

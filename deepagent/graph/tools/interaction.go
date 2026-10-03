@@ -21,7 +21,7 @@ func init() {
 	schema.RegisterName[*FollowUpInfo]("deepagent_follow_up_info")
 }
 
-func GetFollowUpTool() ToolDescriptor {
+func NewFollowUpTool() ToolDescriptor {
 	return ToolDescriptor{Tool: &followUpTool{}, ReadOnly: true}
 }
 
@@ -57,54 +57,54 @@ func (*followUpTool) InvokableRun(ctx context.Context, arguments string, _ ...to
 }
 
 func normalizeFollowUpArgs(arguments string) (*FollowUpInfo, error) {
-	var input struct {
+	var followUpArgs struct {
 		Question string          `json:"question"`
 		Prompt   string          `json:"prompt"`
 		Message  string          `json:"message"`
 		Context  string          `json:"context"`
 		Options  json.RawMessage `json:"options"`
 	}
-	inputDecodeErr := json.Unmarshal([]byte(arguments), &input)
+	inputDecodeErr := json.Unmarshal([]byte(arguments), &followUpArgs)
 	if inputDecodeErr != nil {
 		return nil, inputDecodeErr
 	}
-	info := &FollowUpInfo{}
-	for _, question := range []string{input.Question, input.Prompt, input.Message} {
+	followUpInfo := &FollowUpInfo{}
+	for _, question := range []string{followUpArgs.Question, followUpArgs.Prompt, followUpArgs.Message} {
 		question = strings.TrimSpace(question)
 		if question != "" {
-			info.Question = question
+			followUpInfo.Question = question
 			break
 		}
 	}
-	if info.Question == "" {
+	if followUpInfo.Question == "" {
 		return nil, errors.New("question is required")
 	}
-	detail := strings.TrimSpace(input.Context)
-	if detail != "" {
-		info.Question = detail + "\n\n" + info.Question
+	contextText := strings.TrimSpace(followUpArgs.Context)
+	if contextText != "" {
+		followUpInfo.Question = contextText + "\n\n" + followUpInfo.Question
 	}
-	if len(input.Options) > 0 && string(input.Options) != "null" {
+	if len(followUpArgs.Options) > 0 && string(followUpArgs.Options) != "null" {
 		var options []string
-		err := json.Unmarshal(input.Options, &options)
+		err := json.Unmarshal(followUpArgs.Options, &options)
 		if err != nil {
-			var encoded string
-			err := json.Unmarshal(input.Options, &encoded)
+			var encodedOptions string
+			err := json.Unmarshal(followUpArgs.Options, &encodedOptions)
 			if err != nil {
 				return nil, errors.New("options must be strings")
 			}
-			decodeErr := json.Unmarshal([]byte(encoded), &options)
+			decodeErr := json.Unmarshal([]byte(encodedOptions), &options)
 			if decodeErr != nil {
-				options = []string{encoded}
+				options = []string{encodedOptions}
 			}
 		}
 		for _, option := range options {
 			option = strings.TrimSpace(option)
 			if option != "" {
-				info.Questions = append(info.Questions, option)
+				followUpInfo.Questions = append(followUpInfo.Questions, option)
 			}
 		}
 	}
-	return info, nil
+	return followUpInfo, nil
 }
 
 type PlanStep = types.PlanStep
@@ -134,8 +134,8 @@ func (*updatePlanTool) Info(context.Context) (*schema.ToolInfo, error) {
 	})}, nil
 }
 
-func (t *updatePlanTool) InvokableRun(ctx context.Context, raw string, _ ...tool.Option) (string, error) {
-	update, err := normalizePlanArgs(raw)
+func (updatePlanTool *updatePlanTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	planUpdate, err := normalizePlanArgs(arguments)
 	if err != nil {
 		return "", err
 	}
@@ -143,22 +143,22 @@ func (t *updatePlanTool) InvokableRun(ctx context.Context, raw string, _ ...tool
 	if contextErr != nil {
 		return "", contextErr
 	}
-	if t.onUpdate != nil {
-		err := t.onUpdate(ctx, update)
+	if updatePlanTool.onUpdate != nil {
+		err := updatePlanTool.onUpdate(ctx, planUpdate)
 		if err != nil {
 			return "", err
 		}
 	}
-	state := types.RunStateFromContext(ctx)
-	if state != nil {
-		state.Plan = append([]types.PlanStep(nil), update.Plan...)
+	runState := types.GetRunState(ctx)
+	if runState != nil {
+		runState.Plan = append([]types.PlanStep(nil), planUpdate.Plan...)
 	}
-	encoded, err := json.Marshal(update)
-	return string(encoded), err
+	encodedPlanUpdate, err := json.Marshal(planUpdate)
+	return string(encodedPlanUpdate), err
 }
 
-func normalizePlanArgs(raw string) (PlanUpdate, error) {
-	var object struct {
+func normalizePlanArgs(arguments string) (PlanUpdate, error) {
+	var planArgs struct {
 		Plan  json.RawMessage `json:"plan"`
 		Todos []struct {
 			Content string `json:"content"`
@@ -166,55 +166,55 @@ func normalizePlanArgs(raw string) (PlanUpdate, error) {
 		} `json:"todos"`
 		Explanation string `json:"explanation"`
 	}
-	var update PlanUpdate
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return update, errors.New("plan is required")
+	var planUpdate PlanUpdate
+	arguments = strings.TrimSpace(arguments)
+	if arguments == "" {
+		return planUpdate, errors.New("plan is required")
 	}
-	if raw[0] != '{' {
-		text := raw
-		if raw[0] == '"' {
-			err := json.Unmarshal([]byte(raw), &text)
+	if arguments[0] != '{' {
+		planText := arguments
+		if arguments[0] == '"' {
+			err := json.Unmarshal([]byte(arguments), &planText)
 			if err != nil {
-				return update, err
+				return planUpdate, err
 			}
 		}
-		if raw[0] == '[' {
-			return update, errors.New("plan must be an object or plain text")
+		if arguments[0] == '[' {
+			return planUpdate, errors.New("plan must be an object or plain text")
 		}
-		update.Plan = []PlanStep{{Step: text, Status: "in_progress"}}
+		planUpdate.Plan = []PlanStep{{Step: planText, Status: "in_progress"}}
 	} else {
-		decodeErr := json.Unmarshal([]byte(raw), &object)
+		decodeErr := json.Unmarshal([]byte(arguments), &planArgs)
 		if decodeErr != nil {
-			return update, decodeErr
+			return planUpdate, decodeErr
 		}
-		update.Explanation = object.Explanation
+		planUpdate.Explanation = planArgs.Explanation
 		// Legacy todos takes precedence over a legacy plain-text plan.
-		if len(object.Todos) > 0 {
-			for _, todo := range object.Todos {
-				update.Plan = append(update.Plan, PlanStep{Step: todo.Content, Status: todo.Status})
+		if len(planArgs.Todos) > 0 {
+			for _, todo := range planArgs.Todos {
+				planUpdate.Plan = append(planUpdate.Plan, PlanStep{Step: todo.Content, Status: todo.Status})
 			}
-		} else if len(object.Plan) > 0 && object.Plan[0] == '"' {
-			var text string
-			err := json.Unmarshal(object.Plan, &text)
+		} else if len(planArgs.Plan) > 0 && planArgs.Plan[0] == '"' {
+			var planText string
+			err := json.Unmarshal(planArgs.Plan, &planText)
 			if err != nil {
-				return update, err
+				return planUpdate, err
 			}
-			update.Plan = []PlanStep{{Step: text, Status: "in_progress"}}
+			planUpdate.Plan = []PlanStep{{Step: planText, Status: "in_progress"}}
 		} else {
-			err := json.Unmarshal(object.Plan, &update.Plan)
+			err := json.Unmarshal(planArgs.Plan, &planUpdate.Plan)
 			if err != nil {
-				return update, err
+				return planUpdate, err
 			}
 		}
 	}
-	if len(update.Plan) == 0 {
-		return update, errors.New("plan is required")
+	if len(planUpdate.Plan) == 0 {
+		return planUpdate, errors.New("plan is required")
 	}
-	for _, step := range update.Plan {
+	for _, step := range planUpdate.Plan {
 		if strings.TrimSpace(step.Step) == "" || (step.Status != "pending" && step.Status != "in_progress" && step.Status != "completed") {
-			return update, errors.New("invalid plan step")
+			return planUpdate, errors.New("invalid plan step")
 		}
 	}
-	return update, nil
+	return planUpdate, nil
 }

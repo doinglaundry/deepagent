@@ -36,42 +36,42 @@ type Snapshot struct {
 
 type memoryService struct{ c Config }
 
-func New(c Config) (Service, error) {
-	if c.Model == nil || c.Root == "" {
+func New(config Config) (Service, error) {
+	if config.Model == nil || config.Root == "" {
 		return nil, errors.New("memory requires model and root")
 	}
-	if c.LeaseTTL <= 0 {
-		c.LeaseTTL = 30 * time.Second
+	if config.LeaseTTL <= 0 {
+		config.LeaseTTL = 30 * time.Second
 	}
-	if c.LeaseTTL < 3*time.Millisecond {
+	if config.LeaseTTL < 3*time.Millisecond {
 		return nil, errors.New("memory lease TTL must be at least 3ms")
 	}
-	root, e := filepath.Abs(c.Root)
-	if e != nil {
-		return nil, e
+	root, operationErr := filepath.Abs(config.Root)
+	if operationErr != nil {
+		return nil, operationErr
 	}
-	c.Root = root
-	e = os.MkdirAll(root, 0700)
-	if e != nil {
-		return nil, e
+	config.Root = root
+	operationErr = os.MkdirAll(root, 0700)
+	if operationErr != nil {
+		return nil, operationErr
 	}
-	if c.Consolidator == nil {
-		c.Consolidator = AgentConsolidator(c.Model, c.Root)
+	if config.Consolidator == nil {
+		config.Consolidator = NewAgentConsolidator(config.Model, config.Root)
 	}
-	return &memoryService{c}, nil
+	return &memoryService{config}, nil
 }
 
-func (p *memoryService) Read(ctx context.Context, scope string) (*Snapshot, error) {
+func (memoryService *memoryService) Read(ctx context.Context, scope string) (*Snapshot, error) {
 	validateScopeErr := validateScope(ctx, scope)
 	if validateScopeErr != nil {
 		return nil, validateScopeErr
 	}
 	var state consolidated
 	var err error
-	if p.c.Store != nil {
-		state, err = p.sharedState(ctx, scope)
+	if memoryService.c.Store != nil {
+		state, err = memoryService.readSharedState(ctx, scope)
 	} else {
-		state, err = p.state(scope)
+		state, err = memoryService.readLocalState(scope)
 	}
 	if err != nil {
 		return nil, err

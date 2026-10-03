@@ -14,15 +14,15 @@ type Plan struct{ BaseMiddleware }
 
 func NewPlan() Middleware { return &Plan{} }
 
-func (*Plan) Name() string { return "plan" }
+func (*Plan) GetName() string { return "plan" }
 
 const reminderTag = `<system_reminder type="plan">`
 
 // The plan belongs to RunState. This middleware retains no copy, so compaction
 // and checkpoint restore cannot leave a stale middleware-owned plan behind.
 func (*Plan) ModifyModelRequest(ctx context.Context, _ []*schema.Message, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
-	state := types.RunStateFromContext(ctx)
-	if state == nil || len(state.Plan) == 0 {
+	runState := types.GetRunState(ctx)
+	if runState == nil || len(runState.Plan) == 0 {
 		return messages, nil
 	}
 	for _, message := range messages {
@@ -35,19 +35,19 @@ func (*Plan) ModifyModelRequest(ctx context.Context, _ []*schema.Message, messag
 		if message.Role != schema.Assistant {
 			continue
 		}
-		for _, call := range message.ToolCalls {
-			if call.Function.Name == "update_plan" || call.Function.Name == "write_todos" {
+		for _, toolCall := range message.ToolCalls {
+			if toolCall.Function.Name == "update_plan" || toolCall.Function.Name == "write_todos" {
 				return messages, nil
 			}
 		}
 	}
-	var prompt strings.Builder
-	prompt.WriteString(reminderTag + "\nCurrent plan from earlier context:\n")
-	for _, step := range state.Plan {
-		fmt.Fprintf(&prompt, "- [%s] %s\n", step.Status, step.Step)
+	var reminderPrompt strings.Builder
+	reminderPrompt.WriteString(reminderTag + "\nCurrent plan from earlier context:\n")
+	for _, planStep := range runState.Plan {
+		fmt.Fprintf(&reminderPrompt, "- [%s] %s\n", planStep.Status, planStep.Step)
 	}
-	prompt.WriteString("Update this plan with update_plan as work progresses.\n</system_reminder>")
-	return append([]*schema.Message{schema.SystemMessage(prompt.String())}, messages...), nil
+	reminderPrompt.WriteString("Update this plan with update_plan as work progresses.\n</system_reminder>")
+	return append([]*schema.Message{schema.SystemMessage(reminderPrompt.String())}, messages...), nil
 }
 
 // Planning guidance is request context; the plan itself remains in RunState.

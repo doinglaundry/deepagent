@@ -28,7 +28,7 @@ type DockerFilesystem struct {
 	commands         *Commands
 }
 
-func NewDockerFilesystem(provider sandbox.Sandbox, dir, threadID string, releaseContainer func()) (filesystem *DockerFilesystem, err error) {
+func NewDockerFilesystem(provider sandbox.Sandbox, workDir, threadID string, releaseContainer func()) (filesystem *DockerFilesystem, err error) {
 	defer func() {
 		if filesystem == nil && releaseContainer != nil {
 			releaseContainer()
@@ -37,174 +37,174 @@ func NewDockerFilesystem(provider sandbox.Sandbox, dir, threadID string, release
 	if provider == nil {
 		return nil, fmt.Errorf("sandbox is required")
 	}
-	if !path.IsAbs(dir) || strings.ContainsRune(dir, 0) {
+	if !path.IsAbs(workDir) || strings.ContainsRune(workDir, 0) {
 		return nil, fmt.Errorf("absolute sandbox working directory is required")
 	}
-	target, ok := provider.(interface{ DockerExecTarget() (string, bool) })
+	execTarget, ok := provider.(interface{ GetDockerExecTarget() (string, bool) })
 	if !ok {
 		return nil, fmt.Errorf("sandbox does not expose a Docker container")
 	}
-	containerID, ok := target.DockerExecTarget()
+	containerID, ok := execTarget.GetDockerExecTarget()
 	if !ok || containerID == "" || threadID == "" {
 		return nil, fmt.Errorf("Docker container and thread ID are required")
 	}
-	resolver, ok := provider.(sandbox.ContainerPathResolver)
+	pathResolver, ok := provider.(sandbox.ContainerPathResolver)
 	if !ok {
 		return nil, fmt.Errorf("Docker sandbox must resolve container paths")
 	}
-	b := &DockerFilesystem{releaseContainer: releaseContainer, sandbox: provider, dir: path.Clean(dir), root: path.Clean(dir), containerID: containerID, pathResolver: resolver}
-	b.commands = NewDockerCommands(threadID, b, containerID)
-	return b, nil
+	dockerFilesystem := &DockerFilesystem{releaseContainer: releaseContainer, sandbox: provider, dir: path.Clean(workDir), root: path.Clean(workDir), containerID: containerID, pathResolver: pathResolver}
+	dockerFilesystem.commands = NewDockerCommands(threadID, dockerFilesystem, containerID)
+	return dockerFilesystem, nil
 }
 
-func (b *DockerFilesystem) resolve(ctx context.Context, name string) (string, error) {
+func (dockerFilesystem *DockerFilesystem) resolve(ctx context.Context, filePath string) (string, error) {
 	err := ctx.Err()
 	if err != nil {
-		return "", dockerFileError(ctx, err)
+		return "", normalizeDockerFileError(ctx, err)
 	}
-	if strings.ContainsRune(name, 0) {
+	if strings.ContainsRune(filePath, 0) {
 		return "", ErrInvalidPath
 	}
-	b.mu.RLock()
-	dir := b.dir
-	b.mu.RUnlock()
-	if name == "" {
-		name = "."
+	dockerFilesystem.mu.RLock()
+	workDir := dockerFilesystem.dir
+	dockerFilesystem.mu.RUnlock()
+	if filePath == "" {
+		filePath = "."
 	}
-	resolved := path.Clean(name)
-	if !path.IsAbs(resolved) {
-		resolved = path.Join(dir, resolved)
+	resolvedPath := path.Clean(filePath)
+	if !path.IsAbs(resolvedPath) {
+		resolvedPath = path.Join(workDir, resolvedPath)
 	}
-	if resolved != b.root && b.root != "/" && !strings.HasPrefix(resolved, b.root+"/") {
+	if resolvedPath != dockerFilesystem.root && dockerFilesystem.root != "/" && !strings.HasPrefix(resolvedPath, dockerFilesystem.root+"/") {
 		return "", ErrInvalidPath
 	}
-	b.mu.RLock()
-	canonicalRoot := b.canonicalRoot
-	b.mu.RUnlock()
+	dockerFilesystem.mu.RLock()
+	canonicalRoot := dockerFilesystem.canonicalRoot
+	dockerFilesystem.mu.RUnlock()
 	if canonicalRoot == "" {
 		var err error
-		canonicalRoot, err = b.pathResolver.ResolveContainerPath(ctx, b.root)
+		canonicalRoot, err = dockerFilesystem.pathResolver.ResolveContainerPath(ctx, dockerFilesystem.root)
 		if err != nil {
 			return "", err
 		}
 		if !path.IsAbs(canonicalRoot) || path.Clean(canonicalRoot) != canonicalRoot {
 			return "", ErrInvalidPath
 		}
-		b.mu.Lock()
-		if b.canonicalRoot == "" {
-			b.canonicalRoot = canonicalRoot
+		dockerFilesystem.mu.Lock()
+		if dockerFilesystem.canonicalRoot == "" {
+			dockerFilesystem.canonicalRoot = canonicalRoot
 		} else {
-			canonicalRoot = b.canonicalRoot
+			canonicalRoot = dockerFilesystem.canonicalRoot
 		}
-		b.mu.Unlock()
+		dockerFilesystem.mu.Unlock()
 	}
-	canonical, err := b.pathResolver.ResolveContainerPath(ctx, resolved)
+	canonicalPath, err := dockerFilesystem.pathResolver.ResolveContainerPath(ctx, resolvedPath)
 	if err != nil {
 		return "", err
 	}
-	if !path.IsAbs(canonical) || path.Clean(canonical) != canonical {
+	if !path.IsAbs(canonicalPath) || path.Clean(canonicalPath) != canonicalPath {
 		return "", ErrInvalidPath
 	}
-	if canonical != canonicalRoot && canonicalRoot != "/" && !strings.HasPrefix(canonical, canonicalRoot+"/") {
+	if canonicalPath != canonicalRoot && canonicalRoot != "/" && !strings.HasPrefix(canonicalPath, canonicalRoot+"/") {
 		return "", ErrInvalidPath
 	}
-	return resolved, nil
+	return resolvedPath, nil
 }
 
-func (b *DockerFilesystem) Root() string { return b.root }
-func (b *DockerFilesystem) Resolve(ctx context.Context, name string, _ bool) (string, error) {
-	return b.resolve(ctx, name)
+func (dockerFilesystem *DockerFilesystem) GetRoot() string { return dockerFilesystem.root }
+func (dockerFilesystem *DockerFilesystem) Resolve(ctx context.Context, filePath string, _ bool) (string, error) {
+	return dockerFilesystem.resolve(ctx, filePath)
 }
-func (b *DockerFilesystem) Execute(ctx context.Context, req CommandRequest) (*CommandResult, error) {
-	return b.commands.Execute(ctx, req)
+func (dockerFilesystem *DockerFilesystem) Execute(ctx context.Context, request CommandRequest) (*CommandResult, error) {
+	return dockerFilesystem.commands.Execute(ctx, request)
 }
-func (b *DockerFilesystem) Start(ctx context.Context, req CommandRequest) (string, error) {
-	return b.commands.Start(ctx, req)
+func (dockerFilesystem *DockerFilesystem) Start(ctx context.Context, request CommandRequest) (string, error) {
+	return dockerFilesystem.commands.Start(ctx, request)
 }
-func (b *DockerFilesystem) Wait(ctx context.Context, id, pattern string, offset int) (*CommandSnapshot, error) {
-	return b.commands.Wait(ctx, id, pattern, offset)
+func (dockerFilesystem *DockerFilesystem) Wait(ctx context.Context, jobID, pattern string, offset int) (*CommandSnapshot, error) {
+	return dockerFilesystem.commands.Wait(ctx, jobID, pattern, offset)
 }
-func (b *DockerFilesystem) Cancel(ctx context.Context, id string) error {
-	return b.commands.Cancel(ctx, id)
+func (dockerFilesystem *DockerFilesystem) Cancel(ctx context.Context, jobID string) error {
+	return dockerFilesystem.commands.Cancel(ctx, jobID)
 }
-func (b *DockerFilesystem) Close(ctx context.Context) error {
-	err := b.commands.Close(ctx)
+func (dockerFilesystem *DockerFilesystem) Close(ctx context.Context) error {
+	err := dockerFilesystem.commands.Close(ctx)
 	if err != nil {
 		return err
 	}
-	if b.releaseContainer != nil {
-		b.releaseOnce.Do(b.releaseContainer)
+	if dockerFilesystem.releaseContainer != nil {
+		dockerFilesystem.releaseOnce.Do(dockerFilesystem.releaseContainer)
 	}
 	return nil
 }
 
-func dockerFileInfos(paths []string) []FileInfo {
-	out := make([]FileInfo, 0, len(paths))
-	for _, name := range paths {
-		out = append(out, FileInfo{Path: name, IsDir: strings.HasSuffix(name, "/")})
+func buildDockerFileInfos(paths []string) []FileInfo {
+	fileInfos := make([]FileInfo, 0, len(paths))
+	for _, filePath := range paths {
+		fileInfos = append(fileInfos, FileInfo{Path: filePath, IsDir: strings.HasSuffix(filePath, "/")})
 	}
-	return out
+	return fileInfos
 }
-func (b *DockerFilesystem) List(ctx context.Context, name string) ([]FileInfo, error) {
-	name, err := b.resolve(ctx, name)
+func (dockerFilesystem *DockerFilesystem) List(ctx context.Context, directoryPath string) ([]FileInfo, error) {
+	directoryPath, err := dockerFilesystem.resolve(ctx, directoryPath)
 	if err != nil {
-		return nil, dockerFileError(ctx, err)
+		return nil, normalizeDockerFileError(ctx, err)
 	}
-	provider, ok := b.sandbox.(sandbox.FileInfoProvider)
+	fileInfoProvider, ok := dockerFilesystem.sandbox.(sandbox.FileInfoProvider)
 	if ok {
-		entries, err := provider.ListDirInfo(ctx, name, 1)
+		entries, err := fileInfoProvider.ListDirInfo(ctx, directoryPath, 1)
 		if err != nil {
-			return nil, dockerFileError(ctx, err)
+			return nil, normalizeDockerFileError(ctx, err)
 		}
-		out := make([]FileInfo, 0, len(entries))
+		fileInfos := make([]FileInfo, 0, len(entries))
 		for _, entry := range entries {
-			out = append(out, FileInfo{Path: entry.Path, IsDir: entry.IsDir, IsSymlink: entry.IsSymlink, Size: entry.Size})
+			fileInfos = append(fileInfos, FileInfo{Path: entry.Path, IsDir: entry.IsDir, IsSymlink: entry.IsSymlink, Size: entry.Size})
 		}
-		return out, nil
+		return fileInfos, nil
 	}
-	entries, err := b.sandbox.ListDir(ctx, name, 1)
+	entries, err := dockerFilesystem.sandbox.ListDir(ctx, directoryPath, 1)
 	if err != nil {
-		return nil, dockerFileError(ctx, err)
+		return nil, normalizeDockerFileError(ctx, err)
 	}
-	return dockerFileInfos(entries), nil
+	return buildDockerFileInfos(entries), nil
 }
-func (b *DockerFilesystem) readContent(ctx context.Context, name string) (string, string, error) {
-	resolved, err := b.resolve(ctx, name)
+func (dockerFilesystem *DockerFilesystem) readContent(ctx context.Context, filePath string) (string, string, error) {
+	resolvedPath, err := dockerFilesystem.resolve(ctx, filePath)
 	if err != nil {
-		return "", "", dockerFileError(ctx, err)
+		return "", "", normalizeDockerFileError(ctx, err)
 	}
-	content, err := b.sandbox.ReadFile(ctx, resolved)
+	content, err := dockerFilesystem.sandbox.ReadFile(ctx, resolvedPath)
 	if err != nil {
-		return "", "", dockerFileError(ctx, err)
+		return "", "", normalizeDockerFileError(ctx, err)
 	}
 	if len(content) > MaxFileSizeMB<<20 {
 		return "", "", fmt.Errorf("file exceeds %d MiB", MaxFileSizeMB)
 	}
-	return resolved, content, nil
+	return resolvedPath, content, nil
 }
-func (b *DockerFilesystem) Read(ctx context.Context, name string, offset, limit *int) (string, error) {
-	_, content, err := b.readContent(ctx, name)
+func (dockerFilesystem *DockerFilesystem) Read(ctx context.Context, filePath string, offset, limit *int) (string, error) {
+	_, content, err := dockerFilesystem.readContent(ctx, filePath)
 	if err != nil {
 		return "", err
 	}
 	return ReadFileLines(content, offset, limit), nil
 }
-func (b *DockerFilesystem) Write(ctx context.Context, name, content string) (*WriteResult, error) {
-	resolved, err := b.resolve(ctx, name)
+func (dockerFilesystem *DockerFilesystem) Write(ctx context.Context, filePath, content string) (*WriteResult, error) {
+	resolvedPath, err := dockerFilesystem.resolve(ctx, filePath)
 	if err != nil {
-		return nil, dockerFileError(ctx, err)
+		return nil, normalizeDockerFileError(ctx, err)
 	}
-	err = b.sandbox.WriteFile(ctx, resolved, content, false)
+	err = dockerFilesystem.sandbox.WriteFile(ctx, resolvedPath, content, false)
 	if err != nil {
-		return nil, dockerFileError(ctx, err)
+		return nil, normalizeDockerFileError(ctx, err)
 	}
-	return &WriteResult{Path: name}, nil
+	return &WriteResult{Path: filePath}, nil
 }
-func (b *DockerFilesystem) Edit(ctx context.Context, name, old, new string, all bool) (*EditResult, error) {
-	if old == "" {
+func (dockerFilesystem *DockerFilesystem) Edit(ctx context.Context, filePath, oldText, newText string, replaceAll bool) (*EditResult, error) {
+	if oldText == "" {
 		return nil, fmt.Errorf("old text is required")
 	}
-	resolved, content, err := b.readContent(ctx, name)
+	resolvedPath, content, err := dockerFilesystem.readContent(ctx, filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -214,98 +214,98 @@ func (b *DockerFilesystem) Edit(ctx context.Context, name, old, new string, all 
 	if contextErr != nil {
 		return nil, contextErr
 	}
-	updated, count, err := ReplaceFileText(content, old, new, all)
+	updatedContent, occurrences, err := ReplaceFileText(content, oldText, newText, replaceAll)
 	if err != nil {
-		return &EditResult{Path: name, Occurrences: count}, err
+		return &EditResult{Path: filePath, Occurrences: occurrences}, err
 	}
 	contextErr = ctx.Err()
 	if contextErr != nil {
 		return nil, contextErr
 	}
-	err = b.sandbox.WriteFile(ctx, resolved, updated, false)
+	err = dockerFilesystem.sandbox.WriteFile(ctx, resolvedPath, updatedContent, false)
 	if err != nil {
-		return nil, dockerFileError(ctx, err)
+		return nil, normalizeDockerFileError(ctx, err)
 	}
-	return &EditResult{Path: name, Occurrences: count}, nil
+	return &EditResult{Path: filePath, Occurrences: occurrences}, nil
 }
-func (b *DockerFilesystem) Grep(ctx context.Context, pattern, name, glob string) ([]GrepMatch, error) {
-	name, err := b.resolve(ctx, name)
+func (dockerFilesystem *DockerFilesystem) Grep(ctx context.Context, pattern, directoryPath, glob string) ([]GrepMatch, error) {
+	directoryPath, err := dockerFilesystem.resolve(ctx, directoryPath)
 	if err != nil {
-		return nil, dockerFileError(ctx, err)
+		return nil, normalizeDockerFileError(ctx, err)
 	}
-	matches, _, err := b.sandbox.Grep(ctx, name, pattern, sandbox.GrepOpts{Glob: glob, CaseSensitive: true, MaxResults: 100})
+	matches, _, err := dockerFilesystem.sandbox.Grep(ctx, directoryPath, pattern, sandbox.GrepOpts{Glob: glob, CaseSensitive: true, MaxResults: 100})
 	if err != nil {
-		return nil, dockerFileError(ctx, err)
+		return nil, normalizeDockerFileError(ctx, err)
 	}
-	out := make([]GrepMatch, 0, len(matches))
-	for _, m := range matches {
-		out = append(out, GrepMatch{Path: m.Path, Line: m.LineNumber, Text: m.Line})
+	grepMatches := make([]GrepMatch, 0, len(matches))
+	for _, match := range matches {
+		grepMatches = append(grepMatches, GrepMatch{Path: match.Path, Line: match.LineNumber, Text: match.Line})
 	}
-	return out, nil
+	return grepMatches, nil
 }
-func (b *DockerFilesystem) Glob(ctx context.Context, pattern, name string) ([]FileInfo, error) {
-	name, err := b.resolve(ctx, name)
+func (dockerFilesystem *DockerFilesystem) Glob(ctx context.Context, pattern, directoryPath string) ([]FileInfo, error) {
+	directoryPath, err := dockerFilesystem.resolve(ctx, directoryPath)
 	if err != nil {
-		return nil, dockerFileError(ctx, err)
+		return nil, normalizeDockerFileError(ctx, err)
 	}
-	entries, _, err := b.sandbox.Glob(ctx, name, pattern, sandbox.GlobOpts{MaxResults: globMaxResults})
+	entries, _, err := dockerFilesystem.sandbox.Glob(ctx, directoryPath, pattern, sandbox.GlobOpts{MaxResults: globMaxResults})
 	if err != nil {
-		return nil, dockerFileError(ctx, err)
+		return nil, normalizeDockerFileError(ctx, err)
 	}
-	return dockerFileInfos(entries), nil
+	return buildDockerFileInfos(entries), nil
 }
-func (b *DockerFilesystem) UploadFiles(ctx context.Context, files []struct {
+func (dockerFilesystem *DockerFilesystem) UploadFiles(ctx context.Context, files []struct {
 	Path    string
 	Content []byte
 }) ([]FileUploadResponse, error) {
-	out := make([]FileUploadResponse, 0, len(files))
+	uploadResponses := make([]FileUploadResponse, 0, len(files))
 	for _, file := range files {
-		name, err := b.resolve(ctx, file.Path)
+		resolvedPath, err := dockerFilesystem.resolve(ctx, file.Path)
 		if err != nil {
-			return out, dockerFileError(ctx, err)
+			return uploadResponses, normalizeDockerFileError(ctx, err)
 		}
-		err = b.sandbox.UpdateFile(ctx, name, file.Content)
+		err = dockerFilesystem.sandbox.UpdateFile(ctx, resolvedPath, file.Content)
 		if err != nil {
-			return out, dockerFileError(ctx, err)
+			return uploadResponses, normalizeDockerFileError(ctx, err)
 		}
-		out = append(out, FileUploadResponse{Path: file.Path})
+		uploadResponses = append(uploadResponses, FileUploadResponse{Path: file.Path})
 	}
-	return out, nil
+	return uploadResponses, nil
 }
-func (b *DockerFilesystem) ChangeDir(ctx context.Context, name string) error {
-	name, err := b.resolve(ctx, name)
+func (dockerFilesystem *DockerFilesystem) ChangeDir(ctx context.Context, directoryPath string) error {
+	directoryPath, err := dockerFilesystem.resolve(ctx, directoryPath)
 	if err != nil {
-		return dockerFileError(ctx, err)
+		return normalizeDockerFileError(ctx, err)
 	}
-	_, err = b.sandbox.ListDir(ctx, name, 1)
+	_, err = dockerFilesystem.sandbox.ListDir(ctx, directoryPath, 1)
 	if err != nil {
-		return dockerFileError(ctx, err)
+		return normalizeDockerFileError(ctx, err)
 	}
-	b.mu.Lock()
-	b.dir = name
-	b.mu.Unlock()
+	dockerFilesystem.mu.Lock()
+	dockerFilesystem.dir = directoryPath
+	dockerFilesystem.mu.Unlock()
 	return nil
 }
 
-func (b *DockerFilesystem) Delete(ctx context.Context, name string) (string, error) {
-	resolved, err := b.resolve(ctx, name)
+func (dockerFilesystem *DockerFilesystem) Delete(ctx context.Context, filePath string) (string, error) {
+	resolvedPath, err := dockerFilesystem.resolve(ctx, filePath)
 	if err != nil {
-		return "", dockerFileError(ctx, err)
+		return "", normalizeDockerFileError(ctx, err)
 	}
-	if resolved == b.root {
+	if resolvedPath == dockerFilesystem.root {
 		return "", ErrInvalidPath
 	}
-	cmd := exec.CommandContext(ctx, "docker", "exec", b.containerID, "rm", "-f", "--", resolved)
-	output, err := cmd.CombinedOutput()
+	dockerCommand := exec.CommandContext(ctx, "docker", "exec", dockerFilesystem.containerID, "rm", "-f", "--", resolvedPath)
+	output, err := dockerCommand.CombinedOutput()
 	if err != nil {
-		deleteErr := fmt.Errorf("docker delete %s: %s: %w", name, strings.TrimSpace(string(output)), err)
-		return "", dockerFileError(ctx, deleteErr)
+		deleteErr := fmt.Errorf("docker delete %s: %s: %w", filePath, strings.TrimSpace(string(output)), err)
+		return "", normalizeDockerFileError(ctx, deleteErr)
 	}
-	return "Deleted file " + name, nil
+	return "Deleted file " + filePath, nil
 }
 
-func (b *DockerFilesystem) ApplyPatch(ctx context.Context, patch string) (string, error) {
-	return ApplyWorkspacePatch(ctx, b, patch)
+func (dockerFilesystem *DockerFilesystem) ApplyPatch(ctx context.Context, patch string) (string, error) {
+	return ApplyWorkspacePatch(ctx, dockerFilesystem, patch)
 }
 
 var _ Filesystem = (*DockerFilesystem)(nil)
@@ -318,90 +318,90 @@ const (
 	dockerPatchAlreadyExistsExitCode = 73
 )
 
-func (b *DockerFilesystem) FileExists(ctx context.Context, name string) (bool, error) {
-	resolved, err := b.resolve(ctx, name)
+func (dockerFilesystem *DockerFilesystem) HasFile(ctx context.Context, filePath string) (bool, error) {
+	resolvedPath, err := dockerFilesystem.resolve(ctx, filePath)
 	if err != nil {
-		return false, dockerFileError(ctx, err)
+		return false, normalizeDockerFileError(ctx, err)
 	}
-	provider, ok := b.sandbox.(interface {
+	existenceProvider, ok := dockerFilesystem.sandbox.(interface {
 		FileExists(context.Context, string) (bool, error)
 	})
 	if ok {
-		exists, providerErr := provider.FileExists(ctx, resolved)
+		exists, providerErr := existenceProvider.FileExists(ctx, resolvedPath)
 		if providerErr != nil {
-			return false, dockerFileError(ctx, providerErr)
+			return false, normalizeDockerFileError(ctx, providerErr)
 		}
 		return exists, nil
 	}
-	cmd := exec.CommandContext(ctx, "docker", "exec", b.containerID, "python3", "-c", dockerPatchScript, "stat", b.root, resolved)
-	output, err := cmd.CombinedOutput()
+	dockerCommand := exec.CommandContext(ctx, "docker", "exec", dockerFilesystem.containerID, "python3", "-c", dockerPatchScript, "stat", dockerFilesystem.root, resolvedPath)
+	output, err := dockerCommand.CombinedOutput()
 	if err == nil {
 		return true, nil
 	}
 	contextErr := ctx.Err()
 	if contextErr != nil {
-		return false, dockerFileError(ctx, fmt.Errorf("docker stat %s: %s: %w", name, strings.TrimSpace(string(output)), err))
+		return false, normalizeDockerFileError(ctx, fmt.Errorf("docker stat %s: %s: %w", filePath, strings.TrimSpace(string(output)), err))
 	}
 	exitErr := &exec.ExitError{}
 	isExitError := errors.As(err, &exitErr)
 	if isExitError {
-		code := exitErr.ExitCode()
-		if code == dockerPatchNotFoundExitCode {
+		exitCode := exitErr.ExitCode()
+		if exitCode == dockerPatchNotFoundExitCode {
 			return false, nil
 		}
 	}
-	existenceErr := fmt.Errorf("docker stat %s: %s: %w", name, strings.TrimSpace(string(output)), err)
-	return false, dockerFileError(ctx, existenceErr)
+	existenceErr := fmt.Errorf("docker stat %s: %s: %w", filePath, strings.TrimSpace(string(output)), err)
+	return false, normalizeDockerFileError(ctx, existenceErr)
 }
 
-func (b *DockerFilesystem) CreateFileNoReplace(ctx context.Context, name, content string) (*WriteResult, error) {
-	resolved, err := b.resolve(ctx, name)
+func (dockerFilesystem *DockerFilesystem) CreateFileNoReplace(ctx context.Context, filePath, content string) (*WriteResult, error) {
+	resolvedPath, err := dockerFilesystem.resolve(ctx, filePath)
 	if err != nil {
-		return nil, dockerFileError(ctx, err)
+		return nil, normalizeDockerFileError(ctx, err)
 	}
-	provider, ok := b.sandbox.(interface {
+	creationProvider, ok := dockerFilesystem.sandbox.(interface {
 		CreateFileNoReplace(context.Context, string, string) error
 	})
 	if ok {
-		err = provider.CreateFileNoReplace(ctx, resolved, content)
+		err = creationProvider.CreateFileNoReplace(ctx, resolvedPath, content)
 		if err != nil {
-			return nil, dockerFileError(ctx, err)
+			return nil, normalizeDockerFileError(ctx, err)
 		}
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr
 		}
-		return &WriteResult{Path: name}, nil
+		return &WriteResult{Path: filePath}, nil
 	}
-	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", b.containerID, "python3", "-c", dockerPatchScript, "create", b.root, resolved)
-	cmd.Stdin = strings.NewReader(content)
-	output, err := cmd.CombinedOutput()
+	dockerCommand := exec.CommandContext(ctx, "docker", "exec", "-i", dockerFilesystem.containerID, "python3", "-c", dockerPatchScript, "create", dockerFilesystem.root, resolvedPath)
+	dockerCommand.Stdin = strings.NewReader(content)
+	output, err := dockerCommand.CombinedOutput()
 	if err == nil {
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr
 		}
-		return &WriteResult{Path: name}, nil
+		return &WriteResult{Path: filePath}, nil
 	}
 	contextErr := ctx.Err()
 	if contextErr != nil {
-		return nil, dockerFileError(ctx, fmt.Errorf("docker create %s: %s: %w", name, strings.TrimSpace(string(output)), err))
+		return nil, normalizeDockerFileError(ctx, fmt.Errorf("docker create %s: %s: %w", filePath, strings.TrimSpace(string(output)), err))
 	}
 	exitErr := &exec.ExitError{}
 	isExitError := errors.As(err, &exitErr)
 	if isExitError {
-		code := exitErr.ExitCode()
-		if code == dockerPatchAlreadyExistsExitCode {
-			return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, name)
+		exitCode := exitErr.ExitCode()
+		if exitCode == dockerPatchAlreadyExistsExitCode {
+			return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, filePath)
 		}
 	}
-	createErr := fmt.Errorf("docker create %s: %s: %w", name, strings.TrimSpace(string(output)), err)
-	return nil, dockerFileError(ctx, createErr)
+	createErr := fmt.Errorf("docker create %s: %s: %w", filePath, strings.TrimSpace(string(output)), err)
+	return nil, normalizeDockerFileError(ctx, createErr)
 }
 
 // Older providers wrap transport failures as text. Retain their details while
 // preserving cancellation identity for the Graph's system-error boundary.
-func dockerFileError(ctx context.Context, err error) error {
+func normalizeDockerFileError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return errors.Join(ctx.Err(), err)
 	}

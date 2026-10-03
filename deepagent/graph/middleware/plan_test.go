@@ -12,33 +12,33 @@ import (
 )
 
 func TestPlanReminderUsesRestoredRunState(t *testing.T) {
-	before := &types.RunState{Version: 1, Plan: []types.PlanStep{{Step: "inspect", Status: "pending"}}}
-	raw, err := json.Marshal(before)
+	originalRunState := &types.RunState{Version: 1, Plan: []types.PlanStep{{Step: "inspect", Status: "pending"}}}
+	encodedRunState, err := json.Marshal(originalRunState)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var restored types.RunState
-	decodeErr := json.Unmarshal(raw, &restored)
-	if decodeErr != nil {
-		t.Fatal(decodeErr)
+	var restoredRunState types.RunState
+	restoreErr := json.Unmarshal(encodedRunState, &restoredRunState)
+	if restoreErr != nil {
+		t.Fatal(restoreErr)
 	}
-	ctx := types.WithRunState(context.Background(), &restored)
-	m := NewPlan()
+	ctx := types.WithRunState(context.Background(), &restoredRunState)
+	planMiddleware := NewPlan()
 	history := []*schema.Message{schema.UserMessage("compacted summary")}
-	out, err := m.ModifyModelRequest(ctx, nil, history, nil)
-	if err != nil || len(out) != 2 || !strings.Contains(out[0].Content, "[pending] inspect") {
-		t.Fatalf("out=%v err=%v", out, err)
+	messagesWithReminder, err := planMiddleware.ModifyModelRequest(ctx, nil, history, nil)
+	if err != nil || len(messagesWithReminder) != 2 || !strings.Contains(messagesWithReminder[0].Content, "[pending] inspect") {
+		t.Fatalf("out=%v err=%v", messagesWithReminder, err)
 	}
 	if len(history) != 1 {
 		t.Fatal("history mutated")
 	}
-	again, err := m.ModifyModelRequest(ctx, nil, out, nil)
-	if err != nil || len(again) != 2 {
+	repeatedMessages, err := planMiddleware.ModifyModelRequest(ctx, nil, messagesWithReminder, nil)
+	if err != nil || len(repeatedMessages) != 2 {
 		t.Fatal("duplicate reminder")
 	}
-	visible := []*schema.Message{schema.AssistantMessage("", []schema.ToolCall{{Function: schema.FunctionCall{Name: "update_plan"}}})}
-	modifyModelRequestOut, _ := m.ModifyModelRequest(ctx, nil, visible, nil)
-	if len(modifyModelRequestOut) != 1 {
+	visiblePlanMessages := []*schema.Message{schema.AssistantMessage("", []schema.ToolCall{{Function: schema.FunctionCall{Name: "update_plan"}}})}
+	messagesWithVisiblePlan, _ := planMiddleware.ModifyModelRequest(ctx, nil, visiblePlanMessages, nil)
+	if len(messagesWithVisiblePlan) != 1 {
 		t.Fatal("visible plan was repeated")
 	}
 }
@@ -48,16 +48,16 @@ func TestPlanReminderOnlyTrustsAssistantToolCalls(t *testing.T) {
 	for _, role := range []schema.RoleType{schema.User, schema.Tool, schema.System, schema.Assistant} {
 		t.Run(string(role), func(t *testing.T) {
 			message := &schema.Message{Role: role, Content: "quoted tool data", ToolCalls: []schema.ToolCall{{Function: schema.FunctionCall{Name: "update_plan"}}}}
-			input := []*schema.Message{message}
-			out, err := NewPlan().ModifyModelRequest(ctx, nil, input, nil)
-			want := 2
+			requestMessages := []*schema.Message{message}
+			messagesWithReminder, err := NewPlan().ModifyModelRequest(ctx, nil, requestMessages, nil)
+			expectedMessageCount := 2
 			if role == schema.Assistant {
-				want = 1
+				expectedMessageCount = 1
 			}
-			if err != nil || len(out) != want {
-				t.Fatalf("role=%s len=%d err=%v", role, len(out), err)
+			if err != nil || len(messagesWithReminder) != expectedMessageCount {
+				t.Fatalf("role=%s len=%d err=%v", role, len(messagesWithReminder), err)
 			}
-			if input[0] != message || message.Content != "quoted tool data" {
+			if requestMessages[0] != message || message.Content != "quoted tool data" {
 				t.Fatal("history mutated")
 			}
 		})

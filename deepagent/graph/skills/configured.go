@@ -14,8 +14,8 @@ import (
 
 type fileLoader []*SkillMetadata
 
-func (l fileLoader) ListSkills(context.Context) ([]*SkillMetadata, error) {
-	return append([]*SkillMetadata(nil), l...), nil
+func (fileLoader fileLoader) ListSkills(context.Context) ([]*SkillMetadata, error) {
+	return append([]*SkillMetadata(nil), fileLoader...), nil
 }
 
 // LoadSkills discovers SKILL.md files. In a public/custom layout, custom skills
@@ -24,10 +24,10 @@ func LoadSkills(paths []string) (SkillLoader, error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	items := fileLoader{}
-	byName := map[string]int{}
-	for _, raw := range paths {
-		root, err := expandPath(raw)
+	skillMetadata := fileLoader{}
+	skillIndicesByName := map[string]int{}
+	for _, configuredPath := range paths {
+		root, err := expandPath(configuredPath)
 		if err != nil {
 			return nil, err
 		}
@@ -35,15 +35,15 @@ func LoadSkills(paths []string) (SkillLoader, error) {
 			path    string
 			replace bool
 		}{{root, false}}
-		if directory(filepath.Join(root, "public")) || directory(filepath.Join(root, "custom")) {
+		if isDirectory(filepath.Join(root, "public")) || isDirectory(filepath.Join(root, "custom")) {
 			categories = categories[:0]
-			if directory(filepath.Join(root, "public")) {
+			if isDirectory(filepath.Join(root, "public")) {
 				categories = append(categories, struct {
 					path    string
 					replace bool
 				}{filepath.Join(root, "public"), false})
 			}
-			if directory(filepath.Join(root, "custom")) {
+			if isDirectory(filepath.Join(root, "custom")) {
 				categories = append(categories, struct {
 					path    string
 					replace bool
@@ -51,27 +51,27 @@ func LoadSkills(paths []string) (SkillLoader, error) {
 			}
 		}
 		for _, category := range categories {
-			found, err := scan(category.path)
+			discoveredSkills, err := scanSkillDirectory(category.path)
 			if err != nil {
 				return nil, err
 			}
-			for _, item := range found {
-				i, exists := byName[item.Name]
+			for _, skill := range discoveredSkills {
+				existingIndex, exists := skillIndicesByName[skill.Name]
 				if exists {
 					if category.replace {
-						items[i] = item
+						skillMetadata[existingIndex] = skill
 					}
 					continue
 				}
-				byName[item.Name] = len(items)
-				items = append(items, item)
+				skillIndicesByName[skill.Name] = len(skillMetadata)
+				skillMetadata = append(skillMetadata, skill)
 			}
 		}
 	}
-	return items, nil
+	return skillMetadata, nil
 }
 
-func scan(root string) ([]*SkillMetadata, error) {
+func scanSkillDirectory(root string) ([]*SkillMetadata, error) {
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -92,20 +92,20 @@ func scan(root string) ([]*SkillMetadata, error) {
 		if err != nil {
 			return nil, err
 		}
-		name, description := entry.Name(), firstParagraph(string(data))
-		front, body, ok := splitFrontmatter(string(data))
+		name, description := entry.Name(), getFirstParagraph(string(data))
+		frontmatter, body, ok := splitFrontmatter(string(data))
 		if ok {
 			var fields struct {
 				Name, Description string
 			}
-			if yaml.Unmarshal([]byte(front), &fields) == nil {
+			if yaml.Unmarshal([]byte(frontmatter), &fields) == nil {
 				if strings.TrimSpace(fields.Name) != "" {
 					name = strings.TrimSpace(fields.Name)
 				}
 				if strings.TrimSpace(fields.Description) != "" {
 					description = strings.TrimSpace(fields.Description)
 				} else {
-					description = firstParagraph(body)
+					description = getFirstParagraph(body)
 				}
 			}
 		}
@@ -129,7 +129,7 @@ func expandPath(path string) (string, error) {
 	return filepath.Abs(path)
 }
 
-func directory(path string) bool {
+func isDirectory(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
 }
@@ -138,15 +138,15 @@ func splitFrontmatter(content string) (string, string, bool) {
 	if !strings.HasPrefix(content, "---") {
 		return "", content, false
 	}
-	rest := strings.TrimLeft(strings.TrimPrefix(content, "---"), "\r\n")
-	end := strings.Index(rest, "\n---")
+	remainingContent := strings.TrimLeft(strings.TrimPrefix(content, "---"), "\r\n")
+	end := strings.Index(remainingContent, "\n---")
 	if end < 0 {
 		return "", content, false
 	}
-	return rest[:end], strings.TrimLeft(rest[end+4:], "\r\n"), true
+	return remainingContent[:end], strings.TrimLeft(remainingContent[end+4:], "\r\n"), true
 }
 
-func firstParagraph(content string) string {
+func getFirstParagraph(content string) string {
 	content = strings.TrimSpace(content)
 	end := strings.Index(content, "\n\n")
 	if end >= 0 {

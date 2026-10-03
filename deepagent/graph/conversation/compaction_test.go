@@ -9,7 +9,7 @@ import (
 )
 
 func TestBootstrapReplacementPreservesSummaryAndHistoricalSource(t *testing.T) {
-	for _, tc := range []struct {
+	for _, testCase := range []struct {
 		name, first         string
 		enabled, withPrompt bool
 		wantCount           int
@@ -19,33 +19,33 @@ func TestBootstrapReplacementPreservesSummaryAndHistoricalSource(t *testing.T) {
 		{"default keeps system history", "historical instruction", false, true, 3},
 		{"no replacement prompt keeps history", "old prompt", true, false, 2},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(testCase.name, func(t *testing.T) {
 			ctx := context.Background()
-			c := New("thread", nil, nil, nil, WithBootstrapPromptReplacement(tc.enabled))
-			original := schema.SystemMessage(tc.first)
-			addHistoryErr := c.AddHistory(ctx, "old", original, schema.UserMessage("prior"))
+			conversation := New("thread", nil, nil, nil, WithBootstrapPromptReplacement(testCase.enabled))
+			original := schema.SystemMessage(testCase.first)
+			addHistoryErr := conversation.AddHistory(ctx, "old", original, schema.UserMessage("prior"))
 			if addHistoryErr != nil {
 				t.Fatal(addHistoryErr)
 			}
 			var prompts []*schema.Message
-			if tc.withPrompt {
+			if testCase.withPrompt {
 				prompts = []*schema.Message{schema.SystemMessage("fresh prompt")}
 			}
-			request, err := c.BuildRequest(ctx, prompts)
+			request, err := conversation.BuildRequest(ctx, prompts)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(request) != tc.wantCount {
+			if len(request) != testCase.wantCount {
 				t.Fatalf("request=%v", request)
 			}
-			if tc.withPrompt && request[0].Content != "fresh prompt" {
+			if testCase.withPrompt && request[0].Content != "fresh prompt" {
 				t.Fatal("fresh prompt lost")
 			}
-			if tc.name == "preserve leading summary" && request[1].Content != tc.first {
+			if testCase.name == "preserve leading summary" && request[1].Content != testCase.first {
 				t.Fatal("summary discarded")
 			}
-			history := c.History(ctx)
-			if len(history) != 2 || history[0] != original || original.Content != tc.first {
+			history := conversation.GetHistory(ctx)
+			if len(history) != 2 || history[0] != original || original.Content != testCase.first {
 				t.Fatal("request projection mutated source history")
 			}
 		})
@@ -77,26 +77,26 @@ func TestSummaryCompactionPreservesRecentToolExchange(t *testing.T) {
 		t.Fatalf("compacted=%+v", result)
 	}
 	store := &testStore{}
-	live := New("thread", store, strategy, nil)
-	err = live.AddHistory(context.Background(), "run", current...)
+	liveConversation := New("thread", store, strategy, nil)
+	err = liveConversation.AddHistory(context.Background(), "run", current...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = live.Compact(context.Background(), "run")
+	_, err = liveConversation.Compact(context.Background(), "run")
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = live.AddHistory(context.Background(), "run", schema.UserMessage("later"))
+	err = liveConversation.AddHistory(context.Background(), "run", schema.UserMessage("later"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored := New("thread", store, nil, nil)
-	err = restored.ReloadHistory(context.Background())
+	restoredConversation := New("thread", store, nil, nil)
+	err = restoredConversation.ReloadHistory(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	resumed := restored.History(context.Background())
-	if len(resumed) != 6 || resumed[2].ToolCalls[0].ID != "call" || resumed[3].ToolCallID != "call" || resumed[5].Content != "later" {
-		t.Fatalf("durable reload lost retained exchange: %+v", resumed)
+	restoredHistory := restoredConversation.GetHistory(context.Background())
+	if len(restoredHistory) != 6 || restoredHistory[2].ToolCalls[0].ID != "call" || restoredHistory[3].ToolCallID != "call" || restoredHistory[5].Content != "later" {
+		t.Fatalf("durable reload lost retained exchange: %+v", restoredHistory)
 	}
 }

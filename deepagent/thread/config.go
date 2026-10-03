@@ -16,11 +16,11 @@ import (
 type ContextManager interface {
 	ReloadHistory(context.Context) error
 	AddHistory(context.Context, string, ...*schema.Message) error
-	History(context.Context) []*schema.Message
-	ContextUsage() types.ContextUsageSnapshot
+	GetHistory(context.Context) []*schema.Message
+	GetContextUsage() types.ContextUsageSnapshot
 	RecordModelUsage(context.Context, *model.TokenUsage)
 	Compact(context.Context, string) (*conversation.ContextCompactedPayload, error)
-	CompactNeeded(context.Context) bool
+	NeedsCompaction(context.Context) bool
 }
 
 type ThreadOptions struct {

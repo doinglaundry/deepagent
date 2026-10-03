@@ -15,32 +15,32 @@ import (
 	"eino-cli/deepagent/sandbox"
 )
 
-func (s *fileSandbox) FileExists(ctx context.Context, path string) (bool, error) {
+func (fileSandbox *fileSandbox) FileExists(ctx context.Context, path string) (bool, error) {
 	contextErr := ctx.Err()
 	if contextErr != nil {
 		return false, contextErr
 	}
-	if s.err != nil {
-		return false, s.err
+	if fileSandbox.err != nil {
+		return false, fileSandbox.err
 	}
-	_, exists := s.files[path]
+	_, exists := fileSandbox.files[path]
 	return exists, nil
 }
 
-func (s *fileSandbox) CreateFileNoReplace(ctx context.Context, path, content string) error {
+func (fileSandbox *fileSandbox) CreateFileNoReplace(ctx context.Context, path, content string) error {
 	contextErr := ctx.Err()
 	if contextErr != nil {
 		return contextErr
 	}
-	if s.err != nil {
-		return s.err
+	if fileSandbox.err != nil {
+		return fileSandbox.err
 	}
-	_, exists := s.files[path]
+	_, exists := fileSandbox.files[path]
 	if exists {
 		return filesystempkg.ErrAlreadyExists
 	}
-	s.files[path] = content
-	s.writes++
+	fileSandbox.files[path] = content
+	fileSandbox.writes++
 	return nil
 }
 
@@ -49,9 +49,9 @@ type cancelingPatchExistenceSandbox struct {
 	cancel context.CancelFunc
 }
 
-func (s *cancelingPatchExistenceSandbox) FileExists(ctx context.Context, path string) (bool, error) {
-	exists, err := s.fileSandbox.FileExists(ctx, path)
-	s.cancel()
+func (cancelingPatchExistenceSandbox *cancelingPatchExistenceSandbox) FileExists(ctx context.Context, path string) (bool, error) {
+	exists, err := cancelingPatchExistenceSandbox.fileSandbox.FileExists(ctx, path)
+	cancelingPatchExistenceSandbox.cancel()
 	return exists, err
 }
 
@@ -62,34 +62,34 @@ func TestWorkspacePatchHasSameLocalAndDockerBehavior(t *testing.T) {
 	if writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	local, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true}, "local-thread")
+	localFilesystem, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true}, "local-thread")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer local.Close(ctx)
+	defer localFilesystem.Close(ctx)
 	provider := &fileSandbox{files: map[string]string{"/remote/a.txt": "old\n"}}
-	docker, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-thread", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer docker.Close(ctx)
-	for name, ws := range map[string]filesystempkg.ToolFilesystem{"local": local, "docker": docker} {
-		t.Run(name, func(t *testing.T) {
-			bad := "*** Begin Patch\n*** Update File: a.txt\n@@\n-missing\n+new\n*** End Patch"
-			_, wsApplyPatchErr := ws.ApplyPatch(ctx, bad)
-			if wsApplyPatchErr == nil {
+	defer dockerFilesystem.Close(ctx)
+	for workspaceName, filesystem := range map[string]filesystempkg.ToolFilesystem{"local": localFilesystem, "docker": dockerFilesystem} {
+		t.Run(workspaceName, func(t *testing.T) {
+			invalidPatch := "*** Begin Patch\n*** Update File: a.txt\n@@\n-missing\n+new\n*** End Patch"
+			_, stalePatchErr := filesystem.ApplyPatch(ctx, invalidPatch)
+			if stalePatchErr == nil {
 				t.Fatal("stale patch succeeded")
 			}
 			patch := "*** Begin Patch\n*** Update File: a.txt\n@@\n-old\n+new\n*** Add File: b.txt\n+created\n*** End Patch"
-			_, applyPatchErr := ws.ApplyPatch(ctx, patch)
+			_, applyPatchErr := filesystem.ApplyPatch(ctx, patch)
 			if applyPatchErr != nil {
 				t.Fatal(applyPatchErr)
 			}
-			for file, want := range map[string]string{"a.txt": "new\n", "b.txt": "created\n"} {
+			for filePath, expectedContent := range map[string]string{"a.txt": "new\n", "b.txt": "created\n"} {
 				limit := 100
-				got, err := ws.Read(ctx, file, nil, &limit)
-				if err != nil || got != want {
-					t.Fatalf("%s: %q, %v", file, got, err)
+				fileContent, err := filesystem.Read(ctx, filePath, nil, &limit)
+				if err != nil || fileContent != expectedContent {
+					t.Fatalf("%s: %q, %v", filePath, fileContent, err)
 				}
 			}
 		})
@@ -142,33 +142,33 @@ func TestWorkspacePatchRejectsRepeatedSourcesAndSelfMoves(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			local, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true}, "local-patch-validation")
+			localFilesystem, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true}, "local-patch-validation")
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer local.Close(ctx)
+			defer localFilesystem.Close(ctx)
 
 			provider := &fileSandbox{files: map[string]string{"/remote/a": "old\n"}}
-			docker, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-patch-validation", nil)
+			dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-patch-validation", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer docker.Close(ctx)
+			defer dockerFilesystem.Close(ctx)
 
 			workspaces := map[string]filesystempkg.Filesystem{
-				"local":  local,
-				"docker": docker,
+				"local":  localFilesystem,
+				"docker": dockerFilesystem,
 			}
-			for name, workspace := range workspaces {
-				t.Run(name, func(t *testing.T) {
-					_, err := workspace.ApplyPatch(ctx, testCase.patch)
+			for workspaceName, filesystem := range workspaces {
+				t.Run(workspaceName, func(t *testing.T) {
+					_, err := filesystem.ApplyPatch(ctx, testCase.patch)
 					if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
 						t.Fatalf("patch error = %v; want %q", err, testCase.wantErr)
 					}
 					if provider.writes != 0 {
 						t.Fatalf("rejected patch wrote %d times", provider.writes)
 					}
-					content, readErr := workspace.Read(ctx, "a", nil, nil)
+					content, readErr := filesystem.Read(ctx, "a", nil, nil)
 					if readErr != nil || content != "old\n" {
 						t.Fatalf("rejected patch changed file: %q, %v", content, readErr)
 					}
@@ -187,9 +187,9 @@ func TestWorkspacePatchRejectsRepeatedSourcesAndSelfMoves(t *testing.T) {
 
 func TestWorkspacePatchProtectsExistingTargetsAndDeletesOversizedFiles(t *testing.T) {
 	ctx := context.Background()
-	oversized := strings.Repeat("x", (filesystempkg.MaxFileSizeMB<<20)+1)
-	add := "*** Begin Patch\n*** Add File: target.txt\n+replacement\n*** End Patch"
-	delete := "*** Begin Patch\n*** Delete File: target.txt\n*** End Patch"
+	oversizedContent := strings.Repeat("x", (filesystempkg.MaxFileSizeMB<<20)+1)
+	addPatch := "*** Begin Patch\n*** Add File: target.txt\n+replacement\n*** End Patch"
+	deletePatch := "*** Begin Patch\n*** Delete File: target.txt\n*** End Patch"
 
 	dockerDir := t.TempDir()
 	logPath := filepath.Join(dockerDir, "docker.log")
@@ -209,40 +209,40 @@ func TestWorkspacePatchProtectsExistingTargetsAndDeletesOversizedFiles(t *testin
 
 	localRoot := t.TempDir()
 	localTarget := filepath.Join(localRoot, "target.txt")
-	err = os.WriteFile(localTarget, []byte(oversized), 0600)
+	err = os.WriteFile(localTarget, []byte(oversizedContent), 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true, MaxFileSizeMB: 1}, "local-oversized-patch")
+	localFilesystem, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true, MaxFileSizeMB: 1}, "local-oversized-patch")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer local.Close(ctx)
+	defer localFilesystem.Close(ctx)
 
-	provider := &fileSandbox{files: map[string]string{"/remote/target.txt": oversized}}
-	docker, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-oversized-patch", nil)
+	provider := &fileSandbox{files: map[string]string{"/remote/target.txt": oversizedContent}}
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-oversized-patch", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer docker.Close(ctx)
+	defer dockerFilesystem.Close(ctx)
 
-	for name, workspace := range map[string]filesystempkg.Filesystem{"local": local, "docker": docker} {
-		t.Run(name, func(t *testing.T) {
-			_, err := workspace.ApplyPatch(ctx, add)
+	for workspaceName, filesystem := range map[string]filesystempkg.Filesystem{"local": localFilesystem, "docker": dockerFilesystem} {
+		t.Run(workspaceName, func(t *testing.T) {
+			_, err := filesystem.ApplyPatch(ctx, addPatch)
 			if err == nil || !strings.Contains(err.Error(), "already exists") {
 				t.Fatalf("add error = %v", err)
 			}
 		})
 	}
 	localContent, err := os.ReadFile(localTarget)
-	if err != nil || string(localContent) != oversized {
+	if err != nil || string(localContent) != oversizedContent {
 		t.Fatalf("local oversized target changed: %d bytes, %v", len(localContent), err)
 	}
-	if provider.files["/remote/target.txt"] != oversized {
+	if provider.files["/remote/target.txt"] != oversizedContent {
 		t.Fatal("Docker oversized target changed")
 	}
 
-	_, err = local.ApplyPatch(ctx, delete)
+	_, err = localFilesystem.ApplyPatch(ctx, deletePatch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,30 +250,30 @@ func TestWorkspacePatchProtectsExistingTargetsAndDeletesOversizedFiles(t *testin
 	if !os.IsNotExist(statErr) {
 		t.Fatalf("local oversized target was not deleted: %v", err)
 	}
-	_, err = docker.ApplyPatch(ctx, delete)
+	_, err = dockerFilesystem.ApplyPatch(ctx, deletePatch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	log, err := os.ReadFile(logPath)
+	dockerLog, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(log), "target.txt") {
-		t.Fatalf("Docker delete command missing target: %q", log)
+	if !strings.Contains(string(dockerLog), "target.txt") {
+		t.Fatalf("Docker delete command missing target: %q", dockerLog)
 	}
 }
 
 func TestWorkspacePatchRejectsArbitraryAddReadErrors(t *testing.T) {
 	sentinel := errors.New("provider read failed")
 	provider := &fileSandbox{files: map[string]string{"/remote/target.txt": "original"}, err: sentinel}
-	workspace, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-add-error", nil)
+	filesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-add-error", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer workspace.Close(context.Background())
+	defer filesystem.Close(context.Background())
 
 	patch := "*** Begin Patch\n*** Add File: target.txt\n+replacement\n*** End Patch"
-	_, err = workspace.ApplyPatch(context.Background(), patch)
+	_, err = filesystem.ApplyPatch(context.Background(), patch)
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("add error = %v", err)
 	}
@@ -294,22 +294,22 @@ func TestWorkspacePatchRejectsExistingMoveDestinations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true}, "local-move-destination")
+	localFilesystem, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true}, "local-move-destination")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer local.Close(ctx)
+	defer localFilesystem.Close(ctx)
 
 	provider := &fileSandbox{files: map[string]string{"/remote/source.txt": "source\n", "/remote/destination.txt": "destination\n"}}
-	docker, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-move-destination", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-move-destination", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer docker.Close(ctx)
+	defer dockerFilesystem.Close(ctx)
 
-	for name, workspace := range map[string]filesystempkg.Filesystem{"local": local, "docker": docker} {
-		t.Run(name, func(t *testing.T) {
-			_, err := workspace.ApplyPatch(ctx, patch)
+	for workspaceName, filesystem := range map[string]filesystempkg.Filesystem{"local": localFilesystem, "docker": dockerFilesystem} {
+		t.Run(workspaceName, func(t *testing.T) {
+			_, err := filesystem.ApplyPatch(ctx, patch)
 			if err == nil || !strings.Contains(err.Error(), "destination already exists") {
 				t.Fatalf("move error = %v", err)
 			}
@@ -331,14 +331,14 @@ func TestWorkspacePatchRejectsExistingMoveDestinations(t *testing.T) {
 func TestWorkspacePatchStopsBeforeMutationOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	provider := &cancelingPatchExistenceSandbox{fileSandbox: &fileSandbox{files: map[string]string{}}, cancel: cancel}
-	workspace, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-canceled-patch", nil)
+	filesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-canceled-patch", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer workspace.Close(context.Background())
+	defer filesystem.Close(context.Background())
 
 	patch := "*** Begin Patch\n*** Add File: target.txt\n+created\n*** End Patch"
-	_, err = workspace.ApplyPatch(ctx, patch)
+	_, err = filesystem.ApplyPatch(ctx, patch)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled patch error = %v", err)
 	}
@@ -351,20 +351,20 @@ func TestWorkspacePatchCreateDoesNotReplaceExistingFile(t *testing.T) {
 	ctx := context.Background()
 	patch := "*** Begin Patch\n*** Add File: target.txt\n+first\n*** End Patch"
 	localRoot := t.TempDir()
-	local, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true}, "local-no-replace")
+	localFilesystem, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: localRoot, VirtualMode: true}, "local-no-replace")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer local.Close(ctx)
-	_, err = local.ApplyPatch(ctx, patch)
+	defer localFilesystem.Close(ctx)
+	_, err = localFilesystem.ApplyPatch(ctx, patch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = local.CreateFileNoReplace(ctx, "target.txt", "second\n")
+	_, err = localFilesystem.CreateFileNoReplace(ctx, "target.txt", "second\n")
 	if err == nil || !errors.Is(err, filesystempkg.ErrAlreadyExists) {
 		t.Fatalf("direct local create error = %v", err)
 	}
-	_, err = local.ApplyPatch(ctx, patch)
+	_, err = localFilesystem.ApplyPatch(ctx, patch)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("repeated add error = %v", err)
 	}
@@ -378,7 +378,7 @@ type execDockerSandbox struct {
 	sandbox.Sandbox
 }
 
-func (*execDockerSandbox) DockerExecTarget() (string, bool) {
+func (*execDockerSandbox) GetDockerExecTarget() (string, bool) {
 	return "test-container", true
 }
 
@@ -409,13 +409,13 @@ func TestDockerPatchFallbackUsesContainerNoReplaceCreation(t *testing.T) {
 	t.Setenv("PATH", pathValue)
 
 	provider := &execDockerSandbox{Sandbox: &fileSandbox{files: map[string]string{}}}
-	workspace, err := filesystempkg.NewDockerFilesystem(provider, filepath.ToSlash(storageDir), "docker-exec-create", nil)
+	filesystem, err := filesystempkg.NewDockerFilesystem(provider, filepath.ToSlash(storageDir), "docker-exec-create", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer workspace.Close(context.Background())
+	defer filesystem.Close(context.Background())
 	patch := "*** Begin Patch\n*** Add File: target.txt\n+first\n*** End Patch"
-	_, err = workspace.ApplyPatch(context.Background(), patch)
+	_, err = filesystem.ApplyPatch(context.Background(), patch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,11 +423,11 @@ func TestDockerPatchFallbackUsesContainerNoReplaceCreation(t *testing.T) {
 	if err != nil || string(content) != "first\n" {
 		t.Fatalf("container create content: %q %v", content, err)
 	}
-	_, err = workspace.CreateFileNoReplace(context.Background(), "target.txt", "second\n")
+	_, err = filesystem.CreateFileNoReplace(context.Background(), "target.txt", "second\n")
 	if err == nil || !errors.Is(err, filesystempkg.ErrAlreadyExists) {
 		t.Fatalf("direct container create error = %v", err)
 	}
-	_, err = workspace.ApplyPatch(context.Background(), patch)
+	_, err = filesystem.ApplyPatch(context.Background(), patch)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("repeated container add error = %v", err)
 	}
@@ -436,43 +436,43 @@ func TestDockerPatchFallbackUsesContainerNoReplaceCreation(t *testing.T) {
 		t.Fatalf("repeated container add changed file: %q %v", content, err)
 	}
 	// Competing calls must never truncate the winner's file.
-	var group sync.WaitGroup
-	start := make(chan struct{})
-	successes := make(chan string, 8)
+	var createGroup sync.WaitGroup
+	startCreates := make(chan struct{})
+	successfulContents := make(chan string, 8)
 	for i := 0; i < 8; i++ {
 		content := strings.Repeat(string(rune('a'+i)), 1000)
-		group.Add(1)
+		createGroup.Add(1)
 		go func() {
-			defer group.Done()
-			<-start
-			_, createErr := workspace.CreateFileNoReplace(context.Background(), "race.txt", content)
+			defer createGroup.Done()
+			<-startCreates
+			_, createErr := filesystem.CreateFileNoReplace(context.Background(), "race.txt", content)
 			if createErr == nil {
-				successes <- content
+				successfulContents <- content
 			}
 		}()
 	}
-	close(start)
-	group.Wait()
-	close(successes)
-	if len(successes) != 1 {
-		t.Fatalf("successful competing creates=%d", len(successes))
+	close(startCreates)
+	createGroup.Wait()
+	close(successfulContents)
+	if len(successfulContents) != 1 {
+		t.Fatalf("successful competing creates=%d", len(successfulContents))
 	}
-	winner := <-successes
+	winningContent := <-successfulContents
 	content, err = os.ReadFile(filepath.Join(storageDir, "race.txt"))
-	if err != nil || string(content) != winner {
+	if err != nil || string(content) != winningContent {
 		t.Fatalf("winner overwritten: %v", err)
 	}
 
-	outside := t.TempDir()
-	err = os.Symlink(outside, filepath.Join(storageDir, "escape"))
+	outsideDir := t.TempDir()
+	err = os.Symlink(outsideDir, filepath.Join(storageDir, "escape"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = workspace.CreateFileNoReplace(context.Background(), "escape/new.txt", "forbidden")
+	_, err = filesystem.CreateFileNoReplace(context.Background(), "escape/new.txt", "forbidden")
 	if err == nil {
 		t.Fatal("Docker patch followed symlink parent")
 	}
-	_, err = os.Stat(filepath.Join(outside, "new.txt"))
+	_, err = os.Stat(filepath.Join(outsideDir, "new.txt"))
 	if !os.IsNotExist(err) {
 		t.Fatalf("outside file changed: %v", err)
 	}
@@ -484,20 +484,20 @@ func TestDockerPatchFallbackUsesContainerNoReplaceCreation(t *testing.T) {
 }
 
 func TestDockerCommandRunsInSelectedContainer(t *testing.T) {
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "docker")
-	writeErr := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700)
+	dockerDir := t.TempDir()
+	dockerPath := filepath.Join(dockerDir, "docker")
+	writeErr := os.WriteFile(dockerPath, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700)
 	if writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", dockerDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	provider := &fileSandbox{files: map[string]string{}}
-	ws, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-thread", nil)
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, "/remote", "docker-thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ws.Close(context.Background())
-	result, err := ws.Execute(context.Background(), filesystempkg.CommandRequest{Command: "pwd"})
+	defer dockerFilesystem.Close(context.Background())
+	result, err := dockerFilesystem.Execute(context.Background(), filesystempkg.CommandRequest{Command: "pwd"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,92 +509,92 @@ func TestDockerCommandRunsInSelectedContainer(t *testing.T) {
 }
 
 func TestDockerFilesystemRealContainer(t *testing.T) {
-	image := os.Getenv("DEEPAGENT_DOCKER_TEST_IMAGE")
-	if image == "" {
+	imageName := os.Getenv("DEEPAGENT_DOCKER_TEST_IMAGE")
+	if imageName == "" {
 		t.Skip("set DEEPAGENT_DOCKER_TEST_IMAGE to run the real container test")
 	}
-	root, err := os.MkdirTemp("/private/tmp", "deepagent-docker-test-")
+	rootDir, err := os.MkdirTemp("/private/tmp", "deepagent-docker-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(root)
-	cmd := exec.Command("docker", "run", "-d", "--rm", "-v", root+":"+root, "--entrypoint", "/bin/sh", image, "-c", "sleep 120")
-	out, err := cmd.CombinedOutput()
+	defer os.RemoveAll(rootDir)
+	dockerCommand := exec.Command("docker", "run", "-d", "--rm", "-v", rootDir+":"+rootDir, "--entrypoint", "/bin/sh", imageName, "-c", "sleep 120")
+	dockerOutput, err := dockerCommand.CombinedOutput()
 	if err != nil {
-		t.Fatalf("start container: %s: %v", out, err)
+		t.Fatalf("start container: %s: %v", dockerOutput, err)
 	}
-	id := strings.TrimSpace(string(out))
-	defer exec.Command("docker", "rm", "-f", id).Run()
-	provider := &fileSandbox{containerID: id, files: map[string]string{}}
-	ws, err := filesystempkg.NewDockerFilesystem(provider, root, "real-docker-thread", nil)
+	containerID := strings.TrimSpace(string(dockerOutput))
+	defer exec.Command("docker", "rm", "-f", containerID).Run()
+	provider := &fileSandbox{containerID: containerID, files: map[string]string{}}
+	dockerFilesystem, err := filesystempkg.NewDockerFilesystem(provider, rootDir, "real-docker-thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ws.Close(context.Background())
-	result, err := ws.Execute(context.Background(), filesystempkg.CommandRequest{Command: "printf docker-ok"})
+	defer dockerFilesystem.Close(context.Background())
+	result, err := dockerFilesystem.Execute(context.Background(), filesystempkg.CommandRequest{Command: "printf docker-ok"})
 	if err != nil || result.ExitCode != 0 || result.Output != "docker-ok" {
 		t.Fatalf("command=%+v err=%v", result, err)
 	}
-	file := filepath.Join(root, "remove.txt")
-	writeErr := os.WriteFile(file, []byte("remove me"), 0600)
+	filePath := filepath.Join(rootDir, "remove.txt")
+	writeErr := os.WriteFile(filePath, []byte("remove me"), 0600)
 	if writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	_, deleteErr := ws.Delete(context.Background(), "remove.txt")
+	_, deleteErr := dockerFilesystem.Delete(context.Background(), "remove.txt")
 	if deleteErr != nil {
 		t.Fatal(deleteErr)
 	}
-	_, statErr4 := os.Stat(file)
-	if !os.IsNotExist(statErr4) {
-		t.Fatalf("Docker delete did not remove mounted file: %v", statErr4)
+	_, deleteStatErr := os.Stat(filePath)
+	if !os.IsNotExist(deleteStatErr) {
+		t.Fatalf("Docker delete did not remove mounted file: %v", deleteStatErr)
 	}
-	jobID, err := ws.Start(context.Background(), filesystempkg.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(root, "leak.txt")})
+	jobID, err := dockerFilesystem.Start(context.Background(), filesystempkg.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(rootDir, "leak.txt")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	cancelErr := ws.Cancel(context.Background(), jobID)
+	cancelErr := dockerFilesystem.Cancel(context.Background(), jobID)
 	if cancelErr != nil {
 		t.Fatal(cancelErr)
 	}
 	time.Sleep(2500 * time.Millisecond)
-	_, statErr3 := os.Stat(filepath.Join(root, "leak.txt"))
-	if !os.IsNotExist(statErr3) {
-		t.Fatalf("cancelled Docker job continued running: %v", statErr3)
+	_, cancelStatErr := os.Stat(filepath.Join(rootDir, "leak.txt"))
+	if !os.IsNotExist(cancelStatErr) {
+		t.Fatalf("cancelled Docker job continued running: %v", cancelStatErr)
 	}
-	timedJob, err := ws.Start(context.Background(), filesystempkg.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(root, "timeout-leak.txt"), Timeout: 100 * time.Millisecond})
+	timedJobID, err := dockerFilesystem.Start(context.Background(), filesystempkg.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(rootDir, "timeout-leak.txt"), Timeout: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, waitErr := ws.Wait(context.Background(), timedJob, "", 0)
+	_, waitErr := dockerFilesystem.Wait(context.Background(), timedJobID, "", 0)
 	if waitErr != nil {
 		t.Fatal(waitErr)
 	}
 	time.Sleep(2500 * time.Millisecond)
-	_, statErr2 := os.Stat(filepath.Join(root, "timeout-leak.txt"))
-	if !os.IsNotExist(statErr2) {
-		t.Fatalf("timed out Docker job continued running: %v", statErr2)
+	_, timeoutStatErr := os.Stat(filepath.Join(rootDir, "timeout-leak.txt"))
+	if !os.IsNotExist(timeoutStatErr) {
+		t.Fatalf("timed out Docker job continued running: %v", timeoutStatErr)
 	}
-	_, startErr := ws.Start(context.Background(), filesystempkg.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(root, "close-leak.txt")})
+	_, startErr := dockerFilesystem.Start(context.Background(), filesystempkg.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(rootDir, "close-leak.txt")})
 	if startErr != nil {
 		t.Fatal(startErr)
 	}
 	time.Sleep(100 * time.Millisecond)
-	closeErr := ws.Close(context.Background())
+	closeErr := dockerFilesystem.Close(context.Background())
 	if closeErr != nil {
 		t.Fatal(closeErr)
 	}
 	time.Sleep(2500 * time.Millisecond)
-	_, statErr := os.Stat(filepath.Join(root, "close-leak.txt"))
-	if !os.IsNotExist(statErr) {
-		t.Fatalf("closed Docker workspace left job running: %v", statErr)
+	_, closeStatErr := os.Stat(filepath.Join(rootDir, "close-leak.txt"))
+	if !os.IsNotExist(closeStatErr) {
+		t.Fatalf("closed Docker workspace left job running: %v", closeStatErr)
 	}
 }
 
 type rejectedPatchWrite struct{ filesystempkg.Filesystem }
 
-func (*rejectedPatchWrite) FileExists(_ context.Context, name string) (bool, error) {
-	return filepath.Base(name) == "source", nil
+func (*rejectedPatchWrite) HasFile(_ context.Context, filePath string) (bool, error) {
+	return filepath.Base(filePath) == "source", nil
 }
 
 func (*rejectedPatchWrite) CreateFileNoReplace(context.Context, string, string) (*filesystempkg.WriteResult, error) {
@@ -602,22 +602,22 @@ func (*rejectedPatchWrite) CreateFileNoReplace(context.Context, string, string) 
 }
 
 func TestPatchDoesNotDeleteSourceAfterResultError(t *testing.T) {
-	local, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "patch-result")
+	localFilesystem, err := filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}, "patch-result")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer local.Close(context.Background())
-	_, err = local.Write(context.Background(), "source", "original\n")
+	defer localFilesystem.Close(context.Background())
+	_, err = localFilesystem.Write(context.Background(), "source", "original\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Resolve returns absolute paths; existence checks use the basename.
 	patch := "*** Begin Patch\n*** Update File: source\n*** Move to: target\n@@\n-original\n+changed\n*** End Patch"
-	_, err = filesystempkg.ApplyWorkspacePatch(context.Background(), &rejectedPatchWrite{local}, patch)
+	_, err = filesystempkg.ApplyWorkspacePatch(context.Background(), &rejectedPatchWrite{localFilesystem}, patch)
 	if err == nil || !strings.Contains(err.Error(), "write rejected") {
 		t.Fatalf("error=%v", err)
 	}
-	content, err := local.Read(context.Background(), "source", nil, nil)
+	content, err := localFilesystem.Read(context.Background(), "source", nil, nil)
 	if err != nil || content != "original\n" {
 		t.Fatalf("source changed: %q %v", content, err)
 	}

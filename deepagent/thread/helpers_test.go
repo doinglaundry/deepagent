@@ -333,9 +333,9 @@ type threadCloseMiddleware struct {
 	closed atomic.Int32
 }
 
-func (*threadCloseMiddleware) Name() string { return "thread_close" }
+func (*threadCloseMiddleware) GetName() string { return "thread_close" }
 
-func (m *threadCloseMiddleware) BuildStateHandler() types.RunTimeStateful {
+func (m *threadCloseMiddleware) GetStateHandler() types.RunTimeStateful {
 	close(m.ready)
 	return nil
 }

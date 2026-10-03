@@ -27,12 +27,12 @@ type runStateKey struct{}
 
 // WithRunState exposes the graph-owned state to tools and middleware executing
 // inside a node. It does not create or persist another state object.
-func WithRunState(ctx context.Context, state *RunState) context.Context {
-	return context.WithValue(ctx, runStateKey{}, state)
+func WithRunState(ctx context.Context, runState *RunState) context.Context {
+	return context.WithValue(ctx, runStateKey{}, runState)
 }
-func RunStateFromContext(ctx context.Context) *RunState {
-	state, _ := ctx.Value(runStateKey{}).(*RunState)
-	return state
+func GetRunState(ctx context.Context) *RunState {
+	runState, _ := ctx.Value(runStateKey{}).(*RunState)
+	return runState
 }
 
 // RunState is the serializable local state of the Eino graph. Live resources
@@ -62,10 +62,13 @@ func init() { schema.RegisterName[*RunState]("deepagent_run_state_v1") }
 // Eino's reflective serializer in the pinned version does not round-trip
 // json.RawMessage map values. Encoding this state as one JSON value preserves
 // extension payloads while leaving the Eino checkpoint as the only snapshot.
-func (s RunState) MarshalJSON() ([]byte, error) { type wire RunState; return json.Marshal(wire(s)) }
-func (s *RunState) UnmarshalJSON(raw []byte) error {
+func (runState RunState) MarshalJSON() ([]byte, error) {
 	type wire RunState
-	return json.Unmarshal(raw, (*wire)(s))
+	return json.Marshal(wire(runState))
+}
+func (runState *RunState) UnmarshalJSON(raw []byte) error {
+	type wire RunState
+	return json.Unmarshal(raw, (*wire)(runState))
 }
 
 type Usage struct {
@@ -94,33 +97,33 @@ func NewGraphState() *GraphState {
 	return &GraphState{StateHolder: make(map[string]GraphStateEntry)}
 }
 
-func (as *GraphState) GetStateful(name string) RunTimeStateful {
-	entry, ok := as.StateHolder[name]
+func (graphState *GraphState) GetStateful(name string) RunTimeStateful {
+	stateEntry, ok := graphState.StateHolder[name]
 	if !ok {
 		return nil
 	}
-	return entry.stateful
+	return stateEntry.stateful
 }
 
-func (as *GraphState) RegisterStateful(name string, stateful RunTimeStateful) {
-	as.registerStatefulWithPersistence(name, stateful, true)
+func (graphState *GraphState) RegisterStateful(name string, stateful RunTimeStateful) {
+	graphState.registerStatefulWithPersistence(name, stateful, true)
 }
 
-func (as *GraphState) RegisterRuntimeOnlyStateful(name string, stateful RunTimeStateful) {
-	as.registerStatefulWithPersistence(name, stateful, false)
+func (graphState *GraphState) RegisterRuntimeOnlyStateful(name string, stateful RunTimeStateful) {
+	graphState.registerStatefulWithPersistence(name, stateful, false)
 }
 
-func (as *GraphState) registerStatefulWithPersistence(name string, stateful RunTimeStateful, persist bool) {
-	as.StateHolder[name] = GraphStateEntry{
+func (graphState *GraphState) registerStatefulWithPersistence(name string, stateful RunTimeStateful, persist bool) {
+	graphState.StateHolder[name] = GraphStateEntry{
 		stateful: stateful,
 		persist:  persist,
 	}
 }
 
-func (as *GraphState) RestoreExtensions(state *RunState) error {
-	for name, entry := range as.StateHolder {
-		raw, ok := state.Extensions["middleware:"+name]
-		if !ok || !entry.persist {
+func (graphState *GraphState) RestoreExtensions(runState *RunState) error {
+	for name, stateEntry := range graphState.StateHolder {
+		raw, ok := runState.Extensions["middleware:"+name]
+		if !ok || !stateEntry.persist {
 			continue
 		}
 		var encoded string
@@ -128,26 +131,26 @@ func (as *GraphState) RestoreExtensions(state *RunState) error {
 		if err != nil {
 			return err
 		}
-		unmarshalRuntimeStateErr := entry.stateful.UnmarshalRuntimeState(encoded)
+		unmarshalRuntimeStateErr := stateEntry.stateful.UnmarshalRuntimeState(encoded)
 		if unmarshalRuntimeStateErr != nil {
 			return unmarshalRuntimeStateErr
 		}
 	}
 	return nil
 }
-func (as *GraphState) SnapshotExtensions(state *RunState) error {
-	if state.Extensions == nil {
-		state.Extensions = make(map[string]json.RawMessage)
+func (graphState *GraphState) SnapshotExtensions(runState *RunState) error {
+	if runState.Extensions == nil {
+		runState.Extensions = make(map[string]json.RawMessage)
 	}
-	for name, entry := range as.StateHolder {
-		if !entry.persist {
+	for name, stateEntry := range graphState.StateHolder {
+		if !stateEntry.persist {
 			continue
 		}
-		raw, err := json.Marshal(entry.stateful.MarshalRuntimeState())
+		raw, err := json.Marshal(stateEntry.stateful.MarshalRuntimeState())
 		if err != nil {
 			return err
 		}
-		state.Extensions["middleware:"+name] = raw
+		runState.Extensions["middleware:"+name] = raw
 	}
 	return nil
 }

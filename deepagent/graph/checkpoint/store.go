@@ -27,12 +27,12 @@ func New(inner compose.CheckPointStore, threadID, runID, graphVersion string) *S
 	return &Store{inner: inner, threadID: threadID, runID: runID, graphVersion: graphVersion}
 }
 
-func (s *Store) Get(ctx context.Context, id string) ([]byte, bool, error) {
-	snapshot, exists, err := s.get(ctx, id)
+func (checkpointStore *Store) Get(ctx context.Context, id string) ([]byte, bool, error) {
+	snapshot, exists, err := checkpointStore.readSnapshot(ctx, id)
 	if err != nil || !exists {
 		return snapshot, exists, err
 	}
-	if s.graphVersion == "core-graph-v1" {
+	if checkpointStore.graphVersion == "core-graph-v1" {
 		err := rejectUnknownToolOutcome(snapshot)
 		if err != nil {
 			return nil, false, err
@@ -41,8 +41,8 @@ func (s *Store) Get(ctx context.Context, id string) ([]byte, bool, error) {
 	return snapshot, true, nil
 }
 
-func (s *Store) get(ctx context.Context, id string) ([]byte, bool, error) {
-	raw, exists, err := s.inner.Get(ctx, id)
+func (checkpointStore *Store) readSnapshot(ctx context.Context, id string) ([]byte, bool, error) {
+	raw, exists, err := checkpointStore.inner.Get(ctx, id)
 	if err != nil || !exists {
 		return nil, exists, err
 	}
@@ -54,16 +54,16 @@ func (s *Store) get(ctx context.Context, id string) ([]byte, bool, error) {
 	if envelope.Version != 1 {
 		return nil, false, fmt.Errorf("unsupported checkpoint envelope version %d", envelope.Version)
 	}
-	if envelope.ThreadID != s.threadID || envelope.RunID != s.runID {
+	if envelope.ThreadID != checkpointStore.threadID || envelope.RunID != checkpointStore.runID {
 		return nil, false, fmt.Errorf("checkpoint identity mismatch")
 	}
-	if envelope.GraphVersion != s.graphVersion {
+	if envelope.GraphVersion != checkpointStore.graphVersion {
 		return nil, false, fmt.Errorf("checkpoint graph version mismatch: %s", envelope.GraphVersion)
 	}
 	if len(envelope.EinoSnapshot) == 0 {
 		return nil, false, fmt.Errorf("empty Eino snapshot")
 	}
-	if s.graphVersion == "core-graph-v1" {
+	if checkpointStore.graphVersion == "core-graph-v1" {
 		err := rejectTerminalSnapshot(envelope.EinoSnapshot)
 		if err != nil {
 			return nil, false, err
@@ -72,24 +72,24 @@ func (s *Store) get(ctx context.Context, id string) ([]byte, bool, error) {
 	return envelope.EinoSnapshot, true, nil
 }
 
-func (s *Store) Set(ctx context.Context, id string, snapshot []byte) error {
+func (checkpointStore *Store) Set(ctx context.Context, id string, snapshot []byte) error {
 	if len(snapshot) == 0 {
 		return fmt.Errorf("empty Eino snapshot")
 	}
-	if s.graphVersion == "core-graph-v1" {
+	if checkpointStore.graphVersion == "core-graph-v1" {
 		var err error
-		snapshot, err = blockedSnapshot(snapshot)
+		snapshot, err = markSnapshotBlocked(snapshot)
 		if err != nil {
 			return err
 		}
 	}
-	return s.writeSnapshot(ctx, id, snapshot)
+	return checkpointStore.writeSnapshot(ctx, id, snapshot)
 }
 
 // Preserve unknown envelope metadata while replacing only the Eino snapshot.
 // Finalize also uses this write, bypassing Set's blocked-phase normalization.
-func (s *Store) writeSnapshot(ctx context.Context, id string, snapshot []byte) error {
-	raw, exists, err := s.inner.Get(ctx, id)
+func (checkpointStore *Store) writeSnapshot(ctx context.Context, id string, snapshot []byte) error {
+	raw, exists, err := checkpointStore.inner.Get(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func (s *Store) writeSnapshot(ctx context.Context, id string, snapshot []byte) e
 	if exists {
 		var identity Envelope
 		decodeErr := json.Unmarshal(raw, &identity)
-		if decodeErr == nil && identity.Version == 1 && identity.ThreadID == s.threadID && identity.RunID == s.runID && identity.GraphVersion == s.graphVersion {
+		if decodeErr == nil && identity.Version == 1 && identity.ThreadID == checkpointStore.threadID && identity.RunID == checkpointStore.runID && identity.GraphVersion == checkpointStore.graphVersion {
 			err = json.Unmarshal(raw, &envelope)
 			if err != nil {
 				return err
@@ -107,7 +107,7 @@ func (s *Store) writeSnapshot(ctx context.Context, id string, snapshot []byte) e
 	// A forced fresh execution can reuse an old key. Only matching envelopes
 	// carry metadata forward; stale identities or invalid bytes are replaced.
 	if len(envelope) == 0 {
-		raw, err = json.Marshal(Envelope{Version: 1, ThreadID: s.threadID, RunID: s.runID, GraphVersion: s.graphVersion})
+		raw, err = json.Marshal(Envelope{Version: 1, ThreadID: checkpointStore.threadID, RunID: checkpointStore.runID, GraphVersion: checkpointStore.graphVersion})
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func (s *Store) writeSnapshot(ctx context.Context, id string, snapshot []byte) e
 	if err != nil {
 		return err
 	}
-	return s.inner.Set(ctx, id, raw)
+	return checkpointStore.inner.Set(ctx, id, raw)
 }
 
 var _ compose.CheckPointStore = (*Store)(nil)

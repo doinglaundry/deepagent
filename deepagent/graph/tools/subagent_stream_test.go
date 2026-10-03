@@ -17,46 +17,46 @@ import (
 
 type childRunFunc func(context.Context, ChildRequest, types.ModelChunkSink) (*schema.Message, error)
 
-func (f childRunFunc) Run(ctx context.Context, req ChildRequest, emit types.ModelChunkSink) (*schema.Message, error) {
-	return f(ctx, req, emit)
+func (runChild childRunFunc) Run(ctx context.Context, childRequest ChildRequest, emitChunk types.ModelChunkSink) (*schema.Message, error) {
+	return runChild(ctx, childRequest, emitChunk)
 }
 
 func TestStreamingTaskConsumerCloseCancelsSilentChild(t *testing.T) {
-	started, stopped := make(chan struct{}), make(chan struct{})
-	runner := childRunFunc(func(ctx context.Context, _ ChildRequest, _ types.ModelChunkSink) (*schema.Message, error) {
-		close(started)
+	childStarted, childStopped := make(chan struct{}), make(chan struct{})
+	childRunner := childRunFunc(func(ctx context.Context, _ ChildRequest, _ types.ModelChunkSink) (*schema.Message, error) {
+		close(childStarted)
 		<-ctx.Done()
-		close(stopped)
+		close(childStopped)
 		return nil, ctx.Err()
 	})
-	tool := NewStreamingTaskTool(runner, false).Tool.(einotool.StreamableTool)
-	stream, err := tool.StreamableRun(context.Background(), `{"description":"wait"}`)
+	taskTool := NewStreamingTaskTool(childRunner, false).Tool.(einotool.StreamableTool)
+	stream, err := taskTool.StreamableRun(context.Background(), `{"description":"wait"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	<-started
+	<-childStarted
 	stream.Close()
 	select {
-	case <-stopped:
+	case <-childStopped:
 	case <-time.After(time.Second):
 		t.Fatal("child survived consumer close")
 	}
 }
 
 func TestStreamingTaskFallbackAndPanic(t *testing.T) {
-	for _, panics := range []bool{false, true} {
-		runner := childRunFunc(func(context.Context, ChildRequest, types.ModelChunkSink) (*schema.Message, error) {
-			if panics {
+	for _, shouldPanic := range []bool{false, true} {
+		childRunner := childRunFunc(func(context.Context, ChildRequest, types.ModelChunkSink) (*schema.Message, error) {
+			if shouldPanic {
 				panic("child failure")
 			}
 			return schema.AssistantMessage("final", nil), nil
 		})
-		stream, err := NewStreamingTaskTool(runner, false).Tool.(einotool.StreamableTool).StreamableRun(context.Background(), `{"prompt":"go"}`)
+		stream, err := NewStreamingTaskTool(childRunner, false).Tool.(einotool.StreamableTool).StreamableRun(context.Background(), `{"prompt":"go"}`)
 		if err != nil {
 			t.Fatal(err)
 		}
 		chunk, err := stream.Recv()
-		if panics {
+		if shouldPanic {
 			if err == nil || !strings.Contains(err.Error(), "child failure") {
 				t.Fatalf("chunk=%q err=%v", chunk, err)
 			}
@@ -74,7 +74,7 @@ func TestStreamingTaskFallbackAndPanic(t *testing.T) {
 }
 
 func TestTaskToolNameContract(t *testing.T) {
-	cases := []struct {
+	testCases := []struct {
 		name     string
 		names    []string
 		args     string
@@ -86,49 +86,49 @@ func TestTaskToolNameContract(t *testing.T) {
 		{"registered default", []string{"custom", "general-purpose"}, `{"description":"go"}`, "general-purpose", false},
 		{"standalone default", nil, `{"description":"go"}`, "general-purpose", false},
 	}
-	for _, tc := range cases {
+	for _, testCase := range testCases {
 		for _, mode := range []string{"invoke", "stream"} {
-			t.Run(tc.name+"/"+mode, func(t *testing.T) {
-				calls := 0
-				runner := childRunFunc(func(_ context.Context, request ChildRequest, _ types.ModelChunkSink) (*schema.Message, error) {
-					calls++
-					return schema.AssistantMessage(request.Name, nil), nil
+			t.Run(testCase.name+"/"+mode, func(t *testing.T) {
+				childCalls := 0
+				childRunner := childRunFunc(func(_ context.Context, childRequest ChildRequest, _ types.ModelChunkSink) (*schema.Message, error) {
+					childCalls++
+					return schema.AssistantMessage(childRequest.Name, nil), nil
 				})
-				item := NewTaskTool(runner, tc.names...)
+				toolDescriptor := NewTaskTool(childRunner, testCase.names...)
 				if mode == "stream" {
-					item = NewStreamingTaskTool(runner, false, tc.names...)
+					toolDescriptor = NewStreamingTaskTool(childRunner, false, testCase.names...)
 				}
-				info, err := item.Tool.Info(context.Background())
+				toolInfo, err := toolDescriptor.Tool.Info(context.Background())
 				if err != nil {
 					t.Fatal(err)
 				}
-				shape, err := info.ParamsOneOf.ToJSONSchema()
+				toolSchema, err := toolInfo.ParamsOneOf.ToJSONSchema()
 				if err != nil {
 					t.Fatal(err)
 				}
-				raw, err := json.Marshal(shape)
+				encodedToolSchema, err := json.Marshal(toolSchema)
 				if err != nil {
 					t.Fatal(err)
 				}
-				var fields struct {
+				var schemaFields struct {
 					Required []string `json:"required"`
 				}
-				err = json.Unmarshal(raw, &fields)
+				err = json.Unmarshal(encodedToolSchema, &schemaFields)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if slices.Contains(fields.Required, "subagent_type") != tc.required || !slices.Contains(fields.Required, "description") || strings.Contains(info.Desc, "Omit subagent_type") == tc.required {
-					t.Fatalf("schema=%s description=%q", raw, info.Desc)
+				if slices.Contains(schemaFields.Required, "subagent_type") != testCase.required || !slices.Contains(schemaFields.Required, "description") || strings.Contains(toolInfo.Desc, "Omit subagent_type") == testCase.required {
+					t.Fatalf("schema=%s description=%q", encodedToolSchema, toolInfo.Desc)
 				}
-				var result string
+				var output string
 				if mode == "invoke" {
-					result, err = item.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), tc.args)
+					output, err = toolDescriptor.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), testCase.args)
 				} else {
 					var stream *schema.StreamReader[string]
-					stream, err = item.Tool.(einotool.StreamableTool).StreamableRun(context.Background(), tc.args)
+					stream, err = toolDescriptor.Tool.(einotool.StreamableTool).StreamableRun(context.Background(), testCase.args)
 					if err == nil {
 						defer stream.Close()
-						result, err = stream.Recv()
+						output, err = stream.Recv()
 						if err == nil {
 							_, endErr := stream.Recv()
 							if endErr != io.EOF {
@@ -137,12 +137,12 @@ func TestTaskToolNameContract(t *testing.T) {
 						}
 					}
 				}
-				if tc.want == "" {
-					if err == nil || !strings.Contains(err.Error(), "subagent_type") || calls != 0 {
-						t.Fatalf("missing-name result=%q err=%v calls=%d", result, err, calls)
+				if testCase.want == "" {
+					if err == nil || !strings.Contains(err.Error(), "subagent_type") || childCalls != 0 {
+						t.Fatalf("missing-name result=%q err=%v calls=%d", output, err, childCalls)
 					}
-				} else if err != nil || result != tc.want || calls != 1 {
-					t.Fatalf("result=%q want=%q err=%v calls=%d", result, tc.want, err, calls)
+				} else if err != nil || output != testCase.want || childCalls != 1 {
+					t.Fatalf("result=%q want=%q err=%v calls=%d", output, testCase.want, err, childCalls)
 				}
 			})
 		}

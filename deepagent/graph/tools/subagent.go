@@ -29,155 +29,155 @@ type taskTool struct {
 	names  []string
 }
 
-func NewTaskTool(runner ChildRunner, names ...string) ToolDescriptor {
-	return ToolDescriptor{Tool: &taskTool{runner: runner, names: append([]string(nil), names...)}}
+func NewTaskTool(childRunner ChildRunner, subagentNames ...string) ToolDescriptor {
+	return ToolDescriptor{Tool: &taskTool{runner: childRunner, names: append([]string(nil), subagentNames...)}}
 }
 
-func (t *taskTool) Info(context.Context) (*schema.ToolInfo, error) {
+func (taskTool *taskTool) Info(context.Context) (*schema.ToolInfo, error) {
 	description := "Run an independent subagent on a self-contained task and return its result. Omit subagent_type for general-purpose."
-	subagentType := &schema.ParameterInfo{Type: schema.String, Enum: append([]string(nil), t.names...)}
-	if len(t.names) > 0 && !slices.Contains(t.names, "general-purpose") {
-		description = fmt.Sprintf("Run an independent subagent on a self-contained task and return its result. subagent_type is required; configured subagents: %s.", strings.Join(t.names, ", "))
-		subagentType.Required = true
+	subagentTypeParameter := &schema.ParameterInfo{Type: schema.String, Enum: append([]string(nil), taskTool.names...)}
+	if len(taskTool.names) > 0 && !slices.Contains(taskTool.names, "general-purpose") {
+		description = fmt.Sprintf("Run an independent subagent on a self-contained task and return its result. subagent_type is required; configured subagents: %s.", strings.Join(taskTool.names, ", "))
+		subagentTypeParameter.Required = true
 	}
-	return &schema.ToolInfo{Name: "task", Desc: description, ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{"subagent_type": subagentType, "description": {Type: schema.String, Required: true}})}, nil
+	return &schema.ToolInfo{Name: "task", Desc: description, ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{"subagent_type": subagentTypeParameter, "description": {Type: schema.String, Required: true}})}, nil
 }
 
-func (t *taskTool) InvokableRun(ctx context.Context, raw string, _ ...tool.Option) (string, error) {
-	if t.runner == nil {
+func (taskTool *taskTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+	if taskTool.runner == nil {
 		return "", fmt.Errorf("child runner is required")
 	}
-	request, err := t.parseChildRequest(raw)
+	childRequest, err := taskTool.parseChildRequest(arguments)
 	if err != nil {
 		return "", err
 	}
-	message, err := t.runner.Run(ctx, request, nil)
+	childMessage, err := taskTool.runner.Run(ctx, childRequest, nil)
 	if err != nil {
 		return "", err
 	}
-	if message == nil {
+	if childMessage == nil {
 		return "", fmt.Errorf("child returned no message")
 	}
-	return message.Content, nil
+	return childMessage.Content, nil
 }
 
-func (t *taskTool) parseChildRequest(raw string) (ChildRequest, error) {
-	var input struct {
+func (taskTool *taskTool) parseChildRequest(arguments string) (ChildRequest, error) {
+	var taskArgs struct {
 		SubagentType string `json:"subagent_type"`
 		Description  string `json:"description"`
 		Prompt       string `json:"prompt"`
 		Task         string `json:"task"`
 	}
-	err := json.Unmarshal([]byte(raw), &input)
+	err := json.Unmarshal([]byte(arguments), &taskArgs)
 	if err != nil {
 		return ChildRequest{}, err
 	}
-	prompt := input.Description
+	prompt := taskArgs.Description
 	if prompt == "" {
-		prompt = input.Prompt
+		prompt = taskArgs.Prompt
 	}
 	if prompt == "" {
-		prompt = input.Task
+		prompt = taskArgs.Task
 	}
 	if strings.TrimSpace(prompt) == "" {
 		return ChildRequest{}, fmt.Errorf("description is required")
 	}
-	name := input.SubagentType
-	if name == "" {
-		if len(t.names) > 0 && !slices.Contains(t.names, "general-purpose") {
-			return ChildRequest{}, fmt.Errorf("subagent_type is required; configured subagents: %s", strings.Join(t.names, ", "))
+	subagentName := taskArgs.SubagentType
+	if subagentName == "" {
+		if len(taskTool.names) > 0 && !slices.Contains(taskTool.names, "general-purpose") {
+			return ChildRequest{}, fmt.Errorf("subagent_type is required; configured subagents: %s", strings.Join(taskTool.names, ", "))
 		}
-		name = "general-purpose"
+		subagentName = "general-purpose"
 	}
-	return ChildRequest{Name: name, Prompt: prompt}, nil
+	return ChildRequest{Name: subagentName, Prompt: prompt}, nil
 }
 
 type streamingTaskTool struct{ *taskTool }
 
-func NewStreamingTaskTool(runner ChildRunner, readOnly bool, names ...string) ToolDescriptor {
+func NewStreamingTaskTool(childRunner ChildRunner, readOnly bool, subagentNames ...string) ToolDescriptor {
 	return ToolDescriptor{
-		Tool:     &streamingTaskTool{&taskTool{runner: runner, names: append([]string(nil), names...)}},
+		Tool:     &streamingTaskTool{&taskTool{runner: childRunner, names: append([]string(nil), subagentNames...)}},
 		ReadOnly: readOnly, ParallelSafe: true,
 	}
 }
 
-func (t *streamingTaskTool) StreamableRun(ctx context.Context, raw string, _ ...tool.Option) (*schema.StreamReader[string], error) {
-	request, err := t.parseChildRequest(raw)
+func (streamingTaskTool *streamingTaskTool) StreamableRun(ctx context.Context, arguments string, _ ...tool.Option) (*schema.StreamReader[string], error) {
+	childRequest, err := streamingTaskTool.parseChildRequest(arguments)
 	if err != nil {
 		return nil, err
 	}
-	if t.runner == nil {
+	if streamingTaskTool.runner == nil {
 		return nil, fmt.Errorf("child runner is required")
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	reader, writer := schema.Pipe[string](0)
-	reader.SetAutomaticClose()
-	stopClose := context.AfterFunc(ctx, reader.Close)
-	chunks, done := make(chan string), make(chan error, 1)
+	ctx, cancelChild := context.WithCancel(ctx)
+	streamReader, streamWriter := schema.Pipe[string](0)
+	streamReader.SetAutomaticClose()
+	stopAutomaticClose := context.AfterFunc(ctx, streamReader.Close)
+	outputChunks, childDone := make(chan string), make(chan error, 1)
 	go func() {
 		defer func() {
-			recovered := recover()
-			if recovered != nil {
-				done <- &types.InternalError{Err: fmt.Errorf("child runner panicked: %v", recovered)}
+			panicValue := recover()
+			if panicValue != nil {
+				childDone <- &types.InternalError{Err: fmt.Errorf("child runner panicked: %v", panicValue)}
 			}
 		}()
-		emitted := false
-		message, err := t.runner.Run(ctx, request, func(ctx context.Context, chunk *schema.Message) error {
+		emittedContent := false
+		childMessage, err := streamingTaskTool.runner.Run(ctx, childRequest, func(ctx context.Context, chunk *schema.Message) error {
 			if chunk == nil || chunk.Content == "" {
 				return nil
 			}
 			select {
-			case chunks <- chunk.Content:
-				emitted = true
+			case outputChunks <- chunk.Content:
+				emittedContent = true
 				return nil
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		})
-		if err == nil && message == nil {
+		if err == nil && childMessage == nil {
 			err = fmt.Errorf("child returned no message")
 		}
-		if err == nil && !emitted && message.Content != "" {
+		if err == nil && !emittedContent && childMessage.Content != "" {
 			select {
-			case chunks <- message.Content:
+			case outputChunks <- childMessage.Content:
 			case <-ctx.Done():
 				err = ctx.Err()
 			}
 		}
-		done <- err
+		childDone <- err
 	}()
 	go func() {
-		defer writer.Close()
-		defer cancel()
-		defer stopClose()
-		ticker := time.NewTicker(50 * time.Millisecond)
-		defer ticker.Stop()
+		defer streamWriter.Close()
+		defer cancelChild()
+		defer stopAutomaticClose()
+		heartbeatTicker := time.NewTicker(50 * time.Millisecond)
+		defer heartbeatTicker.Stop()
 		for {
 			select {
-			case chunk := <-chunks:
-				if writer.Send(chunk, nil) {
-					cancel()
-					<-done
+			case chunk := <-outputChunks:
+				if streamWriter.Send(chunk, nil) {
+					cancelChild()
+					<-childDone
 					return
 				}
-			case err := <-done:
+			case err := <-childDone:
 				if err != nil {
-					writer.Send("", err)
+					streamWriter.Send("", err)
 				}
 				return
-			case <-ticker.C:
-				if writer.Send("", nil) {
-					cancel()
-					<-done
+			case <-heartbeatTicker.C:
+				if streamWriter.Send("", nil) {
+					cancelChild()
+					<-childDone
 					return
 				}
 			case <-ctx.Done():
-				<-done
+				<-childDone
 				return
 			}
 		}
 	}()
-	return schema.StreamReaderWithConvert(reader, func(chunk string) (string, error) {
+	return schema.StreamReaderWithConvert(streamReader, func(chunk string) (string, error) {
 		if chunk == "" {
 			return "", schema.ErrNoValue
 		}

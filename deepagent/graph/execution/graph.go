@@ -21,16 +21,16 @@ type Graph struct {
 	resourcesOpen     bool
 	resourcesClosing  chan struct{}
 	resourcesCloseErr error
-	model             model.ToolCallingChatModel
-	eager             bool
+	chatModel         model.ToolCallingChatModel
+	enableEagerTools  bool
 	invoked           bool
 	middlewares       []middleware.Middleware
 	graphState        *types.GraphState
-	cfg               Config
-	graph             compose.Runnable[*types.RunState, *schema.Message]
+	config            Config
+	runnable          compose.Runnable[*types.RunState, *schema.Message]
 	conversation      Conversation
-	tools             *tools.ToolSet
-	executor          *toolExecutor
+	toolSet           *tools.ToolSet
+	toolExecutor      *toolExecutor
 	mu                sync.Mutex
 	eventMu           sync.Mutex
 	invoking          bool
@@ -38,103 +38,103 @@ type Graph struct {
 	cancel            context.CancelCauseFunc
 	interrupt         func(...compose.GraphInterruptOption)
 	done              chan struct{}
-	state             *types.RunState
+	runState          *types.RunState
 }
 
 func New(ctx context.Context, opts ...Option) (*Graph, error) {
-	cfg := Config{MaxSteps: 1000, Parallelism: 4, Name: "deepagent"}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&cfg)
+	config := Config{MaxSteps: 1000, Parallelism: 4, Name: "deepagent"}
+	for _, option := range opts {
+		if option != nil {
+			option(&config)
 		}
 	}
-	if cfg.Model == nil {
+	if config.Model == nil {
 		return nil, errors.New("model is required")
 	}
-	if cfg.Name == "" {
-		cfg.Name = "deepagent"
+	if config.Name == "" {
+		config.Name = "deepagent"
 	}
-	if cfg.MaxSteps <= 0 {
-		cfg.MaxSteps = 1000
+	if config.MaxSteps <= 0 {
+		config.MaxSteps = 1000
 	}
-	if cfg.Parallelism <= 0 {
-		cfg.Parallelism = 4
+	if config.Parallelism <= 0 {
+		config.Parallelism = 4
 	}
-	if cfg.MaxModelCalls < 0 {
+	if config.MaxModelCalls < 0 {
 		return nil, errors.New("max model calls must be >= 0")
 	}
-	err := validateSubAgents(cfg.SubAgents)
+	err := validateSubAgents(config.SubAgents)
 	if err != nil {
 		return nil, err
 	}
-	history := cfg.Conversation
-	if history == nil {
-		history = conversation.New(cfg.ThreadID, nil, nil, nil)
+	threadConversation := config.Conversation
+	if threadConversation == nil {
+		threadConversation = conversation.New(config.ThreadID, nil, nil, nil)
 	}
-	a := &Graph{cfg: cfg, conversation: history, runID: cfg.RunID}
-	if a.runID == "" {
-		a.runID = uuid.NewString()
+	graph := &Graph{config: config, conversation: threadConversation, runID: config.RunID}
+	if graph.runID == "" {
+		graph.runID = uuid.NewString()
 	}
-	err = a.configure(ctx)
+	err = graph.configure(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return a, nil
+	return graph, nil
 }
 
 // Invoke executes the Eino Graph once. Resume restores its saved local state.
-func (a *Graph) Invoke(ctx context.Context, input []*schema.Message, opts ...RunOptionFunc) (result *schema.Message, err error) {
-	ctx, err = a.beginInvoke(ctx)
+func (graph *Graph) Invoke(ctx context.Context, input []*schema.Message, opts ...RunOptionFunc) (result *schema.Message, err error) {
+	ctx, err = graph.beginInvoke(ctx)
 	if err != nil {
 		return nil, err
 	}
-	options := RunOptions{}
-	var state *types.RunState
+	runOptions := RunOptions{}
+	var runState *types.RunState
 	initialCheckpointSaved := false
 	defer func() {
-		if state != nil {
-			err = a.finishInvoke(ctx, state, options, initialCheckpointSaved, err)
+		if runState != nil {
+			err = graph.finishInvoke(ctx, runState, runOptions, initialCheckpointSaved, err)
 		} else {
-			err = errors.Join(err, a.closeResources(ctx))
+			err = errors.Join(err, graph.closeResources(ctx))
 		}
-		a.endInvoke(err)
+		graph.endInvoke(err)
 	}()
 
 	for _, opt := range opts {
 		if opt != nil {
-			opt(&options)
+			opt(&runOptions)
 		}
 	}
 
-	a.runID, err = a.resolveRunID(ctx, options)
+	graph.runID, err = graph.resolveRunID(ctx, runOptions)
 	if err != nil {
 		return nil, err
 	}
-	err = a.buildGraph(ctx)
+	err = graph.buildGraph(ctx)
 	if err != nil {
 		return nil, err
 	}
-	a.executor = newToolExecutor(a.tools, a.cfg.Parallelism, a.cfg.Policy)
-	state = a.newRunState(input, options)
-	if len(options.ResumeInterruptIDs) > 0 {
-		ctx = compose.Resume(ctx, options.ResumeInterruptIDs...)
+	graph.toolExecutor = newToolExecutor(graph.toolSet, graph.config.Parallelism, graph.config.Policy)
+	runState = graph.newRunState(input, runOptions)
+	if len(runOptions.ResumeInterruptIDs) > 0 {
+		ctx = compose.Resume(ctx, runOptions.ResumeInterruptIDs...)
 	}
-	if len(options.ResumeData) > 0 {
-		ctx = compose.BatchResumeWithData(ctx, options.ResumeData)
+	if len(runOptions.ResumeData) > 0 {
+		ctx = compose.BatchResumeWithData(ctx, runOptions.ResumeData)
 	}
-	for _, data := range options.ResumeData {
+	for _, data := range runOptions.ResumeData {
 		approval, ok := data.(*tools.ApprovalResult)
 		if ok && approval != nil && approval.CancelRun {
 			ctx = context.WithValue(ctx, approvalCancelKey{}, true)
 			break
 		}
 	}
-	ctx = context.WithValue(ctx, "graph", a)
+	ctx = context.WithValue(ctx, "graph", graph)
 
-	err = a.beforeRun(ctx, state)
+	err = graph.prepareRun(ctx, runState)
 	if err != nil {
 		return nil, err
 	}
-	result, initialCheckpointSaved, err = a.invokeGraph(ctx, state, options)
+	result, initialCheckpointSaved, err = graph.invokeGraph(ctx, runState, runOptions)
 	return result, err
 }

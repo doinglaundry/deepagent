@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-func mustLocalFilesystem(t *testing.T, cfg *LocalFilesystemConfig) *LocalFilesystem {
+func newTestLocalFilesystem(t *testing.T, filesystemConfig *LocalFilesystemConfig) *LocalFilesystem {
 	t.Helper()
-	filesystem, err := NewLocalFilesystem(cfg, t.Name())
+	localFilesystem, err := NewLocalFilesystem(filesystemConfig, t.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = filesystem.Close(context.Background()) })
-	return filesystem
+	t.Cleanup(func() { _ = localFilesystem.Close(context.Background()) })
+	return localFilesystem
 }

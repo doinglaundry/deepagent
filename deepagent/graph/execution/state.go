@@ -10,98 +10,98 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func (a *Graph) newRunState(input []*schema.Message, options RunOptions) *types.RunState {
-	state := &types.RunState{Version: 1, ThreadID: a.cfg.ThreadID, RunID: a.runID, AgentName: a.cfg.Name, Depth: a.cfg.Depth, Phase: types.PhasePreparing}
-	for i, message := range input {
+func (graph *Graph) newRunState(inputMessages []*schema.Message, runOptions RunOptions) *types.RunState {
+	runState := &types.RunState{Version: 1, ThreadID: graph.config.ThreadID, RunID: graph.runID, AgentName: graph.config.Name, Depth: graph.config.Depth, Phase: types.PhasePreparing}
+	for i, message := range inputMessages {
 		if message != nil {
-			entry := types.Input{Message: message}
-			if i < len(options.InputIDs) {
-				entry.MessageID = options.InputIDs[i]
+			consumedInput := types.Input{Message: message}
+			if i < len(runOptions.InputIDs) {
+				consumedInput.MessageID = runOptions.InputIDs[i]
 			}
-			if i < len(options.InputMeta) {
-				entry.Meta = options.InputMeta[i]
+			if i < len(runOptions.InputMeta) {
+				consumedInput.Meta = runOptions.InputMeta[i]
 			}
-			state.Consumed = append(state.Consumed, entry)
+			runState.Consumed = append(runState.Consumed, consumedInput)
 		}
 	}
 
-	return state
+	return runState
 }
 
-// localState reads the authoritative RunState from Eino, then restores runtime
+// getLocalState reads the authoritative RunState from Eino, then restores runtime
 // collaborators once for each state object seen by this agent.
-func (a *Graph) localState(ctx context.Context) (*types.RunState, error) {
-	var state *types.RunState
-	err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, s *types.RunState) error {
-		if s.Version != 1 {
-			return fmt.Errorf("unsupported run state version %d", s.Version)
+func (graph *Graph) getLocalState(ctx context.Context) (*types.RunState, error) {
+	var runState *types.RunState
+	err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, localRunState *types.RunState) error {
+		if localRunState.Version != 1 {
+			return fmt.Errorf("unsupported run state version %d", localRunState.Version)
 		}
-		if s.PreparedInputs < 0 || s.PreparedInputs > len(s.Consumed) {
+		if localRunState.PreparedInputs < 0 || localRunState.PreparedInputs > len(localRunState.Consumed) {
 			return fmt.Errorf("invalid prepared input cursor")
 		}
-		if s.GraphSteps < 0 || s.ModelCalls < 0 {
+		if localRunState.GraphSteps < 0 || localRunState.ModelCalls < 0 {
 			return fmt.Errorf("invalid negative run budget counters")
 		}
-		state = s
+		runState = localRunState
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	a.mu.Lock()
-	first := a.state != state
-	a.state = state
-	a.mu.Unlock()
-	if first {
-		err = a.restoreLocalState(ctx, state)
+	graph.mu.Lock()
+	needsRestore := graph.runState != runState
+	graph.runState = runState
+	graph.mu.Unlock()
+	if needsRestore {
+		err = graph.restoreLocalState(ctx, runState)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return state, nil
+	return runState, nil
 }
 
-func (a *Graph) restoreLocalState(ctx context.Context, state *types.RunState) error {
-	err := a.restoreChildConversation(ctx, state)
+func (graph *Graph) restoreLocalState(ctx context.Context, runState *types.RunState) error {
+	err := graph.restoreChildConversation(ctx, runState)
 	if err != nil {
 		return err
 	}
-	if state.Context != nil {
-		err = a.conversation.RestoreContext(ctx, *state.Context)
+	if runState.Context != nil {
+		err = graph.conversation.RestoreContext(ctx, *runState.Context)
 		if err != nil {
 			return err
 		}
 	}
-	err = a.graphState.RestoreExtensions(state)
+	err = graph.graphState.RestoreExtensions(runState)
 	if err != nil {
 		return err
 	}
-	err = a.conversation.RestoreRunUsage(ctx, state.Usage)
+	err = graph.conversation.RestoreRunUsage(ctx, runState.Usage)
 	if err != nil {
 		return err
 	}
-	a.executor.restore(state.Calls)
-	a.executor.restoreChildCheckpoints(state)
-	a.executor.onToolStart = func(ctx context.Context, call types.ToolCallState) error {
-		return a.event(ctx, state, "tool_start", call.Call.ID, types.ToolStartPayload{Name: call.Call.Name, CallID: call.Call.ID, Args: call.Call.Arguments, ToolStartTime: call.StartedAt})
+	graph.toolExecutor.restoreToolExecutions(runState.Calls)
+	graph.toolExecutor.restoreChildCheckpoints(runState)
+	graph.toolExecutor.onToolStart = func(ctx context.Context, toolCallState types.ToolCallState) error {
+		return graph.emitEvent(ctx, runState, "tool_start", toolCallState.Call.ID, types.ToolStartPayload{Name: toolCallState.Call.Name, CallID: toolCallState.Call.ID, Args: toolCallState.Call.Arguments, ToolStartTime: toolCallState.StartedAt})
 	}
-	return a.event(ctx, state, "run_state_restored", "", state.Consumed)
+	return graph.emitEvent(ctx, runState, "run_state_restored", "", runState.Consumed)
 }
 
-func (a *Graph) restoreChildConversation(ctx context.Context, state *types.RunState) error {
-	if a.cfg.Depth <= 0 {
+func (graph *Graph) restoreChildConversation(ctx context.Context, runState *types.RunState) error {
+	if graph.config.Depth <= 0 {
 		return nil
 	}
-	raw, ok := state.Extensions["child_history"]
+	historyJSON, ok := runState.Extensions["child_history"]
 	if !ok {
 		return nil
 	}
-	var messages []*schema.Message
-	err := json.Unmarshal(raw, &messages)
+	var historyMessages []*schema.Message
+	err := json.Unmarshal(historyJSON, &historyMessages)
 	if err != nil {
 		return err
 	}
-	err = a.conversation.AddHistory(ctx, state.RunID, messages...)
+	err = graph.conversation.AddHistory(ctx, runState.RunID, historyMessages...)
 	if err != nil {
 		return err
 	}
@@ -110,17 +110,17 @@ func (a *Graph) restoreChildConversation(ctx context.Context, state *types.RunSt
 
 // Node errors set checkpoint-visible state. The final execution error is
 // applied again after checkpoint saving and resource cleanup have completed.
-func markRunError(ctx context.Context, state *types.RunState, err error) {
-	if state == nil || err == nil {
+func markRunError(ctx context.Context, runState *types.RunState, err error) {
+	if runState == nil || err == nil {
 		return
 	}
 	_, interrupt := compose.IsInterruptRerunError(err)
 	_, nested := compose.ExtractInterruptInfo(err)
 	if interrupt || nested {
-		state.Phase = types.PhaseBlocked
+		runState.Phase = types.PhaseBlocked
 	} else if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		state.Phase = types.PhaseInterrupted
+		runState.Phase = types.PhaseInterrupted
 	} else {
-		state.Phase = types.PhaseFailed
+		runState.Phase = types.PhaseFailed
 	}
 }
