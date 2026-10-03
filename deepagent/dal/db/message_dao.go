@@ -43,7 +43,8 @@ func (d *MessageDAO) Get(ctx context.Context, filter *model.MessageFilter) ([]*m
 	}
 	if !filter.SkipNormalize {
 		for _, row := range rows {
-			if err = row.Normalize(); err != nil {
+			err = row.Normalize()
+			if err != nil {
 				return nil, err
 			}
 		}

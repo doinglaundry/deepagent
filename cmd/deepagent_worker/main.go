@@ -4,6 +4,7 @@ import (
 	"context"
 	"eino-cli/deepagent/appconfig"
 	worker "eino-cli/deepagent/worker"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -27,7 +28,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	slog.Info("starting distributed Worker", "default_model", c.DefaultModel)
-	if err = worker.Run(ctx, c); err != nil {
+	err = worker.Run(ctx, c)
+	expectedShutdown := ctx.Err() != nil && errors.Is(err, context.Canceled)
+	if err != nil && !expectedShutdown {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

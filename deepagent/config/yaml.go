@@ -70,7 +70,8 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 	}{
 		alias: alias(*c),
 	}
-	if err := node.Decode(&aux); err != nil {
+	err := node.Decode(&aux)
+	if err != nil {
 		return err
 	}
 	*c = Config(aux.alias)
@@ -138,7 +139,8 @@ func loadFromYAML(root string) (*Config, error) {
 	}
 
 	var config Config
-	if err = yaml.Unmarshal(data, &config); err != nil {
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
 		return nil, fmt.Errorf("parse yaml config: %w", err)
 	}
 

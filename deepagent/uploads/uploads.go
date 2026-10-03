@@ -44,8 +44,9 @@ func NormalizeFilename(filename string) (string, error) {
 
 // PathFor returns the host path for filename under sessionID without creating anything.
 func PathFor(sessionID, filename string) (string, error) {
-	if err := ValidateSessionID(sessionID); err != nil {
-		return "", err
+	validateSessionIDErr := ValidateSessionID(sessionID)
+	if validateSessionIDErr != nil {
+		return "", validateSessionIDErr
 	}
 	safe, err := NormalizeFilename(filename)
 	if err != nil {
@@ -53,8 +54,9 @@ func PathFor(sessionID, filename string) (string, error) {
 	}
 	base := config.SandboxUploadsDir(sessionID)
 	dest := filepath.Join(base, safe)
-	if err := guardTraversal(dest, base); err != nil {
-		return "", err
+	guardTraversalErr := guardTraversal(dest, base)
+	if guardTraversalErr != nil {
+		return "", guardTraversalErr
 	}
 	return dest, nil
 }
@@ -81,8 +83,9 @@ func Write(sessionID, filename string, src io.Reader) (string, error) {
 		return "", fmt.Errorf("uploads: open %s: %w", dest, err)
 	}
 	defer f.Close()
-	if _, err := io.Copy(f, src); err != nil {
-		return "", fmt.Errorf("uploads: write %s: %w", dest, err)
+	_, copyErr := io.Copy(f, src)
+	if copyErr != nil {
+		return "", fmt.Errorf("uploads: write %s: %w", dest, copyErr)
 	}
 	return dest, nil
 }
@@ -98,8 +101,9 @@ type FileInfo struct {
 
 // List enumerates regular files in the session's uploads dir, sorted by name; symlinks are skipped.
 func List(sessionID string) ([]FileInfo, error) {
-	if err := ValidateSessionID(sessionID); err != nil {
-		return nil, err
+	validateSessionIDErr := ValidateSessionID(sessionID)
+	if validateSessionIDErr != nil {
+		return nil, validateSessionIDErr
 	}
 	base := config.SandboxUploadsDir(sessionID)
 	root, err := openUploadsRoot(sessionID, false)

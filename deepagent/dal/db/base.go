@@ -58,7 +58,8 @@ func (c *MySQLClient) DB(ctx context.Context, primary bool) *gorm.DB {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if tx, ok := ctx.Value(c).(*gorm.DB); ok && tx != nil {
+	tx, ok := ctx.Value(c).(*gorm.DB)
+	if ok && tx != nil {
 		return tx.WithContext(ctx)
 	}
 	if primary {
@@ -101,7 +102,8 @@ func (JsonSerialiser) Scan(ctx context.Context, field *schema.Field, dst reflect
 			}
 		}
 		if len(data) > 0 && string(data) != "null" {
-			if err := json.Unmarshal(data, fieldValue.Interface()); err != nil {
+			err := json.Unmarshal(data, fieldValue.Interface())
+			if err != nil {
 				return fmt.Errorf("json serializer: unmarshal field %s: %w", field.Name, err)
 			}
 		}

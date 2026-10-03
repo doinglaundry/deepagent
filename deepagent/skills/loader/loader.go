@@ -43,7 +43,8 @@ func LoadFromPaths(paths []string) ([]Skill, error) {
 				return nil, err
 			}
 			for _, s := range loaded {
-				if idx, dup := idxByName[s.Name]; dup {
+				idx, dup := idxByName[s.Name]
+				if dup {
 					if root.canOverride {
 						out[idx] = s
 					}
@@ -134,7 +135,8 @@ func parseSkillFile(path, dirName, category string) (Skill, error) {
 	}
 
 	body := string(data)
-	if frontmatter, rest, ok := splitFrontmatter(body); ok {
+	frontmatter, rest, ok := splitFrontmatter(body)
+	if ok {
 		applyFrontmatter(&skill, frontmatter)
 		body = rest
 	}
@@ -155,17 +157,21 @@ type frontmatterFields struct {
 
 func applyFrontmatter(skill *Skill, raw string) {
 	var fm frontmatterFields
-	if err := yaml.Unmarshal([]byte(raw), &fm); err != nil {
+	err := yaml.Unmarshal([]byte(raw), &fm)
+	if err != nil {
 		return // tolerate malformed yaml; caller falls back to body
 	}
-	if v := strings.TrimSpace(fm.Name); v != "" {
+	v := strings.TrimSpace(fm.Name)
+	if v != "" {
 		skill.Name = v
 	}
-	if v := strings.TrimSpace(fm.Description); v != "" {
-		skill.Description = v
+	trimSpaceV2 := strings.TrimSpace(fm.Description)
+	if trimSpaceV2 != "" {
+		skill.Description = trimSpaceV2
 	}
-	if v := strings.TrimSpace(fm.License); v != "" {
-		skill.License = v
+	trimSpaceV := strings.TrimSpace(fm.License)
+	if trimSpaceV != "" {
+		skill.License = trimSpaceV
 	}
 }
 
@@ -193,7 +199,8 @@ func firstParagraph(body string) string {
 	if body == "" {
 		return ""
 	}
-	if idx := strings.Index(body, "\n\n"); idx >= 0 {
+	idx := strings.Index(body, "\n\n")
+	if idx >= 0 {
 		return strings.TrimSpace(body[:idx])
 	}
 	return strings.TrimSpace(body)
@@ -206,7 +213,8 @@ func dirExists(path string) bool {
 
 // IsEnabled: explicit map entry wins; otherwise public/custom default to true.
 func IsEnabled(name, category string, enabled map[string]bool) bool {
-	if v, ok := enabled[name]; ok {
+	v, ok := enabled[name]
+	if ok {
 		return v
 	}
 	return category == "public" || category == "custom"

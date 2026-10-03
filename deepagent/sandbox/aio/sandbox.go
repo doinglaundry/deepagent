@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -95,7 +96,8 @@ func (s *Sandbox) ExecuteCommand(ctx context.Context, cmd string) (string, error
 		Output   string `json:"output"`
 		ExitCode *int   `json:"exit_code"`
 	}
-	if err := s.post(ctx, "/v1/shell/exec", body, &data); err != nil {
+	err := s.post(ctx, "/v1/shell/exec", body, &data)
+	if err != nil {
 		return "", sandbox.NewCommandError(err.Error(), cmd, -1)
 	}
 	out := data.Output
@@ -113,8 +115,9 @@ func (s *Sandbox) ReadFile(ctx context.Context, path string) (string, error) {
 	var data struct {
 		Content string `json:"content"`
 	}
-	if err := s.post(ctx, "/v1/file/read", map[string]any{"file": path}, &data); err != nil {
-		return "", sandbox.NewFileError(err.Error(), path, "read")
+	err := s.post(ctx, "/v1/file/read", map[string]any{"file": path}, &data)
+	if err != nil {
+		return "", &os.PathError{Op: "read", Path: path, Err: err}
 	}
 	return s.maskOutput(data.Content), nil
 }
@@ -127,7 +130,8 @@ func (s *Sandbox) WriteFile(ctx context.Context, path, content string, appendMod
 		"encoding": "utf-8",
 		"append":   appendMode,
 	}
-	if err := s.post(ctx, "/v1/file/write", body, nil); err != nil {
+	err := s.post(ctx, "/v1/file/write", body, nil)
+	if err != nil {
 		return sandbox.NewFileError(err.Error(), path, "write")
 	}
 	return nil
@@ -140,7 +144,8 @@ func (s *Sandbox) UpdateFile(ctx context.Context, path string, content []byte) e
 		"content":  base64.StdEncoding.EncodeToString(content),
 		"encoding": "base64",
 	}
-	if err := s.post(ctx, "/v1/file/write", body, nil); err != nil {
+	err := s.post(ctx, "/v1/file/write", body, nil)
+	if err != nil {
 		return sandbox.NewFileError(err.Error(), path, "update")
 	}
 	return nil
@@ -176,7 +181,8 @@ func (s *Sandbox) ListDirInfo(ctx context.Context, path string, maxDepth int) ([
 	var data struct {
 		Files []fileInfo `json:"files"`
 	}
-	if err := s.post(ctx, "/v1/file/list", body, &data); err != nil {
+	err := s.post(ctx, "/v1/file/list", body, &data)
+	if err != nil {
 		return nil, sandbox.NewFileError(err.Error(), path, "list")
 	}
 	out := make([]sandbox.FileInfo, 0, len(data.Files))
@@ -208,7 +214,8 @@ func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.G
 			Files []string `json:"files"`
 		}
 		body := map[string]any{"path": path, "glob": pattern}
-		if err := s.post(ctx, "/v1/file/find", body, &data); err != nil {
+		err := s.post(ctx, "/v1/file/find", body, &data)
+		if err != nil {
 			return nil, false, sandbox.NewFileError(err.Error(), path, "glob")
 		}
 		filtered := filterIgnoredPaths(data.Files)
@@ -273,7 +280,8 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.G
 			Files []string `json:"files"`
 		}
 		body := map[string]any{"path": path, "glob": opts.Glob}
-		if err := s.post(ctx, "/v1/file/find", body, &data); err != nil {
+		err := s.post(ctx, "/v1/file/find", body, &data)
+		if err != nil {
 			return nil, false, sandbox.NewFileError(err.Error(), path, "grep")
 		}
 		candidates = data.Files
@@ -299,7 +307,8 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.G
 			Matches     []string `json:"matches"`
 			LineNumbers []int    `json:"line_numbers"`
 		}
-		if err := s.post(ctx, "/v1/file/search", body, &data); err != nil {
+		err := s.post(ctx, "/v1/file/search", body, &data)
+		if err != nil {
 			continue
 		}
 		count := min(len(data.LineNumbers), len(data.Matches))
@@ -326,7 +335,8 @@ func (s *Sandbox) listPathRecursive(ctx context.Context, path string) ([]fileInf
 	var data struct {
 		Files []fileInfo `json:"files"`
 	}
-	if err := s.post(ctx, "/v1/file/list", body, &data); err != nil {
+	err := s.post(ctx, "/v1/file/list", body, &data)
+	if err != nil {
 		return nil, err
 	}
 	return data.Files, nil
@@ -350,12 +360,19 @@ func (s *Sandbox) post(ctx context.Context, path string, body, decodeData any) e
 	defer resp.Body.Close()
 
 	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("aio: %s %s: HTTP %d: %s", req.Method, path, resp.StatusCode, strings.TrimSpace(string(raw)))
-	}
 	var env envelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return fmt.Errorf("aio: %s %s: decode envelope: %w (body=%s)", req.Method, path, err, truncateLine(string(raw), 200))
+	decodeErr := json.Unmarshal(raw, &env)
+	if resp.StatusCode >= 300 {
+		failure := fmt.Errorf("aio: %s %s: HTTP %d: %s", req.Method, path, resp.StatusCode, strings.TrimSpace(string(raw)))
+		// A valid file API response distinguishes a missing file from a
+		// missing HTTP route. Preserve its identity through ReadFile.
+		if path == "/v1/file/read" && resp.StatusCode == http.StatusNotFound && decodeErr == nil && env.Message != "" {
+			return fmt.Errorf("%v: %w", failure, os.ErrNotExist)
+		}
+		return failure
+	}
+	if decodeErr != nil {
+		return fmt.Errorf("aio: %s %s: decode envelope: %w (body=%s)", req.Method, path, decodeErr, truncateLine(string(raw), 200))
 	}
 	if !env.Success {
 		return fmt.Errorf("aio: %s %s: %s", req.Method, path, env.Message)

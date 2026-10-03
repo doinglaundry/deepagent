@@ -38,8 +38,9 @@ func TestSmokeWriteRead(t *testing.T) {
 	s := smokeBox(t)
 	ctx := context.Background()
 	path := "/tmp/eino-smoke.txt"
-	if err := s.WriteFile(ctx, path, "line1\nline2\n", false); err != nil {
-		t.Fatalf("write: %v", err)
+	sWriteFileErr := s.WriteFile(ctx, path, "line1\nline2\n", false)
+	if sWriteFileErr != nil {
+		t.Fatalf("write: %v", sWriteFileErr)
 	}
 	got, err := s.ReadFile(ctx, path)
 	if err != nil {
@@ -48,8 +49,9 @@ func TestSmokeWriteRead(t *testing.T) {
 	if got != "line1\nline2\n" {
 		t.Fatalf("read mismatch: %q", got)
 	}
-	if err := s.WriteFile(ctx, path, "line3\n", true); err != nil {
-		t.Fatalf("append: %v", err)
+	writeErr := s.WriteFile(ctx, path, "line3\n", true)
+	if writeErr != nil {
+		t.Fatalf("append: %v", writeErr)
 	}
 	got, _ = s.ReadFile(ctx, path)
 	if got != "line1\nline2\nline3\n" {
@@ -60,8 +62,9 @@ func TestSmokeWriteRead(t *testing.T) {
 func TestSmokeListAndGlob(t *testing.T) {
 	s := smokeBox(t)
 	ctx := context.Background()
-	if _, err := s.ExecuteCommand(ctx, "mkdir -p /tmp/eino-smoke-glob && echo a > /tmp/eino-smoke-glob/a.txt && echo b > /tmp/eino-smoke-glob/b.md"); err != nil {
-		t.Fatalf("seed: %v", err)
+	_, executeCommandErr := s.ExecuteCommand(ctx, "mkdir -p /tmp/eino-smoke-glob && echo a > /tmp/eino-smoke-glob/a.txt && echo b > /tmp/eino-smoke-glob/b.md")
+	if executeCommandErr != nil {
+		t.Fatalf("seed: %v", executeCommandErr)
 	}
 
 	entries, err := s.ListDir(ctx, "/tmp/eino-smoke-glob", 2)
@@ -84,8 +87,9 @@ func TestSmokeListAndGlob(t *testing.T) {
 func TestSmokeGrep(t *testing.T) {
 	s := smokeBox(t)
 	ctx := context.Background()
-	if _, err := s.ExecuteCommand(ctx, "mkdir -p /tmp/eino-smoke-grep && printf 'hello world\\nfoo bar\\nhello again\\n' > /tmp/eino-smoke-grep/a.txt"); err != nil {
-		t.Fatalf("seed: %v", err)
+	_, executeCommandErr := s.ExecuteCommand(ctx, "mkdir -p /tmp/eino-smoke-grep && printf 'hello world\\nfoo bar\\nhello again\\n' > /tmp/eino-smoke-grep/a.txt")
+	if executeCommandErr != nil {
+		t.Fatalf("seed: %v", executeCommandErr)
 	}
 	hits, _, err := s.Grep(ctx, "/tmp/eino-smoke-grep", "hello", sandbox.GrepOpts{MaxResults: 10})
 	if err != nil {

@@ -145,7 +145,8 @@ func TestShouldIgnoreName(t *testing.T) {
 		{"main.go.bak", true},
 	}
 	for _, c := range cases {
-		if got := ShouldIgnoreName(c.name); got != c.want {
+		got := ShouldIgnoreName(c.name)
+		if got != c.want {
 			t.Errorf("ShouldIgnoreName(%q) = %v, want %v", c.name, got, c.want)
 		}
 	}

@@ -20,10 +20,12 @@ const (
 )
 
 func detectRuntime() containerRuntime {
-	if _, err := exec.LookPath("docker"); err == nil {
+	_, err := exec.LookPath("docker")
+	if err == nil {
 		return runtimeDocker
 	}
-	if _, err := exec.LookPath("container"); err == nil {
+	_, lookPathErr := exec.LookPath("container")
+	if lookPathErr == nil {
 		return runtimeContainer
 	}
 	return ""
@@ -116,7 +118,8 @@ func parseInspectPort(raw []byte) (int, bool) {
 			} `json:"Ports"`
 		} `json:"NetworkSettings"`
 	}
-	if err := json.Unmarshal(raw, &arr); err != nil || len(arr) == 0 {
+	err := json.Unmarshal(raw, &arr)
+	if err != nil || len(arr) == 0 {
 		return 0, false
 	}
 	bindings, ok := arr[0].NetworkSettings.Ports["8080/tcp"]
@@ -124,7 +127,8 @@ func parseInspectPort(raw []byte) (int, bool) {
 		return 0, false
 	}
 	var port int
-	if _, err := fmt.Sscanf(bindings[0].HostPort, "%d", &port); err != nil {
+	_, sscanfErr := fmt.Sscanf(bindings[0].HostPort, "%d", &port)
+	if sscanfErr != nil {
 		return 0, false
 	}
 	return port, true

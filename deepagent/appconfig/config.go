@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"eino-cli/deepagent/config"
-	"eino-cli/deepagent/core/mcp"
-	"eino-cli/deepagent/core/modelhub"
-	"eino-cli/deepagent/core/tools"
+	"eino-cli/deepagent/graph/mcp"
+	"eino-cli/deepagent/graph/modelhub"
+	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/manager"
 	"eino-cli/deepagent/threadhost"
-	"gopkg.in/yaml.v3"
+
+	yaml "gopkg.in/yaml.v3"
 )
 
 type ManagerConfig = manager.Config

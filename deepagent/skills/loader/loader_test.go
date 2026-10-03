@@ -28,8 +28,9 @@ Body keeps going here.
 `)
 
 	// Empty dir without SKILL.md should be ignored, not crash.
-	if err := os.MkdirAll(filepath.Join(root, "skill-c"), 0o755); err != nil {
-		t.Fatalf("mkdir skill-c: %v", err)
+	mkdirErr := os.MkdirAll(filepath.Join(root, "skill-c"), 0o755)
+	if mkdirErr != nil {
+		t.Fatalf("mkdir skill-c: %v", mkdirErr)
 	}
 
 	got, err := LoadFromPaths([]string{root})
@@ -179,10 +180,12 @@ Body.
 
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
+	if err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
+	writeErr := os.WriteFile(path, []byte(content), 0o644)
+	if writeErr != nil {
+		t.Fatalf("write %s: %v", path, writeErr)
 	}
 }

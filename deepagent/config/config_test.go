@@ -18,7 +18,8 @@ func TestValidateModelConfig(t *testing.T) {
 	}
 
 	t.Run("ok", func(t *testing.T) {
-		if err := validateModelConfig(good); err != nil {
+		err := validateModelConfig(good)
+		if err != nil {
 			t.Fatalf("good config rejected: %v", err)
 		}
 	})

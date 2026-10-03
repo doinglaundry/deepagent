@@ -18,8 +18,9 @@ func TestSandboxWriteReadRoundTrip(t *testing.T) {
 	mappings := []sandboxpaths.MountMapping{{VirtualPath: "/mnt/workspace", HostPath: tmp}}
 	sb := newSandbox("test", "local:test", mappings)
 	ctx := context.Background()
-	if err := sb.WriteFile(ctx, "/mnt/workspace/note.txt", "hello", false); err != nil {
-		t.Fatal(err)
+	writeErr := sb.WriteFile(ctx, "/mnt/workspace/note.txt", "hello", false)
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	got, err := sb.ReadFile(ctx, "/mnt/workspace/note.txt")
 	if err != nil {
@@ -49,11 +50,13 @@ func TestSandboxReadOnlyMountBlocksWrite(t *testing.T) {
 
 func TestSandboxListDir(t *testing.T) {
 	tmp := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmp, "a.txt"), []byte("1"), 0o644); err != nil {
-		t.Fatal(err)
+	writeErr2 := os.WriteFile(filepath.Join(tmp, "a.txt"), []byte("1"), 0o644)
+	if writeErr2 != nil {
+		t.Fatal(writeErr2)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "b.log"), []byte("2"), 0o644); err != nil {
-		t.Fatal(err)
+	writeErr := os.WriteFile(filepath.Join(tmp, "b.log"), []byte("2"), 0o644)
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
 	mappings := []sandboxpaths.MountMapping{{VirtualPath: "/mnt/workspace", HostPath: tmp}}
 	sb := newSandbox("test", "local:test", mappings)
@@ -235,7 +238,8 @@ func TestManagerRejectsForeignSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.GetSandboxIdBySessionId(context.Background(), "other"); err == nil {
+	_, getSandboxIdBySessionIdErr := mgr.GetSandboxIdBySessionId(context.Background(), "other")
+	if getSandboxIdBySessionIdErr == nil {
 		t.Fatal("expected error for foreign session_id")
 	}
 }

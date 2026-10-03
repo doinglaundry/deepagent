@@ -56,11 +56,13 @@ func TestWriteListDelete(t *testing.T) {
 	if err != nil || len(files) != 1 || files[0].Filename != "hello.txt" {
 		t.Fatalf("list mismatch: %+v err=%v", files, err)
 	}
-	if err := Delete(sessionID, "hello.txt"); err != nil {
-		t.Fatal(err)
+	deleteErr := Delete(sessionID, "hello.txt")
+	if deleteErr != nil {
+		t.Fatal(deleteErr)
 	}
-	if _, err := os.Stat(dest); !os.IsNotExist(err) {
-		t.Fatalf("expected delete; stat err=%v", err)
+	_, statErr := os.Stat(dest)
+	if !os.IsNotExist(statErr) {
+		t.Fatalf("expected delete; stat err=%v", statErr)
 	}
 }
 
@@ -83,12 +85,14 @@ func TestWriteRejectsSymlinkDestination(t *testing.T) {
 	setTestRoot(t)
 	sessionID := "t1"
 	base := config.SandboxUploadsDir(sessionID)
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		t.Fatal(err)
+	mkdirErr := os.MkdirAll(base, 0o755)
+	if mkdirErr != nil {
+		t.Fatal(mkdirErr)
 	}
 	bad := filepath.Join(base, "evil.txt")
-	if err := os.Symlink("/etc/passwd", bad); err != nil {
-		t.Skipf("symlink unsupported on this fs: %v", err)
+	symlinkErr := os.Symlink("/etc/passwd", bad)
+	if symlinkErr != nil {
+		t.Skipf("symlink unsupported on this fs: %v", symlinkErr)
 	}
 	_, err := Write(sessionID, "evil.txt", strings.NewReader("pwn"))
 	if err == nil {

@@ -9,13 +9,13 @@ import (
 	"strconv"
 	"strings"
 
-	deepagents "eino-cli/deepagent/core"
 	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/helper/serialiser"
 	"eino-cli/deepagent/manager"
+	threadpkg "eino-cli/deepagent/thread"
 )
 
-func (c *threadRun) runOutput(stop <-chan struct{}, items <-chan deepagents.TransportThreadOutputItem, signal chan<- struct{}, done chan<- runResult) {
+func (c *threadRun) runOutput(stop <-chan struct{}, items <-chan threadpkg.TransportThreadOutputItem, signal chan<- struct{}, done chan<- runResult) {
 	result := runResult{}
 	defer func() { done <- result }()
 	for {
@@ -37,7 +37,7 @@ func (c *threadRun) runOutput(stop <-chan struct{}, items <-chan deepagents.Tran
 }
 
 // handleOutput persists an event before recording the first runtime yield.
-func (c *threadRun) handleOutput(item deepagents.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
+func (c *threadRun) handleOutput(item threadpkg.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
 	if result.outputFailed {
 		return
 	}
@@ -62,8 +62,18 @@ func (c *threadRun) handleOutput(item deepagents.TransportThreadOutputItem, sign
 	}
 
 	yield := item.Yield
+	// A finished Run leaves the Thread available until IdleTimeout, so its
+	// history and background command ledger survive the next Run.
 	if yield == nil {
 		return
+	}
+	if yield.Reason == "finished" && yield.Err == nil {
+		select {
+		case <-c.acceptDone:
+			// Worker shutdown must still wake the drain waiter immediately.
+		default:
+			return
+		}
 	}
 
 	if result.empty() {
@@ -75,7 +85,7 @@ func (c *threadRun) handleOutput(item deepagents.TransportThreadOutputItem, sign
 	}
 }
 
-func (c *threadRun) drainOutput(items <-chan deepagents.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
+func (c *threadRun) drainOutput(items <-chan threadpkg.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
 	for {
 		select {
 		case item, ok := <-items:
@@ -89,7 +99,7 @@ func (c *threadRun) drainOutput(items <-chan deepagents.TransportThreadOutputIte
 	}
 }
 
-func (w *ThreadHost) saveThreadOutput(ctx context.Context, threadID int64, event *deepagents.TransportEvent, leaseToken string) (resultErr error) {
+func (w *ThreadHost) saveThreadOutput(ctx context.Context, threadID int64, event *threadpkg.TransportEvent, leaseToken string) (resultErr error) {
 	if event.ThreadID == "" {
 		event.ThreadID = fmt.Sprint(threadID)
 	}
@@ -134,30 +144,30 @@ func (w *ThreadHost) saveThreadOutput(ctx context.Context, threadID int64, event
 	return err
 }
 
-func ProtocolToWorkerMessage(message *dalmodel.Message) (result *deepagents.TransportMessage) {
+func ProtocolToWorkerMessage(message *dalmodel.Message) (result *threadpkg.TransportMessage) {
 	if message == nil {
 		return nil
 	}
-	return &deepagents.TransportMessage{
+	return &threadpkg.TransportMessage{
 		ID:       fmt.Sprint(message.MessageID),
 		Sender:   protocolSenderFromManager(message.Sender),
-		Type:     deepagents.TransportMessageType(message.MessageType),
+		Type:     threadpkg.TransportMessageType(message.MessageType),
 		Payload:  append([]byte(nil), message.Payload...),
 		Metadata: maps.Clone(message.Metadata),
 	}
 }
 
-func protocolSenderFromManager(sender *dalmodel.Sender) (result *deepagents.TransportSender) {
+func protocolSenderFromManager(sender *dalmodel.Sender) (result *threadpkg.TransportSender) {
 	if sender == nil {
 		return nil
 	}
-	return &deepagents.TransportSender{
-		Type: deepagents.TransportSenderType(strings.ToUpper(string(sender.Type))),
+	return &threadpkg.TransportSender{
+		Type: threadpkg.TransportSenderType(strings.ToUpper(string(sender.Type))),
 		ID:   sender.ID,
 	}
 }
 
-func ProtocolToOutputFrame(threadID int64, event *deepagents.TransportEvent) (result *manager.OutputFrame) {
+func ProtocolToOutputFrame(threadID int64, event *threadpkg.TransportEvent) (result *manager.OutputFrame) {
 	if event == nil {
 		return nil
 	}
@@ -169,11 +179,9 @@ func ProtocolToOutputFrame(threadID int64, event *deepagents.TransportEvent) (re
 		Metadata:  maps.Clone(event.Metadata),
 	}
 	if event.ID != "" {
-		{
-			id, err := strconv.ParseInt(strings.TrimSpace(event.ID), 10, 64)
-			if err == nil {
-				managerEvent.EventID = id
-			}
+		id, err := strconv.ParseInt(strings.TrimSpace(event.ID), 10, 64)
+		if err == nil {
+			managerEvent.EventID = id
 		}
 	}
 	if !event.TS.IsZero() {

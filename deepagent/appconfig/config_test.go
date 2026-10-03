@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"eino-cli/deepagent/config"
-	"eino-cli/deepagent/core/modelhub"
+	"eino-cli/deepagent/graph/modelhub"
 )
 
 func TestLoadExpandsEnvironment(t *testing.T) {

@@ -126,7 +126,9 @@ Thread.PostMessage                 解码 Input / Resume / Compact
     ↓
 Thread.SubmitInput / ResumeRun      追加输入，或创建本次 Run
     ↓
-Run.Execute                        模型、工具、取消、恢复与清理
+Run.Execute                        执行身份、取消、事件与完成
+    ↓
+Graph.Invoke                       模型、工具、恢复与清理
     ↓
 Eino Graph                         模型与工具循环
 ```
@@ -136,11 +138,12 @@ Eino Graph                         模型与工具循环
 | Manager | Thread 调度、租约、输入投递、输出和 Run 结果 | 进程 |
 | ThreadHost | 领取、续租、投递、保存输出和释放 | 进程 / 一次领取 |
 | Thread | 历史、待处理输入、当前 Run、外部协议和环境清理 | 一次领取，可先后执行多个 Run |
-| Run | 执行 ID、Graph、模型、工具、取消、恢复与完成 | 一次执行；恢复沿用原 RunID |
+| Run | 执行 ID、输入归属、取消、事件与完成 | 一次执行；恢复沿用原 RunID |
+| Graph | Eino 图、模型、工具、middleware 与 checkpoint | 一次 Graph 调用 |
 
-同一个 Thread 同时只执行一个 Run。输入归属与结束判断使用同一把锁；最后事件交付后才清除当前 Run，并让 Wait 返回。可变 middleware 每个 Run 独立创建。
+同一个 Thread 同时只执行一个 Run。输入归属与结束判断使用同一把锁；最后事件交付后才清除当前 Run，并让 Wait 返回。可变 middleware 每个 Run 独立创建。正常 Run 结束后，Thread 保留到空闲超时，可继续接收下一轮输入。后台 Shell 任务共享这段 Thread 生命周期；空闲释放、关闭或 Worker 退出时会清理。
 
-Thread 直接拥有协议转换与执行生命周期；Run 直接拥有 Eino Runnable，不再经过独立的 DeepAgentThread、DeepAgent 或 filesystemThread 包装对象。内部子代理直接使用同一种 Run。
+Thread 管会话、输入与外部协议，Run 管一次执行，Graph 集中 Eino 执行能力。子代理直接复用 Graph，保留独立状态与预算。
 
 ### Eino Graph
 
@@ -188,7 +191,7 @@ Graph 事件
     → 新 Run 对象沿用原执行身份，从 Graph 中断位置继续
 ```
 
-ThreadHost 先处理输出保存，再处理 Yield 和租约释放。完整结果与流式增量的持久化策略不同，完整历史以存储中的消息为准。
+ThreadHost 先处理输出保存，再处理 Yield 和租约释放。完整结果与流式增量的持久化策略不同，完整历史以存储中的消息为准。审批取消也恢复原 checkpoint 和输入归属，再终结原 Run；工具结果不确定时明确失败，等待人工核对结果，不会自动重跑。
 
 ### 状态与租约
 
@@ -211,13 +214,13 @@ Run:     started → blocked → started → finished / interrupted / failed
 
 | 类别 | 工具 | 实现位置 |
 | --- | --- | --- |
-| 文件读取 | `list_files`、`read_file` | `core/tools` → filesystem |
-| 文件修改 | `write_file`、`edit_file`、`delete_file`、`apply_patch` | `core/tools` → filesystem |
+| 文件读取 | `list_files`、`read_file` | `graph/tools` → filesystem |
+| 文件修改 | `write_file`、`edit_file`、`delete_file`、`apply_patch` | `graph/tools` → filesystem |
 | 搜索 | `glob`、`grep`、`rg`、`semantic_search` | 文件系统搜索与词项匹配 |
 | 命令 | `execute`、`shell`、`await_shell`、`read_lints` | 本地或 Docker 命令服务 |
 | 交互 | `ask_user`、`update_plan` | 中断问答 / Plan middleware |
 | 技能 | `activate_skill` | Skill loader / middleware |
-| 内部子代理 | `task` | ChildRunner → Run → Graph |
+| 内部子代理 | `task` | ChildRunner → Graph |
 | 跨 Thread 协作 | `spawn_task`、`send_message`、`wait_message`、`close_task` | ThreadHost → Manager |
 | 网络 | `read_url`、`web_search` | Web 配置启用 |
 | MCP | 服务发现返回的工具 | MCP client → ToolSet |
@@ -298,7 +301,7 @@ memory_lease_ttl: 30s
 - Web 搜索需要配置搜索服务；页面读取与搜索使用各自的工具。
 - MCP 当前连接 HTTP 服务；stdio 服务需要额外的 HTTP bridge。
 - Skills 按需激活，内置技能资源位于 `deepagent/skills/public/`。
-- 长期记忆在 Run 完成后提取和整理；模型执行仍复用 Run。作用域优先使用 `memory_user_id`，其次 UserID，再其次 SessionID。
+- 长期记忆在 Run 完成后提取和整理；模型执行复用同一 Graph。作用域优先使用 `memory_user_id`，其次 UserID，再其次 SessionID。
 
 ### 存储与部署边界
 
@@ -309,7 +312,7 @@ memory_lease_ttl: 30s
 | Eino checkpoint | Redis |
 | 工作文件与记忆产物 | 本地 / 容器文件系统及配置的记忆目录 |
 
-Core 另有文件 checkpoint 实现，但当前 Worker 没有通过 YAML 选择 checkpoint 后端的配置项。
+Graph 另有文件 checkpoint 实现，但当前 Worker 没有通过 YAML 选择 checkpoint 后端的配置项。
 
 - 示例压缩阈值是 `24000`，设为 `0` 不配置自动压缩；负数会被配置校验拒绝。
 - 多机 Worker 需要能访问 Thread 对应的工作路径；共享数据库不会同步工作文件。
@@ -324,15 +327,17 @@ Core 另有文件 checkpoint 实现，但当前 Worker 没有通过 YAML 选择 
 | --- | --- | --- |
 | 1 | [manager/input.go](deepagent/manager/input.go)、[manager/thread.go](deepagent/manager/thread.go)、[manager/output.go](deepagent/manager/output.go) | `Submit`、`Acquire`、`SaveOutput` |
 | 2 | [threadhost/threadhost.go](deepagent/threadhost/threadhost.go) | `Run`、`RunThread` |
-| 3 | [threadhost/thread.go](deepagent/threadhost/thread.go) | `createThread`、`buildRunConfig` |
+| 3 | [threadhost/thread.go](deepagent/threadhost/thread.go) | `createThread`：准备资源并创建 Thread |
 | 4 | [threadhost/execution.go](deepagent/threadhost/execution.go) | `threadRun.run`、`wait`、`finish` |
 | 5 | [threadhost/input.go](deepagent/threadhost/input.go)、[threadhost/output.go](deepagent/threadhost/output.go) | `deliverMessage`、`handleOutput` |
-| 6 | [core/thread_transport.go](deepagent/core/thread_transport.go) | `PostMessage`、外部协议和输出转换 |
-| 7 | [core/thread.go](deepagent/core/thread.go) | `SubmitInput`、`ResumeRun`、输入归属 |
-| 8 | [core/run.go](deepagent/core/run.go) | `Run`、`NewRun`、唯一完成边界 |
-| 9 | [core/run_graph.go](deepagent/core/run_graph.go) | `Run.Execute` |
-| 10 | [core/graph.go](deepagent/core/graph.go) | `buildGraph`、节点与分支 |
-| 11 | [core/thread_run.go](deepagent/core/thread_run.go) | `executeRun`、终态和中断事件 |
+| 6 | [thread/config.go](deepagent/thread/config.go)、[run/config.go](deepagent/run/config.go)、[graph/execution/config.go](deepagent/graph/execution/config.go) | 会话、执行、Graph 配置 |
+| 7 | [thread/thread.go](deepagent/thread/thread.go) | `PostMessage`、`SubmitInput`、输入归属与结束边界 |
+| 8 | [thread/thread_control.go](deepagent/thread/thread_control.go) | 中断、`ResumeRun`、手动压缩 |
+| 9 | [run/run.go](deepagent/run/run.go)、[run/events.go](deepagent/run/events.go) | `Run.Execute`、取消、事件与完成 |
+| 10 | [graph/execution/flow.go](deepagent/graph/execution/flow.go)、[graph/execution/conversation.go](deepagent/graph/execution/conversation.go)、[graph/execution/state.go](deepagent/graph/execution/state.go) | 构图、节点、分支与本地状态 |
+| 11 | [graph/execution/model.go](deepagent/graph/execution/model.go)、[graph/execution/tools.go](deepagent/graph/execution/tools.go)、[graph/execution/tool_executor.go](deepagent/graph/execution/tool_executor.go) | 模型流、工具授权与执行 |
+| 12 | [graph/execution/resume.go](deepagent/graph/execution/resume.go)、[graph/checkpoint/](deepagent/graph/checkpoint/) | 保存、恢复与工具执行保护 |
+| 13 | [thread/message.go](deepagent/thread/message.go)、[thread/events.go](deepagent/thread/events.go)、[thread/output.go](deepagent/thread/output.go) | 消息转换、事件映射与 Host 输出 |
 
 ```text
 cmd/                         Web / Worker 入口
@@ -341,21 +346,40 @@ deepagent/
 ├── worker/                 进程启动与资源装配
 ├── manager/                消息与调度
 ├── threadhost/             租约与执行宿主
-├── core/
-│   ├── thread.go           一个 Thread，管理历史和多个 Run
-│   ├── thread_transport.go 外部协议与输出转换
-│   ├── run.go              一个 Run，管理执行生命周期
-│   ├── run_graph.go        Run.Execute
-│   ├── graph.go            Eino Graph 构建与分支
-│   ├── runtime/checkpointer/ Eino snapshot 与恢复
-│   ├── internal/conversation/ 历史、压缩、usage
-│   ├── tools/              工具定义
-│   ├── backend/            Local / Docker 文件与命令实现
+├── thread/                 会话、输入队列与外部协议
+│   ├── thread.go           接收输入、创建 Run、原子结束边界
+│   ├── thread_control.go   中断、恢复与手动压缩
+│   ├── message.go          消息身份与多模态转换
+│   ├── events.go           事件到外部协议的转换
+│   └── output.go           输出通道与 Yield
+├── run/                    一次执行的生命周期
+│   ├── run.go              Execute、取消、输入归属与完成
+│   ├── events.go           执行事件与阻塞信息
+│   └── config.go           执行配置与 Thread 完成边界
+├── graph/                  Eino 执行能力
+│   ├── execution/          唯一模型与工具执行路径
+│   │   ├── graph.go        New / Invoke
+│   │   ├── setup.go        注册工具、创建 middleware、绑定模型
+│   │   ├── flow.go         构造节点、边、编译
+│   │   ├── conversation.go 输入持久化、压缩与继续执行
+│   │   ├── model.go        模型流与工具调用分片
+│   │   ├── tools.go        工具授权、调用与结果持久化
+│   │   ├── tool_executor.go 执行账本、并行与去重
+│   │   ├── state.go        Eino 本地状态与上下文恢复
+│   │   ├── resume.go       Graph / 子代理 checkpoint 接入
+│   │   ├── lifecycle.go    中断、关闭、事件与终态
+│   │   ├── subagent.go     子代理复用同一 Graph
+│   │   └── config.go       配置与公开选项
 │   ├── middleware/         Prompt、Plan、重试等
+│   ├── tools/              Eino 工具与工具定义
+│   ├── filesystem/         Local / Docker 文件与命令实现
+│   ├── skills/             技能目录与内容发现
+│   ├── mcp/                MCP 工具发现与调用
+│   ├── conversation/       历史、压缩与 usage
+│   ├── memory/             长期记忆提取与整理
+│   ├── checkpoint/         存储、Eino snapshot 与恢复
 │   ├── modelhub/           模型客户端
-│   ├── mcp/                MCP 工具接入
-│   ├── memory/             长期记忆
-│   └── types/              Core 共享状态与事件
+│   └── types/              共享状态与事件
 ├── dal/                    MySQL / Redis 访问
 ├── protocol/               输入、输出协议
 ├── sandbox/                执行环境支撑
@@ -375,7 +399,7 @@ go test ./...
 node --test deepagent/host/web/app.test.cjs
 
 # 主链并发检查
-go test -race ./deepagent/core/... ./deepagent/thread/... \
+go test -race ./deepagent/graph/... ./deepagent/run/... ./deepagent/thread/... \
   ./deepagent/threadhost/... ./deepagent/manager/... ./deepagent/worker/...
 ```
 

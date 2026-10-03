@@ -71,7 +71,8 @@ func New(cfg *config.Config, sessionID string) (sandbox.SandboxManager, error) {
 		gate:         make(chan struct{}, 1),
 	}
 	if cfg.Sandbox.Use == "docker" {
-		if _, err := exec.LookPath("docker"); err != nil {
+		_, err := exec.LookPath("docker")
+		if err != nil {
 			return nil, fmt.Errorf("docker CLI is required: %w", err)
 		}
 		m.rt = runtimeDocker
@@ -149,7 +150,8 @@ func (m *Manager) reuse() (string, bool) {
 		return "", false
 	}
 	sid := m.sandboxID
-	if _, alive := m.sandboxes[sid]; alive {
+	_, alive := m.sandboxes[sid]
+	if alive {
 		m.lastActivity[sid] = time.Now()
 		return sid, true
 	}

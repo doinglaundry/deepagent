@@ -29,20 +29,24 @@ func TestEmbeddedWebClient(t *testing.T) {
 func TestWorkspaceFilePreviewCannotFollowSymlinkOutsideRoot(t *testing.T) {
 	workspace := t.TempDir()
 	outside := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "inside.txt"), []byte("inside"), 0600); err != nil {
-		t.Fatal(err)
+	writeErr2 := os.WriteFile(filepath.Join(workspace, "inside.txt"), []byte("inside"), 0600)
+	if writeErr2 != nil {
+		t.Fatal(writeErr2)
 	}
-	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("outside"), 0600); err != nil {
-		t.Fatal(err)
+	writeErr := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("outside"), 0600)
+	if writeErr != nil {
+		t.Fatal(writeErr)
 	}
-	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(workspace, "escape.txt")); err != nil {
-		t.Fatal(err)
+	symlinkErr := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(workspace, "escape.txt"))
+	if symlinkErr != nil {
+		t.Fatal(symlinkErr)
 	}
 	content, err := readWorkspaceFile(workspace, "inside.txt")
 	if err != nil || string(content) != "inside" {
 		t.Fatalf("inside file = %q, %v", content, err)
 	}
-	if _, err := readWorkspaceFile(workspace, "escape.txt"); err == nil {
+	_, readWorkspaceFileErr := readWorkspaceFile(workspace, "escape.txt")
+	if readWorkspaceFileErr == nil {
 		t.Fatal("preview followed symlink outside workspace")
 	}
 }

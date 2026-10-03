@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"time"
 
-	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/helper/serialiser"
 	"eino-cli/deepagent/manager"
+	threadpkg "eino-cli/deepagent/thread"
 )
 
 type runResult struct {
@@ -30,12 +30,12 @@ type threadRun struct {
 	ctx        context.Context
 	acceptDone <-chan struct{}
 	claim      *manager.AcquireResult
-	thread     *deepagents.Thread
+	thread     *threadpkg.Thread
 	idleSince  time.Time
 	wasActive  bool
 }
 
-func (c *threadRun) run(items <-chan deepagents.TransportThreadOutputItem) (result runResult, closeErr error) {
+func (c *threadRun) run(items <-chan threadpkg.TransportThreadOutputItem) (result runResult, closeErr error) {
 	stop := make(chan struct{})
 	stopOutput := make(chan struct{})
 	activity := make(chan time.Time, 1)
@@ -101,11 +101,9 @@ func (c *threadRun) wait(activity <-chan time.Time, inputResults <-chan runResul
 			return c.drainShutdown(inputResults, outputSignal, stop), runResult{}
 		default:
 		}
-		{
-			result := c.checkIdleRelease(activity)
-			if !result.empty() {
-				return result, runResult{}
-			}
+		result := c.checkIdleRelease(activity)
+		if !result.empty() {
+			return result, runResult{}
 		}
 
 		select {
@@ -178,8 +176,8 @@ func (c *threadRun) drainShutdown(inputResults <-chan runResult, outputSignal <-
 
 func (c *threadRun) interruptShutdownTimeout() {
 	interruptTimeout := runtimeInterruptTimeout(c.host.ShutdownInterruptDrainTimeout)
-	_ = c.thread.Interrupt(c.ctx, deepagents.TransportThreadInterruptRequest{
-		Kind:    deepagents.TransportThreadInterruptKindWorkerShutdownTimeout,
+	_ = c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
+		Kind:    threadpkg.TransportThreadInterruptKindWorkerShutdownTimeout,
 		Reason:  defaultShutdownTimeoutReason,
 		Timeout: &interruptTimeout,
 	})
@@ -203,7 +201,7 @@ func (c *threadRun) waitForShutdownOutput(inputResults <-chan runResult, outputS
 	}
 }
 
-func (w *ThreadHost) closeThread(ctx context.Context, thread *deepagents.Thread) error {
+func (w *ThreadHost) closeThread(ctx context.Context, thread *threadpkg.Thread) error {
 	timeout := w.ShutdownInterruptDrainTimeout
 	if timeout <= 0 {
 		timeout = defaultShutdownInterruptDrain

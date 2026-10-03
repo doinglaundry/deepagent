@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	deepagents "eino-cli/deepagent/core"
 	"eino-cli/deepagent/helper/serialiser"
 	"eino-cli/deepagent/manager"
+	threadpkg "eino-cli/deepagent/thread"
 )
 
 // Config controls scheduling, leases, polling and shutdown.
@@ -146,7 +146,7 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 	defer stopLease()
 
 	thread, err := w.createThread(runCtx, claim.Thread)
-	var output *deepagents.TransportThreadOutput
+	var output *threadpkg.TransportThreadOutput
 	if err == nil {
 		output, err = thread.Init(runCtx)
 		if err != nil {

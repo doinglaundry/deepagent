@@ -108,12 +108,10 @@ func (s *Server) threads(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, rows)
 	case http.MethodPost:
 		var req createRequest
-		{
-			err := decode(r, &req)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err)
-				return
-			}
+		decodeErr := decode(r, &req)
+		if decodeErr != nil {
+			writeError(w, http.StatusBadRequest, decodeErr)
+			return
 		}
 		if strings.TrimSpace(req.SessionID) == "" {
 			writeError(w, http.StatusBadRequest, errors.New("session_id is required"))
@@ -181,24 +179,20 @@ type submitRequest struct {
 
 func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID int64) {
 	var req submitRequest
-	{
-		err := decode(r, &req)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
+	decodeErr := decode(r, &req)
+	if decodeErr != nil {
+		writeError(w, http.StatusBadRequest, decodeErr)
+		return
 	}
 	var (
 		result manager.ThreadMessageResult
 		err    error
 	)
 	if req.Resume != nil {
-		{
-			err := req.Resume.Validate()
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err)
-				return
-			}
+		validationErr := req.Resume.Validate()
+		if validationErr != nil {
+			writeError(w, http.StatusBadRequest, validationErr)
+			return
 		}
 		payload, marshalErr := json.Marshal(req.Resume)
 		if marshalErr != nil {

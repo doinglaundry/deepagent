@@ -42,7 +42,8 @@ func ShutdownDefault() {
 	defaultManager.m = nil
 	defaultManager.Unlock()
 
-	if s, ok := m.(Shutdowner); ok {
+	s, ok := m.(Shutdowner)
+	if ok {
 		s.Shutdown()
 	}
 }

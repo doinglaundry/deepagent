@@ -1,0 +1,447 @@
+package execution
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"reflect"
+	"strings"
+	"testing"
+
+	"eino-cli/deepagent/graph/conversation"
+	"eino-cli/deepagent/graph/middleware"
+	"eino-cli/deepagent/graph/tools"
+	"eino-cli/deepagent/graph/types"
+
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
+)
+
+func TestLoopGuardStopsRepeatedToolsAndIsRunLocal(t *testing.T) {
+	guard := middleware.NewLoopGuard()
+	guard.HardLimit = 2
+	for range 2 {
+		m := &sequenceModel{responses: [][]*schema.Message{
+			{schema.AssistantMessage("", []schema.ToolCall{{ID: "first", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
+			{schema.AssistantMessage("stopping loop", []schema.ToolCall{{ID: "second", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
+		}}
+		tool := &countingTool{}
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, EnableEagerTools: true, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ParallelSafe: true}}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := a.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Content != "stopping loop" || tool.count.Load() != 1 || m.calls != 2 {
+			t.Fatalf("result=%v tools=%d model=%d", result, tool.count.Load(), m.calls)
+		}
+	}
+}
+
+func TestLoopGuardRestoresWindowFromCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	guard := middleware.NewLoopGuard()
+	guard.HardLimit = 2
+	counter := &countingTool{}
+	m := &sequenceModel{responses: [][]*schema.Message{
+		{schema.AssistantMessage("", []schema.ToolCall{{ID: "first", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
+		{schema.AssistantMessage("stopping loop", []schema.ToolCall{{ID: "second", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
+	}}
+	cfg := Config{Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
+	first, err := New(ctx, WithConfig(&cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close(ctx)
+	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+	info, ok := compose.ExtractInterruptInfo(err)
+	if !ok || len(info.InterruptContexts) != 1 {
+		t.Fatalf("interrupt=%+v err=%v", info, err)
+	}
+	cfg.Conversation = first.conversation
+	resumed, err := New(ctx, WithConfig(&cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close(ctx)
+	out, err := resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "first", Approved: true}}))
+	if err != nil || out == nil || out.Content != "stopping loop" || len(out.ToolCalls) != 0 || counter.count.Load() != 1 || m.calls != 2 {
+		t.Fatalf("out=%v err=%v tools=%d model=%d", out, err, counter.count.Load(), m.calls)
+	}
+}
+
+func TestLoopGuardDistinctCallsExpireFromWindow(t *testing.T) {
+	guard := middleware.NewLoopGuard()
+	guard.HardLimit = 2
+	guard.WindowSize = 2
+	m := &sequenceModel{}
+	for i, args := range []string{`{"value":1}`, `{"value":2}`, `{"value":1}`} {
+		m.responses = append(m.responses, []*schema.Message{schema.AssistantMessage("", []schema.ToolCall{{ID: fmt.Sprint(i), Function: schema.FunctionCall{Name: "counter", Arguments: args}}})})
+	}
+	m.responses = append(m.responses, []*schema.Message{schema.AssistantMessage("done", nil)})
+	counter := &countingTool{}
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(context.Background())
+	out, err := a.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	if err != nil || out == nil || out.Content != "done" || counter.count.Load() != 3 {
+		t.Fatalf("out=%v err=%v calls=%d", out, err, counter.count.Load())
+	}
+}
+
+func TestMiddleware_OrderAndAfterRunOnce(t *testing.T) {
+	ctx := context.Background()
+	var order []string
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
+	a, err := New(ctx, WithConfig(&Config{Model: m, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, ReturnDirect: true}}, Middlewares: []middleware.Middleware{&orderedMiddleware{name: "outer", order: &order}, &orderedMiddleware{name: "inner", order: &order}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, executeErr := a.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	if executeErr != nil {
+		t.Fatal(executeErr)
+	}
+	want := []string{"before:outer", "before:inner", "model:outer", "model:inner", "after:inner", "after:outer"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("middleware order=%v want=%v", order, want)
+	}
+}
+
+func TestRun_FinalEventFollowsAfterRun(t *testing.T) {
+	ctx := context.Background()
+	mw := &endOrderMiddleware{}
+	a, err := New(ctx, WithConfig(&Config{Model: &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}, Middlewares: []middleware.Middleware{mw}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+		if e.Kind == "turn_end" && !mw.after {
+			t.Error("final event preceded AfterRun")
+		}
+		return nil
+	}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, executeErr := a.Invoke(ctx, []*schema.Message{schema.UserMessage("input")})
+	if executeErr != nil {
+		t.Fatal(executeErr)
+	}
+}
+
+func TestRun_ModelMiddlewareModifiesRequestAndStream(t *testing.T) {
+	ctx := context.Background()
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("original", nil)}}}
+	mw := &modelTransformMiddleware{}
+	a, err := New(ctx, WithModel(m), WithMiddleware(mw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(ctx)
+	out, err := a.Invoke(ctx, []*schema.Message{schema.UserMessage("input")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mw.before != 1 || mw.after != 1 || out.Content != "rewritten" || m.inputs[0][0].Content != "middleware prompt" {
+		t.Fatalf("middleware not applied: before=%d after=%d output=%v inputs=%v", mw.before, mw.after, out, m.inputs)
+	}
+	history := a.conversation.History(ctx)
+	if history[len(history)-1].Content != "rewritten" {
+		t.Fatal("history bypassed middleware")
+	}
+}
+
+func TestRun_ModelMiddlewareErrorStopsModel(t *testing.T) {
+	want := errors.New("before model failed")
+	m := &sequenceModel{}
+	a, err := New(context.Background(), WithModel(m), WithMiddleware(&modelTransformMiddleware{failure: want}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(context.Background())
+	_, err = a.Invoke(context.Background(), []*schema.Message{schema.UserMessage("input")})
+	if !errors.Is(err, want) || m.calls != 0 {
+		t.Fatalf("err=%v calls=%d", err, m.calls)
+	}
+}
+
+func TestDuplicateStatefulMiddlewareNamesRejectedBeforeModelCall(t *testing.T) {
+	tests := []struct {
+		name        string
+		middlewares []middleware.Middleware
+	}{
+		{name: "circuit breaker", middlewares: []middleware.Middleware{&middleware.CircuitBreaker{}, &middleware.CircuitBreaker{}}},
+		{name: "loop guard", middlewares: []middleware.Middleware{middleware.NewLoopGuard(), middleware.NewLoopGuard()}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("unexpected", nil)}}}
+			_, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: tc.middlewares}))
+			if err == nil {
+				t.Fatal("duplicate stateful middleware name was accepted")
+			}
+			if !strings.Contains(err.Error(), "duplicate stateful middleware name") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if m.calls != 0 {
+				t.Fatalf("model calls=%d", m.calls)
+			}
+		})
+	}
+}
+
+func TestDuplicateStatelessMiddlewareNamesRemainSupported(t *testing.T) {
+	ctx := context.Background()
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
+	middlewares := []middleware.Middleware{
+		&orderedMiddleware{name: "shared", order: new([]string)},
+		&orderedMiddleware{name: "shared", order: new([]string)},
+	}
+	a, err := New(ctx, WithConfig(&Config{Model: m, Middlewares: middlewares}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(ctx)
+	result, err := a.Invoke(ctx, []*schema.Message{schema.UserMessage("input")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || result.Content != "done" || m.calls != 1 {
+		t.Fatalf("result=%v model calls=%d", result, m.calls)
+	}
+}
+
+func TestRun_TranscriptObservesCanonicalEvents(t *testing.T) {
+	var writers []*transcriptWriter
+	template := &middleware.Transcript{Open: func(_ context.Context, threadID, runID string) (io.WriteCloser, error) {
+		if threadID != "thread" || runID == "" {
+			t.Fatal("missing run identity")
+		}
+		w := &transcriptWriter{}
+		writers = append(writers, w)
+		return w, nil
+	}}
+	for range 2 {
+		var delivered []types.RuntimeEvent
+		m := &sequenceModel{responses: [][]*schema.Message{
+			{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
+			{schema.AssistantMessage("done", nil)},
+		}}
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, ThreadID: "thread", ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}}}, Middlewares: []middleware.Middleware{template}, Emit: func(_ context.Context, e types.RuntimeEvent) error { delivered = append(delivered, e); return nil }}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, executeErr := a.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+		if executeErr != nil {
+			t.Fatal(executeErr)
+		}
+		if len(delivered) == 0 || delivered[len(delivered)-1].Kind != "turn_end" {
+			t.Fatal("missing final event")
+		}
+		for i := range delivered {
+			if delivered[i].Sequence != uint64(i+1) {
+				t.Fatal("event sequence diverged")
+			}
+		}
+		w := writers[len(writers)-1]
+		if w.closes != 1 {
+			t.Fatalf("close count=%d", w.closes)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(w.Bytes()))
+		var roles []string
+		for {
+			var record struct {
+				Role    string          `json:"role"`
+				Message *schema.Message `json:"message"`
+			}
+			err := decoder.Decode(&record)
+			if err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if record.Message == nil {
+				t.Fatal("missing original message")
+			}
+			roles = append(roles, record.Role)
+		}
+		if len(roles) != 4 || roles[0] != "user" || roles[1] != "assistant" || roles[2] != "tool" || roles[3] != "assistant" {
+			t.Fatalf("duplicated or missing transcript messages: %v", roles)
+		}
+	}
+	if len(writers) != 2 || writers[0] == writers[1] {
+		t.Fatal("shared run writer")
+	}
+}
+
+func TestRun_TranscriptWriteFailureClosesWriterAndStopsModel(t *testing.T) {
+	want := errors.New("transcript disk failure")
+	w := &transcriptWriter{fail: want}
+	m := &sequenceModel{}
+	a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{&middleware.Transcript{Open: func(context.Context, string, string) (io.WriteCloser, error) { return w, nil }}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	if !errors.Is(err, want) || m.calls != 0 || w.closes != 1 {
+		t.Fatalf("err=%v model=%d closes=%d", err, m.calls, w.closes)
+	}
+}
+
+func TestRun_PatchDanglingToolCallsOnlyInModelRequest(t *testing.T) {
+	ctx := context.Background()
+	history := conversation.New("thread", nil, nil, nil)
+	assistant := schema.AssistantMessage("", []schema.ToolCall{
+		{ID: "done", Function: schema.FunctionCall{Name: "read_file", Arguments: "{}"}},
+		{ID: "interrupted", Function: schema.FunctionCall{Name: "write_file", Arguments: "{}"}},
+	})
+	addHistoryErr := history.AddHistory(ctx, "old", schema.UserMessage("old input"), assistant, schema.ToolMessage("already done", "done"))
+	if addHistoryErr != nil {
+		t.Fatal(addHistoryErr)
+	}
+	m := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("new answer", nil)}}}
+	a, err := New(ctx, WithConfig(&Config{Model: m, Conversation: history}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, executeErr := a.Invoke(ctx, []*schema.Message{schema.UserMessage("continue")})
+	if executeErr != nil {
+		t.Fatal(executeErr)
+	}
+	repairs := 0
+	for i, message := range m.inputs[0] {
+		if message.Role == schema.Tool && message.ToolCallID == "interrupted" {
+			repairs++
+			if message.Content == "" || i+1 >= len(m.inputs[0]) || m.inputs[0][i+1].Role != schema.User {
+				t.Fatalf("invalid repair position: %+v", m.inputs[0])
+			}
+		}
+	}
+	if repairs != 1 {
+		t.Fatalf("repairs=%d", repairs)
+	}
+	for _, message := range history.History(ctx) {
+		if message.Role == schema.Tool && message.ToolCallID == "interrupted" {
+			t.Fatal("synthetic result persisted as real execution")
+		}
+	}
+	if len(assistant.ToolCalls) != 2 {
+		t.Fatal("original assistant changed")
+	}
+}
+
+func TestRun_PlanRestoresFromCheckpointAfterContextCompaction(t *testing.T) {
+	ctx := context.Background()
+	m := &sequenceModel{responses: [][]*schema.Message{
+		{schema.AssistantMessage("", []schema.ToolCall{{ID: "plan-call", Type: "function", Function: schema.FunctionCall{Name: "update_plan", Arguments: `{"todos":[{"content":"inspect repository","status":"in_progress"}]}`}}})},
+		{schema.AssistantMessage("done", nil)},
+	}}
+	published := 0
+	cfg := Config{Model: m, RunID: "plan-run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{middleware.NewPlan(&middleware.PlanMiddlewareConfig{OnPlanUpdate: func(context.Context, middleware.PlanUpdate) error { published++; return nil }})}}
+	first, err := New(ctx, WithConfig(&cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Emit = nil
+	first.cfg.Emit = func(_ context.Context, event types.RuntimeEvent) error {
+		if event.Kind == "tool_end" {
+			first.Interrupt()
+		}
+		return nil
+	}
+	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("inspect")}, WithCheckpointID("plan-checkpoint"))
+	_, ok := compose.ExtractInterruptInfo(err)
+	if !ok {
+		t.Fatalf("expected checkpoint: %v", err)
+	}
+	if published != 1 || len(first.state.Plan) != 1 {
+		t.Fatalf("published=%d state=%+v", published, first.state.Plan)
+	}
+	// Model context no longer contains the tool exchange, as after compaction.
+	cfg.Conversation = conversation.New("thread", nil, nil, nil)
+	addHistoryErr := cfg.Conversation.AddHistory(ctx, "plan-run", schema.UserMessage("compacted summary"))
+	if addHistoryErr != nil {
+		t.Fatal(addHistoryErr)
+	}
+	restored, err := New(ctx, WithConfig(&cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := restored.Invoke(ctx, nil, WithCheckpointID("plan-checkpoint"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Content != "done" || published != 1 || m.calls != 2 {
+		t.Fatalf("output=%v published=%d model=%d", out, published, m.calls)
+	}
+	if len(restored.state.Plan) != 1 || restored.state.Plan[0].Step != "inspect repository" {
+		t.Fatalf("restored plan=%+v", restored.state.Plan)
+	}
+	reminders, instructions := 0, 0
+	for _, message := range m.inputs[1] {
+		if strings.Contains(message.Content, "[in_progress] inspect repository") {
+			reminders++
+		}
+		if strings.Contains(message.Content, "<plan_mode>") && strings.Contains(message.Content, "update_plan") {
+			instructions++
+		}
+	}
+	if reminders != 1 || instructions != 1 {
+		t.Fatalf("reminders=%d instructions=%d", reminders, instructions)
+	}
+	for _, message := range restored.conversation.History(ctx) {
+		if strings.Contains(message.Content, "<plan_mode>") {
+			t.Fatal("planning instruction polluted durable history")
+		}
+	}
+}
+
+func TestRun_PlanEventsUseGraphSequenceAndDeliveryErrorsAreFatal(t *testing.T) {
+	for _, failDelivery := range []bool{false, true} {
+		m := &sequenceModel{responses: [][]*schema.Message{
+			{schema.AssistantMessage("", []schema.ToolCall{{ID: "plan", Function: schema.FunctionCall{Name: "update_plan", Arguments: `{"plan":"inspect"}`}}})},
+			{schema.AssistantMessage("done", nil)},
+		}}
+		var events []types.RuntimeEvent
+		want := errors.New("event transport failed")
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{middleware.NewPlan(nil)}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+			events = append(events, event)
+			if failDelivery && event.Kind == "plan_updated" {
+				return want
+			}
+			return nil
+		}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = a.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+		if failDelivery {
+			if !errors.Is(err, want) || m.calls != 1 {
+				t.Fatalf("delivery error swallowed: err=%v calls=%d", err, m.calls)
+			}
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		planIndex, startIndex, endIndex, count := -1, -1, -1, 0
+		for i, event := range events {
+			if event.Sequence != uint64(i+1) {
+				t.Fatalf("sequence=%d position=%d", event.Sequence, i)
+			}
+			switch event.Kind {
+			case "tool_start":
+				startIndex = i
+			case "plan_updated":
+				planIndex = i
+				count++
+			case "tool_end":
+				endIndex = i
+			}
+		}
+		if count != 1 || startIndex < 0 || planIndex <= startIndex || (!failDelivery && endIndex <= planIndex) {
+			t.Fatalf("start=%d plan=%d end=%d count=%d", startIndex, planIndex, endIndex, count)
+		}
+	}
+}

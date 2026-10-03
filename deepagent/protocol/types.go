@@ -12,7 +12,8 @@ import (
 
 func NewID(prefix string) string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	_, err := rand.Read(b[:])
+	if err != nil {
 		panic(err)
 	}
 	return prefix + "-" + hex.EncodeToString(b[:])

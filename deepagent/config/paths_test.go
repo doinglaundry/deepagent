@@ -55,7 +55,8 @@ func TestEnsureSessionDirs_Idempotent(t *testing.T) {
 	defer cleanup()
 
 	for i := 0; i < 2; i++ {
-		if err := EnsureSessionDirs("T1"); err != nil {
+		err := EnsureSessionDirs("T1")
+		if err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}

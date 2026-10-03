@@ -54,7 +54,8 @@ func findHostPathMapping(mappings []sandboxpaths.MountMapping, path string) (*sa
 		if err != nil {
 			continue
 		}
-		if rel, ok := hostPathRel(hostPath, path); ok && len(hostPath) > bestLen {
+		rel, ok := hostPathRel(hostPath, path)
+		if ok && len(hostPath) > bestLen {
 			best, bestRel, bestLen = &mappings[i], rel, len(hostPath)
 		}
 	}

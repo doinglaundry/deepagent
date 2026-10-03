@@ -37,7 +37,8 @@ func AcquireDockerWorkspace(ctx context.Context, source config.SandboxConfig, se
 		return nil, nil, err
 	}
 	cleanup := func() {
-		if shutdown, ok := m.(sandbox.Shutdowner); ok {
+		shutdown, ok := m.(sandbox.Shutdowner)
+		if ok {
 			shutdown.Shutdown()
 		}
 	}

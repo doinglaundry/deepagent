@@ -2,21 +2,23 @@ package aio
 
 import (
 	"context"
-	deepagents "eino-cli/deepagent/core"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"eino-cli/deepagent/core/backend"
+	"eino-cli/deepagent/graph/execution"
+	filesystempkg "eino-cli/deepagent/graph/filesystem"
+	"eino-cli/deepagent/graph/middleware"
+	"eino-cli/deepagent/graph/tools"
+	"eino-cli/deepagent/graph/types"
 
-	"eino-cli/deepagent/core/tools"
-	"eino-cli/deepagent/core/types"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
@@ -41,9 +43,11 @@ func (m *sandboxGraphModel) WithTools(infos []*schema.ToolInfo) (model.ToolCalli
 	}
 	return m, nil
 }
+
 func (m *sandboxGraphModel) Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error) {
 	return nil, fmt.Errorf("unexpected non-stream model call")
 }
+
 func (m *sandboxGraphModel) Stream(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	m.inputs = append(m.inputs, append([]*schema.Message(nil), input...))
 	m.calls++
@@ -73,13 +77,11 @@ func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 					Content string `json:"content"`
 					Append  bool   `json:"append"`
 				}
-				{
-					err := json.NewDecoder(r.Body).Decode(&body)
-					if err != nil {
-						t.Error(err)
-						http.Error(w, "bad JSON", 400)
-						return
-					}
+				err := json.NewDecoder(r.Body).Decode(&body)
+				if err != nil {
+					t.Error(err)
+					http.Error(w, "bad JSON", 400)
+					return
 				}
 				if r.Method != http.MethodPost || body.File != "/virtual/a.txt" {
 					t.Errorf("request=%s %s file=%s", r.Method, r.URL.Path, body.File)
@@ -105,19 +107,19 @@ func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 			defer server.Close()
 			provider := newSandbox("sandbox", "thread", server.URL, nil)
 			provider.containerName, provider.runtime = "test-container", runtimeDocker
-			files, err := backend.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread", nil)
+			files, err := filesystempkg.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			m := &sandboxGraphModel{readOnly: readOnly}
-			agent, err := deepagents.NewRun(context.Background(), deepagents.WithConfig(&deepagents.Config{ThreadID: "thread", Model: m, Filesystem: files, FilesystemConfig: &deepagents.FilesystemConfig{ReadOnly: readOnly}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
+			agent, err := execution.New(context.Background(), execution.WithConfig(&execution.Config{ThreadID: "thread", Model: m, Filesystem: files, FilesystemConfig: &execution.FilesystemConfig{ReadOnly: readOnly}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
 				return tools.Decision{Action: tools.Allow}, nil
 			})}))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer agent.Close(context.Background())
-			result, err := agent.Execute(context.Background(), []*schema.Message{schema.UserMessage("inspect file")})
+			result, err := agent.Invoke(context.Background(), []*schema.Message{schema.UserMessage("inspect file")})
 			if err != nil || result.Content != "done" {
 				t.Fatalf("result=%v err=%v", result, err)
 			}
@@ -160,7 +162,7 @@ func TestCoreDockerFilesystemPreservesInFlightCancellation(t *testing.T) {
 	defer close(release)
 	provider := newSandbox("sandbox", "thread", server.URL, nil)
 	provider.containerName, provider.runtime = "test-container", runtimeDocker
-	files, err := backend.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread", nil)
+	files, err := filesystempkg.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,5 +183,46 @@ func TestCoreDockerFilesystemPreservesInFlightCancellation(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("provider read did not stop")
+	}
+}
+
+func TestDockerProjectInstructionsIgnoreMissingFileOnly(t *testing.T) {
+	for _, scenario := range []struct {
+		name    string
+		status  int
+		message string
+		missing bool
+	}{
+		{"missing file", http.StatusNotFound, "File does not exist: /virtual/AGENTS.md", true},
+		{"service failure", http.StatusServiceUnavailable, "service unavailable", false},
+		{"missing route", http.StatusNotFound, "", false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(scenario.status)
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "message": scenario.message, "data": nil})
+			}))
+			defer server.Close()
+			provider := newSandbox("sandbox", "thread", server.URL, nil)
+			provider.containerName, provider.runtime = "test-container", runtimeDocker
+			files, err := filesystempkg.NewDockerFilesystem(&staticPathSandbox{provider}, "/virtual", "thread", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer files.Close(context.Background())
+			_, readErr := files.Read(context.Background(), "AGENTS.md", nil, nil)
+			missing := errors.Is(readErr, os.ErrNotExist)
+			if missing != scenario.missing {
+				t.Fatalf("missing=%v HTTP=%d error=%v", missing, scenario.status, readErr)
+			}
+			instructions := middleware.NewProjectInstructions(files)
+			messages, promptErr := instructions.BuildPrompt(context.Background())
+			if scenario.missing && (promptErr != nil || len(messages) != 0) {
+				t.Fatalf("optional missing instructions fail: messages=%v err=%v", messages, promptErr)
+			}
+			if !scenario.missing && promptErr == nil {
+				t.Fatal("service failure was ignored")
+			}
+		})
 	}
 }

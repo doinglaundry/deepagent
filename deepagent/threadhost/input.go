@@ -9,10 +9,10 @@ import (
 	"fmt"
 	"time"
 
-	deepagents "eino-cli/deepagent/core"
 	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/helper/serialiser"
 	"eino-cli/deepagent/manager"
+	threadpkg "eino-cli/deepagent/thread"
 )
 
 // CancelInputControlPayload is the JSON payload for
@@ -109,7 +109,7 @@ func (c *threadRun) deliverMessage(message *dalmodel.Message, pending *[]*dalmod
 		if c.ctx.Err() != nil {
 			return runResult{}
 		}
-		if errors.Is(err, deepagents.TransportErrThreadClosed) {
+		if errors.Is(err, threadpkg.TransportErrThreadClosed) {
 			return runResult{reason: defaultThreadClosedReason}
 		}
 		return runResult{reason: postMessageFailedReason, err: err}
@@ -133,19 +133,17 @@ func (c *threadRun) ackMessage(message *dalmodel.Message, triggerRunID string) (
 
 func (c *threadRun) handleCancel(message *dalmodel.Message, pending *[]*dalmodel.Message, stop <-chan struct{}) (result runResult) {
 	var payload CancelInputControlPayload
-	{
-		err := json.Unmarshal(message.Payload, &payload)
-		if err != nil || payload.CutoffMessageID <= 0 {
-			if err == nil {
-				err = fmt.Errorf("cancel input control missing cutoff_message_id")
-			}
-			*pending = nil
-			result = c.ackMessage(message, "")
-			if !result.empty() {
-				return result
-			}
-			return runResult{reason: controlInputFailedReason, err: err}
+	decodeErr := json.Unmarshal(message.Payload, &payload)
+	if decodeErr != nil || payload.CutoffMessageID <= 0 {
+		if decodeErr == nil {
+			decodeErr = fmt.Errorf("cancel input control missing cutoff_message_id")
 		}
+		*pending = nil
+		result = c.ackMessage(message, "")
+		if !result.empty() {
+			return result
+		}
+		return runResult{reason: controlInputFailedReason, err: decodeErr}
 	}
 
 	*pending = dropCanceledMessages(*pending, payload.CutoffMessageID)
@@ -158,8 +156,8 @@ func (c *threadRun) handleCancel(message *dalmodel.Message, pending *[]*dalmodel
 		reason = "user_cancel"
 	}
 	interruptTimeout := runtimeInterruptTimeout(c.host.InterruptDrainTimeout)
-	err := c.thread.Interrupt(c.ctx, deepagents.TransportThreadInterruptRequest{
-		Kind:             deepagents.TransportThreadInterruptKindCancelInput,
+	err := c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
+		Kind:             threadpkg.TransportThreadInterruptKindCancelInput,
 		ControlMessageID: fmt.Sprint(message.MessageID),
 		CutoffMessageID:  fmt.Sprint(payload.CutoffMessageID),
 		Timeout:          &interruptTimeout,
@@ -194,8 +192,8 @@ func (c *threadRun) handleClose(message *dalmodel.Message, pending *[]*dalmodel.
 
 	if c.thread.ActiveRun() != nil {
 		interruptTimeout := runtimeInterruptTimeout(c.host.InterruptDrainTimeout)
-		_ = c.thread.Interrupt(c.ctx, deepagents.TransportThreadInterruptRequest{
-			Kind:             deepagents.TransportThreadInterruptKindCloseThread,
+		_ = c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
+			Kind:             threadpkg.TransportThreadInterruptKindCloseThread,
 			ControlMessageID: fmt.Sprint(message.MessageID),
 			Timeout:          &interruptTimeout,
 		})

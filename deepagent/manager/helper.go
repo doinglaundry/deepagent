@@ -37,11 +37,9 @@ func createThread(req SubmitRequest, id int64) *model.Thread {
 	if metadata == nil {
 		metadata = map[string]string{}
 	}
-	{
-		title := strings.TrimSpace(req.Title)
-		if title != "" {
-			metadata["title"] = title
-		}
+	title := strings.TrimSpace(req.Title)
+	if title != "" {
+		metadata["title"] = title
 	}
 	var profile *model.Profile
 	if req.Profile != nil && *req.Profile != (model.Profile{}) {

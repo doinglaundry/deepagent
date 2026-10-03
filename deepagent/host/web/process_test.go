@@ -59,7 +59,8 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 		cmd := exec.Command(workerBin, "--config", cfg)
 		cmd.Stdout = log
 		cmd.Stderr = log
-		if err = cmd.Start(); err != nil {
+		err = cmd.Start()
+		if err != nil {
 			t.Fatal(err)
 		}
 		active = cmd
@@ -96,8 +97,9 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 	}
 	webCommand := exec.Command(webBin, "--config", cfg, "--root", dir, "--addr", address)
 	webCommand.Stdout, webCommand.Stderr = webLog, webLog
-	if err := webCommand.Start(); err != nil {
-		t.Fatal(err)
+	startErr := webCommand.Start()
+	if startErr != nil {
+		t.Fatal(startErr)
 	}
 	webDone := make(chan error, 1)
 	go func() { webDone <- webCommand.Wait() }()
@@ -158,8 +160,9 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 		var created struct {
 			ID string `json:"id"`
 		}
-		if err := json.Unmarshal(raw, &created); err != nil {
-			return "", err
+		decodeErr := json.Unmarshal(raw, &created)
+		if decodeErr != nil {
+			return "", decodeErr
 		}
 		return created.ID, nil
 	}
@@ -183,8 +186,9 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 			Status   string          `json:"status"`
 			Payload  json.RawMessage `json:"payload"`
 		}
-		if err := json.NewDecoder(response.Body).Decode(&rows); err != nil {
-			return nil, err
+		decodeErr2 := json.NewDecoder(response.Body).Decode(&rows)
+		if decodeErr2 != nil {
+			return nil, decodeErr2
 		}
 		var events []protocol.Event
 		for _, row := range rows {
@@ -203,14 +207,16 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 				}
 			case "approval", "question", "interrupt":
 				var payload eventpkg.ApprovalRequiredEventPayload
-				if err := json.Unmarshal(row.Payload, &payload); err != nil {
-					return nil, err
+				decodeErr := json.Unmarshal(row.Payload, &payload)
+				if decodeErr != nil {
+					return nil, decodeErr
 				}
 				event.Kind = protocol.EventBlocked
 				event.Block = &protocol.Block{RunID: row.RunID, CheckpointID: payload.CheckpointID, InterruptID: payload.InterruptID, Kind: payload.Kind, ToolName: payload.ToolName}
 				if payload.Kind == eventpkg.InputRequiredKindBatch {
 					var batch eventpkg.InterruptBatchRequiredEventPayload
-					if err := json.Unmarshal(row.Payload, &batch); err != nil {
+					err := json.Unmarshal(row.Payload, &batch)
+					if err != nil {
 						return nil, err
 					}
 					for _, item := range batch.Items {
@@ -219,7 +225,8 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 				}
 			case "error":
 				var payload eventpkg.ErrorEventPayload
-				if err := json.Unmarshal(row.Payload, &payload); err != nil {
+				err := json.Unmarshal(row.Payload, &payload)
+				if err != nil {
 					return nil, err
 				}
 				event.Kind, event.Error = protocol.EventRunFailed, payload.Message
@@ -262,8 +269,9 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 			}
 			body = map[string]any{"resume": answer}
 		}
-		if _, err := post(ctx, "/api/threads/"+threadID+"/messages", body); err != nil {
-			return nil, err
+		_, postErr := post(ctx, "/api/threads/"+threadID+"/messages", body)
+		if postErr != nil {
+			return nil, postErr
 		}
 		var events []protocol.Event
 		for {
@@ -315,8 +323,9 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 					}
 					defer response.Body.Close()
 					var displayed []json.RawMessage
-					if err := json.NewDecoder(response.Body).Decode(&displayed); err != nil {
-						return events, err
+					decodeErr := json.NewDecoder(response.Body).Decode(&displayed)
+					if decodeErr != nil {
+						return events, decodeErr
 					}
 					if response.StatusCode != 200 || len(displayed) == 0 {
 						return events, fmt.Errorf("Web history unavailable")
@@ -384,7 +393,8 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 		t.Fatalf("expected two pending child approvals, events=%v err=%v", events, err)
 	}
 	for _, name := range []string{"pair-a.txt", "pair-b.txt"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+		_, err := os.Stat(filepath.Join(dir, name))
+		if !os.IsNotExist(err) {
 			t.Fatalf("%s written before approval: %v", name, err)
 		}
 	}
@@ -442,7 +452,8 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 				Questions []string `json:"questions"`
 			} `json:"info"`
 		}
-		if err := json.Unmarshal(row.Payload, &payload); err != nil {
+		err := json.Unmarshal(row.Payload, &payload)
+		if err != nil {
 			t.Fatal(err)
 		}
 		questionVisible = payload.Kind == eventpkg.InputRequiredKindFollowUp && payload.Info.Question == "Which directory?" && len(payload.Info.Questions) == 2 && payload.Info.Questions[0] == "src" && payload.Info.Questions[1] == "docs"
@@ -450,7 +461,8 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 	if !questionVisible {
 		t.Fatalf("ask_user question and options not visible in Web events: %+v", questionRows)
 	}
-	if events, err = call(questionThread, "", questionBlock); err != nil {
+	events, err = call(questionThread, "", questionBlock)
+	if err != nil {
 		t.Fatalf("ask_user resume failed: %v events=%v", err, events)
 	}
 	// Kill the owning process inside a model request. The polling Web client must
@@ -497,8 +509,9 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 	if !consumed {
 		t.Fatal("first Run was not persisted before crash")
 	}
-	if err := active.Process.Kill(); err != nil {
-		t.Fatal(err)
+	killErr := active.Process.Kill()
+	if killErr != nil {
+		t.Fatal(killErr)
 	}
 	stop()
 	start()

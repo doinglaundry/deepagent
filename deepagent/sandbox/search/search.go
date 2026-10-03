@@ -50,7 +50,8 @@ type GrepMatch struct {
 // ShouldIgnoreName reports whether name matches any IgnorePatterns entry.
 func ShouldIgnoreName(name string) bool {
 	for _, pattern := range IgnorePatterns {
-		if ok, _ := doublestar.Match(pattern, name); ok {
+		ok, _ := doublestar.Match(pattern, name)
+		if ok {
 			return true
 		}
 	}
@@ -60,7 +61,8 @@ func ShouldIgnoreName(name string) bool {
 // PathMatches reports whether relPath matches pattern; accepts bare or "**/" prefixed.
 func PathMatches(pattern, relPath string) bool {
 	relPath = filepath.ToSlash(relPath)
-	if ok, _ := doublestar.PathMatch(pattern, relPath); ok {
+	pathMatchOK, _ := doublestar.PathMatch(pattern, relPath)
+	if pathMatchOK {
 		return true
 	}
 	if strings.HasPrefix(pattern, "**/") {

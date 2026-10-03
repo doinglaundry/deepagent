@@ -4,7 +4,6 @@ package threadhost
 
 import (
 	"context"
-	deepagents "eino-cli/deepagent/core"
 	"encoding/json"
 	"errors"
 	"os"
@@ -15,7 +14,9 @@ import (
 
 	"eino-cli/deepagent/config"
 	"eino-cli/deepagent/dal/model"
+	"eino-cli/deepagent/graph/conversation"
 	eventpkg "eino-cli/deepagent/protocol/event"
+	threadpkg "eino-cli/deepagent/thread"
 
 	modelpkg "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -40,7 +41,7 @@ func TestThreadHostCanonicalRuntimeSubmitToYield(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	posted, err := runtime.PostMessage(ctx, &deepagents.TransportMessage{ID: "101", Type: deepagents.MessageTypeInput, Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`), Metadata: map[string]string{"source": "test"}})
+	posted, err := runtime.PostMessage(ctx, &threadpkg.TransportMessage{ID: "101", Type: threadpkg.MessageTypeInput, Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`), Metadata: map[string]string{"source": "test"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +64,9 @@ func TestThreadHostCanonicalRuntimeSubmitToYield(t *testing.T) {
 				}
 				if string(item.Event.Type) == eventpkg.EventTypeAssistantMessage.String() {
 					var payload eventpkg.MessageEventPayload
-					{
-						err := json.Unmarshal(item.Event.Payload, &payload)
-						if err != nil {
-							t.Fatal(err)
-						}
+					err := json.Unmarshal(item.Event.Payload, &payload)
+					if err != nil {
+						t.Fatal(err)
 					}
 					if len(payload.Parts) == 0 {
 						t.Fatal("assistant message missing content")
@@ -86,9 +85,11 @@ func TestThreadHostCanonicalRuntimeSubmitToYield(t *testing.T) {
 		}
 	}
 }
+
 func (*runtimeModel) Generate(context.Context, []*schema.Message, ...modelpkg.Option) (*schema.Message, error) {
 	return nil, errors.New("not used")
 }
+
 func (*runtimeModel) Stream(context.Context, []*schema.Message, ...modelpkg.Option) (*schema.StreamReader[*schema.Message], error) {
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("ok", nil)}), nil
 }
@@ -196,11 +197,11 @@ func TestCreateThreadDockerAllocationFailure(t *testing.T) {
 
 type failingHistoryStore struct{ err error }
 
-func (s failingHistoryStore) Append(context.Context, *deepagents.HistoryRecord) error {
+func (s failingHistoryStore) Append(context.Context, *conversation.HistoryRecord) error {
 	return s.err
 }
 
-func (s failingHistoryStore) List(context.Context, deepagents.ListQuery) ([]*deepagents.HistoryRecord, error) {
+func (s failingHistoryStore) List(context.Context, conversation.ListQuery) ([]*conversation.HistoryRecord, error) {
 	return nil, s.err
 }
 

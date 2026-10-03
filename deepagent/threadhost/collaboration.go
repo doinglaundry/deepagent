@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/deepagent/core/middleware"
 	"eino-cli/deepagent/dal/model"
+	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/manager"
 	eventpkg "eino-cli/deepagent/protocol/event"
 	inputpkg "eino-cli/deepagent/protocol/input"
+
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"

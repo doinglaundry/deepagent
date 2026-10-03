@@ -2,18 +2,18 @@ package worker
 
 import (
 	"context"
-	deepagents "eino-cli/deepagent/core"
-	"eino-cli/deepagent/core/backend"
 	"fmt"
 	"strconv"
 
-	"eino-cli/deepagent/core/checkpoint"
-	"eino-cli/deepagent/core/mcp"
-	"eino-cli/deepagent/core/modelhub"
-
+	checkpointer "eino-cli/deepagent/graph/checkpoint"
+	"eino-cli/deepagent/graph/conversation"
+	"eino-cli/deepagent/graph/mcp"
+	"eino-cli/deepagent/graph/modelhub"
+	skillspkg "eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/manager"
-
+	threadpkg "eino-cli/deepagent/thread"
 	"eino-cli/deepagent/threadhost"
+
 	modelpkg "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
@@ -44,7 +44,7 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("initialize MCP: %w", err)
 	}
 	defer mcp.CloseMCP(mcpTools)
-	skillLoader, err := backend.LoadSkills(cfg.SkillPaths)
+	skillLoader, err := skillspkg.LoadSkills(cfg.SkillPaths)
 	if err != nil {
 		return fmt.Errorf("load skills: %w", err)
 	}
@@ -53,12 +53,12 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("initialize checkpoints: %w", err)
 	}
-	history := deepagents.NewGormHistoryRolloutStore(sqlDB, cfg.HistoryTable,
+	history := conversation.NewGormHistoryRolloutStore(sqlDB, cfg.HistoryTable,
 		func(idCtx context.Context, _, _ string) int64 {
 			id, _ := manager.IDNextSharedID(idCtx, redisClient)
 			return id
 		},
-		deepagents.NewRedisSeqGenerator(redisClient, "deepagent:history:seq"),
+		conversation.NewRedisSeqGenerator(redisClient, "deepagent:history:seq"),
 	)
 	err = history.AutoMigrate(ctx)
 	if err != nil {
@@ -81,11 +81,9 @@ func Run(ctx context.Context, cfg Config) error {
 			History: history, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
 			MemoryStore: coordinator, Collaboration: coordinator,
 			HistoryRecordID: func(idCtx context.Context, _, _ string, message *schema.Message) int64 {
-				{
-					id, parseErr := strconv.ParseInt(deepagents.MessageID(message), 10, 64)
-					if parseErr == nil && id > 0 {
-						return id
-					}
+				parseIntId, parseErr := strconv.ParseInt(threadpkg.MessageID(message), 10, 64)
+				if parseErr == nil && parseIntId > 0 {
+					return parseIntId
 				}
 				id, _ := manager.IDNextSharedID(idCtx, redisClient)
 				return id

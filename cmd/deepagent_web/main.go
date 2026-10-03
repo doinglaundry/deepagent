@@ -36,8 +36,9 @@ func main() {
 	h := &http.Server{Addr: *addr, Handler: s.Handler()}
 	go func() { <-ctx.Done(); _ = h.Shutdown(context.Background()) }()
 	slog.Info("DeepAgent UI listening", "addr", *addr)
-	if err := h.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fmt.Fprintln(os.Stderr, err)
+	listenAndServeErr := h.ListenAndServe()
+	if listenAndServeErr != nil && listenAndServeErr != http.ErrServerClosed {
+		fmt.Fprintln(os.Stderr, listenAndServeErr)
 		os.Exit(1)
 	}
 }

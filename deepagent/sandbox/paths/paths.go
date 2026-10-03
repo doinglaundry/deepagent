@@ -44,7 +44,8 @@ func BuildMountMappings(sessionID string) ([]MountMapping, error) {
 		VirtualPathPrefixOutputs:   config.SandboxOutputsDir(sessionID),
 	}
 	out := []MountMapping{}
-	if skillsHostPath := GetSkillsHostPath(); skillsHostPath != "" {
+	skillsHostPath := GetSkillsHostPath()
+	if skillsHostPath != "" {
 		out = append(out, MountMapping{
 			VirtualPath: VirtualPathPrefixSkills,
 			HostPath:    skillsHostPath,

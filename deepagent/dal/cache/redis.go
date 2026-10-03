@@ -59,7 +59,8 @@ func NewRedis(cfg RedisConfig) (RedisClient, error) {
 	if cfg.WriteTimeout <= 0 {
 		cfg.WriteTimeout = redisDefaultWriteTimeout
 	}
-	if cached, ok := redisClientCache.Load(cfg); ok {
+	cached, ok := redisClientCache.Load(cfg)
+	if ok {
 		return cached.(*redisClient), nil
 	}
 	cli := redispkg.NewClient(&redispkg.Options{
@@ -183,9 +184,10 @@ func (c *redisClient) Publish(ctx context.Context, channel string, payload []byt
 
 func (c *redisClient) Subscribe(ctx context.Context, channel string) (<-chan []byte, func() error, error) {
 	pubsub := c.client.Subscribe(ctx, channel)
-	if _, err := pubsub.Receive(ctx); err != nil {
+	_, receiveErr := pubsub.Receive(ctx)
+	if receiveErr != nil {
 		_ = pubsub.Close()
-		return nil, nil, err
+		return nil, nil, receiveErr
 	}
 	out := make(chan []byte, 32)
 	go func() {
