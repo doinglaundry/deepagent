@@ -28,15 +28,15 @@ func TestReadLintsUsesCommandServiceAndPropagatesCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !lints.(interface{ RequiresApproval() bool }).RequiresApproval() {
+	if !lints.RequiresApproval {
 		t.Fatal("project tests bypass approval")
 	}
-	out, err := lints.(einotool.InvokableTool).InvokableRun(context.Background(), `{}`)
+	out, err := lints.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), `{}`)
 	if err != nil || out != "diagnostic" || commands.request.Command != "go test './...'" || commands.request.MaxOutputBytes != 64<<10 {
 		t.Fatalf("out=%q err=%v request=%+v", out, err, commands.request)
 	}
 	commands.err = context.Canceled
-	_, invokableRunErr := lints.(einotool.InvokableTool).InvokableRun(context.Background(), `{}`)
+	_, invokableRunErr := lints.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), `{}`)
 	if !errors.Is(invokableRunErr, context.Canceled) {
 		t.Fatalf("cancellation swallowed: %v", invokableRunErr)
 	}

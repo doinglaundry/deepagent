@@ -652,7 +652,7 @@ func TestRun_FollowUpArgumentAliasesPreserveQuestionAndResume(t *testing.T) {
 				}
 				return nil
 			}
-			cfg := Config{Emit: emit, Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tools.GetFollowUpTool()}}}
+			cfg := Config{Emit: emit, Model: m, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{tools.GetFollowUpTool()}}
 			a, err := New(ctx, WithConfig(&cfg))
 			if err != nil {
 				t.Fatal(err)

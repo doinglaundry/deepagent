@@ -7,7 +7,6 @@ import (
 	"eino-cli/deepagent/graph/types"
 	"errors"
 	"fmt"
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	yaml "gopkg.in/yaml.v3"
@@ -108,7 +107,7 @@ type SubAgent struct {
 	MaxSteps                              int
 	EnableFilesystem, EnableWeb, ReadOnly bool
 	ToolMask                              tools.Mask
-	Tools                                 []tool.BaseTool
+	Tools                                 []tools.ToolDescriptor
 }
 
 // validateSubAgents checks the explicit list before task registration.
@@ -237,10 +236,7 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 		}
 		cfg.ToolMask = tools.CombineMasks(cfg.ToolMask, spec.ToolMask)
 		if len(spec.Tools) > 0 {
-			cfg.ToolDescriptors = make([]tools.ToolDescriptor, 0, len(spec.Tools))
-			for _, item := range spec.Tools {
-				cfg.ToolDescriptors = append(cfg.ToolDescriptors, tools.Describe(item))
-			}
+			cfg.ToolDescriptors = append([]tools.ToolDescriptor(nil), spec.Tools...)
 		}
 		if spec.MaxSteps > 0 {
 			cfg.MaxSteps = spec.MaxSteps

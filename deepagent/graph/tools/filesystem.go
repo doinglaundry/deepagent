@@ -25,14 +25,14 @@ type FilesystemToolOptions struct {
 }
 
 // NewFilesystemTools is the only filesystem tool factory for local and Docker.
-func NewFilesystemTools(filesystem filesystempkg.ToolFilesystem, opts FilesystemToolOptions) ([]tool.BaseTool, error) {
+func NewFilesystemTools(filesystem filesystempkg.ToolFilesystem, opts FilesystemToolOptions) ([]ToolDescriptor, error) {
 	if filesystem == nil {
 		return nil, fmt.Errorf("filesystem is required")
 	}
-	items := []tool.BaseTool{
+	items := []ToolDescriptor{
 		NewListFilesTool(filesystem), NewReadFileTool(filesystem),
-		&fileSearchTool{backend: filesystem, name: "glob"}, &fileSearchTool{backend: filesystem, name: "grep"},
-		&fileSearchTool{backend: filesystem, name: "rg"},
+		newFileSearchTool(filesystem, "glob"), newFileSearchTool(filesystem, "grep"),
+		newFileSearchTool(filesystem, "rg"),
 	}
 	semantic, err := NewSemanticSearchTool(filesystem)
 	if err != nil {
@@ -61,17 +61,13 @@ type ListFilesTool struct {
 	backend filesystempkg.Filesystem
 }
 
-func NewListFilesTool(backend filesystempkg.Filesystem) tool.BaseTool {
-	return &ListFilesTool{backend: backend}
+func NewListFilesTool(backend filesystempkg.Filesystem) ToolDescriptor {
+	return ToolDescriptor{Tool: &ListFilesTool{backend: backend}, ReadOnly: true, ParallelSafe: true}
 }
 
 func (*ListFilesTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return toolInfo("list_files", "List files in a directory.", map[string]*schema.ParameterInfo{"path": {Type: schema.String}})
 }
-
-func (*ListFilesTool) ReadOnly() bool { return true }
-
-func (*ListFilesTool) ParallelSafe() bool { return true }
 
 func (t *ListFilesTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
 	var in struct {
@@ -90,8 +86,8 @@ func (t *ListFilesTool) InvokableRun(ctx context.Context, args string, _ ...tool
 
 func NewReadFileTool(backend interface {
 	Read(context.Context, string, *int, *int) (string, error)
-}) tool.BaseTool {
-	return &readFileTool{backend: backend}
+}) ToolDescriptor {
+	return ToolDescriptor{Tool: &readFileTool{backend: backend}, ReadOnly: true, ParallelSafe: true}
 }
 
 type readFileTool struct {
@@ -103,10 +99,6 @@ type readFileTool struct {
 func (*readFileTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return toolInfo("read_file", "Read a UTF-8 file. Offset is a one-based line number.", map[string]*schema.ParameterInfo{"path": {Type: schema.String, Required: true}, "offset": {Type: schema.Integer}, "limit": {Type: schema.Integer}})
 }
-
-func (*readFileTool) ReadOnly() bool { return true }
-
-func (*readFileTool) ParallelSafe() bool { return true }
 
 func (t *readFileTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
 	var in struct {
@@ -126,10 +118,8 @@ func (t *readFileTool) InvokableRun(ctx context.Context, args string, _ ...tool.
 
 type WriteFileTool struct{ backend filesystempkg.Filesystem }
 
-func (*WriteFileTool) RequiresApproval() bool { return true }
-
-func NewWriteFileTool(backend filesystempkg.Filesystem) tool.BaseTool {
-	return &WriteFileTool{backend: backend}
+func NewWriteFileTool(backend filesystempkg.Filesystem) ToolDescriptor {
+	return ToolDescriptor{Tool: &WriteFileTool{backend: backend}, RequiresApproval: true}
 }
 
 func (*WriteFileTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -163,10 +153,8 @@ func (t *WriteFileTool) InvokableRun(ctx context.Context, args string, _ ...tool
 
 type EditFileTool struct{ backend filesystempkg.Filesystem }
 
-func (*EditFileTool) RequiresApproval() bool { return true }
-
-func NewEditFileTool(backend filesystempkg.Filesystem) tool.BaseTool {
-	return &EditFileTool{backend: backend}
+func NewEditFileTool(backend filesystempkg.Filesystem) ToolDescriptor {
+	return ToolDescriptor{Tool: &EditFileTool{backend: backend}, RequiresApproval: true}
 }
 
 func (*EditFileTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -202,10 +190,8 @@ func (t *EditFileTool) InvokableRun(ctx context.Context, args string, _ ...tool.
 
 type DeleteFileTool struct{ workspace filesystempkg.Filesystem }
 
-func (*DeleteFileTool) RequiresApproval() bool { return true }
-
-func NewDeleteFileTool(workspace filesystempkg.Filesystem) tool.BaseTool {
-	return &DeleteFileTool{workspace: workspace}
+func NewDeleteFileTool(workspace filesystempkg.Filesystem) ToolDescriptor {
+	return ToolDescriptor{Tool: &DeleteFileTool{workspace: workspace}, RequiresApproval: true}
 }
 
 func (*DeleteFileTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -223,13 +209,11 @@ func (t *DeleteFileTool) InvokableRun(ctx context.Context, args string, _ ...too
 	return t.workspace.Delete(ctx, in.Path)
 }
 
-func NewApplyPatchTool(patcher filesystempkg.Filesystem) tool.BaseTool {
-	return &applyPatchTool{backend: patcher}
+func NewApplyPatchTool(patcher filesystempkg.Filesystem) ToolDescriptor {
+	return ToolDescriptor{Tool: &applyPatchTool{backend: patcher}, RequiresApproval: true}
 }
 
 type applyPatchTool struct{ backend filesystempkg.Filesystem }
-
-func (*applyPatchTool) RequiresApproval() bool { return true }
 
 func (*applyPatchTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{

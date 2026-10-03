@@ -22,9 +22,9 @@ type fileSearchTool struct {
 	name    string
 }
 
-func (*fileSearchTool) ReadOnly() bool { return true }
-
-func (*fileSearchTool) ParallelSafe() bool { return true }
+func newFileSearchTool(filesystem filesystempkg.Filesystem, name string) ToolDescriptor {
+	return ToolDescriptor{Tool: &fileSearchTool{backend: filesystem, name: name}, ReadOnly: true, ParallelSafe: true}
+}
 
 func (t *fileSearchTool) Info(context.Context) (*schema.ToolInfo, error) {
 	params := map[string]*schema.ParameterInfo{"pattern": {Type: schema.String, Required: t.name == "glob"}, "path": {Type: schema.String}, "glob": {Type: schema.String}, "ignore_case": {Type: schema.Boolean}, "head_limit": {Type: schema.Integer}}
@@ -98,18 +98,14 @@ type semanticMatch struct {
 
 // NewSemanticSearchTool provides a local, deterministic semantic-like search.
 // It ranks files and lines by query-term matches without requiring an index.
-func NewSemanticSearchTool(filesystem filesystempkg.Filesystem) (tool.BaseTool, error) {
+func NewSemanticSearchTool(filesystem filesystempkg.Filesystem) (ToolDescriptor, error) {
 	if filesystem == nil {
-		return nil, fmt.Errorf("filesystem is required")
+		return ToolDescriptor{}, fmt.Errorf("filesystem is required")
 	}
-	return &semanticSearchTool{filesystem: filesystem}, nil
+	return ToolDescriptor{Tool: &semanticSearchTool{filesystem: filesystem}, ReadOnly: true, ParallelSafe: true}, nil
 }
 
 type semanticSearchTool struct{ filesystem filesystempkg.Filesystem }
-
-func (*semanticSearchTool) ReadOnly() bool { return true }
-
-func (*semanticSearchTool) ParallelSafe() bool { return true }
 
 func (*semanticSearchTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return toolInfo("semantic_search", "Rank code paths and lines by query-term matches.", map[string]*schema.ParameterInfo{"query": {Type: schema.String, Required: true}, "path": {Type: schema.String}})

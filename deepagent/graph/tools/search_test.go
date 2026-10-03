@@ -24,9 +24,6 @@ func TestGrepPreservesLiteralQueryAlias(t *testing.T) {
 	if err != nil || !strings.Contains(result, "a.b") || strings.Contains(result, "axb") {
 		t.Fatalf("result=%q err=%v", result, err)
 	}
-	if !search.ReadOnly() {
-		t.Fatal("search missing from read-only tool set")
-	}
 }
 
 func TestGrepRejectsEmptyQueryAndBoundsResults(t *testing.T) {
@@ -66,11 +63,11 @@ func TestSemanticSearchUsesWorkspaceBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := search.(einotool.InvokableTool).InvokableRun(context.Background(), `{"query":"claim lease"}`)
+	text, err := search.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), `{"query":"claim lease"}`)
 	if err != nil || !strings.Contains(text, "lease.go:1:") {
 		t.Fatalf("text=%q err=%v", text, err)
 	}
-	invokableRunText, invokableRunErr := search.(einotool.InvokableTool).InvokableRun(context.Background(), `{"query":"secret","path":"escape"}`)
+	invokableRunText, invokableRunErr := search.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), `{"query":"secret","path":"escape"}`)
 	if invokableRunErr == nil {
 		t.Fatalf("search escaped workspace: %q", invokableRunText)
 	}

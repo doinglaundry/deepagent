@@ -181,7 +181,7 @@ func TestBlockedRunResumesFromCheckpointOnNewThread(t *testing.T) {
 	checkpoints := &legacyParityMemoryCheckpoints{}
 	config := &runpkg.Config{Graph: execution.Config{
 		Model: chatModel, CheckpointStore: checkpoints,
-		ToolDescriptors: []deeptools.ToolDescriptor{deeptools.Describe(deeptools.GetFollowUpTool())},
+		ToolDescriptors: []deeptools.ToolDescriptor{deeptools.GetFollowUpTool()},
 	}}
 
 	firstEvents := make(chan runpkg.Event, 64)
@@ -775,7 +775,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	history := &historyMemory{}
 	checkpoints := &threadCheckpointMemory{}
 	m := &resumeModel{}
-	config := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []deeptools.ToolDescriptor{{Tool: deeptools.GetFollowUpTool()}}}}
+	config := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []deeptools.ToolDescriptor{deeptools.GetFollowUpTool()}}}
 	events := make(chan runpkg.Event, 100)
 	first := newTestThread("thread", config, events, ThreadOptions{HistoryStore: history})
 	firstInitHistoryErr := first.InitHistory(ctx)
@@ -893,7 +893,7 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 	m := &resumedInputModel{started: make(chan struct{}), release: make(chan struct{})}
 	checkpoints := &threadCheckpointMemory{}
 	history := &historyMemory{}
-	cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []deeptools.ToolDescriptor{{Tool: deeptools.GetFollowUpTool()}}}}
+	cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []deeptools.ToolDescriptor{deeptools.GetFollowUpTool()}}}
 	events := make(chan runpkg.Event, 100)
 	first := newTestThread("thread", cfg, events, ThreadOptions{HistoryStore: history})
 	err := first.InitHistory(ctx)

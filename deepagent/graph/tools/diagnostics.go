@@ -23,16 +23,13 @@ type readLintsTool struct {
 	commands  filesystempkg.CommandService
 }
 
-func NewReadLintsTool(workspace filesystempkg.Filesystem, commands filesystempkg.CommandService) (tool.BaseTool, error) {
+func NewReadLintsTool(workspace filesystempkg.Filesystem, commands filesystempkg.CommandService) (ToolDescriptor, error) {
 	if workspace == nil || commands == nil {
-		return nil, fmt.Errorf("workspace and command service are required")
+		return ToolDescriptor{}, fmt.Errorf("workspace and command service are required")
 	}
-	return &readLintsTool{workspace: workspace, commands: commands}, nil
+	// Go diagnostics execute project tests and require approval, like commands.
+	return ToolDescriptor{Tool: &readLintsTool{workspace: workspace, commands: commands}, RequiresApproval: true}, nil
 }
-
-// Go diagnostics execute project tests and therefore require the same approval
-// boundary as other project commands.
-func (*readLintsTool) RequiresApproval() bool { return true }
 
 func (*readLintsTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return toolInfo("read_lints", "Run Go diagnostics for workspace packages.", map[string]*schema.ParameterInfo{"paths": {Type: schema.Array, ElemInfo: &schema.ParameterInfo{Type: schema.String}}})

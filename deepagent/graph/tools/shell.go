@@ -20,17 +20,17 @@ type commandTool struct {
 	defaultTimeout time.Duration
 }
 
-func NewCommandTools(service filesystempkg.CommandService, defaults ...time.Duration) []tool.BaseTool {
+func NewCommandTools(service filesystempkg.CommandService, defaults ...time.Duration) []ToolDescriptor {
 	timeout := 30 * time.Second
 	if len(defaults) > 0 && defaults[0] > 0 {
 		timeout = defaults[0]
 	}
-	return []tool.BaseTool{&executeTool{commandTool{service: service, name: "execute", defaultTimeout: timeout}}, &commandTool{service: service, name: "shell", defaultTimeout: timeout}, &commandTool{service: service, name: "await_shell", defaultTimeout: timeout}}
+	return []ToolDescriptor{
+		{Tool: &executeTool{commandTool{service: service, name: "execute", defaultTimeout: timeout}}, RequiresApproval: true},
+		{Tool: &commandTool{service: service, name: "shell", defaultTimeout: timeout}, RequiresApproval: true},
+		{Tool: &commandTool{service: service, name: "await_shell", defaultTimeout: timeout}, ReadOnly: true},
+	}
 }
-
-func (t *commandTool) ReadOnly() bool { return t.name == "await_shell" }
-
-func (t *commandTool) RequiresApproval() bool { return !t.ReadOnly() }
 
 func (t *commandTool) Info(context.Context) (*schema.ToolInfo, error) {
 	params := map[string]*schema.ParameterInfo{"command": {Type: schema.String, Required: true}, "working_directory": {Type: schema.String}, "timeout_ms": {Type: schema.Integer}}

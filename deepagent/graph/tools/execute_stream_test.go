@@ -37,7 +37,7 @@ func TestExecuteSlowConsumerRetainsFirstMiB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := NewCommandTools(completedOutputCommands{service})[0].(einotool.InvokableTool).InvokableRun(ctx, string(raw))
+	result, err := NewCommandTools(completedOutputCommands{service})[0].Tool.(einotool.InvokableTool).InvokableRun(ctx, string(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestExecuteStreamsAndConsumerCloseJoinsJob(t *testing.T) {
 			defer service.Close(context.Background())
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			stream, err := NewCommandTools(service)[0].(einotool.StreamableTool).StreamableRun(ctx, `{"command":"`+command+`"}`)
+			stream, err := NewCommandTools(service)[0].Tool.(einotool.StreamableTool).StreamableRun(ctx, `{"command":"`+command+`"}`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -88,7 +88,7 @@ func TestExecuteStreamAndInvokeShareResultAndErrors(t *testing.T) {
 	workspace := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
 	service := filesystempkg.NewCommands("thread", workspace)
 	defer service.Close(context.Background())
-	command := NewCommandTools(service)[0]
+	command := NewCommandTools(service)[0].Tool
 	for _, raw := range []string{`{"command":"printf hello"}`, `{"command":"printf failed; exit 7"}`} {
 		stream, err := command.(einotool.StreamableTool).StreamableRun(context.Background(), raw)
 		if err != nil {
@@ -121,7 +121,7 @@ func TestExecuteTimeoutAndParentCancellation(t *testing.T) {
 	workspace := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
 	service := filesystempkg.NewCommands("thread", workspace)
 	defer service.Close(context.Background())
-	command := NewCommandTools(service)[0].(einotool.InvokableTool)
+	command := NewCommandTools(service)[0].Tool.(einotool.InvokableTool)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_, err := command.InvokableRun(ctx, `{"command":"sleep 30","timeout_ms":20}`)
@@ -143,8 +143,8 @@ func TestShellJobCanBeAwaitedAfterStartingRunContextEnds(t *testing.T) {
 	}
 	defer workspace.Close(context.Background())
 	items := NewCommandTools(workspace)
-	shell := items[1].(einotool.InvokableTool)
-	await := items[2].(einotool.InvokableTool)
+	shell := items[1].Tool.(einotool.InvokableTool)
+	await := items[2].Tool.(einotool.InvokableTool)
 	ctx, cancel := context.WithCancel(context.Background())
 	output, err := shell.InvokableRun(ctx, `{"command":"sleep 0.1; printf finished","timeout_ms":10}`)
 	if err != nil {

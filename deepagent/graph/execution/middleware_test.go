@@ -341,7 +341,7 @@ func TestRun_PlanRestoresFromCheckpointAfterContextCompaction(t *testing.T) {
 		{schema.AssistantMessage("done", nil)},
 	}}
 	published := 0
-	cfg := Config{Model: m, RunID: "plan-run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{middleware.NewPlan()}, ToolDescriptors: []tools.ToolDescriptor{tools.Describe(tools.NewUpdatePlanTool(func(context.Context, tools.PlanUpdate) error { published++; return nil }))}}
+	cfg := Config{Model: m, RunID: "plan-run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{middleware.NewPlan()}, ToolDescriptors: []tools.ToolDescriptor{tools.NewUpdatePlanTool(func(context.Context, tools.PlanUpdate) error { published++; return nil })}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -408,7 +408,7 @@ func TestRun_PlanEventsUseGraphSequenceAndDeliveryErrorsAreFatal(t *testing.T) {
 		}}
 		var events []types.RuntimeEvent
 		want := errors.New("event transport failed")
-		a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{middleware.NewPlan()}, ToolDescriptors: []tools.ToolDescriptor{tools.Describe(tools.NewUpdatePlanTool(nil))}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{middleware.NewPlan()}, ToolDescriptors: []tools.ToolDescriptor{tools.NewUpdatePlanTool(nil)}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
 			events = append(events, event)
 			if failDelivery && event.Kind == "plan_updated" {
 				return want

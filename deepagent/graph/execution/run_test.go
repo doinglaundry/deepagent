@@ -68,13 +68,13 @@ func TestNew_RequiresModel(t *testing.T) {
 
 func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T) {
 	ctx := context.Background()
-	config := &Config{
-		ToolDescriptors:   []deeptools.ToolDescriptor{{Tool: &fakeToolCounter{}}, {Tool: &explicitReadOnlyTool{}, ReadOnly: true}},
-		ReadOnlyToolsOnly: true,
-	}
+	config := &Config{ReadOnlyToolsOnly: true}
 	m := &publicModel{}
 	config.Model = m
-	a, err := New(ctx, WithConfig(config))
+	a, err := New(ctx, WithConfig(config), WithTools(
+		deeptools.ToolDescriptor{Tool: &fakeToolCounter{}},
+		deeptools.ToolDescriptor{Tool: &explicitReadOnlyTool{}, ReadOnly: true},
+	))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestPublicConversationDoesNotDuplicateHistory(t *testing.T) {
 	m := &publicModel{call: true}
 	mw := &promptContractMiddleware{}
 	history := conversation.New("", nil, nil, nil)
-	a, err := New(ctx, WithConfig(&Config{Model: m, Conversation: history}), WithMiddleware(mw), WithTools(&fakeToolCounter{}))
+	a, err := New(ctx, WithConfig(&Config{Model: m, Conversation: history}), WithMiddleware(mw), WithTools(tools.ToolDescriptor{Tool: &fakeToolCounter{}}))
 	if err != nil {
 		t.Fatal(err)
 	}

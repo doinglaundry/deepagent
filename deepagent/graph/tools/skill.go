@@ -14,8 +14,6 @@ import (
 
 type ActivateSkillTool struct{ loader skillspkg.SkillLoader }
 
-func (*ActivateSkillTool) ReadOnly() bool { return true }
-
 func (t *ActivateSkillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	items, err := t.loader.ListSkills(ctx)
 	if err != nil {
@@ -33,8 +31,8 @@ func (t *ActivateSkillTool) Info(ctx context.Context) (*schema.ToolInfo, error) 
 	})}, nil
 }
 
-func NewActivateSkillTool(loader skillspkg.SkillLoader) *ActivateSkillTool {
-	return &ActivateSkillTool{loader: loader}
+func NewActivateSkillTool(loader skillspkg.SkillLoader) ToolDescriptor {
+	return ToolDescriptor{Tool: &ActivateSkillTool{loader: loader}, ReadOnly: true}
 }
 
 func (t *ActivateSkillTool) InvokableRun(ctx context.Context, raw string, _ ...tool.Option) (string, error) {

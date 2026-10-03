@@ -8,7 +8,6 @@ import (
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -66,7 +65,7 @@ func (a *Graph) configure(ctx context.Context) (err error) {
 func newToolSet(ctx context.Context, cfg Config) (*tools.ToolSet, error) {
 	descriptors := append([]tools.ToolDescriptor(nil), cfg.ToolDescriptors...)
 	if cfg.SkillLoader != nil {
-		descriptors = append(descriptors, tools.Describe(tools.NewActivateSkillTool(cfg.SkillLoader)))
+		descriptors = append(descriptors, tools.NewActivateSkillTool(cfg.SkillLoader))
 	}
 	filesystemConfig := cfg.FilesystemConfig
 	if filesystemConfig != nil && cfg.Filesystem != nil {
@@ -79,37 +78,27 @@ func newToolSet(ctx context.Context, cfg Config) (*tools.ToolSet, error) {
 		if err != nil {
 			return nil, err
 		}
-		descriptors = appendToolDescriptors(descriptors, items)
+		descriptors = append(descriptors, items...)
 	}
 	if cfg.WebConfig != nil {
 		items, err := tools.NewWebTools(ctx, cfg.WebConfig)
 		if err != nil {
 			return nil, err
 		}
-		descriptors = appendToolDescriptors(descriptors, items)
+		descriptors = append(descriptors, items...)
 	}
 	if len(cfg.SubAgents) > 0 {
 		names := make([]string, 0, len(cfg.SubAgents))
 		for _, spec := range cfg.SubAgents {
 			names = append(names, spec.Name)
 		}
-		descriptors = append(descriptors, tools.ToolDescriptor{
-			Tool:         tools.NewStreamingTaskTool(NewChildRunner(cfg), names...),
-			ParallelSafe: true, ReadOnly: cfg.ReadOnlyToolsOnly,
-		})
+		descriptors = append(descriptors, tools.NewStreamingTaskTool(NewChildRunner(cfg), cfg.ReadOnlyToolsOnly, names...))
 	}
 	toolSet, err := tools.NewToolSet(ctx, descriptors)
 	if err != nil {
 		return nil, err
 	}
 	return toolSet.Filter(ctx, cfg.ReadOnlyToolsOnly, cfg.ToolMask)
-}
-
-func appendToolDescriptors(descriptors []tools.ToolDescriptor, items []tool.BaseTool) []tools.ToolDescriptor {
-	for _, item := range items {
-		descriptors = append(descriptors, tools.Describe(item))
-	}
-	return descriptors
 }
 
 // newRunMiddlewares creates dynamic prompts and fresh mutable instances for this Run.

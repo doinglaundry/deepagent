@@ -35,7 +35,7 @@ func TestWebFactoryAppliesConfiguredMask(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("tools = %d, want only read_url", len(items))
 	}
-	info, err := items[0].Info(ctx)
+	info, err := items[0].Tool.Info(ctx)
 	if err != nil || info.Name != "read_url" {
 		t.Fatalf("tool = %v, %v", info, err)
 	}
@@ -62,7 +62,7 @@ func TestWebSearchEscapesQueryAndReadLimitsResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := tools[1].(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"a & b"}`)
+	result, err := tools[1].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"a & b"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestWebToolRejectsFileScheme(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = tools[0].(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"file:///etc/passwd"}`)
+	_, err = tools[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"file:///etc/passwd"}`)
 	if err == nil {
 		t.Fatal("file URL accepted")
 	}
@@ -102,7 +102,7 @@ func TestWebSearchHeadersStayOnConfiguredOrigin(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = items[1].(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"go"}`)
+			_, err = items[1].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"go"}`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,7 @@ func TestWebSearchHeadersStayOnConfiguredOrigin(t *testing.T) {
 				t.Fatalf("redirect calls=%d", calls)
 			}
 			// Arbitrary read URLs must not receive the configured search headers.
-			_, err = items[0].(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"https://page.example"}`)
+			_, err = items[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"https://page.example"}`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -133,7 +133,7 @@ func TestReadURLExtractsVisibleText(t *testing.T) {
 	if err != nil || len(items) != 1 {
 		t.Fatalf("tools = %d, %v", len(items), err)
 	}
-	output, err := items[0].(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"`+server.URL+`"}`)
+	output, err := items[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"url":"`+server.URL+`"}`)
 	if err != nil || !strings.Contains(output, "Hello world") || strings.Contains(output, "hidden") {
 		t.Fatalf("read_url = %q, %v", output, err)
 	}
@@ -148,7 +148,7 @@ func TestSearchUsesConfiguredEndpoint(t *testing.T) {
 	if err != nil || len(items) != 1 {
 		t.Fatalf("tools = %d, %v", len(items), err)
 	}
-	output, err := items[0].(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"deep agent"}`)
+	output, err := items[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), `{"query":"deep agent"}`)
 	if err != nil || !strings.Contains(output, "deep agent") {
 		t.Fatalf("web_search = %q, %v", output, err)
 	}

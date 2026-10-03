@@ -154,7 +154,7 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			if fail {
 				store.failure = failure
 			}
-			cfg := &runpkg.Config{Graph: execution.Config{Model: &resumeModel{}, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tools.GetFollowUpTool()}}}}
+			cfg := &runpkg.Config{Graph: execution.Config{Model: &resumeModel{}, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{tools.GetFollowUpTool()}}}
 			history := &historyMemory{}
 			events := make(chan runpkg.Event, 64)
 			first := newTestThread("thread", cfg, events, ThreadOptions{HistoryStore: history})
@@ -280,7 +280,7 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			}
 			history := &pendingHistoryStore{}
 			m := &pendingQuestionModel{started: make(chan struct{}), release: make(chan struct{})}
-			cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tools.GetFollowUpTool()}}}}
+			cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{tools.GetFollowUpTool()}}}
 			events := make(chan runpkg.Event, 64)
 			first := newTestThread("thread", cfg, events, ThreadOptions{HistoryStore: history})
 			firstInitHistoryErr := first.InitHistory(ctx)

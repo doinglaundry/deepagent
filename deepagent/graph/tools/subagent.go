@@ -29,8 +29,8 @@ type taskTool struct {
 	names  []string
 }
 
-func NewTaskTool(runner ChildRunner, names ...string) tool.BaseTool {
-	return &taskTool{runner: runner, names: append([]string(nil), names...)}
+func NewTaskTool(runner ChildRunner, names ...string) ToolDescriptor {
+	return ToolDescriptor{Tool: &taskTool{runner: runner, names: append([]string(nil), names...)}}
 }
 
 func (t *taskTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -94,8 +94,11 @@ func (t *taskTool) parseChildRequest(raw string) (ChildRequest, error) {
 
 type streamingTaskTool struct{ *taskTool }
 
-func NewStreamingTaskTool(runner ChildRunner, names ...string) tool.BaseTool {
-	return &streamingTaskTool{&taskTool{runner: runner, names: append([]string(nil), names...)}}
+func NewStreamingTaskTool(runner ChildRunner, readOnly bool, names ...string) ToolDescriptor {
+	return ToolDescriptor{
+		Tool:     &streamingTaskTool{&taskTool{runner: runner, names: append([]string(nil), names...)}},
+		ReadOnly: readOnly, ParallelSafe: true,
+	}
 }
 
 func (t *streamingTaskTool) StreamableRun(ctx context.Context, raw string, _ ...tool.Option) (*schema.StreamReader[string], error) {

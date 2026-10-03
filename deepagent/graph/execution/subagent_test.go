@@ -30,13 +30,14 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 	childModel := &parallelChildModel{both: make(chan struct{})}
 	counter := &countingTool{}
 	task := tools.NewTaskTool(NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: childModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}))
+	task.ParallelSafe = true
 	parentModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{
 		{ID: "a", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"a"}`}},
 		{ID: "b", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"b"}`}},
 	})}, {schema.AssistantMessage("parent done", nil)}}}
 	cfg := Config{Model: parentModel, RunID: "run", Parallelism: 2, CheckpointStore: &checkpointMemory{}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
 		return tools.Decision{Action: tools.Allow}, nil
-	}), ToolDescriptors: []tools.ToolDescriptor{{Tool: task, ParallelSafe: true}}}
+	}), ToolDescriptors: []tools.ToolDescriptor{task}}
 	a, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -270,7 +271,9 @@ func TestChildAgent_ConcurrencyLimitQueuesEveryTask(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	runner := &boundedChildRunner{started: make(chan string, 5), release: make(chan struct{}, 5)}
-	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: tools.NewTaskTool(runner), ParallelSafe: true}})
+	task := tools.NewTaskTool(runner)
+	task.ParallelSafe = true
+	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{task})
 	if err != nil {
 		t.Fatal(err)
 	}

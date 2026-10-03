@@ -101,8 +101,6 @@ func (t *fakeToolCounter) InvokableRun(_ context.Context, _ string, _ ...tool.Op
 
 type explicitReadOnlyTool struct{ fakeToolCounter }
 
-func (*explicitReadOnlyTool) ReadOnly() bool { return true }
-
 func (*explicitReadOnlyTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{Name: "readonly_counter"}, nil
 }

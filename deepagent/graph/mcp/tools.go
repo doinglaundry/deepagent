@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"time"
 
+	"eino-cli/deepagent/graph/tools"
+
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/eino-contrib/jsonschema"
@@ -18,12 +20,9 @@ type mcpTool struct {
 	client     *mcpClient
 	remoteName string
 	info       *schema.ToolInfo
-	readOnly   bool
 }
 
 func (t *mcpTool) Info(context.Context) (*schema.ToolInfo, error) { return t.info, nil }
-func (t *mcpTool) ReadOnly() bool                                 { return t.readOnly }
-func (t *mcpTool) RequiresApproval() bool                         { return !t.readOnly }
 func (t *mcpTool) InvokableRun(ctx context.Context, args string, _ ...tool.Option) (string, error) {
 	var arguments map[string]any
 	decodeErr := json.Unmarshal([]byte(args), &arguments)
@@ -49,7 +48,7 @@ func (t *mcpTool) InvokableRun(ctx context.Context, args string, _ ...tool.Optio
 
 var toolNameCleaner = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
-func LoadMCP(ctx context.Context, configs []MCPConfig) (result []tool.BaseTool, err error) {
+func LoadMCP(ctx context.Context, configs []MCPConfig) (result []tools.ToolDescriptor, err error) {
 	names := map[string]bool{}
 
 	var clients []*mcpClient
@@ -57,7 +56,7 @@ func LoadMCP(ctx context.Context, configs []MCPConfig) (result []tool.BaseTool, 
 		retained := make(map[*mcpClient]bool)
 		if err == nil {
 			for _, base := range result {
-				t, ok := base.(*mcpTool)
+				t, ok := base.Tool.(*mcpTool)
 				if ok {
 					retained[t.client] = true
 				}
@@ -137,7 +136,10 @@ func LoadMCP(ctx context.Context, configs []MCPConfig) (result []tool.BaseTool, 
 				if e != nil {
 					return result, e
 				}
-				result = append(result, &mcpTool{client: client, remoteName: remote.Name, info: &schema.ToolInfo{Name: name, Desc: remote.Description, ParamsOneOf: schema.NewParamsOneOfByJSONSchema(&params)}, readOnly: remote.Annotations.ReadOnly})
+				result = append(result, tools.ToolDescriptor{
+					Tool:     &mcpTool{client: client, remoteName: remote.Name, info: &schema.ToolInfo{Name: name, Desc: remote.Description, ParamsOneOf: schema.NewParamsOneOfByJSONSchema(&params)}},
+					ReadOnly: remote.Annotations.ReadOnly, RequiresApproval: !remote.Annotations.ReadOnly,
+				})
 			}
 			cursor = list.NextCursor
 			if cursor == "" {
@@ -151,9 +153,9 @@ func LoadMCP(ctx context.Context, configs []MCPConfig) (result []tool.BaseTool, 
 	}
 	return result, nil
 }
-func CloseMCP(tools []tool.BaseTool) {
-	for _, base := range tools {
-		t, ok := base.(*mcpTool)
+func CloseMCP(descriptors []tools.ToolDescriptor) {
+	for _, base := range descriptors {
+		t, ok := base.Tool.(*mcpTool)
 		if ok {
 			t.client.close()
 		}

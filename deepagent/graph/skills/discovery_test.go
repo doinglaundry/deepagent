@@ -10,6 +10,8 @@ import (
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/tools"
+
+	einotool "github.com/cloudwego/eino/components/tool"
 )
 
 func TestSkillsCatalogDefersNestedInstructionsUntilActivation(t *testing.T) {
@@ -38,14 +40,14 @@ func TestSkillsCatalogDefersNestedInstructionsUntilActivation(t *testing.T) {
 		t.Fatal(removeErr)
 	}
 	tool := tools.NewActivateSkillTool(catalog)
-	if !tool.ReadOnly() {
+	if !tool.ReadOnly {
 		t.Fatal("activation must be read-only")
 	}
-	content, err := tool.InvokableRun(context.Background(), `{"name":"test-skill"}`)
+	content, err := tool.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), `{"name":"test-skill"}`)
 	if err != nil || !strings.Contains(content, "Run the project test command") {
 		t.Fatalf("full instructions missing %q err %v", content, err)
 	}
-	_, err = tool.InvokableRun(context.Background(), `{"name":"../../etc/passwd"}`)
+	_, err = tool.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), `{"name":"../../etc/passwd"}`)
 	if err == nil {
 		t.Fatal("activated undiscovered skill")
 	}

@@ -11,6 +11,8 @@ import (
 
 	"eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/types"
+
+	einotool "github.com/cloudwego/eino/components/tool"
 )
 
 func TestUpdatePlanAliasesShareRunState(t *testing.T) {
@@ -24,7 +26,7 @@ func TestUpdatePlanAliasesShareRunState(t *testing.T) {
 		t.Run(raw, func(t *testing.T) {
 			state := &types.RunState{}
 			ctx := types.WithRunState(context.Background(), state)
-			out, err := NewUpdatePlanTool(nil).InvokableRun(ctx, raw)
+			out, err := NewUpdatePlanTool(nil).Tool.(einotool.InvokableTool).InvokableRun(ctx, raw)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -44,7 +46,7 @@ func TestUpdatePlanFailedPublishPreservesState(t *testing.T) {
 	state := &types.RunState{Plan: []types.PlanStep{{Step: "old", Status: "pending"}}}
 	want := errors.New("publish failed")
 	tool := NewUpdatePlanTool(func(context.Context, PlanUpdate) error { return want })
-	_, err := tool.InvokableRun(types.WithRunState(context.Background(), state), `{"plan":"new"}`)
+	_, err := tool.Tool.(einotool.InvokableTool).InvokableRun(types.WithRunState(context.Background(), state), `{"plan":"new"}`)
 	if !errors.Is(err, want) || state.Plan[0].Step != "old" {
 		t.Fatalf("err=%v plan=%v", err, state.Plan)
 	}
@@ -57,7 +59,7 @@ func TestUpdatePlanPublishesValidatedPlan(t *testing.T) {
 		return nil
 	})
 	input := `{"explanation":"starting","plan":[{"step":"inspect","status":"in_progress"}]}`
-	_, err := runner.InvokableRun(context.Background(), input)
+	_, err := runner.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +70,7 @@ func TestUpdatePlanPublishesValidatedPlan(t *testing.T) {
 
 func TestUpdatePlanRejectsInvalidState(t *testing.T) {
 	runner := NewUpdatePlanTool(nil)
-	_, err := runner.InvokableRun(context.Background(), `{"plan":[{"step":"inspect","status":"later"}]}`)
+	_, err := runner.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), `{"plan":[{"step":"inspect","status":"later"}]}`)
 	if err == nil {
 		t.Fatal("invalid plan status was accepted")
 	}
@@ -87,7 +89,7 @@ func TestActivateSkillLoadsInstructionsWithoutMiddleware(t *testing.T) {
 		t.Fatal(err)
 	}
 	loader := skillTestLoader{items: []*skills.SkillMetadata{{Name: "review", Path: path}}}
-	output, err := NewActivateSkillTool(loader).InvokableRun(context.Background(), `{"name":"review"}`)
+	output, err := NewActivateSkillTool(loader).Tool.(einotool.InvokableTool).InvokableRun(context.Background(), `{"name":"review"}`)
 	if err != nil || !strings.Contains(output, "follow these instructions") {
 		t.Fatalf("activate_skill = %q, %v", output, err)
 	}

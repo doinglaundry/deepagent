@@ -21,11 +21,11 @@ func init() {
 	schema.RegisterName[*FollowUpInfo]("deepagent_follow_up_info")
 }
 
-func GetFollowUpTool() tool.BaseTool { return &followUpTool{} }
+func GetFollowUpTool() ToolDescriptor {
+	return ToolDescriptor{Tool: &followUpTool{}, ReadOnly: true}
+}
 
 type followUpTool struct{}
-
-func (*followUpTool) ReadOnly() bool { return true }
 
 func (*followUpTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
@@ -120,11 +120,9 @@ type PlanUpdateHandler func(context.Context, PlanUpdate) error
 
 type updatePlanTool struct{ onUpdate PlanUpdateHandler }
 
-func NewUpdatePlanTool(onUpdate PlanUpdateHandler) tool.InvokableTool {
-	return &updatePlanTool{onUpdate: onUpdate}
+func NewUpdatePlanTool(onUpdate PlanUpdateHandler) ToolDescriptor {
+	return ToolDescriptor{Tool: &updatePlanTool{onUpdate: onUpdate}, ReadOnly: true}
 }
-
-func (*updatePlanTool) ReadOnly() bool { return true }
 
 func (*updatePlanTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{Name: ToolUpdatePlan, Desc: "Publish the current plan and progress.", ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{

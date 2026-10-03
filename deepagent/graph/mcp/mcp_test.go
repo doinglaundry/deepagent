@@ -54,11 +54,14 @@ func TestMCPInitializesListsAndInvokesRemoteTool(t *testing.T) {
 	if len(tools) != 1 {
 		t.Fatalf("tools %v", tools)
 	}
-	info, _ := tools[0].Info(context.Background())
+	if !tools[0].ReadOnly || tools[0].RequiresApproval || tools[0].ParallelSafe || tools[0].ReturnDirect {
+		t.Fatalf("read-only MCP capabilities = %+v", tools[0])
+	}
+	info, _ := tools[0].Tool.Info(context.Background())
 	if info.Name != "mcp_test_lookup" {
 		t.Fatalf("name %s", info.Name)
 	}
-	out, err := tools[0].(tool.InvokableTool).InvokableRun(context.Background(), "{}")
+	out, err := tools[0].Tool.(tool.InvokableTool).InvokableRun(context.Background(), "{}")
 	if err != nil || out == "" {
 		t.Fatalf("out %s err %v", out, err)
 	}
@@ -134,6 +137,11 @@ func TestMCP_DiscoveryPaginationAndClose(t *testing.T) {
 			}
 			if mode == "pages" && (len(loaded) != 2 || pages != 2) {
 				t.Fatalf("tools=%d pages=%d", len(loaded), pages)
+			}
+			for _, descriptor := range loaded {
+				if descriptor.ReadOnly || !descriptor.RequiresApproval || descriptor.ParallelSafe || descriptor.ReturnDirect {
+					t.Fatalf("unannotated MCP capabilities = %+v", descriptor)
+				}
 			}
 			CloseMCP(loaded)
 			CloseMCP(loaded)

@@ -29,7 +29,7 @@ func TestStreamingTaskConsumerCloseCancelsSilentChild(t *testing.T) {
 		close(stopped)
 		return nil, ctx.Err()
 	})
-	tool := NewStreamingTaskTool(runner).(einotool.StreamableTool)
+	tool := NewStreamingTaskTool(runner, false).Tool.(einotool.StreamableTool)
 	stream, err := tool.StreamableRun(context.Background(), `{"description":"wait"}`)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestStreamingTaskFallbackAndPanic(t *testing.T) {
 			}
 			return schema.AssistantMessage("final", nil), nil
 		})
-		stream, err := NewStreamingTaskTool(runner).(einotool.StreamableTool).StreamableRun(context.Background(), `{"prompt":"go"}`)
+		stream, err := NewStreamingTaskTool(runner, false).Tool.(einotool.StreamableTool).StreamableRun(context.Background(), `{"prompt":"go"}`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,9 +96,9 @@ func TestTaskToolNameContract(t *testing.T) {
 				})
 				item := NewTaskTool(runner, tc.names...)
 				if mode == "stream" {
-					item = NewStreamingTaskTool(runner, tc.names...)
+					item = NewStreamingTaskTool(runner, false, tc.names...)
 				}
-				info, err := item.Info(context.Background())
+				info, err := item.Tool.Info(context.Background())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -122,10 +122,10 @@ func TestTaskToolNameContract(t *testing.T) {
 				}
 				var result string
 				if mode == "invoke" {
-					result, err = item.(einotool.InvokableTool).InvokableRun(context.Background(), tc.args)
+					result, err = item.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), tc.args)
 				} else {
 					var stream *schema.StreamReader[string]
-					stream, err = item.(einotool.StreamableTool).StreamableRun(context.Background(), tc.args)
+					stream, err = item.Tool.(einotool.StreamableTool).StreamableRun(context.Background(), tc.args)
 					if err == nil {
 						defer stream.Close()
 						result, err = stream.Recv()

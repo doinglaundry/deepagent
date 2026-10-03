@@ -23,12 +23,13 @@ func TestTools_AllRegisteredNamesSchemasAndArgumentAliases(t *testing.T) {
 	}
 	defer b.Close(ctx)
 	registered := map[string]einotool.InvokableTool{}
+	descriptors := map[string]ToolDescriptor{}
 	items, err := NewFilesystemTools(b, FilesystemToolOptions{EnableCommands: true, EnablePatch: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tool := range items {
-		info, err := tool.Info(ctx)
+		info, err := tool.Tool.Info(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -38,18 +39,38 @@ func TestTools_AllRegisteredNamesSchemasAndArgumentAliases(t *testing.T) {
 		if registered[info.Name] != nil {
 			t.Fatalf("duplicate tool name %q", info.Name)
 		}
-		registered[info.Name] = tool.(einotool.InvokableTool)
+		registered[info.Name] = tool.Tool.(einotool.InvokableTool)
+		descriptors[info.Name] = tool
 	}
 	for _, name := range []string{"list_files", "read_file", "write_file", "edit_file", "delete_file", "glob", "grep", "rg", "semantic_search", "read_lints", "apply_patch", "execute", "shell", "await_shell"} {
 		if registered[name] == nil {
 			t.Fatalf("missing %s", name)
 		}
 	}
-	for _, name := range []string{"write_file", "edit_file", "delete_file"} {
-		approval, ok := registered[name].(interface{ RequiresApproval() bool })
-		if !ok || !approval.RequiresApproval() {
-			t.Fatalf("%s must request approval", name)
+	for _, name := range []string{"write_file", "edit_file", "delete_file", "apply_patch", "read_lints", "execute", "shell"} {
+		if !descriptors[name].RequiresApproval || descriptors[name].ReadOnly || descriptors[name].ParallelSafe {
+			t.Fatalf("%s must execute serially with approval", name)
 		}
+	}
+	toolSet, err := NewToolSet(ctx, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnly, err := toolSet.Filter(ctx, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	infos, err := readOnly.ModelTools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, info := range infos {
+		names = append(names, info.Name)
+	}
+	want := []string{"list_files", "read_file", "glob", "grep", "rg", "semantic_search", "await_shell"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("read-only model tools = %v, want %v", names, want)
 	}
 	for _, step := range []struct{ name, args string }{
 		{"write_file", `{"path":"a.txt","content":"first\nsecond\n"}`},
@@ -74,8 +95,8 @@ func TestFilesystemPreservesWorkerReadAndExactEditContracts(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	b := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: root, VirtualMode: true, MaxFileSizeMB: 1})
-	read := NewReadFileTool(b).(einotool.InvokableTool)
-	edit := NewEditFileTool(b).(einotool.InvokableTool)
+	read := NewReadFileTool(b).Tool.(einotool.InvokableTool)
+	edit := NewEditFileTool(b).Tool.(einotool.InvokableTool)
 	writeErr3 := os.WriteFile(filepath.Join(root, "data.txt"), []byte("hello world"), 0600)
 	if writeErr3 != nil {
 		t.Fatal(writeErr3)
@@ -120,9 +141,9 @@ func TestFilesystemToolArgumentPresenceAndReplaceAll(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	b := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
-	write := NewWriteFileTool(b).(einotool.InvokableTool)
-	edit := NewEditFileTool(b).(einotool.InvokableTool)
-	read := NewReadFileTool(b).(einotool.InvokableTool)
+	write := NewWriteFileTool(b).Tool.(einotool.InvokableTool)
+	edit := NewEditFileTool(b).Tool.(einotool.InvokableTool)
+	read := NewReadFileTool(b).Tool.(einotool.InvokableTool)
 	err := os.WriteFile(filepath.Join(root, "data.txt"), []byte("twice twice"), 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -236,15 +257,15 @@ func (f *pathValidationFilesystem) Edit(context.Context, string, string, string,
 
 func TestFileMutationRequiresPathBeforeBackendInvocation(t *testing.T) {
 	filesystem := &pathValidationFilesystem{}
-	for _, item := range []einotool.BaseTool{NewWriteFileTool(filesystem), NewEditFileTool(filesystem)} {
-		info, err := item.Info(context.Background())
+	for _, item := range []ToolDescriptor{NewWriteFileTool(filesystem), NewEditFileTool(filesystem)} {
+		info, err := item.Tool.Info(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, path := range []string{"", `,"path":null`, `,"path":""`, `,"path":"  "`} {
 			t.Run(info.Name+path, func(t *testing.T) {
 				args := `{"content":"value","old":"old","new":"new"` + path + `}`
-				_, err := item.(einotool.InvokableTool).InvokableRun(context.Background(), args)
+				_, err := item.Tool.(einotool.InvokableTool).InvokableRun(context.Background(), args)
 				if err == nil || err.Error() != "path is required" {
 					t.Fatalf("path validation error = %v", err)
 				}
@@ -285,7 +306,7 @@ func TestWorkspaceToolSchemasMatchLocalAndDocker(t *testing.T) {
 			}
 			byName := map[string]any{}
 			for _, item := range items {
-				info, err := item.Info(ctx)
+				info, err := item.Tool.Info(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -321,11 +342,11 @@ func TestReadOnlyFilesystemOmitsMutations(t *testing.T) {
 	}
 	var names []string
 	for _, item := range items {
-		info, err := item.Info(context.Background())
+		info, err := item.Tool.Info(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		descriptor := Describe(item)
+		descriptor := item
 		if !descriptor.ReadOnly || descriptor.RequiresApproval {
 			t.Fatalf("read-only factory exposed mutation: %s", info.Name)
 		}
@@ -340,7 +361,7 @@ func TestReadOnlyFilesystemOmitsMutations(t *testing.T) {
 func TestApplyPatchDelegatesToFilesystem(t *testing.T) {
 	filesystem := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
 	probe := &applyPatchProbe{LocalFilesystem: filesystem}
-	item := NewApplyPatchTool(probe).(einotool.InvokableTool)
+	item := NewApplyPatchTool(probe).Tool.(einotool.InvokableTool)
 	output, err := item.InvokableRun(context.Background(), `{"patch":"*** Begin Patch\\n*** End Patch"}`)
 	if err != nil || output != "patched" || probe.patch == "" {
 		t.Fatalf("apply_patch = %q, %v, patch=%q", output, err, probe.patch)
@@ -350,7 +371,7 @@ func TestApplyPatchDelegatesToFilesystem(t *testing.T) {
 func TestDeleteFileRefusesDirectories(t *testing.T) {
 	root := t.TempDir()
 	filesystem := mustLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: root, VirtualMode: true})
-	item := NewDeleteFileTool(filesystem).(einotool.InvokableTool)
+	item := NewDeleteFileTool(filesystem).Tool.(einotool.InvokableTool)
 	_, err := item.InvokableRun(context.Background(), `{"path":"."}`)
 	if err == nil {
 		t.Fatal("delete_file accepted a directory")

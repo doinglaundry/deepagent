@@ -10,7 +10,6 @@ import (
 	"eino-cli/deepagent/graph/types"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"time"
@@ -157,11 +156,9 @@ func WithMaxModelCalls(calls int) Option {
 	}
 }
 
-func WithTools(items ...tool.BaseTool) Option {
+func WithTools(items ...tools.ToolDescriptor) Option {
 	return func(c *Config) {
-		for _, item := range items {
-			c.ToolDescriptors = append(c.ToolDescriptors, tools.Describe(item))
-		}
+		c.ToolDescriptors = append(c.ToolDescriptors, items...)
 	}
 }
 
@@ -186,7 +183,7 @@ func WithSkillLoader(loader skillspkg.SkillLoader) Option {
 // WithPlan enables the plan tool and its prompt independently.
 func WithPlan(onUpdate tools.PlanUpdateHandler) Option {
 	return func(c *Config) {
-		c.ToolDescriptors = append(c.ToolDescriptors, tools.Describe(tools.NewUpdatePlanTool(onUpdate)))
+		c.ToolDescriptors = append(c.ToolDescriptors, tools.NewUpdatePlanTool(onUpdate))
 		c.Middlewares = append(c.Middlewares, middleware.NewPlan())
 	}
 }

@@ -10,7 +10,8 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// ToolDescriptor describes capabilities; execution remains the Eino tool's responsibility.
+// ToolDescriptor carries the tool and its execution capabilities from the constructor.
+// ToolSet registers this descriptor; execution uses the original Eino Tool.
 type ToolDescriptor struct {
 	Tool             tool.BaseTool
 	ReadOnly         bool
@@ -19,28 +20,6 @@ type ToolDescriptor struct {
 	ReturnDirect     bool
 
 	info *schema.ToolInfo // Cached by NewToolSet; not supplied by callers.
-}
-
-// Describe preserves capability metadata exposed by an Eino tool.
-func Describe(tool tool.BaseTool) ToolDescriptor {
-	toolDescriptor := ToolDescriptor{Tool: tool}
-	readOnly, ok := tool.(interface{ ReadOnly() bool })
-	if ok {
-		toolDescriptor.ReadOnly = readOnly.ReadOnly()
-	}
-	approval, ok := tool.(interface{ RequiresApproval() bool })
-	if ok {
-		toolDescriptor.RequiresApproval = approval.RequiresApproval()
-	}
-	parallel, ok := tool.(interface{ ParallelSafe() bool })
-	if ok {
-		toolDescriptor.ParallelSafe = parallel.ParallelSafe()
-	}
-	returnDirect, ok := tool.(interface{ ReturnDirect() bool })
-	if ok {
-		toolDescriptor.ReturnDirect = returnDirect.ReturnDirect()
-	}
-	return toolDescriptor
 }
 
 // ToolSet is immutable after construction; filtered sets share their tool definitions.

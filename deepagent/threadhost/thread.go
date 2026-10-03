@@ -27,7 +27,6 @@ import (
 	threadpkg "eino-cli/deepagent/thread"
 
 	modelpkg "github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )
@@ -56,7 +55,7 @@ type RuntimeConfig struct {
 type RuntimeDeps struct {
 	History          conversation.HistoryRolloutStore
 	Checkpoint       compose.CheckPointStore
-	Tools            []tool.BaseTool
+	Tools            []tools.ToolDescriptor
 	SkillLoader      skillspkg.SkillLoader
 	MemoryStore      memorypkg.Store
 	Collaboration    CollaborationBackend
@@ -117,24 +116,20 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 	agentConfig := execution.Config{
 		Model: chatModel, MaxSteps: w.Runtime.MaxSteps, MaxModelCalls: w.Runtime.MaxModelCalls,
 		CheckpointStore:  w.Deps.Checkpoint,
-		ToolDescriptors:  []tools.ToolDescriptor{tools.Describe(tools.GetFollowUpTool())},
+		ToolDescriptors:  []tools.ToolDescriptor{tools.GetFollowUpTool()},
 		SubAgents:        []*execution.SubAgent{{Name: "general-purpose", EnableFilesystem: true, EnableWeb: true}},
 		SkillLoader:      w.Deps.SkillLoader,
 		WebConfig:        w.Runtime.Web,
 		Filesystem:       filesystem,
 		FilesystemConfig: &execution.FilesystemConfig{},
 	}
-	for _, item := range w.Deps.Tools {
-		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.Describe(item))
-	}
+	agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, w.Deps.Tools...)
 	if w.Deps.Collaboration != nil {
 		items, err := newCollaborationTools(w.Deps.Collaboration, info)
 		if err != nil {
 			return nil, err
 		}
-		for _, item := range items {
-			agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.Describe(item))
-		}
+		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, items...)
 		agentConfig.Prompts = append(agentConfig.Prompts, schema.SystemMessage(collaborationPrompt))
 	}
 	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)

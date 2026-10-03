@@ -14,7 +14,7 @@ import (
 	eventpkg "eino-cli/deepagent/protocol/event"
 	inputpkg "eino-cli/deepagent/protocol/input"
 
-	"github.com/cloudwego/eino/components/tool"
+	"eino-cli/deepagent/graph/tools"
 	"github.com/cloudwego/eino/components/tool/utils"
 )
 
@@ -32,7 +32,7 @@ type collaborationTools struct {
 	current *model.Thread
 }
 
-func newCollaborationTools(backend CollaborationBackend, current *model.Thread) ([]tool.BaseTool, error) {
+func newCollaborationTools(backend CollaborationBackend, current *model.Thread) ([]tools.ToolDescriptor, error) {
 	if backend == nil || current == nil {
 		return nil, nil
 	}
@@ -53,7 +53,7 @@ func newCollaborationTools(backend CollaborationBackend, current *model.Thread) 
 	if err != nil {
 		return nil, err
 	}
-	return []tool.BaseTool{send, spawn, wait, closeTask}, nil
+	return []tools.ToolDescriptor{{Tool: send}, {Tool: spawn}, {Tool: wait}, {Tool: closeTask}}, nil
 }
 
 type collaborationSpawnInput struct {

@@ -104,11 +104,11 @@ func TestDockerFilesystemToolsUseProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, item := range items {
-		info, err := item.Info(ctx)
+		info, err := item.Tool.Info(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		registered[info.Name] = item.(einotool.InvokableTool)
+		registered[info.Name] = item.Tool.(einotool.InvokableTool)
 	}
 	read, err := registered["read_file"].InvokableRun(ctx, `{"path":"a.txt","offset":2,"limit":1}`)
 	if err != nil || !strings.Contains(read, "second") || strings.Contains(read, "first") || provider.lastPath != "/remote/a.txt" {
@@ -161,8 +161,8 @@ func TestDockerFilesystemToolArgumentPresenceAndReplaceAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	write := tools.NewWriteFileTool(b).(einotool.InvokableTool)
-	edit := tools.NewEditFileTool(b).(einotool.InvokableTool)
+	write := tools.NewWriteFileTool(b).Tool.(einotool.InvokableTool)
+	edit := tools.NewEditFileTool(b).Tool.(einotool.InvokableTool)
 
 	for _, args := range []string{
 		`{"path":"data.txt"}`,

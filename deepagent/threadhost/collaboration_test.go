@@ -7,6 +7,7 @@ import (
 
 	"eino-cli/deepagent/dal/db"
 	"eino-cli/deepagent/dal/model"
+	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/manager"
 	"github.com/cloudwego/eino/components/tool"
 )
@@ -62,14 +63,14 @@ func (f *collaborationBackendFake) Close(_ context.Context, threadID int64, _ st
 	return &manager.ThreadMessageResult{}, nil
 }
 
-func runCollaborationTool(t *testing.T, items []tool.BaseTool, name, input string) map[string]any {
+func runCollaborationTool(t *testing.T, items []tools.ToolDescriptor, name, input string) map[string]any {
 	t.Helper()
 	for _, item := range items {
-		info, _ := item.Info(context.Background())
+		info, _ := item.Tool.Info(context.Background())
 		if info.Name != name {
 			continue
 		}
-		output, err := item.(tool.InvokableTool).InvokableRun(context.Background(), input)
+		output, err := item.Tool.(tool.InvokableTool).InvokableRun(context.Background(), input)
 		if err != nil {
 			t.Fatal(err)
 		}
