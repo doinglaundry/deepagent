@@ -210,7 +210,7 @@ Run:     started → blocked → started → finished / interrupted / failed
 
 ## 工具
 
-工具是否对模型可见，取决于配置、只读限制和工具过滤。
+工具是否对模型可见，取决于配置、只读限制和工具过滤。工具与中间件分别注册，互不依赖；中间件不提供工具。固定系统、文件系统与协作说明放在 `Config.Prompts`，动态项目规范、技能、计划和记忆提示由中间件生成。
 
 | 类别 | 工具 | 实现位置 |
 | --- | --- | --- |
@@ -218,8 +218,8 @@ Run:     started → blocked → started → finished / interrupted / failed
 | 文件修改 | `write_file`、`edit_file`、`delete_file`、`apply_patch` | `graph/tools` → filesystem |
 | 搜索 | `glob`、`grep`、`rg`、`semantic_search` | 文件系统搜索与词项匹配 |
 | 命令 | `execute`、`shell`、`await_shell`、`read_lints` | 本地或 Docker 命令服务 |
-| 交互 | `ask_user`、`update_plan` | 中断问答 / Plan middleware |
-| 技能 | `activate_skill` | Skill loader / middleware |
+| 交互 | `ask_user`、`update_plan` | 独立 Eino 工具；Plan middleware 只读取 RunState 生成提醒 |
+| 技能 | `activate_skill` | Skill loader；工具独立注册，middleware 只生成目录提示 |
 | 内部子代理 | `task` | ChildRunner → Graph |
 | 跨 Thread 协作 | `spawn_task`、`send_message`、`wait_message`、`close_task` | ThreadHost → Manager |
 | 网络 | `read_url`、`web_search` | Web 配置启用 |
@@ -359,7 +359,7 @@ deepagent/
 ├── graph/                  Eino 执行能力
 │   ├── execution/          唯一模型与工具执行路径
 │   │   ├── graph.go        New / Invoke
-│   │   ├── setup.go        注册工具、创建 middleware、绑定模型
+│   │   ├── setup.go        分别装配工具和 middleware，再绑定模型
 │   │   ├── flow.go         构造节点、边、编译
 │   │   ├── conversation.go 输入持久化、压缩与继续执行
 │   │   ├── model.go        模型流与工具调用分片

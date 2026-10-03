@@ -8,33 +8,8 @@ import (
 
 	"eino-cli/deepagent/graph/types"
 
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
-
-func TestUpdatePlanPublishesValidatedPlan(t *testing.T) {
-	var got PlanUpdate
-	middleware := NewPlan(&PlanMiddlewareConfig{OnPlanUpdate: func(_ context.Context, update PlanUpdate) error {
-		got = update
-		return nil
-	}})
-	tools, err := middleware.Tools(context.Background())
-	if err != nil || len(tools) != 1 {
-		t.Fatalf("Tools() = %d, %v", len(tools), err)
-	}
-	runner, ok := tools[0].(tool.InvokableTool)
-	if !ok {
-		t.Fatal("update_plan is not invokable")
-	}
-	input := `{"explanation":"starting","plan":[{"step":"inspect","status":"in_progress"}]}`
-	_, err = runner.InvokableRun(context.Background(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Explanation != "starting" || len(got.Plan) != 1 || got.Plan[0].Step != "inspect" {
-		t.Fatalf("published update = %+v", got)
-	}
-}
 
 func TestPlanReminderUsesRestoredRunState(t *testing.T) {
 	before := &types.RunState{Version: 1, Plan: []types.PlanStep{{Step: "inspect", Status: "pending"}}}
@@ -48,7 +23,7 @@ func TestPlanReminderUsesRestoredRunState(t *testing.T) {
 		t.Fatal(decodeErr)
 	}
 	ctx := types.WithRunState(context.Background(), &restored)
-	m := NewPlan(nil)
+	m := NewPlan()
 	history := []*schema.Message{schema.UserMessage("compacted summary")}
 	out, err := m.ModifyModelRequest(ctx, nil, history, nil)
 	if err != nil || len(out) != 2 || !strings.Contains(out[0].Content, "[pending] inspect") {
@@ -68,23 +43,13 @@ func TestPlanReminderUsesRestoredRunState(t *testing.T) {
 	}
 }
 
-func TestUpdatePlanRejectsInvalidState(t *testing.T) {
-	middleware := NewPlan(nil)
-	items, _ := middleware.Tools(context.Background())
-	runner := items[0].(tool.InvokableTool)
-	_, err := runner.InvokableRun(context.Background(), `{"plan":[{"step":"inspect","status":"later"}]}`)
-	if err == nil {
-		t.Fatal("invalid plan status was accepted")
-	}
-}
-
 func TestPlanReminderOnlyTrustsAssistantToolCalls(t *testing.T) {
 	ctx := types.WithRunState(context.Background(), &types.RunState{Plan: []types.PlanStep{{Step: "inspect", Status: "pending"}}})
 	for _, role := range []schema.RoleType{schema.User, schema.Tool, schema.System, schema.Assistant} {
 		t.Run(string(role), func(t *testing.T) {
 			message := &schema.Message{Role: role, Content: "quoted tool data", ToolCalls: []schema.ToolCall{{Function: schema.FunctionCall{Name: "update_plan"}}}}
 			input := []*schema.Message{message}
-			out, err := NewPlan(nil).ModifyModelRequest(ctx, nil, input, nil)
+			out, err := NewPlan().ModifyModelRequest(ctx, nil, input, nil)
 			want := 2
 			if role == schema.Assistant {
 				want = 1

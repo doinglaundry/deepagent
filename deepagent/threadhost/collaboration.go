@@ -10,14 +10,12 @@ import (
 	"time"
 
 	"eino-cli/deepagent/dal/model"
-	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/manager"
 	eventpkg "eino-cli/deepagent/protocol/event"
 	inputpkg "eino-cli/deepagent/protocol/input"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
-	"github.com/cloudwego/eino/schema"
 )
 
 type CollaborationBackend interface {
@@ -27,30 +25,34 @@ type CollaborationBackend interface {
 	Close(context.Context, int64, string) (*manager.ThreadMessageResult, error)
 }
 
-type collaborationMiddleware struct {
-	middleware.BaseMiddleware
+const collaborationPrompt = "Use spawn_task for bounded independent work, send_message only for new information, wait_message to collect a result, and close_task when a child task is no longer needed. Never target the current thread."
+
+type collaborationTools struct {
 	manager CollaborationBackend
 	current *model.Thread
 }
 
-func newCollaborationMiddleware(backend CollaborationBackend, current *model.Thread) *collaborationMiddleware {
-	return &collaborationMiddleware{manager: backend, current: current}
-}
-
-func (*collaborationMiddleware) Name() string { return "collaboration" }
-
-func (*collaborationMiddleware) BuildPrompt(context.Context) ([]*schema.Message, error) {
-	return []*schema.Message{schema.SystemMessage("Use spawn_task for bounded independent work, send_message only for new information, wait_message to collect a result, and close_task when a child task is no longer needed. Never target the current thread.")}, nil
-}
-
-func (m *collaborationMiddleware) Tools(context.Context) ([]tool.BaseTool, error) {
-	if m == nil || m.manager == nil || m.current == nil {
+func newCollaborationTools(backend CollaborationBackend, current *model.Thread) ([]tool.BaseTool, error) {
+	if backend == nil || current == nil {
 		return nil, nil
 	}
-	spawn, _ := utils.InferTool("spawn_task", "Create an independent child task.", m.spawn)
-	send, _ := utils.InferTool("send_message", "Send new information to another task.", m.send)
-	wait, _ := utils.InferTool("wait_message", "Wait for a submitted message to finish or block.", m.wait)
-	closeTask, _ := utils.InferTool("close_task", "Close another task.", m.close)
+	implementation := &collaborationTools{manager: backend, current: current}
+	send, err := utils.InferTool("send_message", "Send new information to another task.", implementation.send)
+	if err != nil {
+		return nil, err
+	}
+	spawn, err := utils.InferTool("spawn_task", "Create an independent child task.", implementation.spawn)
+	if err != nil {
+		return nil, err
+	}
+	wait, err := utils.InferTool("wait_message", "Wait for a submitted message to finish or block.", implementation.wait)
+	if err != nil {
+		return nil, err
+	}
+	closeTask, err := utils.InferTool("close_task", "Close another task.", implementation.close)
+	if err != nil {
+		return nil, err
+	}
 	return []tool.BaseTool{send, spawn, wait, closeTask}, nil
 }
 
@@ -60,7 +62,7 @@ type collaborationSpawnInput struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-func (m *collaborationMiddleware) spawn(ctx context.Context, input *collaborationSpawnInput) (string, error) {
+func (m *collaborationTools) spawn(ctx context.Context, input *collaborationSpawnInput) (string, error) {
 	if input == nil || strings.TrimSpace(input.Content) == "" {
 		return "", errors.New("content is required")
 	}
@@ -86,7 +88,7 @@ type collaborationSendInput struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-func (m *collaborationMiddleware) send(ctx context.Context, input *collaborationSendInput) (string, error) {
+func (m *collaborationTools) send(ctx context.Context, input *collaborationSendInput) (string, error) {
 	if input == nil || strings.TrimSpace(input.Content) == "" {
 		return "", errors.New("target and content are required")
 	}
@@ -118,7 +120,7 @@ type collaborationWaitResult struct {
 	Result string `json:"result,omitempty"`
 }
 
-func (m *collaborationMiddleware) wait(ctx context.Context, input *collaborationWaitInput) (string, error) {
+func (m *collaborationTools) wait(ctx context.Context, input *collaborationWaitInput) (string, error) {
 	if input == nil {
 		return "", errors.New("target and message_id are required")
 	}
@@ -157,7 +159,7 @@ func (m *collaborationMiddleware) wait(ctx context.Context, input *collaboration
 	}
 }
 
-func (m *collaborationMiddleware) observe(ctx context.Context, threadID, messageID int64) (collaborationWaitResult, bool, error) {
+func (m *collaborationTools) observe(ctx context.Context, threadID, messageID int64) (collaborationWaitResult, bool, error) {
 	threads, err := m.manager.ListThreads(ctx, manager.ListThreadsRequest{ThreadID: threadID})
 	if err != nil {
 		return collaborationWaitResult{}, false, err
@@ -202,7 +204,7 @@ type collaborationCloseInput struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-func (m *collaborationMiddleware) close(ctx context.Context, input *collaborationCloseInput) (string, error) {
+func (m *collaborationTools) close(ctx context.Context, input *collaborationCloseInput) (string, error) {
 	if input == nil {
 		return "", errors.New("target is required")
 	}

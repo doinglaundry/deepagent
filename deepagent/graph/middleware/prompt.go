@@ -10,36 +10,9 @@ import (
 
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	skillspkg "eino-cli/deepagent/graph/skills"
-	"eino-cli/deepagent/graph/tools"
 
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
-
-const BasePromptMiddlewareName = "base_prompt"
-
-// BasePromptMiddleware supplies the initial system context for a model run.
-type BasePromptMiddleware struct {
-	BaseMiddleware
-	prompt string
-}
-
-func NewBasePromptMiddleware(prompt string) *BasePromptMiddleware {
-	return &BasePromptMiddleware{prompt: prompt}
-}
-
-func (m *BasePromptMiddleware) Name() string { return BasePromptMiddlewareName }
-
-func (m *BasePromptMiddleware) BuildInitialContext(context.Context) ([]*schema.Message, error) {
-	if m == nil || m.prompt == "" {
-		return nil, nil
-	}
-	return []*schema.Message{schema.SystemMessage(m.prompt)}, nil
-}
-
-func (m *BasePromptMiddleware) BuildPrompt(ctx context.Context) ([]*schema.Message, error) {
-	return m.BuildInitialContext(ctx)
-}
 
 type projectInstructions struct {
 	BaseMiddleware
@@ -126,11 +99,4 @@ func (m *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*schema.Message, e
 		fmt.Fprintf(&prompt, "- %s: %s (source: %s)\n", item.Name, item.Description, item.Path)
 	}
 	return []*schema.Message{schema.SystemMessage(prompt.String())}, nil
-}
-
-func (m *SkillMiddleware) Tools(context.Context) ([]tool.BaseTool, error) {
-	if m == nil || m.loader == nil {
-		return nil, nil
-	}
-	return []tool.BaseTool{tools.NewActivateSkillTool(m.loader)}, nil
 }

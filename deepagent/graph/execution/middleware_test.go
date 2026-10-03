@@ -13,6 +13,7 @@ import (
 
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/middleware"
+	"eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
 
@@ -340,7 +341,7 @@ func TestRun_PlanRestoresFromCheckpointAfterContextCompaction(t *testing.T) {
 		{schema.AssistantMessage("done", nil)},
 	}}
 	published := 0
-	cfg := Config{Model: m, RunID: "plan-run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{middleware.NewPlan(&middleware.PlanMiddlewareConfig{OnPlanUpdate: func(context.Context, middleware.PlanUpdate) error { published++; return nil }})}}
+	cfg := Config{Model: m, RunID: "plan-run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{middleware.NewPlan()}, ToolDescriptors: []tools.ToolDescriptor{tools.Describe(tools.NewUpdatePlanTool(func(context.Context, tools.PlanUpdate) error { published++; return nil }))}}
 	first, err := New(ctx, WithConfig(&cfg))
 	if err != nil {
 		t.Fatal(err)
@@ -407,7 +408,7 @@ func TestRun_PlanEventsUseGraphSequenceAndDeliveryErrorsAreFatal(t *testing.T) {
 		}}
 		var events []types.RuntimeEvent
 		want := errors.New("event transport failed")
-		a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{middleware.NewPlan(nil)}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+		a, err := New(context.Background(), WithConfig(&Config{Model: m, Middlewares: []middleware.Middleware{middleware.NewPlan()}, ToolDescriptors: []tools.ToolDescriptor{tools.Describe(tools.NewUpdatePlanTool(nil))}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
 			events = append(events, event)
 			if failDelivery && event.Kind == "plan_updated" {
 				return want
@@ -444,4 +445,45 @@ func TestRun_PlanEventsUseGraphSequenceAndDeliveryErrorsAreFatal(t *testing.T) {
 			t.Fatalf("start=%d plan=%d end=%d count=%d", startIndex, planIndex, endIndex, count)
 		}
 	}
+}
+
+// A prompt middleware must not grant tools that were not independently configured.
+func TestRun_PromptMiddlewareDoesNotRegisterTools(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		middleware middleware.Middleware
+		prompt     string
+	}{
+		{"plan", middleware.NewPlan(), "<plan_mode>"},
+		{"skill", middleware.NewSkillMiddleware(emptySkillLoader{}), "Available project skills"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			chatModel := &publicModel{}
+			graph, err := New(context.Background(), WithModel(chatModel), WithMiddleware(test.middleware))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer graph.Close(context.Background())
+			_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("hello")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(chatModel.infos) != 0 {
+				t.Fatalf("prompt middleware implicitly registered tools: %+v", chatModel.infos)
+			}
+			found := false
+			for _, message := range chatModel.inputs[0] {
+				found = found || strings.Contains(message.Content, test.prompt)
+			}
+			if !found {
+				t.Fatal("middleware prompt was lost")
+			}
+		})
+	}
+}
+
+type emptySkillLoader struct{}
+
+func (emptySkillLoader) ListSkills(context.Context) ([]*skills.SkillMetadata, error) {
+	return nil, nil
 }

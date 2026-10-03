@@ -127,21 +127,25 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 	for _, item := range w.Deps.Tools {
 		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.Describe(item))
 	}
-	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)
-	runConfig := &run.Config{Graph: agentConfig}
-	runConfig.MiddlewaresProvider = func(context.Context, string) []middleware.Middleware {
-		items := []middleware.Middleware{middleware.NewProjectInstructions(filesystem)}
-		if w.Deps.Collaboration != nil {
-			items = append(items, newCollaborationMiddleware(w.Deps.Collaboration, info))
+	if w.Deps.Collaboration != nil {
+		items, err := newCollaborationTools(w.Deps.Collaboration, info)
+		if err != nil {
+			return nil, err
 		}
-		if prompt != "" {
-			items = append(items, middleware.NewBasePromptMiddleware(prompt))
+		for _, item := range items {
+			agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.Describe(item))
 		}
-		if memoryService != nil {
-			items = append(items, longmemory.NewPrompt(memoryService, memoryScope(w.Runtime.MemoryUserID, info)))
-		}
-		return items
+		agentConfig.Prompts = append(agentConfig.Prompts, schema.SystemMessage(collaborationPrompt))
 	}
+	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)
+	if prompt != "" {
+		agentConfig.Prompts = append(agentConfig.Prompts, schema.SystemMessage(prompt))
+	}
+	agentConfig.Middlewares = []middleware.Middleware{middleware.NewProjectInstructions(filesystem)}
+	if memoryService != nil {
+		agentConfig.Middlewares = append(agentConfig.Middlewares, longmemory.NewPrompt(memoryService, memoryScope(w.Runtime.MemoryUserID, info)))
+	}
+	runConfig := &run.Config{Graph: agentConfig}
 	if memoryService != nil {
 		runConfig.RunCompleted = func(doneCtx context.Context, threadID, _ string, _ modelpkg.ToolCallingChatModel, history []*schema.Message) {
 			observeErr := memoryService.Observe(doneCtx, memoryScope(w.Runtime.MemoryUserID, info), threadID, history)

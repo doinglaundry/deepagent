@@ -6,7 +6,6 @@ import (
 
 	"eino-cli/deepagent/graph/types"
 
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -20,7 +19,6 @@ type Middleware interface {
 	ModifyModelRequest(context.Context, []*schema.Message, []*schema.Message, *types.GraphState) ([]*schema.Message, error)
 	ModifyModelResponse(context.Context, *schema.Message, *types.GraphState) (*schema.Message, error)
 	ModifyModelStreamResponse(context.Context, *schema.StreamReader[*schema.Message], *types.GraphState) (*schema.StreamReader[*schema.Message], error)
-	Tools(context.Context) ([]tool.BaseTool, error)
 }
 
 // BaseMiddleware makes every hook optional. Concrete middleware only needs to
@@ -47,9 +45,7 @@ func (BaseMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schem
 	return stream, nil
 }
 
-func (BaseMiddleware) Tools(context.Context) ([]tool.BaseTool, error) { return nil, nil }
-
-// Optional capabilities are detected directly by DeepAgent; there is no second
+// Optional capabilities are detected directly by Graph; there is no second
 // middleware pipeline or intermediate execution object.
 type RunMiddleware interface {
 	BeforeRun(context.Context, *types.RunState) error
@@ -69,6 +65,5 @@ type ModelMiddleware interface {
 // RunFactory creates fresh mutable state when a configured middleware is reused.
 type RunFactory interface{ NewRun() Middleware }
 
-// ResourceCloser releases resources acquired during tool construction as well
-// as execution. Close must tolerate construction without BeforeRun.
+// ResourceCloser releases resources acquired during setup or execution. Close must tolerate construction without BeforeRun.
 type ResourceCloser interface{ Close(context.Context) error }

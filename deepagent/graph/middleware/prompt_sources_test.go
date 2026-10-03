@@ -9,35 +9,12 @@ import (
 
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	skillspkg "eino-cli/deepagent/graph/skills"
-
-	"github.com/cloudwego/eino/components/tool"
 )
 
 type testLoader struct{ items []*skillspkg.SkillMetadata }
 
 func (l testLoader) ListSkills(context.Context) ([]*skillspkg.SkillMetadata, error) {
 	return l.items, nil
-}
-
-func TestActivateSkillLoadsInstructions(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "SKILL.md")
-	writeErr := os.WriteFile(path, []byte("follow these instructions"), 0o600)
-	if writeErr != nil {
-		t.Fatal(writeErr)
-	}
-	middleware := NewSkillMiddleware(testLoader{items: []*skillspkg.SkillMetadata{{Name: "review", Description: "Review code", Path: path}}})
-	prompt, err := middleware.BuildPrompt(context.Background())
-	if err != nil || len(prompt) != 1 || !strings.Contains(prompt[0].Content, "review") {
-		t.Fatalf("prompt = %+v, %v", prompt, err)
-	}
-	items, err := middleware.Tools(context.Background())
-	if err != nil || len(items) != 1 {
-		t.Fatalf("tools = %d, %v", len(items), err)
-	}
-	output, err := items[0].(tool.InvokableTool).InvokableRun(context.Background(), `{"name":"review"}`)
-	if err != nil || !strings.Contains(output, "follow these instructions") {
-		t.Fatalf("activate_skill = %q, %v", output, err)
-	}
 }
 
 func TestBuildPromptIgnoresInvalidSkillMetadata(t *testing.T) {

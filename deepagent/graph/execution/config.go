@@ -183,9 +183,11 @@ func WithSkillLoader(loader skillspkg.SkillLoader) Option {
 	}
 }
 
-func WithPlanMiddleware(cfg *middleware.PlanMiddlewareConfig) Option {
+// WithPlan enables the plan tool and its prompt independently.
+func WithPlan(onUpdate tools.PlanUpdateHandler) Option {
 	return func(c *Config) {
-		c.Middlewares = append(c.Middlewares, middleware.NewPlan(cfg))
+		c.ToolDescriptors = append(c.ToolDescriptors, tools.Describe(tools.NewUpdatePlanTool(onUpdate)))
+		c.Middlewares = append(c.Middlewares, middleware.NewPlan())
 	}
 }
 

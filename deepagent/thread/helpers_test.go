@@ -335,9 +335,9 @@ type threadCloseMiddleware struct {
 
 func (*threadCloseMiddleware) Name() string { return "thread_close" }
 
-func (m *threadCloseMiddleware) Tools(context.Context) ([]tool.BaseTool, error) {
+func (m *threadCloseMiddleware) BuildStateHandler() types.RunTimeStateful {
 	close(m.ready)
-	return nil, nil
+	return nil
 }
 
 func (m *threadCloseMiddleware) Close(context.Context) error { m.closed.Add(1); return nil }

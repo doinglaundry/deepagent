@@ -10,7 +10,6 @@ import (
 
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
 	"eino-cli/deepagent/graph/execution"
-	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/types"
 
 	"github.com/cloudwego/eino/schema"
@@ -73,11 +72,8 @@ func (r *Run) Execute(ctx context.Context) (result *schema.Message, err error) {
 	}()
 
 	cfg := *r.config.Graph.Clone()
-	if r.config.MiddlewaresProvider != nil {
-		cfg.Middlewares = append(r.config.MiddlewaresProvider(ctx, r.id), cfg.Middlewares...)
-	}
 	if r.config.EnablePlan {
-		cfg.Middlewares = append(cfg.Middlewares, middleware.NewPlan(nil))
+		execution.WithPlan(nil)(&cfg)
 	}
 	cfg.RunID = r.id
 	cfg.Emit = r.forwardGraphEvent

@@ -226,7 +226,7 @@ func (r *childRunner) Run(ctx context.Context, request tools.ChildRequest, emit 
 		}
 		found = true
 		if spec.SystemPrompt != "" {
-			cfg.Prompts = []*schema.Message{schema.SystemMessage(spec.SystemPrompt)}
+			cfg.Prompts = append(cfg.Prompts, schema.SystemMessage(spec.SystemPrompt))
 		}
 		cfg.ReadOnlyToolsOnly = cfg.ReadOnlyToolsOnly || spec.ReadOnly
 		if !spec.EnableFilesystem {

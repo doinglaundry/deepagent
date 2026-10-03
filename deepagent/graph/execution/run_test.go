@@ -12,6 +12,7 @@ import (
 	"eino-cli/deepagent/graph/conversation"
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	"eino-cli/deepagent/graph/middleware"
+	"eino-cli/deepagent/graph/tools"
 	deeptools "eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
 
@@ -340,8 +341,8 @@ func TestNew_ConstructionFailureClosesResourcesInReverseOrder(t *testing.T) {
 	want, closeErr := errors.New("tool construction failed"), errors.New("resource close failed")
 	var order []string
 	first := &resourceMiddleware{name: "first", order: &order, closeErr: closeErr}
-	second := &resourceMiddleware{name: "second", order: &order, toolsErr: want}
-	a, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{}, Middlewares: []middleware.Middleware{first, second}}))
+	second := &resourceMiddleware{name: "second", order: &order}
+	a, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{}, Middlewares: []middleware.Middleware{first, second}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &failingInfoTool{err: want}}}}))
 	if a != nil || !errors.Is(err, want) || !errors.Is(err, closeErr) {
 		t.Fatalf("agent=%v err=%v", a, err)
 	}

@@ -5,38 +5,16 @@ import (
 	"fmt"
 	"strings"
 
-	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
 
-	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
-type Plan struct {
-	BaseMiddleware
-	onUpdate PlanUpdateHandler
-}
+type Plan struct{ BaseMiddleware }
 
-type PlanMiddlewareConfig struct{ OnPlanUpdate PlanUpdateHandler }
-
-type PlanStep = tools.PlanStep
-
-type PlanUpdate = tools.PlanUpdate
-
-type PlanUpdateHandler = tools.PlanUpdateHandler
-
-func NewPlan(cfg *PlanMiddlewareConfig) Middleware {
-	if cfg == nil {
-		cfg = &PlanMiddlewareConfig{}
-	}
-	return &Plan{onUpdate: cfg.OnPlanUpdate}
-}
+func NewPlan() Middleware { return &Plan{} }
 
 func (*Plan) Name() string { return "plan" }
-
-func (m *Plan) Tools(context.Context) ([]tool.BaseTool, error) {
-	return []tool.BaseTool{tools.NewUpdatePlanTool(m.onUpdate)}, nil
-}
 
 const reminderTag = `<system_reminder type="plan">`
 

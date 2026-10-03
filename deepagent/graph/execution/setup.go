@@ -9,6 +9,7 @@ import (
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/schema"
 )
 
 // configure 将配置装配为当前 Graph 使用的工具、模型和中间件，不构图、不调用模型。
@@ -17,77 +18,19 @@ func (a *Graph) configure(ctx context.Context) (err error) {
 	// 使用配置副本补齐本次 RunID，避免修改原配置。
 	cfg := *a.cfg.Clone()
 	cfg.RunID = a.runID
-	// 有 RunFactory 的中间件创建本次实例，避免多个 Run 共用可变状态。
-	callers, err := a.newRunMiddlewares(ctx)
+	// 中间件只处理提示和执行钩子，不注册工具。
+	middlewares, err := a.newRunMiddlewares(ctx)
 	if err != nil {
 		return err
 	}
-	middlewares := make([]middleware.Middleware, 0, len(callers)+2)
-	// 后续装配失败时，即使上游 context 已取消，也尝试关闭已创建的中间件。
 	defer func() {
 		if err != nil {
-			err = errors.Join(err, closeMiddlewareResources(context.WithoutCancel(ctx), callers))
+			err = errors.Join(err, closeMiddlewareResources(context.WithoutCancel(ctx), middlewares))
 		}
 	}()
 
-	// 汇总显式工具，以及 Skills、文件系统、Web、中间件和子代理提供的工具。
-	descriptors := append([]tools.ToolDescriptor(nil), cfg.ToolDescriptors...)
-	if cfg.SkillLoader != nil {
-		skill := middleware.NewSkillMiddleware(cfg.SkillLoader)
-		middlewares = append(middlewares, skill)
-		items, toolsErr := skill.Tools(ctx)
-		if toolsErr != nil {
-			return toolsErr
-		}
-		descriptors = appendToolDescriptors(descriptors, items)
-	}
-	filesystemConfig := cfg.FilesystemConfig
-	if filesystemConfig != nil && cfg.Filesystem != nil {
-		// 同时接入文件工具的使用说明，让模型知道如何操作当前文件系统。
-		middlewares = append(middlewares, middleware.NewBasePromptMiddleware(tools.FilesystemPrompt))
-		items, toolsErr := tools.NewFilesystemTools(cfg.Filesystem, tools.FilesystemToolOptions{
-			ReadOnly:       filesystemConfig.ReadOnly,
-			EnableCommands: !filesystemConfig.DisableExecute,
-			EnablePatch:    !filesystemConfig.DisableApplyPatch,
-			CommandTimeout: filesystemConfig.CommandTimeout,
-		})
-		if toolsErr != nil {
-			return toolsErr
-		}
-		descriptors = appendToolDescriptors(descriptors, items)
-	}
-	if cfg.WebConfig != nil {
-		items, toolsErr := tools.NewWebTools(ctx, cfg.WebConfig)
-		if toolsErr != nil {
-			return toolsErr
-		}
-		descriptors = appendToolDescriptors(descriptors, items)
-	}
-	middlewares = append(middlewares, callers...)
-	for _, mw := range callers {
-		items, toolsErr := mw.Tools(ctx)
-		if toolsErr != nil {
-			return toolsErr
-		}
-		descriptors = appendToolDescriptors(descriptors, items)
-	}
-	// 注册 task 工具作为子代理入口；真正调用 task 时才创建并执行子 Graph。
-	if len(cfg.SubAgents) > 0 {
-		names := make([]string, 0, len(cfg.SubAgents))
-		for _, spec := range cfg.SubAgents {
-			names = append(names, spec.Name)
-		}
-		task := tools.NewStreamingTaskTool(NewChildRunner(cfg), names...)
-		descriptors = append(descriptors, tools.ToolDescriptor{
-			Tool: task, ParallelSafe: true, ReadOnly: cfg.ReadOnlyToolsOnly,
-		})
-	}
-	// 检查工具名称与重复定义、缓存 schema，再按只读限制和 ToolMask 过滤。
-	toolSet, err := tools.NewToolSet(ctx, descriptors)
-	if err != nil {
-		return err
-	}
-	toolSet, err = toolSet.Filter(ctx, a.cfg.ReadOnlyToolsOnly, a.cfg.ToolMask)
+	// 工具单独装配、校验和过滤，再将 schema 绑定到模型。
+	toolSet, err := newToolSet(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -96,9 +39,9 @@ func (a *Graph) configure(ctx context.Context) (err error) {
 		return err
 	}
 	// 把最终工具 schema 绑定到模型；这里只告知模型有哪些工具，不执行工具。
-	a.model = a.cfg.Model
+	a.model = cfg.Model
 	if len(infos) > 0 {
-		a.model, err = a.cfg.Model.WithTools(infos)
+		a.model, err = cfg.Model.WithTools(infos)
 		if err != nil {
 			return err
 		}
@@ -108,10 +51,58 @@ func (a *Graph) configure(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	// 固定说明属于配置；动态提示仍由中间件在每次模型请求前生成。
+	if cfg.FilesystemConfig != nil && cfg.Filesystem != nil {
+		cfg.Prompts = append(cfg.Prompts, schema.SystemMessage(tools.FilesystemPrompt))
+	}
+	a.cfg.Prompts = cfg.Prompts
 	a.middlewares, a.tools, a.graphState = middlewares, toolSet, graphState
 	a.eager = a.canExecuteToolsEagerly(middlewares)
 	a.resourcesOpen = true
 	return nil
+}
+
+// newToolSet 只装配工具，不访问中间件。
+func newToolSet(ctx context.Context, cfg Config) (*tools.ToolSet, error) {
+	descriptors := append([]tools.ToolDescriptor(nil), cfg.ToolDescriptors...)
+	if cfg.SkillLoader != nil {
+		descriptors = append(descriptors, tools.Describe(tools.NewActivateSkillTool(cfg.SkillLoader)))
+	}
+	filesystemConfig := cfg.FilesystemConfig
+	if filesystemConfig != nil && cfg.Filesystem != nil {
+		items, err := tools.NewFilesystemTools(cfg.Filesystem, tools.FilesystemToolOptions{
+			ReadOnly:       filesystemConfig.ReadOnly,
+			EnableCommands: !filesystemConfig.DisableExecute,
+			EnablePatch:    !filesystemConfig.DisableApplyPatch,
+			CommandTimeout: filesystemConfig.CommandTimeout,
+		})
+		if err != nil {
+			return nil, err
+		}
+		descriptors = appendToolDescriptors(descriptors, items)
+	}
+	if cfg.WebConfig != nil {
+		items, err := tools.NewWebTools(ctx, cfg.WebConfig)
+		if err != nil {
+			return nil, err
+		}
+		descriptors = appendToolDescriptors(descriptors, items)
+	}
+	if len(cfg.SubAgents) > 0 {
+		names := make([]string, 0, len(cfg.SubAgents))
+		for _, spec := range cfg.SubAgents {
+			names = append(names, spec.Name)
+		}
+		descriptors = append(descriptors, tools.ToolDescriptor{
+			Tool:         tools.NewStreamingTaskTool(NewChildRunner(cfg), names...),
+			ParallelSafe: true, ReadOnly: cfg.ReadOnlyToolsOnly,
+		})
+	}
+	toolSet, err := tools.NewToolSet(ctx, descriptors)
+	if err != nil {
+		return nil, err
+	}
+	return toolSet.Filter(ctx, cfg.ReadOnlyToolsOnly, cfg.ToolMask)
 }
 
 func appendToolDescriptors(descriptors []tools.ToolDescriptor, items []tool.BaseTool) []tools.ToolDescriptor {
@@ -121,13 +112,16 @@ func appendToolDescriptors(descriptors []tools.ToolDescriptor, items []tool.Base
 	return descriptors
 }
 
-// newRunMiddlewares creates fresh mutable instances before any Tools method is called.
+// newRunMiddlewares creates dynamic prompts and fresh mutable instances for this Run.
 func (a *Graph) newRunMiddlewares(ctx context.Context) (middlewares []middleware.Middleware, err error) {
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, closeMiddlewareResources(context.WithoutCancel(ctx), middlewares))
 		}
 	}()
+	if a.cfg.SkillLoader != nil {
+		middlewares = append(middlewares, middleware.NewSkillMiddleware(a.cfg.SkillLoader))
+	}
 	for _, source := range a.cfg.Middlewares {
 		if source == nil {
 			continue

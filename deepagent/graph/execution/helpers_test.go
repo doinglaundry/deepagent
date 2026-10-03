@@ -495,17 +495,13 @@ func (m *blockingResourceMiddleware) Close(context.Context) error {
 
 type resourceMiddleware struct {
 	middleware.BaseMiddleware
-	name                          string
-	order                         *[]string
-	toolsErr, beforeErr, closeErr error
-	closed                        int
+	name                string
+	order               *[]string
+	beforeErr, closeErr error
+	closed              int
 }
 
 func (m *resourceMiddleware) Name() string { return m.name }
-
-func (m *resourceMiddleware) Tools(context.Context) ([]tool.BaseTool, error) {
-	return nil, m.toolsErr
-}
 
 func (m *resourceMiddleware) BeforeRun(context.Context, *types.RunState) error { return m.beforeErr }
 
@@ -881,4 +877,13 @@ func (t *webMaskTestTool) Info(context.Context) (*schema.ToolInfo, error) {
 
 func (*webMaskTestTool) InvokableRun(context.Context, string, ...tool.Option) (string, error) {
 	return "", nil
+}
+
+type failingInfoTool struct {
+	fakeToolCounter
+	err error
+}
+
+func (t *failingInfoTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return nil, t.err
 }

@@ -402,3 +402,28 @@ func TestChildAgent_RequiresExplicitRegistration(t *testing.T) {
 		t.Fatalf("unconfigured child executed: err=%v calls=%d", err, m.calls)
 	}
 }
+
+func TestChildAgent_CustomPromptRetainsSharedInstructions(t *testing.T) {
+	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
+	cfg := Config{
+		Model:     chatModel,
+		Prompts:   []*schema.Message{schema.SystemMessage("shared operating instructions")},
+		SubAgents: []*SubAgent{{Name: "review", SystemPrompt: "review-specific instructions"}},
+	}
+	_, err := NewChildRunner(cfg).Run(context.Background(), tools.ChildRequest{Name: "review", Prompt: "inspect"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, child := 0, 0
+	for _, message := range chatModel.inputs[0] {
+		if message.Content == "shared operating instructions" {
+			shared++
+		}
+		if message.Content == "review-specific instructions" {
+			child++
+		}
+	}
+	if shared != 1 || child != 1 || len(cfg.Prompts) != 1 {
+		t.Fatalf("shared=%d child=%d parent prompts=%d", shared, child, len(cfg.Prompts))
+	}
+}
