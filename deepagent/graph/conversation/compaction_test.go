@@ -8,47 +8,25 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func TestBootstrapReplacementPreservesSummaryAndHistoricalSource(t *testing.T) {
-	for _, testCase := range []struct {
-		name, first         string
-		enabled, withPrompt bool
-		wantCount           int
-	}{
-		{"replace stale bootstrap", "old prompt", true, true, 2},
-		{"preserve leading summary", "Earlier conversation summary: important", true, true, 3},
-		{"default keeps system history", "historical instruction", false, true, 3},
-		{"no replacement prompt keeps history", "old prompt", true, false, 2},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			ctx := context.Background()
-			conversation := New("thread", nil, nil, nil, WithBootstrapPromptReplacement(testCase.enabled))
-			original := schema.SystemMessage(testCase.first)
-			addHistoryErr := conversation.AddHistory(ctx, "old", original, schema.UserMessage("prior"))
-			if addHistoryErr != nil {
-				t.Fatal(addHistoryErr)
-			}
-			var prompts []*schema.Message
-			if testCase.withPrompt {
-				prompts = []*schema.Message{schema.SystemMessage("fresh prompt")}
-			}
-			request, err := conversation.BuildRequest(ctx, prompts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(request) != testCase.wantCount {
-				t.Fatalf("request=%v", request)
-			}
-			if testCase.withPrompt && request[0].Content != "fresh prompt" {
-				t.Fatal("fresh prompt lost")
-			}
-			if testCase.name == "preserve leading summary" && request[1].Content != testCase.first {
-				t.Fatal("summary discarded")
-			}
-			history := conversation.GetHistory(ctx)
-			if len(history) != 2 || history[0] != original || original.Content != testCase.first {
-				t.Fatal("request projection mutated source history")
-			}
-		})
+func TestBuildRequestPreservesHistoricalMessages(t *testing.T) {
+	ctx := context.Background()
+	conversation := New("thread", nil, nil, nil)
+	original := schema.SystemMessage("historical instruction")
+	err := conversation.AddHistory(ctx, "old", original, schema.UserMessage("prior"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := conversation.BuildRequest(ctx, []*schema.Message{schema.SystemMessage("fresh prompt")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request) != 3 || request[0].Content != "fresh prompt" || request[1] != original {
+		t.Fatalf("request lost prompt or history: %v", request)
+	}
+	request[1] = schema.SystemMessage("replacement")
+	history := conversation.GetHistory(ctx)
+	if len(history) != 2 || history[0] != original || original.Content != "historical instruction" {
+		t.Fatal("request projection mutated source history")
 	}
 }
 
@@ -73,7 +51,7 @@ func TestSummaryCompactionPreservesRecentToolExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result == nil || len(result.Rebuilt) != 5 || result.Rebuilt[2].ToolCalls[0].ID != "call" || result.Rebuilt[3].ToolCallID != "call" {
+	if result == nil || len(result) != 5 || result[2].ToolCalls[0].ID != "call" || result[3].ToolCallID != "call" {
 		t.Fatalf("compacted=%+v", result)
 	}
 	store := &testStore{}

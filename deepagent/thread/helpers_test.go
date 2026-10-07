@@ -139,21 +139,26 @@ func (s *legacyParityDedupHistoryStore) Append(_ context.Context, record *conver
 	}
 	s.seen[record.MessageID] = struct{}{}
 	copy := *record
-	copy.Seq = int64(len(s.records) + 1)
+	record.Seq = int64(len(s.records) + 1)
+	copy.Seq = record.Seq
 	s.records = append(s.records, &copy)
 	return nil
 }
 
-func (s *legacyParityDedupHistoryStore) List(_ context.Context, query conversation.ListQuery) ([]*conversation.HistoryRecord, error) {
+func (s *legacyParityDedupHistoryStore) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*conversation.HistoryRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := append([]*conversation.HistoryRecord(nil), s.records...)
-	if query.Order == conversation.ListOrderDESC {
-		for left, right := 0, len(result)-1; left < right; left, right = left+1, right-1 {
-			result[left], result[right] = result[right], result[left]
+	var records []*conversation.HistoryRecord
+	for _, record := range s.records {
+		if record.ThreadID != threadID || record.Seq <= sequence {
+			continue
+		}
+		records = append(records, record)
+		if limit > 0 && len(records) >= limit {
+			break
 		}
 	}
-	return result, nil
+	return records, nil
 }
 
 type redeliveryModel struct{}
@@ -178,11 +183,15 @@ func (s *redeliveryHistoryStore) Append(_ context.Context, record *conversation.
 	return nil
 }
 
-func (s *redeliveryHistoryStore) List(_ context.Context, query conversation.ListQuery) ([]*conversation.HistoryRecord, error) {
+func (s *redeliveryHistoryStore) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*conversation.HistoryRecord, error) {
 	var result []*conversation.HistoryRecord
 	for _, record := range s.records {
-		if query.AfterID == nil || record.Seq > *query.AfterID {
-			result = append(result, record)
+		if record.ThreadID != threadID || record.Seq <= sequence {
+			continue
+		}
+		result = append(result, record)
+		if limit > 0 && len(result) >= limit {
+			break
 		}
 	}
 	return result, nil
@@ -386,13 +395,16 @@ func (s *historyMemory) Append(_ context.Context, r *conversation.HistoryRecord)
 	return nil
 }
 
-func (s *historyMemory) List(_ context.Context, q conversation.ListQuery) ([]*conversation.HistoryRecord, error) {
+func (s *historyMemory) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*conversation.HistoryRecord, error) {
 	var result []*conversation.HistoryRecord
 	for _, r := range s.records {
-		if q.AfterID != nil && r.Seq <= *q.AfterID {
+		if r.ThreadID != threadID || r.Seq <= sequence {
 			continue
 		}
 		result = append(result, r)
+		if limit > 0 && len(result) >= limit {
+			break
+		}
 	}
 	return result, nil
 }

@@ -24,12 +24,11 @@ type ContextManager interface {
 }
 
 type ThreadOptions struct {
-	ReplaceBootstrapPrompt bool
-	HistoryStore           conversation.HistoryRolloutStore
-	CompactionStrategy     conversation.CompactionStrategy
-	TokenCounter           conversation.TokenCounter
-	ContextWindow          int64
-	HistoryRecordID        conversation.HistoryRecordIDProvider
+	HistoryStore       conversation.HistoryStore
+	CompactionStrategy conversation.CompactionStrategy
+	TokenCounter       conversation.TokenCounter
+	ContextWindow      int64
+	HistoryRecordID    conversation.HistoryRecordIDProvider
 }
 
 type SubmitInputResult struct {

@@ -2,7 +2,6 @@ package conversation
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,10 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-type Message = schema.Message
-
-type TokenCounter func(messages []*schema.Message) int
-
+type TokenCounter func([]*schema.Message) int
 type HistoryRecordType string
 
 const (
@@ -23,262 +19,116 @@ const (
 	HistoryRecordCompact HistoryRecordType = "compact"
 )
 
+// HistoryRecord is both the durable record and its GORM mapping.
 type HistoryRecord struct {
-	Type       HistoryRecordType
-	ThreadID   string
-	RunID      string `json:"TurnID" yaml:"turnid"`
-	UniqueKey  string
-	MessageID  int64
-	Seq        int64
-	Message    *Message
-	CreateAt   int64 // unix timestamp, second
-	CreateAtMS int64 // unix timestamp, millisecond
-	Ext        *HistoryRecordExtend
+	ThreadID          string            `gorm:"column:thread_id;primaryKey;size:128"`
+	MessageID         int64             `gorm:"column:message_id;primaryKey;autoIncrement:false"`
+	Seq               int64             `gorm:"column:seq"`
+	RunID             string            `gorm:"column:turn_id;size:128"`
+	Type              HistoryRecordType `gorm:"column:type;size:32"`
+	Message           *schema.Message   `gorm:"column:message;type:longtext;serializer:json"`
+	CompactedMessages []*schema.Message `gorm:"column:ext;type:longtext;serializer:json"`
+	CreatedAt         int64             `gorm:"column:created_at;autoCreateTime:false"`
 }
 
-func (historyRecord *HistoryRecord) GetOrderSequence() int64 {
-	if historyRecord == nil {
-		return 0
-	}
-	if historyRecord.Seq > 0 {
-		return historyRecord.Seq
-	}
-	return historyRecord.MessageID
+type HistoryStore interface {
+	Append(context.Context, *HistoryRecord) error
+	LoadAfter(ctx context.Context, threadID string, sequence int64, limit int) ([]*HistoryRecord, error)
 }
 
-type HistoryRecordExtend struct {
-	CompactStrategyID      string
-	CompactStrategyPayload string
-}
-
-type HistoryRolloutStore interface {
-	Append(ctx context.Context, rec *HistoryRecord) error
-	List(ctx context.Context, q ListQuery) ([]*HistoryRecord, error)
-}
-
-type ListOrder string
-
-const (
-	ListOrderASC  ListOrder = "asc"
-	ListOrderDESC ListOrder = "desc"
-)
-
-type ListQuery struct {
-	ThreadID string
-	RunID    string `json:"TurnID" yaml:"turnid"`
-	Order    ListOrder
-	Limit    int
-	// Seq cursor. Semantics depend on Order:
-	// - Order DESC: return records with Seq < BeforeID (older).
-	// - Order ASC: return records with Seq > AfterID (newer).
-	BeforeID *int64
-	AfterID  *int64
-}
-
-type HistoryRecordIDProvider func(context.Context, string, string, *schema.Message) int64
-
+type HistoryRecordIDProvider func(context.Context, string, string, *schema.Message) (int64, error)
 type RedisIncrByClient interface {
-	IncrBy(ctx context.Context, key string, value int64) (int64, error)
+	IncrBy(context.Context, string, int64) (int64, error)
 }
-
 type RedisSeqGenerator struct {
 	client RedisIncrByClient
 	prefix string
 }
 
-func NewRedisSeqGenerator(client RedisIncrByClient, prefix string) (generator *RedisSeqGenerator) {
+func NewRedisSeqGenerator(client RedisIncrByClient, prefix string) *RedisSeqGenerator {
 	prefix = strings.Trim(strings.TrimSpace(prefix), ":/")
 	if prefix == "" {
 		prefix = "agentthread_history_seq"
 	}
 	return &RedisSeqGenerator{client: client, prefix: prefix}
 }
-
-func (sequenceGenerator *RedisSeqGenerator) GenerateSequence(ctx context.Context, threadID string) (sequence int64, err error) {
-	if sequenceGenerator == nil || sequenceGenerator.client == nil {
-		return 0, errors.New("agentthread: redis seq generator is not initialized")
+func (generator *RedisSeqGenerator) GenerateSequence(ctx context.Context, threadID string) (int64, error) {
+	if generator == nil || generator.client == nil {
+		return 0, errors.New("history sequence generator is not initialized")
 	}
-	threadID = strings.TrimSpace(threadID)
-	if threadID == "" {
-		return 0, errors.New("agentthread: thread id is required to generate history seq")
+	if strings.TrimSpace(threadID) == "" {
+		return 0, errors.New("history thread id is required")
 	}
-	return sequenceGenerator.client.IncrBy(ctx, fmt.Sprintf("%s:thread:%s", sequenceGenerator.prefix, threadID), 1)
-}
-
-const defaultHistoryTable = "agentthread_history"
-
-// GormHistoryRolloutStore stores HistoryRecord via GORM.
-type GormHistoryRolloutStore struct {
-	db               *gorm.DB
-	table            string
-	recordIDProvider func(ctx context.Context, threadID, runID string) int64
-	seqGenerator     SeqGenerator
+	return generator.client.IncrBy(ctx, fmt.Sprintf("%s:thread:%s", generator.prefix, threadID), 1)
 }
 
 type SeqGenerator interface {
-	GenerateSequence(ctx context.Context, threadID string) (int64, error)
+	GenerateSequence(context.Context, string) (int64, error)
 }
 
-func NewGormHistoryRolloutStore(db *gorm.DB, table string, recordIDProvider func(ctx context.Context, threadID, runID string) int64, seqGenerators ...SeqGenerator) *GormHistoryRolloutStore {
+type GormHistoryStore struct {
+	db           *gorm.DB
+	table        string
+	seqGenerator SeqGenerator
+}
+
+func NewGormHistoryStore(db *gorm.DB, table string, seqGenerator SeqGenerator) *GormHistoryStore {
 	if table == "" {
-		table = defaultHistoryTable
+		table = "agentthread_history"
 	}
-	var seqGenerator SeqGenerator
-	if len(seqGenerators) > 0 {
-		seqGenerator = seqGenerators[0]
-	}
-	return &GormHistoryRolloutStore{db: db, table: table, recordIDProvider: recordIDProvider, seqGenerator: seqGenerator}
+	return &GormHistoryStore{db: db, table: table, seqGenerator: seqGenerator}
 }
-
-func (historyStore *GormHistoryRolloutStore) MigrateSchema(ctx context.Context) (err error) {
-	if historyStore == nil || historyStore.db == nil {
-		return errors.New("agentthread: history store not initialized")
+func (store *GormHistoryStore) MigrateSchema(ctx context.Context) error {
+	if store == nil || store.db == nil {
+		return errors.New("history store is not initialized")
 	}
-	err = historyStore.db.WithContext(ctx).Table(historyStore.table).AutoMigrate(&historyRow{})
-	return err
-}
-
-func (historyStore *GormHistoryRolloutStore) Append(ctx context.Context, historyRecord *HistoryRecord) error {
-	if historyStore == nil || historyStore.db == nil {
-		return errors.New("agentthread: history store not initialized")
-	}
-	if historyRecord == nil {
-		return nil
-	}
-	if historyRecord.MessageID == 0 {
-		if historyStore.recordIDProvider == nil {
-			return errors.New("agentthread: history record message_id is empty and no store id provider is configured")
-		}
-		historyRecord.MessageID = historyStore.recordIDProvider(ctx, historyRecord.ThreadID, historyRecord.RunID)
-		if historyRecord.MessageID == 0 {
-			return errors.New("agentthread: history record id provider returned 0")
-		}
-	}
-	if historyRecord.Seq == 0 {
-		if historyStore.seqGenerator != nil {
-			sequence, err := historyStore.seqGenerator.GenerateSequence(ctx, historyRecord.ThreadID)
-			if err != nil {
-				return err
-			}
-			historyRecord.Seq = sequence
-		} else {
-			historyRecord.Seq = historyRecord.MessageID
-		}
-		if historyRecord.Seq <= 0 {
-			return errors.New("agentthread: history record seq generator returned non-positive seq")
-		}
-	}
-	row, err := encodeHistoryRow(historyRecord)
+	database := store.db.WithContext(ctx).Table(store.table)
+	err := database.AutoMigrate(&HistoryRecord{})
 	if err != nil {
 		return err
 	}
-	return historyStore.db.WithContext(ctx).Table(historyStore.table).Clauses(clause.OnConflict{DoNothing: true}).Create(row).Error
+	// Convert existing compact records once. Normal reads only decode message lists.
+	payload := "JSON_UNQUOTE(JSON_EXTRACT(ext, '$.CompactStrategyPayload'))"
+	summary := "JSON_EXTRACT(" + payload + ", '$.Summary')"
+	retained := "JSON_EXTRACT(" + payload + ", '$.Retained')"
+	window := "JSON_MERGE_PRESERVE(JSON_ARRAY(" + summary + "), IF(JSON_TYPE(" + retained + ") = 'ARRAY', " + retained + ", JSON_ARRAY()))"
+	return database.Where("type = ? AND JSON_VALID(ext) AND JSON_TYPE(ext) = 'OBJECT'", HistoryRecordCompact).
+		Where("JSON_UNQUOTE(JSON_EXTRACT(ext, '$.CompactStrategyID')) = ?", "core_snapshot_v1").
+		Where("JSON_EXTRACT("+payload+", '$.Version') = 1 AND JSON_TYPE("+summary+") = 'OBJECT'").
+		UpdateColumn("ext", gorm.Expr(window)).Error
 }
-
-func (historyStore *GormHistoryRolloutStore) List(ctx context.Context, query ListQuery) ([]*HistoryRecord, error) {
-	if historyStore == nil || historyStore.db == nil {
-		return nil, errors.New("agentthread: history store not initialized")
+func (store *GormHistoryStore) Append(ctx context.Context, record *HistoryRecord) error {
+	if store == nil || store.db == nil || store.seqGenerator == nil {
+		return errors.New("history store requires a database and sequence generator")
 	}
-	queryDB := historyStore.db.WithContext(ctx).Table(historyStore.table)
-	if query.ThreadID != "" {
-		queryDB = queryDB.Where("thread_id = ?", query.ThreadID)
+	if record == nil || record.ThreadID == "" || record.MessageID <= 0 {
+		return errors.New("history record requires a thread id and positive message id")
 	}
-	if query.RunID != "" {
-		queryDB = queryDB.Where("turn_id = ?", query.RunID)
-	}
-	queryDB = queryDB.Where("seq > 0")
-	if query.Order == ListOrderDESC {
-		if query.BeforeID != nil {
-			queryDB = queryDB.Where("seq < ?", *query.BeforeID)
-		}
-		queryDB = queryDB.Order("seq DESC")
-	} else {
-		if query.AfterID != nil {
-			queryDB = queryDB.Where("seq > ?", *query.AfterID)
-		}
-		queryDB = queryDB.Order("seq ASC")
-	}
-	if query.Limit > 0 {
-		queryDB = queryDB.Limit(query.Limit)
-	}
-	var rows []*historyRow
-	checkErr := queryDB.Find(&rows).Error
-	if checkErr != nil {
-		return nil, checkErr
-	}
-	historyRecords := make([]*HistoryRecord, 0, len(rows))
-	for _, row := range rows {
-		historyRecord, err := row.decodeHistoryRecord()
+	if record.Seq == 0 {
+		sequence, err := store.seqGenerator.GenerateSequence(ctx, record.ThreadID)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		historyRecords = append(historyRecords, historyRecord)
+		record.Seq = sequence
 	}
-	return historyRecords, nil
+	if record.Seq <= 0 {
+		return errors.New("history sequence must be positive")
+	}
+	database := store.db.WithContext(ctx).Table(store.table)
+	result := database.Clauses(clause.OnConflict{DoNothing: true}).Create(record)
+	if result.Error != nil {
+		return result.Error
+	}
+	// Always use the durable sequence; duplicate row counts depend on the MySQL client configuration.
+	return database.Select("seq").Where("thread_id = ? AND message_id = ?", record.ThreadID, record.MessageID).Scan(&record.Seq).Error
 }
-
-// historyRow preserves the existing durable rollout schema.
-type historyRow struct {
-	ThreadID  string `gorm:"column:thread_id;primaryKey;size:128"`
-	MessageID int64  `gorm:"column:message_id;primaryKey"`
-	Seq       int64  `gorm:"column:seq"`
-	RunID     string `gorm:"column:turn_id;size:128" json:"TurnID" yaml:"turnid"`
-	Type      string `gorm:"column:type;size:32"`
-	Message   string `gorm:"column:message"`
-	Ext       string `gorm:"column:ext"`
-	CreateAt  int64  `gorm:"column:created_at"`
-}
-
-func encodeHistoryRow(historyRecord *HistoryRecord) (*historyRow, error) {
-	row := &historyRow{
-		ThreadID:  historyRecord.ThreadID,
-		MessageID: historyRecord.MessageID,
-		Seq:       historyRecord.Seq,
-		RunID:     historyRecord.RunID,
-		Type:      string(historyRecord.Type),
-		CreateAt:  historyRecord.CreateAt,
+func (store *GormHistoryStore) LoadAfter(ctx context.Context, threadID string, sequence int64, limit int) ([]*HistoryRecord, error) {
+	if store == nil || store.db == nil {
+		return nil, errors.New("history store is not initialized")
 	}
-	if historyRecord.Message != nil {
-		encodedJSON, err := json.Marshal(historyRecord.Message)
-		if err != nil {
-			return nil, err
-		}
-		row.Message = string(encodedJSON)
-	}
-	if historyRecord.Ext != nil {
-		encodedJSON, err := json.Marshal(historyRecord.Ext)
-		if err != nil {
-			return nil, err
-		}
-		row.Ext = string(encodedJSON)
-	}
-	return row, nil
-}
-
-func (historyRow *historyRow) decodeHistoryRecord() (*HistoryRecord, error) {
-	historyRecord := &HistoryRecord{
-		Type:      HistoryRecordType(historyRow.Type),
-		ThreadID:  historyRow.ThreadID,
-		RunID:     historyRow.RunID,
-		MessageID: historyRow.MessageID,
-		Seq:       historyRow.Seq,
-		CreateAt:  historyRow.CreateAt,
-	}
-	if historyRow.Message != "" {
-		var message Message
-		err := json.Unmarshal([]byte(historyRow.Message), &message)
-		if err != nil {
-			return nil, err
-		}
-		historyRecord.Message = &message
-	}
-	if historyRow.Ext != "" {
-		var historyExtension HistoryRecordExtend
-		err := json.Unmarshal([]byte(historyRow.Ext), &historyExtension)
-		if err != nil {
-			return nil, err
-		}
-		historyRecord.Ext = &historyExtension
-	}
-	return historyRecord, nil
+	var records []*HistoryRecord
+	err := store.db.WithContext(ctx).Table(store.table).
+		Where("thread_id = ? AND seq > ?", threadID, sequence).
+		Order("seq ASC").Limit(limit).Find(&records).Error
+	return records, err
 }

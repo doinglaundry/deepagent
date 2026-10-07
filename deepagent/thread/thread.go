@@ -63,7 +63,6 @@ func NewThread(cfg ThreadConfig) (*Thread, error) {
 		historyOptions.CompactionStrategy, historyOptions.TokenCounter,
 		conversation.WithContextWindow(historyOptions.ContextWindow),
 		conversation.WithRecordID(historyOptions.HistoryRecordID),
-		conversation.WithBootstrapPromptReplacement(historyOptions.ReplaceBootstrapPrompt),
 	)
 	return &Thread{
 		ThreadID:             cfg.ThreadID,

@@ -388,12 +388,12 @@ func TestThread_MultimodalRoundTrip(t *testing.T) {
 func TestThread_RedeliveryPreservesMessageIdentity(t *testing.T) {
 	ctx := context.Background()
 	store := &redeliveryHistoryStore{}
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &redeliveryModel{}}}, make(chan runpkg.Event, 128), ThreadOptions{HistoryStore: store, HistoryRecordID: func(_ context.Context, _, _ string, message *schema.Message) int64 {
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &redeliveryModel{}}}, make(chan runpkg.Event, 128), ThreadOptions{HistoryStore: store, HistoryRecordID: func(_ context.Context, _, _ string, message *schema.Message) (int64, error) {
 		id, err := strconv.ParseInt(MessageID(message), 10, 64)
 		if err != nil {
-			return 0 // Assistant messages get a store-generated ID.
+			return 0, nil // The test store assigns assistant IDs.
 		}
-		return id
+		return id, nil
 	}})
 	initHistoryErr := thread.InitHistory(ctx)
 	if initHistoryErr != nil {

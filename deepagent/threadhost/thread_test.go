@@ -201,7 +201,7 @@ func (s failingHistoryStore) Append(context.Context, *conversation.HistoryRecord
 	return s.err
 }
 
-func (s failingHistoryStore) List(context.Context, conversation.ListQuery) ([]*conversation.HistoryRecord, error) {
+func (s failingHistoryStore) LoadAfter(context.Context, string, int64, int) ([]*conversation.HistoryRecord, error) {
 	return nil, s.err
 }
 

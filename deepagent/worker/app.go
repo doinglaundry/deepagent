@@ -53,11 +53,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("initialize checkpoints: %w", err)
 	}
-	history := conversation.NewGormHistoryRolloutStore(sqlDB, cfg.HistoryTable,
-		func(idCtx context.Context, _, _ string) int64 {
-			id, _ := manager.IDNextSharedID(idCtx, redisClient)
-			return id
-		},
+	history := conversation.NewGormHistoryStore(sqlDB, cfg.HistoryTable,
 		conversation.NewRedisSeqGenerator(redisClient, "deepagent:history:seq"),
 	)
 	err = history.MigrateSchema(ctx)
@@ -80,13 +76,12 @@ func Run(ctx context.Context, cfg Config) error {
 		Deps: threadhost.RuntimeDeps{
 			History: history, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
 			MemoryStore: coordinator, Collaboration: coordinator,
-			HistoryRecordID: func(idCtx context.Context, _, _ string, message *schema.Message) int64 {
+			HistoryRecordID: func(idCtx context.Context, _, _ string, message *schema.Message) (int64, error) {
 				parseIntId, parseErr := strconv.ParseInt(threadpkg.MessageID(message), 10, 64)
 				if parseErr == nil && parseIntId > 0 {
-					return parseIntId
+					return parseIntId, nil
 				}
-				id, _ := manager.IDNextSharedID(idCtx, redisClient)
-				return id
+				return manager.IDNextSharedID(idCtx, redisClient)
 			},
 		},
 	}

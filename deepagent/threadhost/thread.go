@@ -53,7 +53,7 @@ type RuntimeConfig struct {
 
 // RuntimeDeps are long-lived resources shared by Thread runtimes.
 type RuntimeDeps struct {
-	History          conversation.HistoryRolloutStore
+	History          conversation.HistoryStore
 	Checkpoint       compose.CheckPointStore
 	Tools            []tools.ToolDescriptor
 	SkillLoader      skillspkg.SkillLoader

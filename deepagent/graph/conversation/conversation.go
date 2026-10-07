@@ -3,55 +3,45 @@ package conversation
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
+	"eino-cli/deepagent/graph/types"
 	"eino-cli/deepagent/utils"
-
 	"github.com/cloudwego/eino/schema"
-	"github.com/google/uuid"
 )
 
 type Option func(*Conversation)
 
-// WithBootstrapPromptReplacement supports histories written by the old Worker,
-// which stored its startup prompt as the first system message. Summary messages
-// keep their historical prefix and are always retained.
-func WithBootstrapPromptReplacement(enabled bool) Option {
-	return func(conversation *Conversation) { conversation.replaceBootstrapPrompt = enabled }
+func WithRecordID(provider HistoryRecordIDProvider) Option {
+	return func(conversation *Conversation) { conversation.recordID = provider }
 }
-
-func WithRecordID(recordIDProvider HistoryRecordIDProvider) Option {
-	return func(conversation *Conversation) { conversation.recordID = recordIDProvider }
-}
-
 func WithContextWindow(window int64) Option {
-	return func(conversation *Conversation) { conversation.usage.snapshot.ContextWindow = window }
+	return func(conversation *Conversation) { conversation.contextUsage.ContextWindow = window }
 }
 
-// Conversation serializes durable writes and in-memory publication. Compression
-// is deliberately computed outside this lock and committed against version.
+// Conversation publishes changes only after durable writes succeed.
 type Conversation struct {
-	replaceBootstrapPrompt bool
-	mu                     sync.Mutex
-	version                uint64
-	threadID               string
-	messages               []*schema.Message
-	store                  HistoryRolloutStore
-	compactor              CompactionStrategy
-	usage                  *UsageTracker
-	recordID               HistoryRecordIDProvider
-	seen                   map[int64]struct{}
-	cursor                 int64
+	mu              sync.Mutex
+	threadID        string
+	messages        []*schema.Message
+	seenMessageIDs  map[int64]struct{}
+	historySequence int64
+	version         uint64
+	store           HistoryStore
+	compactor       CompactionStrategy
+	recordID        HistoryRecordIDProvider
+	tokenCounter    TokenCounter
+	contextUsage    types.ContextUsageSnapshot
+	runUsage        types.Usage
 }
 
-func New(threadID string, store HistoryRolloutStore, compactor CompactionStrategy, tokenCounter TokenCounter, opts ...Option) *Conversation {
-	if tokenCounter == nil {
-		tokenCounter = utils.SimpleTokenCounter
+func New(threadID string, store HistoryStore, compactor CompactionStrategy, counter TokenCounter, opts ...Option) *Conversation {
+	if counter == nil {
+		counter = utils.SimpleTokenCounter
 	}
-	conversation := &Conversation{threadID: threadID, store: store, compactor: compactor, usage: &UsageTracker{counter: tokenCounter}, seen: make(map[int64]struct{})}
-	conversation.usage.recomputeContextUsage(nil)
+	conversation := &Conversation{threadID: threadID, store: store, compactor: compactor, tokenCounter: counter, seenMessageIDs: make(map[int64]struct{})}
+	conversation.recomputeContextUsage()
 	for _, opt := range opts {
 		if opt != nil {
 			opt(conversation)
@@ -59,76 +49,67 @@ func New(threadID string, store HistoryRolloutStore, compactor CompactionStrateg
 	}
 	return conversation
 }
-
 func (conversation *Conversation) AddHistory(ctx context.Context, runID string, messages ...*schema.Message) error {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
 	for _, message := range messages {
-		contextErr := ctx.Err()
-		if contextErr != nil {
-			return contextErr
-		}
 		if message == nil {
 			continue
 		}
-		historyRecord := conversation.buildHistoryRecord(ctx, runID, message, HistoryRecordMessage)
-		if historyRecord.MessageID > 0 {
-			_, ok := conversation.seen[historyRecord.MessageID]
-			if ok {
-				continue
-			}
+		record, err := conversation.buildHistoryRecord(ctx, runID, message, HistoryRecordMessage)
+		if err != nil {
+			return err
+		}
+		_, exists := conversation.seenMessageIDs[record.MessageID]
+		if record.MessageID > 0 && exists {
+			continue
 		}
 		if conversation.store != nil {
-			err := conversation.store.Append(ctx, historyRecord)
+			err = conversation.store.Append(ctx, record)
 			if err != nil {
 				return err
 			}
 		}
-		// Stores may resolve a redelivery to an existing durable ID.
-		if historyRecord.MessageID > 0 {
-			_, ok := conversation.seen[historyRecord.MessageID]
-			if ok {
-				continue
-			}
-			conversation.seen[historyRecord.MessageID] = struct{}{}
+		if record.MessageID > 0 {
+			conversation.seenMessageIDs[record.MessageID] = struct{}{}
 		}
 		conversation.messages = append(conversation.messages, message)
 		conversation.version++
-		conversation.usage.addMessageUsage(message)
-		if historyRecord.GetOrderSequence() > conversation.cursor {
-			conversation.cursor = historyRecord.GetOrderSequence()
-		}
+		conversation.addMessageUsage(message)
+		conversation.historySequence = max(conversation.historySequence, record.Seq)
 	}
 	return nil
 }
-
 func (conversation *Conversation) GetHistory(context.Context) []*schema.Message {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
 	return append([]*schema.Message(nil), conversation.messages...)
 }
-
 func (conversation *Conversation) BuildRequest(ctx context.Context, prompts []*schema.Message) ([]*schema.Message, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, err
 	}
-	history := conversation.GetHistory(ctx)
-	if conversation.replaceBootstrapPrompt && len(prompts) > 0 && len(history) > 0 && history[0].Role == schema.System && !strings.HasPrefix(history[0].Content, "Earlier conversation summary:") {
-		history = history[1:]
-	}
-	return append(append([]*schema.Message(nil), prompts...), history...), nil
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	request := make([]*schema.Message, 0, len(prompts)+len(conversation.messages))
+	request = append(request, prompts...)
+	return append(request, conversation.messages...), nil
 }
-
-func (conversation *Conversation) buildHistoryRecord(ctx context.Context, runID string, message *schema.Message, kind HistoryRecordType) *HistoryRecord {
-	now := time.Now()
-	historyRecord := &HistoryRecord{ThreadID: conversation.threadID, RunID: runID, Type: kind, Message: message, UniqueKey: uuid.NewString(), CreateAt: now.Unix(), CreateAtMS: now.UnixMilli()}
+func (conversation *Conversation) buildHistoryRecord(ctx context.Context, runID string, message *schema.Message, kind HistoryRecordType) (*HistoryRecord, error) {
+	err := ctx.Err()
+	if err != nil {
+		return nil, err
+	}
+	record := &HistoryRecord{ThreadID: conversation.threadID, RunID: runID, Type: kind, Message: message, CreatedAt: time.Now().Unix()}
 	if conversation.recordID != nil {
-		historyRecord.MessageID = conversation.recordID(ctx, conversation.threadID, runID, message)
+		record.MessageID, err = conversation.recordID(ctx, conversation.threadID, runID, message)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return historyRecord
+	return record, nil
 }
-
 func (conversation *Conversation) ReloadHistory(ctx context.Context) error {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
@@ -137,56 +118,46 @@ func (conversation *Conversation) ReloadHistory(ctx context.Context) error {
 	}
 	var messages []*schema.Message
 	seenMessageIDs := make(map[int64]struct{})
-	var cursor int64
+	var sequence int64
 	for {
-		rows, err := conversation.store.List(ctx, ListQuery{ThreadID: conversation.threadID, Order: ListOrderASC, Limit: 200, AfterID: &cursor})
+		records, err := conversation.store.LoadAfter(ctx, conversation.threadID, sequence, 200)
 		if err != nil {
 			return err
 		}
-		if len(rows) == 0 {
-			break
-		}
-		previousCursor := cursor
-		for _, historyRecord := range rows {
-			if historyRecord == nil {
-				return fmt.Errorf("nil history record")
+		for _, record := range records {
+			if record == nil || record.Seq <= sequence {
+				return fmt.Errorf("history sequence must advance past %d", sequence)
 			}
-			if historyRecord.GetOrderSequence() <= cursor {
-				return fmt.Errorf("history sequence did not advance: %d", historyRecord.GetOrderSequence())
+			sequence = record.Seq
+			_, exists := seenMessageIDs[record.MessageID]
+			if record.MessageID > 0 && exists {
+				continue
 			}
-			cursor = historyRecord.GetOrderSequence()
-			if historyRecord.MessageID > 0 {
-				_, ok := seenMessageIDs[historyRecord.MessageID]
-				if ok {
-					continue
-				}
-				seenMessageIDs[historyRecord.MessageID] = struct{}{}
+			if record.MessageID > 0 {
+				seenMessageIDs[record.MessageID] = struct{}{}
 			}
-			switch historyRecord.Type {
+			switch record.Type {
 			case HistoryRecordMessage:
-				if historyRecord.Message != nil {
-					messages = append(messages, historyRecord.Message)
+				if record.Message != nil {
+					messages = append(messages, record.Message)
 				}
 			case HistoryRecordCompact:
-				messages, err = conversation.restoreCompact(historyRecord)
-				if err != nil {
-					return err
+				if len(record.CompactedMessages) == 0 || record.CompactedMessages[0] == nil || record.CompactedMessages[0].Role != schema.System {
+					return fmt.Errorf("compact record requires a summary and rebuilt context")
 				}
+				messages = append([]*schema.Message(nil), record.CompactedMessages...)
 			default:
-				return fmt.Errorf("unknown history record type %q", historyRecord.Type)
+				return fmt.Errorf("unknown history record type %q", record.Type)
 			}
 		}
-		if cursor <= previousCursor {
-			return fmt.Errorf("history cursor did not advance")
-		}
-		if len(rows) < 200 {
+		if len(records) < 200 {
 			break
 		}
 	}
 	conversation.messages = messages
-	conversation.seen = seenMessageIDs
-	conversation.cursor = cursor
+	conversation.seenMessageIDs = seenMessageIDs
+	conversation.historySequence = sequence
 	conversation.version++
-	conversation.usage.recomputeContextUsage(messages)
+	conversation.recomputeContextUsage()
 	return nil
 }
