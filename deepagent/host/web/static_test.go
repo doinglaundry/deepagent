@@ -13,7 +13,7 @@ import (
 
 func TestEmbeddedWebClient(t *testing.T) {
 	handler := New(nil, t.TempDir()).Handler()
-	for _, path := range []string{"/", "/app.js", "/app.css"} {
+	for _, path := range []string{"/", "/app.js", "/i18n.js", "/app.css", "/assets/office.png"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusOK {
@@ -72,5 +72,37 @@ func TestMissingTaskTitleAndMessageSummary(t *testing.T) {
 	named := viewThread(&dalmodel.Thread{Metadata: map[string]string{"title": "我的任务"}})
 	if named.Title != "我的任务" {
 		t.Fatalf("explicit title changed: %q", named.Title)
+	}
+}
+
+func TestCancelRejectsSimpleCrossOriginForm(t *testing.T) {
+	handler := New(nil, t.TempDir()).Handler()
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/threads/1/cancel", strings.NewReader("reason=cancel"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Origin", "https://unrelated.example")
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("cancel form status=%d", response.Code)
+	}
+}
+
+func TestThreadViewProjectsCurrentRunOutcome(t *testing.T) {
+	for _, status := range []string{"finished", "failed", "interrupted"} {
+		view := viewThread(&dalmodel.Thread{ThreadID: 1, LastRun: &dalmodel.RunRecord{RunID: "current-run", Status: status}})
+		if view.RunID != "current-run" || view.RunStatus != status {
+			t.Fatalf("current Run projection = %+v", view)
+		}
+	}
+}
+
+func TestResumeRejectsSimpleCrossOriginRequest(t *testing.T) {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/threads/1/messages", strings.NewReader(`{"resume":{"approval":{"approved":true,"always_allow":true}}}`))
+	request.Header.Set("Content-Type", "text/plain")
+	request.Header.Set("Origin", "https://unrelated.example")
+	New(nil, t.TempDir()).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("resume form status=%d", response.Code)
 	}
 }

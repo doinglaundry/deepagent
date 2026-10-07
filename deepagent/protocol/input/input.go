@@ -52,7 +52,9 @@ func (m UserMessage) Validate() error {
 }
 
 type ApprovalDecision struct {
-	Approved       bool   `json:"approved"`
+	Approved bool `json:"approved"`
+	// AlwaysAllow remembers this tool for this Thread, including future Runs.
+	AlwaysAllow    bool   `json:"always_allow,omitempty"`
 	AllowInSession bool   `json:"allow_in_session"`
 	CancelRun      bool   `json:"cancel_run"`
 	Reason         string `json:"reason,omitempty"`

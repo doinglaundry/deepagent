@@ -1,10 +1,13 @@
 let session = localStorage.session || crypto.randomUUID();
 localStorage.session = session;
 let thread = null, cursor = 0n, generation = 0, timer = null, polling = false, submitting = false;
+let followConversation = true;
 let eventSource = null, taskRows = [], lastRefresh = 0, fileRequest = 0, taskRequest = 0;
 const messagesByKey = new Map(), toolsByKey = new Map(), promptsByKey = new Map();
+const roundsByRunID = new Map();
 const endedRuns = new Set(), inputModesByID = new Map();
 const $ = id => document.getElementById(id);
+const panelNames = ['Talk', 'Plan', 'Output', 'File', 'Tasks'];
 const statusLabels = {idle: '就绪', ready: '等待执行', running: '执行中', blocked: '等待你的回复', closing: '关闭中', closed: '已关闭'};
 function report(error) {
   $('status').textContent = error ? error.message : '';
@@ -22,20 +25,21 @@ function updateComposer() {
 async function api(url, options) {
   const response = await fetch(url, {headers: {'content-type': 'application/json'}, ...options});
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
+  if (!response.ok) throw new Error(data.error || t('请求失败 ({status})', {status: response.status}));
   return data;
 }
+function getTaskTitle(row) { return row.untitled || !row.title ? t('未命名任务') : row.title; }
 function showTasks() {
   const query = $('search').value.trim().toLowerCase();
   $('threads').replaceChildren();
-  taskRows.filter(row => (row.title || '未命名任务').toLowerCase().includes(query)).forEach(row => {
+  taskRows.filter(row => getTaskTitle(row).toLowerCase().includes(query)).forEach(row => {
     const button = document.createElement('button');
     button.className = 'thread' + (row.id === thread ? ' active' : '');
     button.dataset.status = row.status || 'idle';
-    button.title = row.title || '未命名任务';
+    button.title = getTaskTitle(row);
     button.setAttribute('aria-current', row.id === thread ? 'true' : 'false');
     const dot = document.createElement('span'); dot.className = 'task-dot';
-    button.append(dot, document.createTextNode(row.title || '未命名任务'));
+    button.append(dot, document.createTextNode(getTaskTitle(row)));
     button.onclick = () => select(row.id).catch(report);
     $('threads').append(button);
   });
@@ -47,14 +51,39 @@ async function list() {
   taskRows = rows; showTasks();
 }
 function showThread(row) {
-  $('title').textContent = row.title || (row.id ? '未命名任务' : '新任务');
-  $('workspace').textContent = row.work_dir || '从一个问题或任务开始';
+  if (row.untitled || !row.title) setLabel($('title'), row.id ? '未命名任务' : '新任务');
+  else { delete $('title').dataset.i18n; $('title').textContent = row.title; }
+  if (row.work_dir) { delete $('workspace').dataset.i18n; $('workspace').textContent = row.work_dir; }
+  else setLabel($('workspace'), '从一个问题或任务开始');
   $('workspace').title = row.work_dir || '';
   const status = row.status || 'idle';
-  $('runStatus').textContent = statusLabels[status] || status;
-  $('runStatus').dataset.status = status;
+  setRunStatus(status, row.run_id, row.run_status);
   $('mode').disabled = ['ready', 'running', 'blocked', 'closing', 'closed'].includes(status);
-  $('composerHint').textContent = status === 'blocked' ? '请先回复上方的问题，再继续任务' : $('mode').value === 'plan' ? '按步骤执行并跟踪进度' : '在当前项目中工作';
+  setLabel($('composerHint'), status === 'blocked' ? '请先回复上方的问题，再继续任务' : $('mode').value === 'plan' ? '按步骤执行并跟踪进度' : '在当前项目中工作');
+}
+function setRunStatus(status, runID, runStatus) {
+  setLabel($('runStatus'), statusLabels[status] || status);
+  $('runStatus').dataset.status = status;
+  setLabel($('phaseLabel'), statusLabels[status] || status);
+  setLabel($('phaseCaption'), {idle: '给搭档一个任务，我们一起推进', ready: '任务已收到，准备开始', running: '任务执行中，可以随时补充想法', blocked: '任务暂时停在这里，等待你的回复', closing: '正在结束任务', closed: '这次任务已结束'}[status] || status);
+  $('office').dataset.status = status; $('office').dataset.outcome = runStatus || '';
+  setLabel($('agentStatus'), {idle: '随时可以开始', ready: '任务已收到', running: '正在处理任务', blocked: '需要你的回复', closing: '正在结束任务', closed: '任务已关闭'}[status] || status);
+  $('stop').disabled = !['ready', 'running'].includes(status);
+  const result = [...messagesByKey.values()].findLast(message => message.finished && message.runID === runID);
+  const completed = status === 'idle' && runStatus === 'finished' && !!result;
+  setLabel($('boardTitle'), completed ? '成果已放到柜子里' : {idle: '想一起完成什么？', ready: '搭档正在接收任务', running: '我们正在推进这件事', blocked: '需要你做一个选择', closing: '正在结束任务', closed: '这次任务已结束'}[status] || status);
+  $('deliverable').hidden = !completed;
+  $('resultPreview').textContent = completed ? result.text.slice(0, 70) : '';
+  setLabel($('boardStatus'), completed ? '已完成 · 可以继续追问或回看过程' : $('agentStatus').dataset.i18n);
+  if (completed) {
+    setLabel($('phaseCaption'), '任务完成：打开成果，或继续和搭档讨论');
+    setLabel($('agentStatus'), '成果整理好了，点开一起看看。');
+  }
+  if (status === 'idle' && ['failed', 'interrupted'].includes(runStatus)) {
+    setLabel($('boardTitle'), runStatus === 'failed' ? '这次任务没有完成' : '这次任务已停止');
+    setLabel($('boardStatus'), '可以查看执行记录，或补充消息后继续');
+    setLabel($('phaseCaption'), '可以查看执行记录，或补充消息后继续');
+  }
 }
 function reset(id) {
   save(draftKey(thread), $('input').value);
@@ -63,13 +92,15 @@ function reset(id) {
   if (eventSource) eventSource.close();
   eventSource = null;
   thread = id; cursor = 0n; lastRefresh = 0; fileRequest++;
-  messagesByKey.clear(); toolsByKey.clear(); promptsByKey.clear(); endedRuns.clear(); inputModesByID.clear();
+  messagesByKey.clear(); roundsByRunID.clear(); toolsByKey.clear(); promptsByKey.clear(); endedRuns.clear(); inputModesByID.clear();
+  $('notebook').hidden = true; followConversation = true;
   $('messages').replaceChildren();
   $('welcome').hidden = !!id;
   $('jumpBottom').hidden = true;
-  $('toolOutput').replaceChildren(); $('toolOutput').textContent = '工具调用的参数、结果和运行状态会出现在这里。';
-  $('plan').replaceChildren(); $('plan').textContent = 'Agent 更新计划后，步骤会出现在这里。';
-  $('file').textContent = '输入相对路径查看文件'; $('fileStatus').textContent = ''; $('filePath').value = '';
+  $('toolOutput').replaceChildren();
+  $('boardPlan').replaceChildren(); setLabel($('goalSummary'), '阅读代码、处理文件，或把一个想法变成现实。');
+  $('plan').replaceChildren();
+  setLabel($('file'), '输入相对路径查看文件'); delete $('fileStatus').dataset.i18n; $('fileStatus').textContent = ''; $('filePath').value = '';
   $('input').value = localStorage[draftKey(id)] || '';
   $('mode').value = '';
   save('selectedThread', id || '');
@@ -94,6 +125,7 @@ function connectStream(target) {
 }
 async function select(id) {
   reset(id);
+  showPanel('Talk');
   const current = generation;
   const row = await api('/api/threads/' + id);
   if (current !== generation) return;
@@ -118,7 +150,7 @@ async function submit(text) {
     if ($('input').value === draft) $('input').value = '';
     save(draftKey(target), $('input').value); save(draftKey(null), '');
     $('welcome').hidden = true;
-    $('runStatus').textContent = '等待执行';
+    setRunStatus('ready'); showPanel('Talk');
     report(null); await list();
     if (current === generation) poll();
   } catch (error) {
@@ -129,7 +161,7 @@ function resolvePrompt(box, label = '已处理') {
   if (label === '已处理' && box.classList.contains('resolved')) return;
   box.querySelectorAll('button,input,select,textarea').forEach(control => control.disabled = true);
   box.classList.add('resolved');
-  box.children[0].textContent = label;
+  setLabel(box.children[0], label);
 }
 async function resume(target, run, payload, box) {
   const controls = box.querySelectorAll('button,input,select,textarea');
@@ -139,7 +171,7 @@ async function resume(target, run, payload, box) {
     await api('/api/threads/' + target + '/messages', {method: 'POST', body: JSON.stringify({mode: box.dataset.mode || '', resume: {
       run_id: run, checkpoint_id: payload.checkpoint_id, interrupt_id: payload.interrupt_id, ...payload.response
     }})});
-    resolvePrompt(box, '回复已提交');
+    resolvePrompt(box, payload.response?.approval?.always_allow ? '已始终允许此工具' : '回复已提交');
     if (current === generation) { report(null); poll(); }
   } catch (error) {
     controls.forEach(control => control.disabled = false);
@@ -149,9 +181,9 @@ async function resume(target, run, payload, box) {
 function required(ev, p, target) {
   const box = document.createElement('div'); box.className = 'prompt'; box.dataset.run = ev.run_id || ''; box.dataset.interrupt = p.interrupt_id;
   const title = document.createElement('strong');
-  title.textContent = p.kind === 'approval' ? '需要批准' : '需要回答'; box.append(title);
+  setLabel(title, p.kind === 'approval' ? '需要批准' : '需要回答'); box.append(title);
   const button = (label, response) => {
-    const b = document.createElement('button'); b.textContent = label;
+    const b = document.createElement('button'); setLabel(b, label);
     b.onclick = async () => {
       try { await resume(target, ev.run_id, {...p, response: response()}, box); }
       catch (error) { report(error); }
@@ -169,13 +201,13 @@ function required(ev, p, target) {
           const args = document.createElement('div'); args.textContent = item.arguments_json; row.append(args);
         }
         const select = document.createElement('select');
-        [['请选择', ''], ['允许', 'allow'], ['拒绝', 'deny']].forEach(([text, value]) => {
-          const option = document.createElement('option'); option.textContent = text; option.value = value; select.append(option);
+        [['请选择', ''], ['允许', 'allow'], ['始终允许此工具', 'always'], ['拒绝', 'deny']].forEach(([text, value]) => {
+          const option = document.createElement('option'); setLabel(option, text); option.value = value; select.append(option);
         });
         row.append(select);
-        answers.push(() => ({interrupt_id: item.interrupt_id, approval: {approved: select.value === 'allow', reason: select.value === 'allow' ? '' : 'user denied'}}));
+        answers.push(() => ({interrupt_id: item.interrupt_id, approval: {approved: ['allow', 'always'].includes(select.value), always_allow: select.value === 'always', reason: select.value === 'deny' ? 'user denied' : ''}}));
       } else {
-        const input = document.createElement('input'); input.placeholder = '输入回复'; row.append(input);
+        const input = document.createElement('input'); input.dataset.i18nPlaceholder = '输入回复'; input.placeholder = t('输入回复'); row.append(input);
         answers.push(() => ({interrupt_id: item.interrupt_id, interrupt: {kind: item.kind, info_type: item.info_type, data: {user_answer: input.value}}}));
       }
       box.append(row);
@@ -183,12 +215,15 @@ function required(ev, p, target) {
     button('提交全部', () => {
       const responses = answers.map(answer => answer());
       const undecided = [...box.querySelectorAll('select')].some(control => !control.value);
-      if (undecided) throw new Error('请为每个审批项选择允许或拒绝');
+      if (undecided) throw new Error(t('请为每个审批项选择允许或拒绝'));
       return {answers: responses};
     });
   } else if (p.kind === 'approval') {
-    const detail = document.createElement('div'); detail.textContent = (p.tool_name || '工具') + (p.arguments_json ? ' ' + p.arguments_json : ''); box.append(detail);
-    [['允许', true], ['拒绝', false]].forEach(([label, approved]) => button(label, () => ({approval: {approved, reason: approved ? '' : 'user denied'}})));
+    const detail = document.createElement('div'); detail.textContent = (p.tool_name || t('工具')) + (p.arguments_json ? ' ' + p.arguments_json : ''); box.append(detail);
+    button('允许', () => ({approval: {approved: true}}));
+    button('始终允许此工具', () => ({approval: {approved: true, always_allow: true}}));
+    button('拒绝', () => ({approval: {approved: false, reason: 'user denied'}}));
+    const scope = document.createElement('small'); setLabel(scope, '当前任务中不再询问此工具'); box.append(scope);
   } else if (p.kind === 'plan_input') {
     const answers = {};
     (p.questions || []).forEach(q => {
@@ -198,19 +233,19 @@ function required(ev, p, target) {
     });
     button('提交', () => {
       const missing = (p.questions || []).some(question => !answers[question.id]?.answers[0]?.trim());
-      if (missing) throw new Error('请回答每一个问题');
+      if (missing) throw new Error(t('请回答每一个问题'));
       return {request_user_input: {answers}};
     });
   } else {
     const question = document.createElement('div');
     const info = p.info || p;
-    question.textContent = info.question || info.message || (info.questions || []).join('\n') || '请补充信息'; box.append(question);
+    question.textContent = info.question || info.message || (info.questions || []).join('\n') || t('请补充信息'); box.append(question);
     if (info.question && info.questions && info.questions.length) {
       const options = document.createElement('div'); options.textContent = info.questions.join(' / '); box.append(options);
     }
-    const input = document.createElement('input'); input.placeholder = '输入回复'; box.append(input);
+    const input = document.createElement('input'); input.dataset.i18nPlaceholder = '输入回复'; input.placeholder = t('输入回复'); box.append(input);
     button('继续', () => {
-      if (!input.value.trim()) throw new Error('请先输入回答');
+      if (!input.value.trim()) throw new Error(t('请先输入回答'));
       return {interrupt: {kind: p.kind, info_type: p.info_type, data: {user_answer: input.value}}};
     });
   }
@@ -262,16 +297,45 @@ function pretty(value) {
   if (!value) return '';
   try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return String(value); }
 }
-function showPanel(name) {
-  ['Plan', 'Output', 'File'].forEach(panel => {
+function showPanel(name, focus = false) {
+  if (!$('notebook').hidden && !$('panelTalk').hidden) followConversation = isNearBottom();
+  $('notebook').hidden = false; $('notebook').dataset.panel = name;
+  panelNames.forEach(panel => {
     $('panel' + panel).hidden = panel !== name;
     $('tab' + panel).setAttribute('aria-selected', String(panel === name));
     $('tab' + panel).tabIndex = panel === name ? 0 : -1;
   });
+  if (name === 'Talk' && followConversation) $('messages').scrollTop = $('messages').scrollHeight;
+  $('jumpBottom').hidden = isNearBottom();
+  if (focus) $('tab' + name).focus();
 }
-function openInspector() {
-  document.body.classList.remove('inspector-hidden'); document.body.classList.add('inspector-open');
-  $('toggleInspector').setAttribute('aria-expanded', 'true');
+// Live output may arrive before the input is assigned a Run. Keep both in the same round.
+function appendToLog(event, element) {
+  let runID = event.run_id;
+  if (!runID && event.kind === 'input') {
+    runID = [...roundsByRunID].find(([, round]) => round.inputIDs.has(String(event.sequence)))?.[0];
+  }
+  if (!runID) { $('messages').append(element); return; }
+  let round = roundsByRunID.get(runID);
+  const inputIDs = (event.payload?.consumed_message_ids || []).map(String);
+  if (!round) {
+    round = document.createElement('section'); round.className = 'round'; round.dataset.run = runID;
+    round.inputIDs = new Set();
+    const heading = document.createElement('div'); heading.className = 'round-heading';
+    setLabel(heading, '第 {number} 轮', {number: roundsByRunID.size + 1}); round.append(heading);
+    const firstInput = inputIDs.map(id => messagesByKey.get('input:' + id)).find(record => record && !record.runID);
+    $('messages').insertBefore(round, firstInput?.element || null);
+    roundsByRunID.set(runID, round);
+  }
+  const findConsumer = id => [...round.children].find(child => child.consumedInputIDs?.has(id)) || null;
+  inputIDs.forEach(id => {
+    round.inputIDs.add(id);
+    const record = messagesByKey.get('input:' + id);
+    if (record && !record.runID) { round.insertBefore(record.element, findConsumer(id)); record.runID = runID; }
+  });
+  element.consumedInputIDs ||= new Set();
+  inputIDs.forEach(id => element.consumedInputIDs.add(id));
+  if (element.parentNode !== round) round.insertBefore(element, event.kind === 'input' ? findConsumer(String(event.sequence)) : null);
 }
 function renderTool(event) {
   const payload = event.payload || {}, key = event.run_id + ':' + payload.tool_call_id;
@@ -283,31 +347,31 @@ function renderTool(event) {
     const args = document.createElement('pre'), result = document.createElement('pre'); detail.append(args, result);
     record = {detail, name, state, args, result, output: '', finished: false}; toolsByKey.set(key, record);
     if (toolsByKey.size === 1) $('toolOutput').replaceChildren();
-    $('toolOutput').append(detail);
-    const chat = document.createElement('details'); chat.className = 'tool-record';
-    const chatSummary = document.createElement('summary'); chat.append(chatSummary);
-    const inspect = document.createElement('button'); inspect.textContent = '查看参数和结果';
-    inspect.onclick = () => { showPanel('Output'); openInspector(); detail.open = true; detail.scrollIntoView({block: 'nearest'}); };
-    chat.append(inspect); $('messages').append(chat); record.chatSummary = chatSummary;
+    appendToLog(event, detail);
+    const link = document.createElement('button'); link.className = 'tool-link';
+    link.onclick = () => { showPanel('Talk', true); detail.open = true; detail.scrollIntoView({block: 'nearest'}); };
+    $('toolOutput').append(link); record.link = link;
   }
   if (record.finished && payload.status !== 'finished') return;
-  record.name.textContent = payload.tool_name || '工具';
+  record.name.textContent = payload.tool_name || t('工具');
   record.finished = payload.status === 'finished';
   const label = record.finished ? '已完成' : '运行中';
-  record.state.textContent = label + (payload.elapsed_ms != null ? ' · ' + (payload.elapsed_ms / 1000).toFixed(1) + 's' : '');
-  record.chatSummary.textContent = (payload.tool_name || '工具') + ' · ' + label;
+  setLabel(record.state, payload.elapsed_ms != null ? '{status} · {seconds}s' : '{status}', {status: t(label), seconds: (payload.elapsed_ms / 1000).toFixed(1)});
+  setLabel(record.link, '{tool} · {status}', {tool: payload.tool_name || t('工具'), status: t(label)});
+  record.state.dataset.toolStatus = record.link.dataset.toolStatus = label;
   if (payload.arguments_json != null) record.args.textContent = pretty(payload.arguments_json);
   if (payload.output_delta) record.output += payload.output_delta;
   record.result.textContent = payload.result_json != null ? pretty(payload.result_json) : record.output;
   record.result.hidden = !record.result.textContent; record.args.hidden = !record.args.textContent;
 }
 function renderPlan(payload) {
-  $('plan').replaceChildren();
+  $('plan').replaceChildren(); $('boardPlan').replaceChildren();
   if (payload.explanation) { const explanation = document.createElement('div'); explanation.className = 'plan-explanation'; explanation.textContent = payload.explanation; $('plan').append(explanation); }
   (payload.items || []).forEach(item => {
     const row = document.createElement('div'); row.className = 'plan-step'; row.dataset.status = item.status;
     const marker = document.createElement('span'); marker.className = 'step-marker'; marker.textContent = item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '◉' : '○';
     const text = document.createElement('span'); text.textContent = item.content; row.append(marker, text); $('plan').append(row);
+    if ($('boardPlan').children.length < 3) $('boardPlan').append(row.cloneNode(true));
   });
 }
 function renderEvent(event, target) {
@@ -319,7 +383,10 @@ function renderEvent(event, target) {
   if (event.kind === 'resume_run') {
     const box = promptsByKey.get(payload.interrupt_id);
     const answer = payload.interrupt?.data?.user_answer;
-    if (box) resolvePrompt(box, payload.approval ? (payload.approval.approved ? '已允许' : '已拒绝') : '已回答' + (answer ? '：' + answer : ''));
+    if (box) {
+      const label = payload.approval ? (payload.approval.always_allow ? '已始终允许此工具' : payload.approval.approved ? '已允许' : '已拒绝') : answer ? '已回答：{answer}' : '已回答';
+      resolvePrompt(box, label); box.children[0].i18nValues = {answer}; setLabel(box.children[0], label, {answer});
+    }
     return;
   }
   if (payload.interrupt_id && payload.checkpoint_id) {
@@ -327,7 +394,8 @@ function renderEvent(event, target) {
     const box = required(event, payload, target);
     box.dataset.mode = (payload.consumed_message_ids || []).some(id => inputModesByID.get(id) === 'plan') ? 'plan' : '';
     if (endedRuns.has(event.run_id)) resolvePrompt(box);
-    promptsByKey.set(payload.interrupt_id, box); $('messages').append(box);
+    promptsByKey.set(payload.interrupt_id, box); appendToLog(event, box);
+    if (!endedRuns.has(event.run_id)) { setRunStatus('blocked'); showPanel('Talk'); }
   } else if (event.kind === 'tool' || event.kind === 'tool_call') {
     renderTool(event);
   } else if (event.kind === 'plan' || event.kind === 'plan_updated') {
@@ -339,21 +407,30 @@ function renderEvent(event, target) {
     const text = delta ? payload.delta || '' : eventText(event);
     if (!text) return;
     if (!record) {
-      const element = document.createElement('div'); element.className = 'msg assistant'; $('messages').append(element);
-      record = {element, text: '', finished: false}; messagesByKey.set(key, record);
+      const element = document.createElement('div'); element.className = 'msg assistant'; element.dataset.i18nRole = '搭档'; element.dataset.role = t('搭档');
+      record = {element, runID: event.run_id, text: '', finished: false}; messagesByKey.set(key, record);
     }
+    appendToLog(event, record.element);
     if (record.finished && delta) return;
     record.text = delta ? record.text + text : text; record.finished = !delta;
     renderMarkdown(record.element, record.text);
+    if (event.created_at) record.element.dataset.time = new Date(event.created_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
   } else if (['input', 'error', 'text'].includes(event.kind)) {
     const key = event.kind + ':' + event.sequence;
     if (messagesByKey.has(key)) return;
     const element = document.createElement('div'); element.className = 'msg' + (event.kind === 'input' ? ' user' : event.kind === 'error' ? ' error' : '');
-    element.textContent = eventText(event) || event.kind; $('messages').append(element); messagesByKey.set(key, {element});
+    element.textContent = eventText(event) || event.kind;
+    if (event.kind === 'input') { element.dataset.i18nRole = '你'; element.dataset.role = t('你'); delete $('goalSummary').dataset.i18n; $('goalSummary').textContent = eventText(event); }
+    if (event.created_at) element.dataset.time = new Date(event.created_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    appendToLog(event, element); messagesByKey.set(key, {element, runID: element.parentNode?.dataset.run || event.run_id});
   }
   $('welcome').hidden = true;
 }
-function isNearBottom() { const messages = $('messages'); return messages.scrollHeight - messages.scrollTop - messages.clientHeight <= 48; }
+function isNearBottom() {
+  if ($('panelTalk').hidden) return false;
+  const messages = $('messages');
+  return messages.scrollHeight - messages.scrollTop - messages.clientHeight <= 48;
+}
 async function poll() {
   if (!thread || polling) return;
   clearTimeout(timer); timer = null; polling = true;
@@ -396,51 +473,67 @@ $('input').onkeydown = event => {
 };
 $('new').onclick = () => { reset(null); list().catch(report); $('input').focus(); };
 $('search').oninput = showTasks;
-$('mode').onchange = () => showThread({title: $('title').textContent, work_dir: $('workspace').textContent, status: $('runStatus').dataset.status});
-$('messages').onscroll = () => $('jumpBottom').hidden = isNearBottom();
+$('mode').onchange = () => setLabel($('composerHint'), $('mode').value === 'plan' ? '按步骤执行并跟踪进度' : '在当前项目中工作');
+$('messages').onscroll = () => {
+  if ($('notebook').hidden || $('panelTalk').hidden) return;
+  followConversation = isNearBottom(); $('jumpBottom').hidden = followConversation;
+};
 $('jumpBottom').onclick = () => { $('messages').scrollTop = $('messages').scrollHeight; $('jumpBottom').hidden = true; };
 $('fileForm').onsubmit = async event => {
   event.preventDefault();
-  if (!thread) { $('fileStatus').textContent = '请先创建或选择任务'; return; }
+  if (!thread) { setLabel($('fileStatus'), '请先创建或选择任务'); return; }
   const path = $('filePath').value.trim(), current = generation, target = thread, request = ++fileRequest;
   if (!path) return;
-  $('fileStatus').textContent = '正在读取…';
+  setLabel($('fileStatus'), '正在读取…');
   try {
     const result = await api('/api/threads/' + target + '/file?path=' + encodeURIComponent(path));
     if (current !== generation || request !== fileRequest) return;
-    $('file').textContent = result.content || ''; $('fileStatus').textContent = result.path;
+    delete $('file').dataset.i18n; delete $('fileStatus').dataset.i18n; $('file').textContent = result.content || ''; $('fileStatus').textContent = result.path;
   } catch (error) {
-    if (current === generation && request === fileRequest) $('fileStatus').textContent = error.message;
+    if (current === generation && request === fileRequest) { delete $('fileStatus').dataset.i18n; $('fileStatus').textContent = error.message; }
   }
 };
 document.querySelectorAll('[data-panel]').forEach(button => {
-  button.onclick = () => showPanel(button.dataset.panel);
+  button.onclick = () => showPanel(button.dataset.panel, true);
   button.onkeydown = event => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    if (button.getAttribute('role') !== 'tab' || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    const panels = ['Plan', 'Output', 'File'], index = panels.indexOf(button.dataset.panel);
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
-    showPanel(panels[next]); $('tab' + panels[next]).focus();
+    const index = panelNames.indexOf(button.dataset.panel);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? panelNames.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : panelNames.length - 1)) % panelNames.length;
+    showPanel(panelNames[next]); $('tab' + panelNames[next]).focus();
   };
 });
-document.querySelectorAll('[data-prompt]').forEach(button => button.onclick = () => { $('input').value = button.dataset.prompt; $('mode').value = button.dataset.mode || ''; $('mode').onchange(); $('input').oninput(); $('input').focus(); });
-$('toggleInspector').onclick = () => {
-  const narrow = typeof matchMedia !== 'undefined' && matchMedia('(max-width: 960px)').matches;
-  if (narrow) document.body.classList.toggle('inspector-open');
-  else document.body.classList.toggle('inspector-hidden');
-  const open = narrow ? document.body.classList.contains('inspector-open') : !document.body.classList.contains('inspector-hidden');
-  $('toggleInspector').setAttribute('aria-expanded', String(open));
+document.querySelectorAll('[data-prompt]').forEach(button => button.onclick = () => {
+  $('input').value = t(button.dataset.prompt);
+  $('mode').value = button.dataset.mode || '';
+  $('mode').onchange(); $('input').oninput(); $('input').focus();
+});
+$('closeNotebook').onclick = () => {
+  if (!$('panelTalk').hidden) followConversation = isNearBottom();
+  $('notebook').hidden = true; $('input').focus();
 };
-$('closeInspector').onclick = () => { document.body.classList.remove('inspector-open'); $('toggleInspector').setAttribute('aria-expanded', 'false'); };
+$('stop').onclick = async () => {
+  if (!thread) return;
+  const current = generation, target = thread;
+  $('stop').disabled = true;
+  try {
+    await api('/api/threads/' + target + '/cancel', {method: 'POST'});
+    if (current !== generation) return;
+    setLabel($('agentStatus'), '正在停止任务');
+    report(null); poll();
+  } catch (error) {
+    if (current === generation) { setRunStatus($('runStatus').dataset.status); report(error); }
+  }
+};
 function setTheme(theme) { document.documentElement.dataset.theme = theme; save('theme', theme); }
+$('language').onclick = () => { setLanguage(language === 'en' ? 'zh' : 'en'); showTasks(); };
+setLanguage(language);
 $('theme').onclick = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
-setTheme(localStorage.theme || (typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+setTheme(localStorage.theme || 'light');
 document.onkeydown = event => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('new').onclick(); }
-  if (event.key === 'Escape') $('closeInspector').onclick();
+  if (event.key === 'Escape') $('closeNotebook').onclick();
 };
 $('input').value = localStorage[draftKey(null)] || ''; updateComposer();
-showPanel('Plan');
-$('toggleInspector').setAttribute('aria-expanded', String(typeof matchMedia !== 'undefined' && !matchMedia('(max-width: 960px)').matches));
 const selectedThread = localStorage.selectedThread;
 if (selectedThread) select(selectedThread).catch(report); else list().catch(report);

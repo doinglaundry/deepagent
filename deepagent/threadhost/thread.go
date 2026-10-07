@@ -21,6 +21,7 @@ import (
 	"eino-cli/deepagent/graph/middleware"
 	skillspkg "eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/tools"
+	"eino-cli/deepagent/graph/types"
 	memorypkg "eino-cli/deepagent/protocol/memory"
 	"eino-cli/deepagent/run"
 	"eino-cli/deepagent/sandbox/aio"
@@ -61,6 +62,7 @@ type RuntimeDeps struct {
 	Collaboration          CollaborationBackend
 	ConversationEntryID    conversation.ConversationEntryIDProvider
 	ApprovalRemember       threadpkg.ApprovalRememberer
+	IsToolAlwaysAllowed    func(context.Context, int64, string) (bool, error)
 	InterruptResume        threadpkg.InterruptResumeDecoder
 }
 
@@ -123,6 +125,22 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 		Filesystem:       filesystem,
 		FilesystemConfig: &execution.FilesystemConfig{},
 	}
+	agentConfig.Policy = tools.PolicyFunc(func(ctx context.Context, call types.ToolCall, descriptor tools.ToolDescriptor) (tools.Decision, error) {
+		if !descriptor.RequiresApproval {
+			return tools.Decision{Action: tools.Allow}, nil
+		}
+		if w.Deps.IsToolAlwaysAllowed == nil {
+			return tools.Decision{Action: tools.AskApproval}, nil
+		}
+		allowed, err := w.Deps.IsToolAlwaysAllowed(ctx, info.ThreadID, call.Name)
+		if err != nil {
+			return tools.Decision{}, err
+		}
+		if allowed {
+			return tools.Decision{Action: tools.Allow}, nil
+		}
+		return tools.Decision{Action: tools.AskApproval}, nil
+	})
 	agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, w.Deps.Tools...)
 	if w.Deps.Collaboration != nil {
 		items, err := newCollaborationTools(w.Deps.Collaboration, info)

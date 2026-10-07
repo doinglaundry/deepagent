@@ -74,6 +74,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Deps: threadhost.RuntimeDeps{
 			ConversationRepository: conversationDAO, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
 			MemoryStore: coordinator, Collaboration: coordinator,
+			IsToolAlwaysAllowed: coordinator.IsToolAlwaysAllowed,
 			ConversationEntryID: func(idCtx context.Context, _, _ string, message *schema.Message) (int64, error) {
 				parseIntId, parseErr := strconv.ParseInt(threadpkg.MessageID(message), 10, 64)
 				if parseErr == nil && parseIntId > 0 {

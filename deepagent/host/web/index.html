@@ -2,34 +2,50 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light dark"><title>DeepAgent · 工作台</title>
-<link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script>
+<meta name="color-scheme" content="light dark"><title data-i18n="DeepAgent · 像素办公室">DeepAgent · 像素办公室</title>
+<link rel="stylesheet" href="/app.css"><script src="/i18n.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
-<aside class="sidebar" aria-label="任务导航">
-  <div class="brand"><span class="brand-mark">d<span>·</span></span><div>DeepAgent<small>你的 Agent 工作台</small></div></div>
-  <button id="new" class="new-task">＋ 新任务 <kbd>⌘ K</kbd></button>
-  <label class="search"><span>⌕</span><input id="search" placeholder="搜索任务" aria-label="搜索任务"></label>
-  <div class="nav-label">最近任务</div><nav id="threads" aria-label="最近任务"></nav>
-  <div class="sidebar-bottom"><span class="connection"><i></i> 本地工作台</span><button id="theme" class="icon-button" aria-label="切换深浅主题" title="切换深浅主题">◐</button></div>
-</aside>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true">d<span>·</span></span><strong data-i18n="DeepAgent · 小办公室">DeepAgent · 小办公室</strong></div>
+  <div class="task-heading"><span aria-hidden="true">◇</span><h1 id="title" data-i18n="等待你的第一个任务">等待你的第一个任务</h1></div>
+  <span id="workspace" class="workspace" data-i18n="本地工作空间">本地工作空间</span><span id="runStatus" class="badge" data-status="idle" data-i18n="就绪">就绪</span>
+  <nav aria-label="办公室导航" data-i18n-label="办公室导航"><button data-panel="Tasks" data-i18n="任务">任务</button><button id="new" data-i18n="＋ 新任务">＋ 新任务</button><button id="stop" type="button" disabled data-i18n="■ 停止">■ 停止</button><button id="language" type="button" aria-label="Switch to English">EN</button><button id="theme" aria-label="切换深浅主题" data-i18n-label="切换深浅主题">◐</button></nav>
+</header>
 <main>
-  <header class="topbar"><div><h1 id="title">新任务</h1><div class="subtitle" id="workspace">从一个问题或任务开始</div></div><div class="header-actions"><span id="runStatus" class="badge">就绪</span><button id="toggleInspector" class="icon-button" aria-label="打开或关闭工作面板" aria-expanded="false">▤</button></div></header>
-  <div id="status" role="status" aria-live="polite" hidden></div>
-  <div class="conversation">
-    <div id="welcome" class="welcome"><span class="welcome-mark">d<span>·</span></span><h2>想一起完成什么？</h2><p>阅读代码、处理文件，或拆解一个复杂任务。</p><div class="suggestions"><button data-prompt="阅读当前项目，告诉我它的架构和主要入口。">⌘ <strong>理解项目</strong><span>梳理架构与执行链路</span></button><button data-mode="plan" data-prompt="帮我制定一个改进当前项目可读性的计划，先分析，不修改文件。">☷ <strong>制定计划</strong><span>把复杂工作分成步骤</span></button><button data-prompt="阅读 README.md，概括这个项目的用途和启动方法。">↗ <strong>阅读文件</strong><span>提炼重点和下一步</span></button></div></div>
-    <div class="messages" id="messages" aria-label="对话消息"></div>
-    <button id="jumpBottom" class="jump-bottom" hidden>↓ 回到最新</button>
+  <div class="workbench">
+  <section id="office" class="office" data-status="idle" aria-label="像素办公室" data-i18n-label="像素办公室">
+    <section class="task-board" aria-label="任务板" data-i18n-label="任务板">
+      <span class="eyebrow" data-i18n="TASK BOARD / 任务板">TASK BOARD / 任务板</span><h2 id="boardTitle" data-i18n="想一起完成什么？">想一起完成什么？</h2>
+      <p id="goalSummary" class="lead" data-i18n="阅读代码、处理文件，或把一个想法变成现实。">阅读代码、处理文件，或把一个想法变成现实。</p>
+      <div id="boardPlan" class="board-plan"></div>
+      <button id="deliverable" class="deliverable" data-panel="Talk" hidden><span aria-hidden="true">▤</span><span><strong data-i18n="搭档的成果">搭档的成果</strong><small id="resultPreview"></small></span><span class="deliverable-action" data-i18n="打开成果 ↗">打开成果 ↗</span></button>
+      <p id="boardStatus" class="status-line" data-i18n="随时可以开始">随时可以开始</p>
+      <div id="welcome" class="welcome"><button data-prompt="阅读 README.md，概括这个项目的用途和启动方法。" data-i18n="读懂项目 ↗">读懂项目 ↗</button><button data-mode="plan" data-prompt="帮我制定一个改进当前项目可读性的计划，先分析，不修改文件。" data-i18n="一起做计划 ↗">一起做计划 ↗</button></div>
+      <button class="board-link" data-panel="Plan" data-i18n="查看完整计划 →">查看完整计划 →</button>
+    </section>
+    <button class="hotspot agent" data-panel="Output" aria-label="点击搭档查看工具执行" data-i18n-label="点击搭档查看工具执行"><span class="speech" id="agentStatus" data-i18n="准备好后，把任务交给我。">准备好后，把任务交给我。</span><span class="agent-target" aria-hidden="true"></span><span class="buddy-label" data-i18n="查看搭档正在做什么">查看搭档正在做什么</span></button>
+    <button class="hotspot cabinet" data-panel="File"><span class="cabinet-label"><span data-i18n="▤ 成果柜">▤ 成果柜</span><small data-i18n="查看项目文件">查看项目文件</small></span></button>
+    <div class="scene-nav"><button data-panel="Talk"><strong data-i18n="对话">对话</strong><small data-i18n="一起讨论你的目标">一起讨论你的目标</small></button><button data-panel="Plan"><strong data-i18n="计划">计划</strong><small data-i18n="任务一步步推进">任务一步步推进</small></button><button data-panel="Output"><strong data-i18n="工具">工具</strong><small data-i18n="搭档如何使用能力">搭档如何使用能力</small></button></div>
+  </section>
+    <aside id="notebook" class="notebook" aria-label="工作记录" data-i18n-label="工作记录" hidden>
+      <header class="notebook-heading"><strong data-i18n="工作记录">工作记录</strong><button id="closeNotebook" aria-label="收起工作记录" data-i18n-label="收起工作记录">×</button></header>
+      <div class="tabs" role="tablist" aria-label="工作记录" data-i18n-label="工作记录">
+        <button id="tabTalk" role="tab" aria-controls="panelTalk" aria-selected="true" data-panel="Talk" data-i18n="对话">对话</button><button id="tabPlan" role="tab" aria-controls="panelPlan" aria-selected="false" data-panel="Plan" data-i18n="计划">计划</button><button id="tabOutput" role="tab" aria-controls="panelOutput" aria-selected="false" data-panel="Output" data-i18n="工具">工具</button><button id="tabFile" role="tab" aria-controls="panelFile" aria-selected="false" data-panel="File" data-i18n="文件">文件</button><button id="tabTasks" role="tab" aria-controls="panelTasks" aria-selected="false" data-panel="Tasks" data-i18n="任务">任务</button>
+      </div>
+      <div id="panelTalk" class="panel conversation" role="tabpanel" aria-labelledby="tabTalk"><div id="messages" class="messages" data-i18n-empty="这里记录你和搭档的对话。先给它一个任务吧。" aria-label="对话消息" data-i18n-label="对话消息"></div><button id="jumpBottom" class="jump-bottom" hidden data-i18n="↓ 回到最新">↓ 回到最新</button></div>
+      <div id="panelPlan" class="panel" role="tabpanel" aria-labelledby="tabPlan" hidden><p class="panel-label" data-i18n="任务步骤">任务步骤</p><div id="plan" data-i18n-empty="Agent 更新计划后，步骤会出现在这里。"></div></div>
+      <div id="panelOutput" class="panel" role="tabpanel" aria-labelledby="tabOutput" hidden><p class="panel-label" data-i18n="搭档的执行记录">搭档的执行记录</p><div id="toolOutput" data-i18n-empty="工具调用的参数、结果和运行状态会出现在这里。"></div></div>
+      <div id="panelFile" class="panel" role="tabpanel" aria-labelledby="tabFile" hidden><p class="panel-label" data-i18n="项目文件 · 只读预览">项目文件 · 只读预览</p><form id="fileForm"><input id="filePath" placeholder="例如 README.md" data-i18n-placeholder="例如 README.md" aria-label="文件相对路径" data-i18n-label="文件相对路径"><button type="submit" data-i18n="打开">打开</button></form><div id="fileStatus" role="status"></div><pre id="file" data-i18n="输入相对路径查看文件">输入相对路径查看文件</pre></div>
+      <div id="panelTasks" class="panel" role="tabpanel" aria-labelledby="tabTasks" hidden><label class="search"><input id="search" placeholder="搜索任务" data-i18n-placeholder="搜索任务" aria-label="搜索任务" data-i18n-label="搜索任务"></label><nav id="threads" aria-label="最近任务" data-i18n-label="最近任务"></nav></div>
+    </aside>
   </div>
-  <div class="composer-area"><form class="composer"><textarea id="input" rows="2" placeholder="描述任务，或继续追问…" aria-label="输入消息"></textarea><div class="composer-bottom"><div class="composer-tools"><select id="mode" aria-label="执行模式"><option value="">执行</option><option value="plan">计划</option></select><span id="composerHint">在当前项目中工作</span></div><button id="send" type="submit" aria-label="发送消息">↑</button></div></form><div class="composer-note">Enter 发送 <span>·</span> Shift + Enter 换行 <span>·</span> 执行前需要你的授权时会停下来询问</div></div>
+  <div class="composer-area">
+    <div id="status" role="status" aria-live="polite" hidden></div>
+    <div class="caption"><span id="phaseLabel" data-i18n="就绪">就绪</span><span id="phaseCaption" data-i18n="给搭档一个任务，我们一起推进">给搭档一个任务，我们一起推进</span></div>
+    <form class="composer"><span class="input-mark" aria-hidden="true">✦</span><textarea id="input" rows="1" placeholder="描述你的任务，或随时补充想法…" data-i18n-placeholder="描述你的任务，或随时补充想法…" aria-label="输入消息" data-i18n-label="输入消息"></textarea><select id="mode" aria-label="执行模式" data-i18n-label="执行模式"><option value="" data-i18n="执行">执行</option><option value="plan" data-i18n="计划">计划</option></select><button id="send" type="submit" aria-label="发送消息" data-i18n-label="发送消息" data-i18n="发送 ↗">发送 ↗</button></form>
+    <div class="composer-note"><span id="composerHint" data-i18n="在当前项目中工作">在当前项目中工作</span><span data-i18n="Enter 发送 · Shift + Enter 换行">Enter 发送 · Shift + Enter 换行</span></div>
+  </div>
 </main>
-<section id="inspector" class="inspector" aria-label="工作面板">
-  <div class="inspector-heading"><strong>工作面板</strong><button id="closeInspector" class="icon-button" aria-label="关闭工作面板">×</button></div>
-  <div class="tabs" role="tablist" aria-label="工作面板"><button id="tabPlan" role="tab" aria-selected="true" aria-controls="panelPlan" data-panel="Plan">计划</button><button id="tabOutput" role="tab" aria-selected="false" aria-controls="panelOutput" data-panel="Output">工具</button><button id="tabFile" role="tab" aria-selected="false" aria-controls="panelFile" data-panel="File">文件</button></div>
-  <div id="panelPlan" class="panel" role="tabpanel" aria-labelledby="tabPlan"><div class="panel-label">任务步骤</div><div id="plan" class="panel-empty">Agent 更新计划后，步骤会出现在这里。</div></div>
-  <div id="panelOutput" class="panel" role="tabpanel" aria-labelledby="tabOutput" hidden><div class="panel-label">执行记录</div><div id="toolOutput" class="panel-empty">工具调用的参数、结果和运行状态会出现在这里。</div></div>
-  <div id="panelFile" class="panel file-panel" role="tabpanel" aria-labelledby="tabFile" hidden><div class="panel-label">项目文件 · 只读预览</div><form id="fileForm"><input id="filePath" placeholder="例如 README.md" aria-label="文件相对路径"><button id="openFile" type="submit">打开</button></form><div id="fileStatus" role="status"></div><pre id="file">输入相对路径查看文件</pre></div>
-  <div class="inspector-footer">工具执行与计划来自当前任务</div>
-</section>
 </body>
 </html>

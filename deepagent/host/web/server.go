@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,7 +18,7 @@ import (
 	inputpkg "eino-cli/deepagent/protocol/input"
 )
 
-//go:embed index.html app.js app.css
+//go:embed index.html app.js i18n.js app.css assets
 var files embed.FS
 
 type Server struct {
@@ -30,34 +29,13 @@ type Server struct {
 
 func New(coordinator *manager.Manager, root string) *Server {
 	s := &Server{Manager: coordinator, Root: root, Mux: http.NewServeMux()}
-	s.Mux.HandleFunc("/", s.index)
-	s.Mux.HandleFunc("/app.js", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		http.ServeFileFS(w, r, files, "app.js")
-	})
-	s.Mux.HandleFunc("/app.css", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		http.ServeFileFS(w, r, files, "app.css")
-	})
+	s.Mux.Handle("/", http.FileServerFS(files))
 	s.Mux.HandleFunc("/api/threads", s.threads)
 	s.Mux.HandleFunc("/api/threads/", s.thread)
 	return s
 }
 
 func (s *Server) Handler() http.Handler { return s.Mux }
-
-func (s *Server) index(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	t, err := template.ParseFS(files, "index.html")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	_ = t.Execute(w, nil)
-}
 
 func decode[T any](r *http.Request, out *T) error { return json.NewDecoder(r.Body).Decode(out) }
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -73,8 +51,11 @@ type threadView struct {
 	ID        string `json:"id"`
 	SessionID string `json:"session_id"`
 	Title     string `json:"title"`
+	Untitled  bool   `json:"untitled,omitempty"`
 	Status    string `json:"status"`
 	WorkDir   string `json:"work_dir"`
+	RunID     string `json:"run_id,omitempty"`
+	RunStatus string `json:"run_status,omitempty"`
 }
 
 func viewThread(thread *dalmodel.Thread) threadView {
@@ -85,8 +66,12 @@ func viewThread(thread *dalmodel.Thread) threadView {
 		ID: strconv.FormatInt(thread.ThreadID, 10), SessionID: thread.SessionID,
 		Status: thread.DisplayStatus(time.Now()), Title: strings.TrimSpace(thread.Metadata["title"]),
 	}
+	if thread.LastRun != nil {
+		view.RunID, view.RunStatus = thread.LastRun.RunID, thread.LastRun.Status
+	}
 	if view.Title == "" {
 		view.Title = "未命名任务"
+		view.Untitled = true
 	}
 	if thread.Profile != nil {
 		view.WorkDir = thread.Profile.Cwd
@@ -125,6 +110,7 @@ func (s *Server) getThreadViews(ctx context.Context, threads ...*dalmodel.Thread
 	for index, thread := range threads {
 		if strings.TrimSpace(thread.Metadata["title"]) == "" && titles[views[index].ID] != "" {
 			views[index].Title = titles[views[index].ID]
+			views[index].Untitled = false
 		}
 	}
 	return views, nil
@@ -219,6 +205,18 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case parts[1] == "messages" && r.Method == http.MethodPost:
 		s.submitMessage(w, r, threadID)
+	case parts[1] == "cancel" && r.Method == http.MethodPost:
+		contentType := strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])
+		if strings.ToLower(contentType) != "application/json" {
+			writeError(w, http.StatusUnsupportedMediaType, errors.New("application/json is required"))
+			return
+		}
+		result, err := s.Manager.Cancel(r.Context(), threadID, "user stopped task", nil)
+		if err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, result.Message)
 	case parts[1] == "events" && r.Method == http.MethodGet:
 		s.events(w, r, threadID)
 	case parts[1] == "stream" && r.Method == http.MethodGet:
@@ -237,6 +235,10 @@ type submitRequest struct {
 }
 
 func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID int64) {
+	if strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])) != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, errors.New("application/json is required"))
+		return
+	}
 	var req submitRequest
 	decodeErr := decode(r, &req)
 	if decodeErr != nil {
@@ -291,12 +293,13 @@ func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID 
 }
 
 type eventView struct {
-	Sequence string          `json:"sequence"`
-	Status   string          `json:"status,omitempty"`
-	RunID    string          `json:"run_id,omitempty"`
-	Kind     string          `json:"kind"`
-	Text     string          `json:"text,omitempty"`
-	Payload  json.RawMessage `json:"payload,omitempty"`
+	Sequence  string          `json:"sequence"`
+	CreatedAt time.Time       `json:"created_at,omitempty"`
+	Status    string          `json:"status,omitempty"`
+	RunID     string          `json:"run_id,omitempty"`
+	Kind      string          `json:"kind"`
+	Text      string          `json:"text,omitempty"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request, threadID int64) {
@@ -309,7 +312,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, threadID int64) 
 	rows := make([]eventView, 0, len(result.Messages))
 	for _, message := range result.Messages {
 		rows = append(rows, eventView{
-			Sequence: strconv.FormatInt(message.MessageID, 10), RunID: message.TriggerRunID, Kind: message.MessageType,
+			Sequence: strconv.FormatInt(message.MessageID, 10), CreatedAt: message.CreatedAt, RunID: message.TriggerRunID, Kind: message.MessageType,
 			Status: messageDisplayStatus(message, result.Runs[message.TriggerRunID]),
 			Text:   messageText(message), Payload: append(json.RawMessage(nil), message.Payload...),
 		})

@@ -190,6 +190,10 @@ func (c *Manager) Resume(ctx context.Context, threadID int64, input *InputMessag
 		if count > 0 {
 			return errors.New("resume is already queued")
 		}
+		err = c.rememberToolApprovals(txCtx, thread, resume)
+		if err != nil {
+			return err
+		}
 		message, err := c.createInput(txCtx, threadID, input)
 		if err != nil {
 			return err

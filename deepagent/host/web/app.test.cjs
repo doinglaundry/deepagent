@@ -10,13 +10,22 @@ class Element {
   }
   get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
   set textContent(value) { this._text = value; this.children = []; }
-  append(...children) { this.children.push(...children); }
+  append(...children) { children.forEach(child => this.insertBefore(child, null)); }
   replaceChildren(...children) { this._text = ''; this.children = children; }
+  insertBefore(child, before) {
+    if (child.parentNode) child.parentNode.children.splice(child.parentNode.children.indexOf(child), 1);
+    const index = this.children.indexOf(before);
+    this.children.splice(index < 0 ? this.children.length : index, 0, child);
+    child.parentNode = this;
+  }
   setAttribute(name, value) { this.attributes[name] = value; }
   focus() {}
   querySelectorAll(selector = 'button,input,select,textarea') {
-    const tags = selector.split(',');
-    return this.children.flatMap(child => [...(tags.includes(child.tag) ? [child] : []), ...child.querySelectorAll(selector)]);
+    const selectors = selector.split(',');
+    return this.children.flatMap(child => {
+      const matches = selectors.some(value => value.startsWith('.') ? value.slice(1).split('.').every(name => (child.className || '').split(' ').includes(name)) : value === child.tag);
+      return [...(matches ? [child] : []), ...child.querySelectorAll(selector)];
+    });
   }
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -35,6 +44,7 @@ function load(handler) {
       return {ok: result?.ok !== false, status: result?.ok === false ? 409 : 200, json: async () => result?.data ?? []};
     }
   });
+  vm.runInContext(fs.readFileSync(__dirname + '/i18n.js', 'utf8'), context);
   vm.runInContext(fs.readFileSync(__dirname + '/app.js', 'utf8'), context);
   return {context, get, timers, calls};
 }
@@ -148,8 +158,9 @@ test('live chunks and durable final answer render once without replay duplicatio
   app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {llm_response_id: 'response', delta: '好'}}, 'thread');
   app.context.renderEvent({sequence: '10', run_id: 'run', kind: 'assistant', text: '你好！', payload: {llm_response_id: 'response'}}, 'thread');
   app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {llm_response_id: 'response', delta: '好'}}, 'thread');
-  assert.equal(app.get('messages').children.length, 1);
-  assert.equal(app.get('messages').children[0].textContent, '你好！');
+  const replies = app.get('messages').querySelectorAll('.msg.assistant');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].textContent, '你好！');
 });
 
 test('failed resume restores select and textarea controls as well as buttons', async () => {
@@ -165,7 +176,7 @@ test('replaying a completed resume disables its original question', () => {
   const app = load(() => undefined);
   app.context.renderEvent({sequence: '1', run_id: 'run', kind: 'interrupt', payload: {kind: 'follow_up', checkpoint_id: 'run', interrupt_id: 'question', info: {question: '颜色？'}}}, 'thread');
   app.context.renderEvent({sequence: '2', run_id: 'run', kind: 'resume_run', payload: {run_id: 'run', checkpoint_id: 'run', interrupt_id: 'question', interrupt: {kind: 'follow_up', data: {user_answer: '蓝色'}}}}, 'thread');
-  const prompt = app.get('messages').children[0];
+  const prompt = app.get('messages').querySelectorAll('.prompt')[0];
   assert.ok(prompt.querySelectorAll().every(control => control.disabled));
 });
 
@@ -183,7 +194,7 @@ test('finished runs cannot expose old questions while another run is blocked', (
   const app = load(() => undefined);
   app.context.renderEvent({sequence: '1', run_id: 'old', kind: 'input', status: 'interrupted', text: '旧任务'}, 'thread');
   app.context.renderEvent({sequence: '2', run_id: 'old', kind: 'interrupt', payload: {checkpoint_id: 'old', interrupt_id: 'old-question', kind: 'follow_up', info: {question: '旧问题'}}}, 'thread');
-  const question = app.get('messages').children[1];
+  const question = app.get('messages').querySelectorAll('.prompt')[0];
   assert.ok(question.querySelectorAll().every(control => control.disabled));
 });
 
@@ -192,7 +203,7 @@ test('a planning question resumes in its original mode after history reload', as
   const app = load(url => url.endsWith('/messages') ? {ok: false, data: {error: 'retry'}} : undefined);
   app.context.renderEvent({sequence: '1', kind: 'input', run_id: 'plan-run', text: '做一个计划', payload: {mode: 'plan'}}, 'thread');
   app.context.renderEvent({sequence: '2', kind: 'interrupt', run_id: 'plan-run', payload: {kind: 'follow_up', checkpoint_id: 'plan-run', interrupt_id: 'question', consumed_message_ids: ['1'], info: {question: '下一步？'}}}, 'thread');
-  const box = app.get('messages').children[1];
+  const box = app.get('messages').querySelectorAll('.prompt')[0];
   box.children.find(child => child.tag === 'input').value = '继续';
   await box.children.find(child => child.tag === 'button').onclick();
   const request = app.calls.find(call => call.url.endsWith('/messages'));
@@ -219,4 +230,144 @@ test('untitled task names never fall back to internal database IDs', async () =>
   const app = load(url => url.startsWith('/api/threads?') ? {data: [{id: '2000000000000000001', title: ''}]} : undefined);
   await tick();
   assert.equal(app.get('threads').children[0].textContent, '未命名任务');
+});
+
+
+test('office reflects runtime state and only offers stop during active execution', () => {
+  const app = load(() => undefined);
+  app.context.showThread({id: 'one', title: '读代码', status: 'running'});
+  assert.equal(app.get('office').dataset.status, 'running');
+  assert.equal(app.get('agentStatus').textContent, '正在处理任务');
+  app.context.showThread({id: 'one', status: 'blocked'});
+  assert.equal(app.get('agentStatus').textContent, '需要你的回复');
+  assert.equal(app.get('stop').disabled, true);
+});
+
+test('office opens one notebook at the selected destination', () => {
+  const app = load(() => undefined);
+  app.get('notebook').hidden = true;
+  app.context.showPanel('Output');
+  assert.equal(app.get('notebook').hidden, false);
+  assert.equal(app.get('panelOutput').hidden, false);
+  assert.equal(app.get('panelTalk').hidden, true);
+  assert.equal(app.get('panelTasks').hidden, true);
+});
+
+
+test('hidden conversation does not opt into automatic scrolling', () => {
+  const app = load(() => undefined);
+  app.get('messages').clientHeight = 400;
+  app.get('messages').scrollHeight = 2000;
+  app.get('messages').scrollTop = 1580;
+  app.get('panelTalk').hidden = true;
+  assert.equal(app.context.isNearBottom(), false);
+});
+
+
+test('returning to conversation follows latest only when the reader previously followed it', () => {
+  const app = load(() => undefined);
+  const messages = app.get('messages');
+  messages.clientHeight = 400; messages.scrollHeight = 2000; messages.scrollTop = 1600;
+  app.get('notebook').hidden = false; app.get('panelTalk').hidden = false;
+  app.context.showPanel('Output');
+  messages.scrollHeight = 2500;
+  app.context.showPanel('Talk');
+  assert.equal(messages.scrollTop, 2500);
+  messages.scrollTop = 100;
+  app.context.showPanel('File');
+  messages.scrollHeight = 3000;
+  app.context.showPanel('Talk');
+  assert.equal(messages.scrollTop, 100);
+});
+
+test('task board only presents a successful current Run as completed', () => {
+  const app = load(() => undefined);
+  app.context.renderEvent({sequence: '1', run_id: 'old-run', kind: 'assistant', text: '旧成果'}, 'thread');
+  app.context.showThread({status: 'idle', run_id: 'new-run', run_status: 'failed'});
+  assert.equal(app.get('deliverable').hidden, true, 'failure must not reuse an old result');
+  assert.equal(app.get('boardTitle').textContent, '这次任务没有完成');
+  app.context.showThread({status: 'idle', run_id: 'new-run', run_status: 'interrupted'});
+  assert.equal(app.get('deliverable').hidden, true, 'interruption must not look successful');
+  assert.equal(app.get('boardTitle').textContent, '这次任务已停止');
+  app.context.showThread({status: 'idle', run_id: 'new-run', run_status: 'finished'});
+  assert.equal(app.get('deliverable').hidden, true, 'an old Run cannot supply the current result');
+  app.context.renderEvent({sequence: '2', run_id: 'new-run', kind: 'assistant', text: '新成果'}, 'thread');
+  app.context.showThread({status: 'idle', run_id: 'new-run', run_status: 'finished'});
+  assert.equal(app.get('deliverable').hidden, false);
+  assert.equal(app.get('resultPreview').textContent, '新成果');
+});
+
+
+test('work log separates actual Runs and keeps appended inputs in the same round', () => {
+  const app = load(() => undefined);
+  app.context.renderEvent({sequence: '1', kind: 'input', run_id: 'first', text: '第一轮任务'}, 'thread');
+  app.context.renderEvent({sequence: '2', kind: 'assistant', run_id: 'first', text: '第一轮成果'}, 'thread');
+  app.context.renderEvent({sequence: '3', kind: 'input', run_id: 'second', text: '第二轮任务'}, 'thread');
+  app.context.renderEvent({sequence: '4', kind: 'input', run_id: 'second', text: '补充第二轮'}, 'thread');
+  const headings = app.get('messages').querySelectorAll('.round-heading');
+  assert.deepEqual(headings.map(element => element.textContent), ['第 1 轮', '第 2 轮']);
+  assert.equal(app.get('messages').querySelectorAll('.msg.user').length, 3);
+});
+
+test('a live response groups its already stored pending input before the reply without duplicate headings', () => {
+  const app = load(() => undefined);
+  app.context.renderEvent({sequence: '1', kind: 'input', text: '待领取的任务'}, 'thread');
+  app.context.renderEvent({kind: 'assistant_delta', run_id: 'run', payload: {llm_response_id: 'reply', consumed_message_ids: ['1'], delta: '开始'}}, 'thread');
+  app.context.renderEvent({sequence: '2', kind: 'assistant', run_id: 'run', text: '完成', payload: {llm_response_id: 'reply', consumed_message_ids: ['1']}}, 'thread');
+  const entries = app.get('messages').children[0].children;
+  assert.equal(entries[0].className, 'round-heading');
+  assert.equal(entries[1].textContent, '待领取的任务');
+  assert.equal(entries[2].textContent, '完成');
+  assert.equal(entries.length, 3);
+});
+
+
+test('tool details stay in the conversation and the tools tab links to that single record', () => {
+  const app = load(() => undefined);
+  app.context.renderEvent({run_id: 'run', kind: 'tool_call', payload: {tool_call_id: 'call', tool_name: 'read_file', status: 'started', arguments_json: '{"path":"README.md"}'}}, 'thread');
+  app.context.renderEvent({sequence: '2', run_id: 'run', kind: 'tool', payload: {tool_call_id: 'call', tool_name: 'read_file', status: 'finished', result_json: 'file contents'}}, 'thread');
+  const details = app.get('messages').querySelectorAll('.tool-record');
+  assert.equal(details.length, 1);
+  assert.equal(details[0].open, undefined, 'tool details are collapsed by default');
+  assert.ok(details[0].textContent.includes('file contents'));
+  assert.equal(app.get('toolOutput').querySelectorAll('.tool-record').length, 0);
+  assert.equal(app.get('toolOutput').querySelectorAll('.tool-link').length, 1);
+});
+
+test('appended inputs retain their position after earlier output in the same Run', () => {
+  const app = load(() => undefined);
+  app.context.renderEvent({sequence: '1', run_id: 'run', kind: 'input', text: '初始输入'}, 'thread');
+  app.context.renderEvent({sequence: '2', run_id: 'run', kind: 'assistant', text: '初次回答'}, 'thread');
+  app.context.renderEvent({sequence: '3', run_id: 'run', kind: 'input', text: '追加输入'}, 'thread');
+  assert.deepEqual(app.get('messages').children[0].children.map(element => element.textContent), ['第 1 轮', '初始输入', '初次回答', '追加输入']);
+});
+
+test('late pending input is placed before the live response that consumed it', () => {
+  const app = load(() => undefined);
+  app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {llm_response_id: 'reply', consumed_message_ids: ['1'], delta: '答复'}}, 'thread');
+  app.context.renderEvent({sequence: '1', kind: 'input', text: '原始问题'}, 'thread');
+  const entries = app.get('messages').children[0].children;
+  assert.deepEqual(entries.map(element => element.textContent), ['第 1 轮', '原始问题', '答复']);
+});
+
+
+test('always allow submits an explicit per-tool grant with the original interrupt identity', async () => {
+  const app = load(() => ({data: {}}));
+  const box = app.context.required({run_id: 'run'}, {kind: 'approval', checkpoint_id: 'checkpoint', interrupt_id: 'call', tool_name: 'execute'}, 'thread');
+  await box.children.find(element => element.textContent === '始终允许此工具').onclick();
+  const resume = JSON.parse(app.calls.find(call => call.url.endsWith('/messages')).options.body).resume;
+  assert.equal(resume.run_id, 'run'); assert.equal(resume.interrupt_id, 'call');
+  assert.equal(resume.approval.approved, true); assert.equal(resume.approval.always_allow, true);
+});
+
+test('English interface labels do not translate user messages or model replies', () => {
+  const app = load(() => undefined);
+  app.context.setLanguage('en');
+  const box = app.context.required({run_id: 'run'}, {kind: 'approval', tool_name: 'execute'}, 'thread');
+  assert.equal(box.children[0].textContent, 'Approval needed');
+  assert.ok(box.children.some(element => element.textContent === 'Always allow this tool'));
+  app.context.renderEvent({sequence: '1', run_id: 'run', kind: 'input', text: '原始中文任务'}, 'thread');
+  app.context.renderEvent({sequence: '2', run_id: 'run', kind: 'assistant', text: '原始中文回答'}, 'thread');
+  assert.equal(app.get('messages').querySelectorAll('.msg.user')[0].textContent, '原始中文任务');
+  assert.equal(app.get('messages').querySelectorAll('.msg.assistant')[0].textContent, '原始中文回答');
 });

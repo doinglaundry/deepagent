@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	inputpkg "eino-cli/deepagent/protocol/input"
 )
 
 func TestManager_ReleaseOnlyClearsLease(t *testing.T) {
@@ -491,5 +493,90 @@ func TestManager_RunIdentityCannotOverwriteAnotherThread(t *testing.T) {
 	runs, err := m.runs.Get(context.Background(), first.ThreadID, []string{"shared-id"})
 	if err != nil || runs["shared-id"] == nil {
 		t.Fatalf("first Thread lost its Run: %v %v", runs, err)
+	}
+}
+
+func TestManager_AlwaysAllowOnlyRemembersTheApprovedTool(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		approved    bool
+		alwaysAllow bool
+		wantAllowed bool
+		wantError   bool
+	}{
+		{"once", true, false, false, false},
+		{"always", true, true, true, false},
+		{"deny", false, false, false, false},
+		{"deny_cannot_grant", false, true, false, true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			m, thread := releaseTestManager(t)
+			ctx := context.Background()
+			err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{
+				{EventType: "input_required", Payload: []byte(`{"kind":"approval","checkpoint_id":"checkpoint","interrupt_id":"question","tool_name":"execute"}`)},
+				{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"question"}`)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := json.Marshal(inputpkg.ResumeRunPayload{RunID: "run", CheckpointID: "checkpoint", InterruptID: "question", Approval: &inputpkg.ApprovalDecision{Approved: testCase.approved, AlwaysAllow: testCase.alwaysAllow}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = m.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: payload})
+			if (err != nil) != testCase.wantError {
+				t.Fatalf("resume error = %v", err)
+			}
+			allowed, err := m.IsToolAlwaysAllowed(ctx, thread.ThreadID, "execute")
+			if err != nil || allowed != testCase.wantAllowed {
+				t.Fatalf("allowed=%t error=%v", allowed, err)
+			}
+			allowed, err = m.IsToolAlwaysAllowed(ctx, thread.ThreadID, "write_file")
+			if err != nil || allowed {
+				t.Fatalf("unrelated tool was authorized: %t %v", allowed, err)
+			}
+			_, other := releaseTestManager(t)
+			allowed, err = m.IsToolAlwaysAllowed(ctx, other.ThreadID, "execute")
+			if err != nil || allowed {
+				t.Fatalf("another task was authorized: %t %v", allowed, err)
+			}
+		})
+	}
+}
+
+func TestManager_AlwaysAllowCannotAuthorizeAQuestion(t *testing.T) {
+	m, thread := releaseTestManager(t)
+	ctx := context.Background()
+	err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{
+		{EventType: "input_required", Payload: []byte(`{"kind":"follow_up","checkpoint_id":"checkpoint","interrupt_id":"question","info":{"question":"What next?"}}`)},
+		{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"question"}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true,"always_allow":true}}`)})
+	if err == nil {
+		t.Fatal("a follow-up question cannot grant tool approval")
+	}
+}
+
+func TestManager_AlwaysAllowBatchCannotReuseAnOldApproval(t *testing.T) {
+	m, thread := releaseTestManager(t)
+	ctx := context.Background()
+	err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{
+		{EventType: "input_required", Payload: []byte(`{"kind":"approval","checkpoint_id":"checkpoint","interrupt_id":"old","tool_name":"write_file"}`)},
+		{EventType: "input_required", Payload: []byte(`{"kind":"batch","checkpoint_id":"checkpoint","interrupt_id":"current","items":[{"kind":"approve","interrupt_id":"current","tool_name":"execute"}]}`)},
+		{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"current"}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"current","answers":[{"interrupt_id":"current","approval":{"approved":true,"always_allow":true}},{"interrupt_id":"old","approval":{"approved":true,"always_allow":true}}]}`)})
+	if err == nil {
+		t.Fatal("stale approval accepted in the current batch")
+	}
+	allowed, err := m.IsToolAlwaysAllowed(ctx, thread.ThreadID, "execute")
+	if err != nil || allowed {
+		t.Fatalf("invalid batch partially authorized a tool: %t %v", allowed, err)
 	}
 }
