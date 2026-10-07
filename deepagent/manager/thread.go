@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"eino-cli/deepagent/dal/cache"
 	"eino-cli/deepagent/dal/db"
 	"eino-cli/deepagent/dal/model"
 	eventpkg "eino-cli/deepagent/protocol/event"
@@ -242,7 +243,7 @@ func (c *Manager) Close(ctx context.Context, threadID int64, reason string) (res
 			}
 		}
 
-		messageID, err := IDNextSharedID(ctx, c.redis)
+		messageID, err := cache.GenerateID(ctx, c.redis)
 		if err != nil {
 			return err
 		}

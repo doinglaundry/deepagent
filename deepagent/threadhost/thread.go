@@ -53,15 +53,15 @@ type RuntimeConfig struct {
 
 // RuntimeDeps are long-lived resources shared by Thread runtimes.
 type RuntimeDeps struct {
-	History          conversation.HistoryStore
-	Checkpoint       compose.CheckPointStore
-	Tools            []tools.ToolDescriptor
-	SkillLoader      skillspkg.SkillLoader
-	MemoryStore      memorypkg.Store
-	Collaboration    CollaborationBackend
-	HistoryRecordID  conversation.HistoryRecordIDProvider
-	ApprovalRemember threadpkg.ApprovalRememberer
-	InterruptResume  threadpkg.InterruptResumeDecoder
+	ConversationRepository conversation.ConversationRepository
+	Checkpoint             compose.CheckPointStore
+	Tools                  []tools.ToolDescriptor
+	SkillLoader            skillspkg.SkillLoader
+	MemoryStore            memorypkg.Store
+	Collaboration          CollaborationBackend
+	ConversationEntryID    conversation.ConversationEntryIDProvider
+	ApprovalRemember       threadpkg.ApprovalRememberer
+	InterruptResume        threadpkg.InterruptResumeDecoder
 }
 
 // createThread 准备资源和配置，再创建 Thread；初始化由 RunThread 负责。
@@ -157,8 +157,8 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 
 	// 4. 配置 Thread 的历史和压缩，并绑定资源清理。
 	options := threadpkg.ThreadOptions{
-		HistoryStore: w.Deps.History, ContextWindow: w.Runtime.ContextWindow,
-		HistoryRecordID: w.Deps.HistoryRecordID,
+		ConversationRepository: w.Deps.ConversationRepository, ContextWindow: w.Runtime.ContextWindow,
+		ConversationEntryID: w.Deps.ConversationEntryID,
 	}
 	if w.Runtime.CompactThresholdTokens > 0 {
 		options.CompactionStrategy = &conversation.SummaryCompaction{

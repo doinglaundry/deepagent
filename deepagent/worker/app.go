@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"strconv"
 
+	dalcache "eino-cli/deepagent/dal/cache"
+	daldb "eino-cli/deepagent/dal/db"
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
-	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/mcp"
 	"eino-cli/deepagent/graph/modelhub"
 	skillspkg "eino-cli/deepagent/graph/skills"
@@ -29,7 +30,6 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("create Manager: %w", err)
 	}
 	redisClient := coordinator.Redis()
-	sqlDB := coordinator.DB().DB(ctx, true)
 
 	models := make(map[string]modelpkg.ToolCallingChatModel, len(cfg.Models))
 	for _, modelConfig := range cfg.Models {
@@ -53,10 +53,8 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("initialize checkpoints: %w", err)
 	}
-	history := conversation.NewGormHistoryStore(sqlDB, cfg.HistoryTable,
-		conversation.NewRedisSeqGenerator(redisClient, "deepagent:history:seq"),
-	)
-	err = history.MigrateSchema(ctx)
+	conversationDAO := daldb.NewConversationDAO(coordinator.DB(), cfg.HistoryTable, redisClient)
+	err = conversationDAO.MigrateSchema(ctx)
 	if err != nil {
 		return fmt.Errorf("migrate thread history: %w", err)
 	}
@@ -74,14 +72,14 @@ func Run(ctx context.Context, cfg Config) error {
 			MemoryUserID: cfg.MemoryUserID, MemoryLeaseTTL: cfg.MemoryLeaseTTL,
 		},
 		Deps: threadhost.RuntimeDeps{
-			History: history, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
+			ConversationRepository: conversationDAO, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
 			MemoryStore: coordinator, Collaboration: coordinator,
-			HistoryRecordID: func(idCtx context.Context, _, _ string, message *schema.Message) (int64, error) {
+			ConversationEntryID: func(idCtx context.Context, _, _ string, message *schema.Message) (int64, error) {
 				parseIntId, parseErr := strconv.ParseInt(threadpkg.MessageID(message), 10, 64)
 				if parseErr == nil && parseIntId > 0 {
 					return parseIntId, nil
 				}
-				return manager.IDNextSharedID(idCtx, redisClient)
+				return dalcache.GenerateID(idCtx, redisClient)
 			},
 		},
 	}

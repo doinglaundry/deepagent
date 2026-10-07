@@ -12,25 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/deepagent/dal/cache"
 	"eino-cli/deepagent/dal/model"
 	eventpkg "eino-cli/deepagent/protocol/event"
 )
-
-func IDNextSharedID(ctx context.Context, counter cache.RedisClient) (int64, error) {
-	if counter == nil {
-		return 0, ErrRedisUnavailable
-	}
-	seq, err := counter.IncrBy(ctx, "deepagent:coordinator:global_id", 1)
-	if err != nil {
-		return 0, err
-	}
-	const base int64 = 2_000_000_000_000_000_000
-	if seq <= 0 || seq > int64(^uint64(0)>>1)-base {
-		return 0, errors.New("distributed ID counter overflow")
-	}
-	return base + seq, nil
-}
 
 func createThread(req SubmitRequest, id int64) *model.Thread {
 	metadata := maps.Clone(req.Metadata)

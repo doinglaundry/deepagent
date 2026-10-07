@@ -76,7 +76,7 @@ func releaseTestManager(t *testing.T) (*Manager, *dalmodel.Thread) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := IDNextSharedID(ctx, counter)
+	id, err := dalcache.GenerateID(ctx, counter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,5 +244,53 @@ func TestManager_RunOutcomeIncludesCompactionAndStartupFailure(t *testing.T) {
 		if rows[0].LastRunID != step.run || rows[0].LastRun.Status != step.want {
 			t.Fatalf("step=%+v outcome=%+v", step, rows[0])
 		}
+	}
+}
+
+func TestSessionSequenceResumesFromExistingCounter(t *testing.T) {
+	addr := os.Getenv("DEEPAGENT_TEST_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("set DEEPAGENT_TEST_REDIS_ADDR for session replay validation")
+	}
+	redis, err := dalcache.NewRedis(dalcache.RedisConfig{Addr: addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sessionID := "sequence-test-" + uuid.NewString()
+	key := sessionEventKey(sessionID)
+	t.Cleanup(func() {
+		_, _ = redis.Del(context.Background(), key, key+":seq", key+":16", key+":17")
+	})
+	_, err = redis.IncrBy(ctx, key+":seq", 15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := &StreamStreamOut{redis: redis}
+	err = stream.FanoutEventRecords(ctx, sessionID, []OutputFrame{
+		{EventType: "assistant_message", Payload: []byte(`{"text":"first"}`)},
+		{EventType: "assistant_message", Payload: []byte(`{"text":"second"}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequence, err := redis.GetCounter(ctx, key+":seq")
+	if err != nil || sequence != 17 {
+		t.Fatalf("session counter changed namespace or reset: sequence=%d err=%v", sequence, err)
+	}
+	manager := &Manager{stream: stream, subscribeSessionMaxIdle: time.Second}
+	subscription, err := manager.SubscribeSession(ctx, sessionID, "16")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	select {
+	case frame, open := <-subscription.Events:
+		if !open || frame.QueueID != "17" || string(frame.Payload) != `{"text":"second"}` {
+			t.Fatalf("reconnect did not continue after existing cursor: %+v", frame)
+		}
+	case <-ctx.Done():
+		t.Fatal("session replay timed out")
 	}
 }

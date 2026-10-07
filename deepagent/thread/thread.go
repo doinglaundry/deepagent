@@ -59,10 +59,10 @@ func NewThread(cfg ThreadConfig) (*Thread, error) {
 	}
 	historyOptions := cfg.Options
 	history := conversation.New(
-		cfg.ThreadID, historyOptions.HistoryStore,
+		cfg.ThreadID, historyOptions.ConversationRepository,
 		historyOptions.CompactionStrategy, historyOptions.TokenCounter,
 		conversation.WithContextWindow(historyOptions.ContextWindow),
-		conversation.WithRecordID(historyOptions.HistoryRecordID),
+		conversation.WithEntryID(historyOptions.ConversationEntryID),
 	)
 	return &Thread{
 		ThreadID:             cfg.ThreadID,

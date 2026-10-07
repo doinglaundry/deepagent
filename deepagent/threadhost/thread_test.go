@@ -14,7 +14,6 @@ import (
 
 	"eino-cli/deepagent/config"
 	"eino-cli/deepagent/dal/model"
-	"eino-cli/deepagent/graph/conversation"
 	eventpkg "eino-cli/deepagent/protocol/event"
 	threadpkg "eino-cli/deepagent/thread"
 
@@ -195,13 +194,13 @@ func TestCreateThreadDockerAllocationFailure(t *testing.T) {
 	}
 }
 
-type failingHistoryStore struct{ err error }
+type failingConversationRepository struct{ err error }
 
-func (s failingHistoryStore) Append(context.Context, *conversation.HistoryRecord) error {
+func (s failingConversationRepository) Append(context.Context, *model.ConversationEntry) error {
 	return s.err
 }
 
-func (s failingHistoryStore) LoadAfter(context.Context, string, int64, int) ([]*conversation.HistoryRecord, error) {
+func (s failingConversationRepository) LoadAfter(context.Context, string, int64, int) ([]*model.ConversationEntry, error) {
 	return nil, s.err
 }
 
@@ -248,7 +247,7 @@ esac
 				host.Runtime.MemoryEnabled = true
 				host.Runtime.MemoryDir = memoryPath
 			case "init_failure":
-				host.Deps.History = failingHistoryStore{err: historyErr}
+				host.Deps.ConversationRepository = failingConversationRepository{err: historyErr}
 			}
 			thread, err := host.createThread(context.Background(), &model.Thread{
 				ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: dir},

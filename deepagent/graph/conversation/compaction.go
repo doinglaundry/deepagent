@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/graph/types"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -46,14 +47,14 @@ func (conversation *Conversation) Compact(ctx context.Context, runID string) (*C
 	if conversation.version != sourceVersion {
 		return nil, nil
 	}
-	record, err := conversation.buildHistoryRecord(ctx, runID, rebuilt[0], HistoryRecordCompact)
+	conversationEntry, err := conversation.buildConversationEntry(ctx, runID, rebuilt[0], dalmodel.ConversationEntryCompact)
 	if err != nil {
 		return nil, err
 	}
-	record.Message = nil
-	record.CompactedMessages = append([]*schema.Message(nil), rebuilt...)
-	if conversation.store != nil {
-		err = conversation.store.Append(ctx, record)
+	conversationEntry.Message = nil
+	conversationEntry.CompactedMessages = append([]*schema.Message(nil), rebuilt...)
+	if conversation.conversationRepository != nil {
+		err = conversation.conversationRepository.Append(ctx, conversationEntry)
 		if err != nil {
 			return nil, err
 		}
@@ -62,10 +63,10 @@ func (conversation *Conversation) Compact(ctx context.Context, runID string) (*C
 	conversation.messages = append([]*schema.Message(nil), rebuilt...)
 	conversation.version++
 	conversation.recomputeContextUsage()
-	if record.MessageID > 0 {
-		conversation.seenMessageIDs[record.MessageID] = struct{}{}
+	if conversationEntry.MessageID > 0 {
+		conversation.seenMessageIDs[conversationEntry.MessageID] = struct{}{}
 	}
-	conversation.historySequence = max(conversation.historySequence, record.Seq)
+	conversation.historySequence = max(conversation.historySequence, conversationEntry.Seq)
 	return &ContextCompactedPayload{StrategyID: conversation.compactor.GetID(), Before: before, After: conversation.contextUsage}, nil
 }
 

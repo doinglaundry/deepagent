@@ -101,7 +101,7 @@ func (c *Manager) prepareOutput(ctx context.Context, output *OutputFrame, thread
 		output.CreatedAt = time.Now()
 	}
 	originalID = output.EventID
-	output.EventID, err = IDNextSharedID(ctx, c.redis)
+	output.EventID, err = cache.GenerateID(ctx, c.redis)
 	return originalID, err
 }
 
@@ -249,7 +249,7 @@ type streamEnvelope struct {
 
 func (s *StreamStreamOut) FanoutEventRecords(ctx context.Context, sessionID string, frames []OutputFrame) error {
 	for _, frame := range frames {
-		seq, err := s.redis.IncrBy(ctx, sessionEventKey(sessionID)+":seq", 1)
+		seq, err := cache.GenerateSequence(ctx, s.redis, sessionEventKey(sessionID)+":seq")
 		if err != nil {
 			return err
 		}

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"eino-cli/deepagent/dal/cache"
 	"eino-cli/deepagent/dal/db"
 	"eino-cli/deepagent/dal/model"
 	eventpkg "eino-cli/deepagent/protocol/event"
@@ -72,7 +73,7 @@ func (c *Manager) Submit(ctx context.Context, req SubmitRequest) (result ThreadM
 				return ErrThreadClosed
 			}
 		} else {
-			id, err := IDNextSharedID(txCtx, c.redis)
+			id, err := cache.GenerateID(txCtx, c.redis)
 			if err != nil {
 				return err
 			}
@@ -251,7 +252,7 @@ func (c *Manager) Cancel(ctx context.Context, threadID int64, reason string, cut
 			return err
 		}
 
-		messageID, err := IDNextSharedID(ctx, c.redis)
+		messageID, err := cache.GenerateID(ctx, c.redis)
 		if err != nil {
 			return err
 		}
@@ -330,7 +331,7 @@ func (c *Manager) ListMessages(ctx context.Context, req ListMessagesRequest) (re
 }
 
 func (c *Manager) createInput(ctx context.Context, threadID int64, input *InputMessage) (*model.Message, error) {
-	id, err := IDNextSharedID(ctx, c.redis)
+	id, err := cache.GenerateID(ctx, c.redis)
 	if err != nil {
 		return nil, err
 	}

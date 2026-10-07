@@ -24,11 +24,11 @@ type ContextManager interface {
 }
 
 type ThreadOptions struct {
-	HistoryStore       conversation.HistoryStore
-	CompactionStrategy conversation.CompactionStrategy
-	TokenCounter       conversation.TokenCounter
-	ContextWindow      int64
-	HistoryRecordID    conversation.HistoryRecordIDProvider
+	ConversationRepository conversation.ConversationRepository
+	CompactionStrategy     conversation.CompactionStrategy
+	TokenCounter           conversation.TokenCounter
+	ContextWindow          int64
+	ConversationEntryID    conversation.ConversationEntryIDProvider
 }
 
 type SubmitInputResult struct {

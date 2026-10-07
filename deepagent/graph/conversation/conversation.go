@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/graph/types"
 	"eino-cli/deepagent/utils"
 	"github.com/cloudwego/eino/schema"
@@ -13,8 +14,8 @@ import (
 
 type Option func(*Conversation)
 
-func WithRecordID(provider HistoryRecordIDProvider) Option {
-	return func(conversation *Conversation) { conversation.recordID = provider }
+func WithEntryID(provider ConversationEntryIDProvider) Option {
+	return func(conversation *Conversation) { conversation.entryID = provider }
 }
 func WithContextWindow(window int64) Option {
 	return func(conversation *Conversation) { conversation.contextUsage.ContextWindow = window }
@@ -22,25 +23,25 @@ func WithContextWindow(window int64) Option {
 
 // Conversation publishes changes only after durable writes succeed.
 type Conversation struct {
-	mu              sync.Mutex
-	threadID        string
-	messages        []*schema.Message
-	seenMessageIDs  map[int64]struct{}
-	historySequence int64
-	version         uint64
-	store           HistoryStore
-	compactor       CompactionStrategy
-	recordID        HistoryRecordIDProvider
-	tokenCounter    TokenCounter
-	contextUsage    types.ContextUsageSnapshot
-	runUsage        types.Usage
+	mu                     sync.Mutex
+	threadID               string
+	messages               []*schema.Message
+	seenMessageIDs         map[int64]struct{}
+	historySequence        int64
+	version                uint64
+	conversationRepository ConversationRepository
+	compactor              CompactionStrategy
+	entryID                ConversationEntryIDProvider
+	tokenCounter           TokenCounter
+	contextUsage           types.ContextUsageSnapshot
+	runUsage               types.Usage
 }
 
-func New(threadID string, store HistoryStore, compactor CompactionStrategy, counter TokenCounter, opts ...Option) *Conversation {
+func New(threadID string, conversationRepository ConversationRepository, compactor CompactionStrategy, counter TokenCounter, opts ...Option) *Conversation {
 	if counter == nil {
 		counter = utils.SimpleTokenCounter
 	}
-	conversation := &Conversation{threadID: threadID, store: store, compactor: compactor, tokenCounter: counter, seenMessageIDs: make(map[int64]struct{})}
+	conversation := &Conversation{threadID: threadID, conversationRepository: conversationRepository, compactor: compactor, tokenCounter: counter, seenMessageIDs: make(map[int64]struct{})}
 	conversation.recomputeContextUsage()
 	for _, opt := range opts {
 		if opt != nil {
@@ -56,27 +57,27 @@ func (conversation *Conversation) AddHistory(ctx context.Context, runID string, 
 		if message == nil {
 			continue
 		}
-		record, err := conversation.buildHistoryRecord(ctx, runID, message, HistoryRecordMessage)
+		conversationEntry, err := conversation.buildConversationEntry(ctx, runID, message, dalmodel.ConversationEntryMessage)
 		if err != nil {
 			return err
 		}
-		_, exists := conversation.seenMessageIDs[record.MessageID]
-		if record.MessageID > 0 && exists {
+		_, exists := conversation.seenMessageIDs[conversationEntry.MessageID]
+		if conversationEntry.MessageID > 0 && exists {
 			continue
 		}
-		if conversation.store != nil {
-			err = conversation.store.Append(ctx, record)
+		if conversation.conversationRepository != nil {
+			err = conversation.conversationRepository.Append(ctx, conversationEntry)
 			if err != nil {
 				return err
 			}
 		}
-		if record.MessageID > 0 {
-			conversation.seenMessageIDs[record.MessageID] = struct{}{}
+		if conversationEntry.MessageID > 0 {
+			conversation.seenMessageIDs[conversationEntry.MessageID] = struct{}{}
 		}
 		conversation.messages = append(conversation.messages, message)
 		conversation.version++
 		conversation.addMessageUsage(message)
-		conversation.historySequence = max(conversation.historySequence, record.Seq)
+		conversation.historySequence = max(conversation.historySequence, conversationEntry.Seq)
 	}
 	return nil
 }
@@ -96,61 +97,61 @@ func (conversation *Conversation) BuildRequest(ctx context.Context, prompts []*s
 	request = append(request, prompts...)
 	return append(request, conversation.messages...), nil
 }
-func (conversation *Conversation) buildHistoryRecord(ctx context.Context, runID string, message *schema.Message, kind HistoryRecordType) (*HistoryRecord, error) {
+func (conversation *Conversation) buildConversationEntry(ctx context.Context, runID string, message *schema.Message, kind dalmodel.ConversationEntryType) (*dalmodel.ConversationEntry, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, err
 	}
-	record := &HistoryRecord{ThreadID: conversation.threadID, RunID: runID, Type: kind, Message: message, CreatedAt: time.Now().Unix()}
-	if conversation.recordID != nil {
-		record.MessageID, err = conversation.recordID(ctx, conversation.threadID, runID, message)
+	conversationEntry := &dalmodel.ConversationEntry{ThreadID: conversation.threadID, RunID: runID, Type: kind, Message: message, CreatedAt: time.Now().Unix()}
+	if conversation.entryID != nil {
+		conversationEntry.MessageID, err = conversation.entryID(ctx, conversation.threadID, runID, message)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return record, nil
+	return conversationEntry, nil
 }
 func (conversation *Conversation) ReloadHistory(ctx context.Context) error {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	if conversation.store == nil {
+	if conversation.conversationRepository == nil {
 		return nil
 	}
 	var messages []*schema.Message
 	seenMessageIDs := make(map[int64]struct{})
 	var sequence int64
 	for {
-		records, err := conversation.store.LoadAfter(ctx, conversation.threadID, sequence, 200)
+		conversationEntries, err := conversation.conversationRepository.LoadAfter(ctx, conversation.threadID, sequence, 200)
 		if err != nil {
 			return err
 		}
-		for _, record := range records {
-			if record == nil || record.Seq <= sequence {
+		for _, conversationEntry := range conversationEntries {
+			if conversationEntry == nil || conversationEntry.Seq <= sequence {
 				return fmt.Errorf("history sequence must advance past %d", sequence)
 			}
-			sequence = record.Seq
-			_, exists := seenMessageIDs[record.MessageID]
-			if record.MessageID > 0 && exists {
+			sequence = conversationEntry.Seq
+			_, exists := seenMessageIDs[conversationEntry.MessageID]
+			if conversationEntry.MessageID > 0 && exists {
 				continue
 			}
-			if record.MessageID > 0 {
-				seenMessageIDs[record.MessageID] = struct{}{}
+			if conversationEntry.MessageID > 0 {
+				seenMessageIDs[conversationEntry.MessageID] = struct{}{}
 			}
-			switch record.Type {
-			case HistoryRecordMessage:
-				if record.Message != nil {
-					messages = append(messages, record.Message)
+			switch conversationEntry.Type {
+			case dalmodel.ConversationEntryMessage:
+				if conversationEntry.Message != nil {
+					messages = append(messages, conversationEntry.Message)
 				}
-			case HistoryRecordCompact:
-				if len(record.CompactedMessages) == 0 || record.CompactedMessages[0] == nil || record.CompactedMessages[0].Role != schema.System {
+			case dalmodel.ConversationEntryCompact:
+				if len(conversationEntry.CompactedMessages) == 0 || conversationEntry.CompactedMessages[0] == nil || conversationEntry.CompactedMessages[0].Role != schema.System {
 					return fmt.Errorf("compact record requires a summary and rebuilt context")
 				}
-				messages = append([]*schema.Message(nil), record.CompactedMessages...)
+				messages = append([]*schema.Message(nil), conversationEntry.CompactedMessages...)
 			default:
-				return fmt.Errorf("unknown history record type %q", record.Type)
+				return fmt.Errorf("unknown history record type %q", conversationEntry.Type)
 			}
 		}
-		if len(records) < 200 {
+		if len(conversationEntries) < 200 {
 			break
 		}
 	}

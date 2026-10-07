@@ -96,7 +96,6 @@ var (
 	ErrThreadNotBlocked     = errors.New("thread is not blocked")
 	ErrThreadBlocked        = errors.New("thread is blocked")
 	ErrLeaseMismatch        = errors.New("lease mismatch")
-	ErrRedisUnavailable     = errors.New("redis unavailable")
 	ErrInvalidCancel        = errors.New("invalid cancel")
 	ErrInvalidClose         = errors.New("invalid close")
 	ErrMessageNotFound      = errors.New("message not found")

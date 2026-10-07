@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	dalmodel "eino-cli/deepagent/dal/model"
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
-	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/types"
 	runpkg "eino-cli/deepagent/run"
@@ -121,13 +121,13 @@ func legacyParityWaitRunEnd(t *testing.T, events <-chan runpkg.Event) runpkg.Eve
 	}
 }
 
-type legacyParityDedupHistoryStore struct {
+type legacyParityDedupConversationRepository struct {
 	mu      sync.Mutex
-	records []*conversation.HistoryRecord
+	records []*dalmodel.ConversationEntry
 	seen    map[int64]struct{}
 }
 
-func (s *legacyParityDedupHistoryStore) Append(_ context.Context, record *conversation.HistoryRecord) error {
+func (s *legacyParityDedupConversationRepository) Append(_ context.Context, record *dalmodel.ConversationEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.seen == nil {
@@ -145,10 +145,10 @@ func (s *legacyParityDedupHistoryStore) Append(_ context.Context, record *conver
 	return nil
 }
 
-func (s *legacyParityDedupHistoryStore) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*conversation.HistoryRecord, error) {
+func (s *legacyParityDedupConversationRepository) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*dalmodel.ConversationEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var records []*conversation.HistoryRecord
+	var records []*dalmodel.ConversationEntry
 	for _, record := range s.records {
 		if record.ThreadID != threadID || record.Seq <= sequence {
 			continue
@@ -175,16 +175,16 @@ func (m *redeliveryModel) Stream(context.Context, []*schema.Message, ...model.Op
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("done", nil)}), nil
 }
 
-type redeliveryHistoryStore struct{ records []*conversation.HistoryRecord }
+type redeliveryConversationRepository struct{ records []*dalmodel.ConversationEntry }
 
-func (s *redeliveryHistoryStore) Append(_ context.Context, record *conversation.HistoryRecord) error {
+func (s *redeliveryConversationRepository) Append(_ context.Context, record *dalmodel.ConversationEntry) error {
 	record.Seq = int64(len(s.records) + 1)
 	s.records = append(s.records, record)
 	return nil
 }
 
-func (s *redeliveryHistoryStore) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*conversation.HistoryRecord, error) {
-	var result []*conversation.HistoryRecord
+func (s *redeliveryConversationRepository) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*dalmodel.ConversationEntry, error) {
+	var result []*dalmodel.ConversationEntry
 	for _, record := range s.records {
 		if record.ThreadID != threadID || record.Seq <= sequence {
 			continue
@@ -264,9 +264,9 @@ func (s *pendingCheckpointStore) Set(ctx context.Context, id string, raw []byte)
 	return s.threadCheckpointMemory.Set(ctx, id, raw)
 }
 
-type pendingHistoryStore struct{ historyMemory }
+type pendingConversationRepository struct{ historyMemory }
 
-func (s *pendingHistoryStore) Append(ctx context.Context, record *conversation.HistoryRecord) error {
+func (s *pendingConversationRepository) Append(ctx context.Context, record *dalmodel.ConversationEntry) error {
 	err := ctx.Err()
 	if err != nil {
 		return err
@@ -281,7 +281,7 @@ type pendingSaveStore struct {
 	failure error
 }
 
-func (s *pendingSaveStore) Append(ctx context.Context, r *conversation.HistoryRecord) error {
+func (s *pendingSaveStore) Append(ctx context.Context, r *dalmodel.ConversationEntry) error {
 	if r.Message.Content == "accepted pending" {
 		close(s.started)
 		select {
@@ -384,9 +384,9 @@ func (m *threadModel) Stream(ctx context.Context, input []*schema.Message, _ ...
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("answer", nil)}), nil
 }
 
-type historyMemory struct{ records []*conversation.HistoryRecord }
+type historyMemory struct{ records []*dalmodel.ConversationEntry }
 
-func (s *historyMemory) Append(_ context.Context, r *conversation.HistoryRecord) error {
+func (s *historyMemory) Append(_ context.Context, r *dalmodel.ConversationEntry) error {
 	r.Seq = int64(len(s.records) + 1)
 	if r.MessageID == 0 {
 		r.MessageID = r.Seq
@@ -395,8 +395,8 @@ func (s *historyMemory) Append(_ context.Context, r *conversation.HistoryRecord)
 	return nil
 }
 
-func (s *historyMemory) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*conversation.HistoryRecord, error) {
-	var result []*conversation.HistoryRecord
+func (s *historyMemory) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*dalmodel.ConversationEntry, error) {
+	var result []*dalmodel.ConversationEntry
 	for _, r := range s.records {
 		if r.ThreadID != threadID || r.Seq <= sequence {
 			continue

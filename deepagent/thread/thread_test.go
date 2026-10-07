@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"eino-cli/deepagent/graph/conversation"
+	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/middleware"
 	deeptools "eino-cli/deepagent/graph/tools"
@@ -239,11 +239,11 @@ waitBlocked:
 }
 
 func TestReloadRepairsInterruptedToolCallBeforeNewInput(t *testing.T) {
-	store := &legacyParityDedupHistoryStore{
+	store := &legacyParityDedupConversationRepository{
 		seen: map[int64]struct{}{1: {}, 2: {}},
-		records: []*conversation.HistoryRecord{
-			{Type: conversation.HistoryRecordMessage, ThreadID: "thread-1", MessageID: 1, Seq: 1, Message: schema.UserMessage("previous")},
-			{Type: conversation.HistoryRecordMessage, ThreadID: "thread-1", MessageID: 2, Seq: 2, Message: &schema.Message{
+		records: []*dalmodel.ConversationEntry{
+			{Type: dalmodel.ConversationEntryMessage, ThreadID: "thread-1", MessageID: 1, Seq: 1, Message: schema.UserMessage("previous")},
+			{Type: dalmodel.ConversationEntryMessage, ThreadID: "thread-1", MessageID: 2, Seq: 2, Message: &schema.Message{
 				Role:      schema.Assistant,
 				ToolCalls: []schema.ToolCall{{ID: "call-1", Type: "function", Function: schema.FunctionCall{Name: "write_file", Arguments: `{}`}}},
 			}},
@@ -255,7 +255,7 @@ func TestReloadRepairsInterruptedToolCallBeforeNewInput(t *testing.T) {
 	events := make(chan runpkg.Event, 64)
 	thread := newTestThread("thread-1", &runpkg.Config{Graph: execution.Config{
 		Model: chatModel, CheckpointStore: &legacyParityMemoryCheckpoints{},
-	}}, events, ThreadOptions{HistoryStore: store})
+	}}, events, ThreadOptions{ConversationRepository: store})
 	err := thread.InitHistory(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -387,8 +387,8 @@ func TestThread_MultimodalRoundTrip(t *testing.T) {
 
 func TestThread_RedeliveryPreservesMessageIdentity(t *testing.T) {
 	ctx := context.Background()
-	store := &redeliveryHistoryStore{}
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &redeliveryModel{}}}, make(chan runpkg.Event, 128), ThreadOptions{HistoryStore: store, HistoryRecordID: func(_ context.Context, _, _ string, message *schema.Message) (int64, error) {
+	store := &redeliveryConversationRepository{}
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &redeliveryModel{}}}, make(chan runpkg.Event, 128), ThreadOptions{ConversationRepository: store, ConversationEntryID: func(_ context.Context, _, _ string, message *schema.Message) (int64, error) {
 		id, err := strconv.ParseInt(MessageID(message), 10, 64)
 		if err != nil {
 			return 0, nil // The test store assigns assistant IDs.
@@ -599,7 +599,7 @@ func TestThread_SubmitInputRejectsInvalidMessageWhileIdle(t *testing.T) {
 	history := &historyMemory{}
 	model := &threadModel{}
 	events := make(chan runpkg.Event, 100)
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, events, ThreadOptions{HistoryStore: history})
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, events, ThreadOptions{ConversationRepository: history})
 
 	unsupported := schema.UserMessage("unsupported")
 	unsupported.Extra = map[string]any{"value": func() {}}
@@ -777,7 +777,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	m := &resumeModel{}
 	config := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []deeptools.ToolDescriptor{deeptools.NewFollowUpTool()}}}
 	events := make(chan runpkg.Event, 100)
-	first := newTestThread("thread", config, events, ThreadOptions{HistoryStore: history})
+	first := newTestThread("thread", config, events, ThreadOptions{ConversationRepository: history})
 	firstInitHistoryErr := first.InitHistory(ctx)
 	if firstInitHistoryErr != nil {
 		t.Fatal(firstInitHistoryErr)
@@ -800,7 +800,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	if question.InterruptID == "" || question.Info.Question != "which one?" {
 		t.Fatalf("missing follow-up: %+v", question)
 	}
-	restored := newTestThread("thread", config, events, ThreadOptions{HistoryStore: history})
+	restored := newTestThread("thread", config, events, ThreadOptions{ConversationRepository: history})
 	restoredInitHistoryErr := restored.InitHistory(ctx)
 	if restoredInitHistoryErr != nil {
 		t.Fatal(restoredInitHistoryErr)
@@ -833,7 +833,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	if m.calls != 2 || len(m.inputs[1]) != 3 || m.inputs[1][2].Content != "a" {
 		t.Fatalf("resume restarted model or lost tool answer: calls=%d inputs=%v", m.calls, m.inputs)
 	}
-	replay := newTestThread("thread", config, events, ThreadOptions{HistoryStore: history})
+	replay := newTestThread("thread", config, events, ThreadOptions{ConversationRepository: history})
 	initHistoryErr := replay.InitHistory(ctx)
 	if initHistoryErr != nil {
 		t.Fatal(initHistoryErr)
@@ -895,7 +895,7 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 	history := &historyMemory{}
 	cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []deeptools.ToolDescriptor{deeptools.NewFollowUpTool()}}}
 	events := make(chan runpkg.Event, 100)
-	first := newTestThread("thread", cfg, events, ThreadOptions{HistoryStore: history})
+	first := newTestThread("thread", cfg, events, ThreadOptions{ConversationRepository: history})
 	err := first.InitHistory(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -915,7 +915,7 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 			question = event.Payload.(runpkg.FollowUpRequestedPayload)
 		}
 	}
-	restored := newTestThread("thread", cfg, events, ThreadOptions{HistoryStore: history})
+	restored := newTestThread("thread", cfg, events, ThreadOptions{ConversationRepository: history})
 	err = restored.InitHistory(ctx)
 	if err != nil {
 		t.Fatal(err)
