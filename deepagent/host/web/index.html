@@ -1,10 +1,35 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DeepAgent</title>
-<style>
-:root{color-scheme:dark;font:14px system-ui;background:#151719;color:#e7e9ea}*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;grid-template-columns:240px 1fr 360px;overflow:hidden}aside,main,section{border-right:1px solid #303337;min-width:0}aside{background:#1b1d20;padding:14px}button,input,textarea{background:#25282c;color:inherit;border:1px solid #41454b;border-radius:6px;padding:8px}button{cursor:pointer}#new{width:100%;margin-bottom:14px}.thread{padding:9px;border-radius:6px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.thread.active,.thread:hover{background:#2b3036}main{display:flex;flex-direction:column}header{padding:14px 18px;border-bottom:1px solid #303337;font-weight:600}.messages{flex:1;overflow:auto;padding:20px}.msg{max-width:80%;padding:10px 12px;margin:8px 0;border-radius:10px;background:#25282c;white-space:pre-wrap}.msg.user{margin-left:auto;background:#245b9b}.prompt{max-width:90%;padding:12px;margin:10px 0;border:1px solid #655f39;border-radius:10px;background:#292714}.prompt label{display:block;margin:8px 0}.prompt button{margin:8px 6px 0 0}.composer{display:flex;gap:8px;padding:14px;border-top:1px solid #303337}.composer textarea{flex:1;resize:none;height:44px}section{padding:14px;background:#1b1d20}pre{height:calc(100vh - 60px);overflow:auto;background:#111;padding:12px;border-radius:6px;color:#c9d1d9}
-main{min-height:0}.messages{min-height:0}.composer{flex-shrink:0}.composer textarea{min-width:0}
-@media(max-width:1000px){body{grid-template-columns:200px minmax(0,1fr)}body>section{display:none}}
-@media(max-width:640px){body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);height:100dvh}aside{padding:8px;border-right:0;border-bottom:1px solid #303337}#new{margin-bottom:0}#threads{display:flex;overflow:auto;max-height:44px}.thread{flex-shrink:0;max-width:200px}.messages{padding:12px}.composer{padding:10px}}
-</style></head><body><aside><button id="new">＋ 新对话</button><div id="threads"></div></aside><main><header id="title">DeepAgent</header><div id="status" role="status" aria-live="polite"></div><div class="messages" id="messages"></div><form class="composer"><textarea id="input" placeholder="输入消息…"></textarea><button>发送</button></form></main><section><strong>文件</strong><div style="display:flex;gap:6px;margin:10px 0"><input id="filePath" placeholder="相对路径" style="min-width:0;flex:1"><button id="openFile">打开</button></div><pre id="file">输入相对路径查看文件</pre></section>
-<script src="/app.js" defer></script>
-</body></html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>DeepAgent · 工作台</title>
+<link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script>
+</head>
+<body>
+<aside class="sidebar" aria-label="任务导航">
+  <div class="brand"><span class="brand-mark">d<span>·</span></span><div>DeepAgent<small>你的 Agent 工作台</small></div></div>
+  <button id="new" class="new-task">＋ 新任务 <kbd>⌘ K</kbd></button>
+  <label class="search"><span>⌕</span><input id="search" placeholder="搜索任务" aria-label="搜索任务"></label>
+  <div class="nav-label">最近任务</div><nav id="threads" aria-label="最近任务"></nav>
+  <div class="sidebar-bottom"><span class="connection"><i></i> 本地工作台</span><button id="theme" class="icon-button" aria-label="切换深浅主题" title="切换深浅主题">◐</button></div>
+</aside>
+<main>
+  <header class="topbar"><div><h1 id="title">新任务</h1><div class="subtitle" id="workspace">从一个问题或任务开始</div></div><div class="header-actions"><span id="runStatus" class="badge">就绪</span><button id="toggleInspector" class="icon-button" aria-label="打开或关闭工作面板" aria-expanded="false">▤</button></div></header>
+  <div id="status" role="status" aria-live="polite" hidden></div>
+  <div class="conversation">
+    <div id="welcome" class="welcome"><span class="welcome-mark">d<span>·</span></span><h2>想一起完成什么？</h2><p>阅读代码、处理文件，或拆解一个复杂任务。</p><div class="suggestions"><button data-prompt="阅读当前项目，告诉我它的架构和主要入口。">⌘ <strong>理解项目</strong><span>梳理架构与执行链路</span></button><button data-mode="plan" data-prompt="帮我制定一个改进当前项目可读性的计划，先分析，不修改文件。">☷ <strong>制定计划</strong><span>把复杂工作分成步骤</span></button><button data-prompt="阅读 README.md，概括这个项目的用途和启动方法。">↗ <strong>阅读文件</strong><span>提炼重点和下一步</span></button></div></div>
+    <div class="messages" id="messages" aria-label="对话消息"></div>
+    <button id="jumpBottom" class="jump-bottom" hidden>↓ 回到最新</button>
+  </div>
+  <div class="composer-area"><form class="composer"><textarea id="input" rows="2" placeholder="描述任务，或继续追问…" aria-label="输入消息"></textarea><div class="composer-bottom"><div class="composer-tools"><select id="mode" aria-label="执行模式"><option value="">执行</option><option value="plan">计划</option></select><span id="composerHint">在当前项目中工作</span></div><button id="send" type="submit" aria-label="发送消息">↑</button></div></form><div class="composer-note">Enter 发送 <span>·</span> Shift + Enter 换行 <span>·</span> 执行前需要你的授权时会停下来询问</div></div>
+</main>
+<section id="inspector" class="inspector" aria-label="工作面板">
+  <div class="inspector-heading"><strong>工作面板</strong><button id="closeInspector" class="icon-button" aria-label="关闭工作面板">×</button></div>
+  <div class="tabs" role="tablist" aria-label="工作面板"><button id="tabPlan" role="tab" aria-selected="true" aria-controls="panelPlan" data-panel="Plan">计划</button><button id="tabOutput" role="tab" aria-selected="false" aria-controls="panelOutput" data-panel="Output">工具</button><button id="tabFile" role="tab" aria-selected="false" aria-controls="panelFile" data-panel="File">文件</button></div>
+  <div id="panelPlan" class="panel" role="tabpanel" aria-labelledby="tabPlan"><div class="panel-label">任务步骤</div><div id="plan" class="panel-empty">Agent 更新计划后，步骤会出现在这里。</div></div>
+  <div id="panelOutput" class="panel" role="tabpanel" aria-labelledby="tabOutput" hidden><div class="panel-label">执行记录</div><div id="toolOutput" class="panel-empty">工具调用的参数、结果和运行状态会出现在这里。</div></div>
+  <div id="panelFile" class="panel file-panel" role="tabpanel" aria-labelledby="tabFile" hidden><div class="panel-label">项目文件 · 只读预览</div><form id="fileForm"><input id="filePath" placeholder="例如 README.md" aria-label="文件相对路径"><button id="openFile" type="submit">打开</button></form><div id="fileStatus" role="status"></div><pre id="file">输入相对路径查看文件</pre></div>
+  <div class="inspector-footer">工具执行与计划来自当前任务</div>
+</section>
+</body>
+</html>

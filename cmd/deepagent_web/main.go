@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -33,7 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 	s := web.New(m, *root)
-	h := &http.Server{Addr: *addr, Handler: s.Handler()}
+	h := &http.Server{Addr: *addr, Handler: s.Handler(), BaseContext: func(net.Listener) context.Context { return ctx }}
 	go func() { <-ctx.Done(); _ = h.Shutdown(context.Background()) }()
 	slog.Info("DeepAgent UI listening", "addr", *addr)
 	listenAndServeErr := h.ListenAndServe()

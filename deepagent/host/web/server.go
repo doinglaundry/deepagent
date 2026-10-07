@@ -19,7 +19,7 @@ import (
 	inputpkg "eino-cli/deepagent/protocol/input"
 )
 
-//go:embed index.html app.js
+//go:embed index.html app.js app.css
 var files embed.FS
 
 type Server struct {
@@ -34,6 +34,10 @@ func New(coordinator *manager.Manager, root string) *Server {
 	s.Mux.HandleFunc("/app.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		http.ServeFileFS(w, r, files, "app.js")
+	})
+	s.Mux.HandleFunc("/app.css", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		http.ServeFileFS(w, r, files, "app.css")
 	})
 	s.Mux.HandleFunc("/api/threads", s.threads)
 	s.Mux.HandleFunc("/api/threads/", s.thread)
@@ -79,12 +83,59 @@ func viewThread(thread *dalmodel.Thread) threadView {
 	}
 	view := threadView{
 		ID: strconv.FormatInt(thread.ThreadID, 10), SessionID: thread.SessionID,
-		Status: thread.DisplayStatus(time.Now()), Title: thread.Metadata["title"],
+		Status: thread.DisplayStatus(time.Now()), Title: strings.TrimSpace(thread.Metadata["title"]),
+	}
+	if view.Title == "" {
+		view.Title = "未命名任务"
 	}
 	if thread.Profile != nil {
 		view.WorkDir = thread.Profile.Cwd
 	}
 	return view
+}
+
+// Resolve missing titles in one read; do not rewrite stored metadata or history.
+func (s *Server) getThreadViews(ctx context.Context, threads ...*dalmodel.Thread) ([]threadView, error) {
+	views := make([]threadView, len(threads))
+	var untitledIDs []int64
+	for index, thread := range threads {
+		views[index] = viewThread(thread)
+		if strings.TrimSpace(thread.Metadata["title"]) == "" {
+			untitledIDs = append(untitledIDs, thread.ThreadID)
+		}
+	}
+	if len(untitledIDs) == 0 {
+		return views, nil
+	}
+	database := s.Manager.DB().DB(ctx, true)
+	firstInputIDs := database.Model(&dalmodel.Message{}).Select("MIN(message_id)").
+		Where("thread_id IN ? AND message_type = ?", untitledIDs, inputpkg.MessageTypeInput).Group("thread_id")
+	var messages []*dalmodel.Message
+	err := database.Select("thread_id", "message_type", "payload").Where("message_id IN (?)", firstInputIDs).Find(&messages).Error
+	if err != nil {
+		return nil, err
+	}
+	titles := make(map[string]string, len(messages))
+	for _, message := range messages {
+		text := summarizeTaskTitle(messageText(message))
+		if text != "" {
+			titles[strconv.FormatInt(message.ThreadID, 10)] = text
+		}
+	}
+	for index, thread := range threads {
+		if strings.TrimSpace(thread.Metadata["title"]) == "" && titles[views[index].ID] != "" {
+			views[index].Title = titles[views[index].ID]
+		}
+	}
+	return views, nil
+}
+
+func summarizeTaskTitle(text string) string {
+	characters := []rune(strings.Join(strings.Fields(text), " "))
+	if len(characters) > 48 {
+		return string(characters[:48]) + "…"
+	}
+	return string(characters)
 }
 
 type createRequest struct {
@@ -101,9 +152,10 @@ func (s *Server) threads(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		rows := make([]threadView, 0, len(result.Threads))
-		for _, thread := range result.Threads {
-			rows = append(rows, viewThread(thread))
+		rows, err := s.getThreadViews(r.Context(), result.Threads...)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
 		}
 		writeJSON(w, http.StatusOK, rows)
 	case http.MethodPost:
@@ -152,7 +204,12 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, viewThread(result.Thread))
+		views, err := s.getThreadViews(r.Context(), result.Thread)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, views[0])
 		return
 	}
 	if len(parts) != 2 {
@@ -164,6 +221,8 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 		s.submitMessage(w, r, threadID)
 	case parts[1] == "events" && r.Method == http.MethodGet:
 		s.events(w, r, threadID)
+	case parts[1] == "stream" && r.Method == http.MethodGet:
+		s.stream(w, r, threadID)
 	case parts[1] == "file" && r.Method == http.MethodGet:
 		s.openFile(w, r, threadID)
 	default:
@@ -199,7 +258,12 @@ func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID 
 			writeError(w, http.StatusBadRequest, marshalErr)
 			return
 		}
+		var metadata map[string]string
+		if req.Mode == inputpkg.UserMessageModeImplPlan {
+			metadata = map[string]string{inputpkg.MetadataRunMode: inputpkg.RunModePlan}
+		}
 		result, err = s.Manager.Resume(r.Context(), threadID, &manager.InputMessage{
+			Metadata:   metadata,
 			SenderType: "user", MessageType: inputpkg.MessageTypeResume, Payload: payload,
 		})
 	} else {
@@ -358,3 +422,60 @@ func readWorkspaceFile(base, relative string) ([]byte, error) {
 }
 
 func (s *Server) Shutdown(context.Context) error { return nil }
+
+// stream forwards existing Manager events; persisted messages remain the history source.
+func (s *Server) stream(w http.ResponseWriter, r *http.Request, threadID int64) {
+	result, err := s.Manager.ListThreads(r.Context(), manager.ListThreadsRequest{ThreadID: threadID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	subscription, err := s.Manager.SubscribeSession(r.Context(), result.Thread.SessionID, r.Header.Get("Last-Event-ID"))
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	defer subscription.Close()
+	controller := http.NewResponseController(w)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	_, err = fmt.Fprint(w, ": connected\n\n")
+	if err != nil {
+		return
+	}
+	err = controller.Flush()
+	if err != nil {
+		return
+	}
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case frame, ok := <-subscription.Events:
+			if !ok {
+				return
+			}
+			// Session streams can contain multiple threads. Never display another task's events.
+			if frame.ThreadID != threadID {
+				continue
+			}
+			data, marshalErr := json.Marshal(eventView{RunID: frame.RunID, Kind: frame.EventType, Payload: json.RawMessage(frame.Payload)})
+			if marshalErr != nil {
+				return
+			}
+			_, err = fmt.Fprintf(w, "id: %s\ndata: %s\n\n", frame.QueueID, data)
+		case <-heartbeat.C:
+			_, err = fmt.Fprint(w, ": heartbeat\n\n")
+		case <-r.Context().Done():
+			return
+		}
+		if err != nil {
+			return
+		}
+		err = controller.Flush()
+		if err != nil {
+			return
+		}
+	}
+}

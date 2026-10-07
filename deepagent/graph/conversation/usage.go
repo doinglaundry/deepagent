@@ -87,7 +87,7 @@ type UsageTracker struct {
 	counter  TokenCounter
 	snapshot types.ContextUsageSnapshot
 	runMu    sync.Mutex
-	run      types.Usage
+	usage    types.Usage
 }
 
 // RunUsage is cumulative provider usage, independent of the context-window
@@ -95,7 +95,7 @@ type UsageTracker struct {
 func (usageTracker *UsageTracker) GetRunUsage() types.Usage {
 	usageTracker.runMu.Lock()
 	defer usageTracker.runMu.Unlock()
-	return usageTracker.run
+	return usageTracker.usage
 }
 
 func (usageTracker *UsageTracker) RestoreRunUsage(ctx context.Context, usage types.Usage) error {
@@ -108,7 +108,7 @@ func (usageTracker *UsageTracker) RestoreRunUsage(ctx context.Context, usage typ
 	}
 	usageTracker.runMu.Lock()
 	defer usageTracker.runMu.Unlock()
-	usageTracker.run = usage
+	usageTracker.usage = usage
 	return nil
 }
 
@@ -118,13 +118,13 @@ func (usageTracker *UsageTracker) RecordRunUsage(modelUsage *model.TokenUsage) {
 	}
 	usageTracker.runMu.Lock()
 	defer usageTracker.runMu.Unlock()
-	usageTracker.run.PromptTokens += int64(modelUsage.PromptTokens)
-	usageTracker.run.CompletionTokens += int64(modelUsage.CompletionTokens)
+	usageTracker.usage.PromptTokens += int64(modelUsage.PromptTokens)
+	usageTracker.usage.CompletionTokens += int64(modelUsage.CompletionTokens)
 	total := modelUsage.TotalTokens
 	if total == 0 {
 		total = modelUsage.PromptTokens + modelUsage.CompletionTokens
 	}
-	usageTracker.run.TotalTokens += int64(total)
+	usageTracker.usage.TotalTokens += int64(total)
 }
 
 func (usageTracker *UsageTracker) recomputeContextUsage(messages []*schema.Message) {
