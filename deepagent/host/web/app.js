@@ -1,16 +1,19 @@
 let session = localStorage.session || crypto.randomUUID();
 localStorage.session = session;
 let thread = null, cursor = 0n, generation = 0, timer = null, polling = false, submitting = false;
-let followConversation = true;
+let followConversation = true, activityPhase = '';
 let eventSource = null, taskRows = [], lastRefresh = 0, fileRequest = 0, taskRequest = 0;
 const messagesByKey = new Map(), toolsByKey = new Map(), promptsByKey = new Map();
-const roundsByRunID = new Map();
+const roundsByRunID = new Map(), changedFilesByPath = new Map();
 const endedRuns = new Set(), inputModesByID = new Map();
 const $ = id => document.getElementById(id);
 const panelNames = ['Talk', 'Plan', 'Output', 'File', 'Tasks'];
 const statusLabels = {idle: '就绪', ready: '等待执行', running: '执行中', blocked: '等待你的回复', closing: '关闭中', closed: '已关闭'};
-function report(error) {
-  $('status').textContent = error ? error.message : '';
+function report(error, source = 'action') {
+  $('status').dataset.errorSource = error ? source : '';
+  const disconnected = source === 'poll' && error?.name === 'TypeError';
+  if (disconnected) setLabel($('status'), '本地服务暂时无法连接，正在重试…');
+  else { delete $('status').dataset.i18n; $('status').textContent = error ? error.message : ''; }
   $('status').hidden = !error;
 }
 function save(key, value) {
@@ -18,7 +21,11 @@ function save(key, value) {
 }
 function draftKey(id) { return 'draft:' + session + ':' + (id || 'new'); }
 function updateComposer() {
-  $('send').disabled = submitting || !$('input').value.trim();
+  const closed = ['closing', 'closed'].includes($('runStatus').dataset.status);
+  document.querySelector('.composer').hidden = closed;
+  document.querySelector('.composer-note').hidden = closed;
+  $('input').readOnly = closed;
+  $('send').disabled = closed || submitting || !$('input').value.trim();
   $('input').style.height = 'auto';
   $('input').style.height = Math.min($('input').scrollHeight || 54, 160) + 'px';
 }
@@ -31,18 +38,42 @@ async function api(url, options) {
 function getTaskTitle(row) { return row.untitled || !row.title ? t('未命名任务') : row.title; }
 function showTasks() {
   const query = $('search').value.trim().toLowerCase();
+  const tasksByID = new Map(taskRows.map(row => [row.id, row]));
+  const childrenByParent = new Map(), visibleIDs = new Set(), renderedIDs = new Set();
+  for (const row of taskRows) {
+    const children = childrenByParent.get(row.parent_thread_id) || [];
+    children.push(row); childrenByParent.set(row.parent_thread_id, children);
+    if (!getTaskTitle(row).toLowerCase().includes(query)) continue;
+    let ancestor = row;
+    while (ancestor && !visibleIDs.has(ancestor.id)) {
+      visibleIDs.add(ancestor.id); ancestor = tasksByID.get(ancestor.parent_thread_id);
+    }
+  }
   $('threads').replaceChildren();
-  taskRows.filter(row => getTaskTitle(row).toLowerCase().includes(query)).forEach(row => {
+  const appendTask = (row, depth = 0) => {
+    if (!visibleIDs.has(row.id) || renderedIDs.has(row.id)) return;
+    renderedIDs.add(row.id);
+    const child = !!row.parent_thread_id, status = row.status || 'idle';
     const button = document.createElement('button');
-    button.className = 'thread' + (row.id === thread ? ' active' : '');
-    button.dataset.status = row.status || 'idle';
+    button.className = 'thread' + (child ? ' child' : '') + (row.id === thread ? ' active' : '');
+    button.dataset.id = row.id; button.dataset.depth = String(depth); button.dataset.status = status;
+    button.style.paddingLeft = 12 + Math.min(depth, 6) * 18 + 'px';
     button.title = getTaskTitle(row);
     button.setAttribute('aria-current', row.id === thread ? 'true' : 'false');
-    const dot = document.createElement('span'); dot.className = 'task-dot';
-    button.append(dot, document.createTextNode(getTaskTitle(row)));
-    button.onclick = () => select(row.id).catch(report);
+    const line = document.createElement('div'); line.className = 'task-line';
+    const dot = document.createElement('span'); dot.className = 'task-dot'; dot.setAttribute('aria-hidden', 'true');
+    const name = document.createElement('span'); name.className = 'task-name'; name.textContent = getTaskTitle(row);
+    const type = document.createElement('span'); type.className = 'task-type'; setLabel(type, child ? '子任务' : '主任务');
+    line.append(dot, name, type);
+    const state = document.createElement('small'); state.className = 'task-status';
+    state.textContent = t(statusLabels[status] || status) + (['closing', 'closed'].includes(status) ? ' · ' + t('仅供查看') : '');
+    button.append(line, state); button.onclick = () => select(row.id).catch(report);
     $('threads').append(button);
-  });
+    (childrenByParent.get(row.id) || []).forEach(child => appendTask(child, depth + 1));
+  };
+  taskRows.filter(row => !tasksByID.has(row.parent_thread_id)).forEach(row => appendTask(row));
+  // Keep orphaned or cyclic metadata inspectable without duplicating any task.
+  taskRows.forEach(row => appendTask(row));
 }
 async function list() {
   const request = ++taskRequest;
@@ -57,15 +88,22 @@ function showThread(row) {
   else setLabel($('workspace'), '从一个问题或任务开始');
   $('workspace').title = row.work_dir || '';
   const status = row.status || 'idle';
-  setRunStatus(status, row.run_id, row.run_status);
+  $('taskContext').hidden = !row.parent_thread_id;
+  $('parentTask').dataset.id = row.parent_thread_id || '';
+  setLabel($('taskContextLabel'), status === 'closed' ? '子任务已关闭，仅可查看记录' : status === 'closing' ? '子任务正在关闭' : '子任务');
+  setRunStatus(status, row.run_id || '', row.run_status);
   $('mode').disabled = ['ready', 'running', 'blocked', 'closing', 'closed'].includes(status);
   setLabel($('composerHint'), status === 'blocked' ? '请先回复上方的问题，再继续任务' : $('mode').value === 'plan' ? '按步骤执行并跟踪进度' : '在当前项目中工作');
 }
-function setRunStatus(status, runID, runStatus) {
+function setRunStatus(status, runID = $('runStatus').dataset.runID || '', runStatus) {
+  if (runID !== $('runStatus').dataset.runID || status !== 'running' || $('runStatus').dataset.status !== 'running') activityPhase = '';
+  $('runStatus').dataset.runID = runID;
   setLabel($('runStatus'), statusLabels[status] || status);
   $('runStatus').dataset.status = status;
   setLabel($('phaseLabel'), statusLabels[status] || status);
   setLabel($('phaseCaption'), {idle: '给搭档一个任务，我们一起推进', ready: '任务已收到，准备开始', running: '任务执行中，可以随时补充想法', blocked: '任务暂时停在这里，等待你的回复', closing: '正在结束任务', closed: '这次任务已结束'}[status] || status);
+  if (status === 'closed') setLabel($('phaseCaption'), '任务已关闭，仅可查看记录');
+  updateComposer();
   $('office').dataset.status = status; $('office').dataset.outcome = runStatus || '';
   setLabel($('agentStatus'), {idle: '随时可以开始', ready: '任务已收到', running: '正在处理任务', blocked: '需要你的回复', closing: '正在结束任务', closed: '任务已关闭'}[status] || status);
   $('stop').disabled = !['ready', 'running'].includes(status);
@@ -84,6 +122,39 @@ function setRunStatus(status, runID, runStatus) {
     setLabel($('boardStatus'), '可以查看执行记录，或补充消息后继续');
     setLabel($('phaseCaption'), '可以查看执行记录，或补充消息后继续');
   }
+  updateActivity();
+}
+function updateActivity() {
+  const status = $('runStatus').dataset.status;
+  const phase = status === 'running' ? activityPhase || 'working' : status === 'blocked' ? 'waiting' : 'queued';
+  const label = {thinking: '正在思考', tools: '正在调用工具', responding: '正在回复', working: '正在处理任务', waiting: '等待你的回复', queued: '等待执行'}[phase];
+  $('activity').hidden = !['ready', 'running', 'blocked'].includes(status);
+  $('activity').dataset.phase = phase; setLabel($('activity'), label);
+  if (status === 'running') { setLabel($('phaseLabel'), label); setLabel($('agentStatus'), label); }
+}
+function renderActivity(event) {
+  // Stored history and late output from another Run cannot revive its live status.
+  if (event.sequence || !event.run_id || endedRuns.has(event.run_id) || ['closing', 'closed'].includes($('runStatus').dataset.status)) return;
+  const payload = event.payload || {};
+  if (event.kind === 'run_status' && payload.status === 'started') {
+    setRunStatus('running', event.run_id); return;
+  }
+  if (event.run_id !== $('runStatus').dataset.runID) return;
+  if (event.kind === 'run_status') {
+    if (payload.status === 'blocked') setRunStatus('blocked', event.run_id);
+    else if (['finished', 'failed', 'interrupted'].includes(payload.status)) {
+      endedRuns.add(event.run_id); setRunStatus('idle', event.run_id, payload.status);
+    }
+    return;
+  }
+  if ($('runStatus').dataset.status !== 'running') return;
+  if (event.kind === 'agent_activity' && payload.phase === 'thinking') activityPhase = 'thinking';
+  else if (event.kind === 'tool_call' && payload.status === 'started' && !toolsByKey.get(event.run_id + ':' + payload.tool_call_id)?.finished) activityPhase = 'tools';
+  else if (event.kind === 'assistant_delta') {
+    if (payload.delta) activityPhase = 'responding';
+    else if (payload.thinking_content_delta) activityPhase = 'thinking';
+  }
+  updateActivity();
 }
 function reset(id) {
   save(draftKey(thread), $('input').value);
@@ -93,18 +164,20 @@ function reset(id) {
   eventSource = null;
   thread = id; cursor = 0n; lastRefresh = 0; fileRequest++;
   messagesByKey.clear(); roundsByRunID.clear(); toolsByKey.clear(); promptsByKey.clear(); endedRuns.clear(); inputModesByID.clear();
-  $('notebook').hidden = true; followConversation = true;
+  followConversation = true;
   $('messages').replaceChildren();
   $('welcome').hidden = !!id;
   $('jumpBottom').hidden = true;
   $('toolOutput').replaceChildren();
   $('boardPlan').replaceChildren(); setLabel($('goalSummary'), '阅读代码、处理文件，或把一个想法变成现实。');
   $('plan').replaceChildren();
-  setLabel($('file'), '输入相对路径查看文件'); delete $('fileStatus').dataset.i18n; $('fileStatus').textContent = ''; $('filePath').value = '';
+  changedFilesByPath.clear(); $('changedFiles').replaceChildren();
+  $('file').textContent = ''; $('file').hidden = true; delete $('file').dataset.path;
+  delete $('fileStatus').dataset.i18n; $('fileStatus').textContent = '';
   $('input').value = localStorage[draftKey(id)] || '';
   $('mode').value = '';
   save('selectedThread', id || '');
-  showThread({}); updateComposer(); report(null);
+  showThread({}); updateComposer(); report(null); showPanel('Talk');
 }
 function connectStream(target) {
   if (typeof EventSource === 'undefined') return;
@@ -116,7 +189,7 @@ function connectStream(target) {
     try {
       const event = JSON.parse(message.data);
       // Questions come from durable history; live deltas only decorate those same messages.
-      if (!['assistant_delta', 'assistant_message', 'tool_call', 'plan_updated'].includes(event.kind)) return;
+      if (!['assistant_delta', 'assistant_message', 'tool_call', 'plan_updated', 'agent_activity', 'run_status'].includes(event.kind)) return;
       const follow = isNearBottom();
       renderEvent(event, target);
       if (follow) $('messages').scrollTop = $('messages').scrollHeight;
@@ -135,7 +208,7 @@ async function select(id) {
   poll();
 }
 async function submit(text) {
-  if (submitting) return;
+  if (submitting || ['closing', 'closed'].includes($('runStatus').dataset.status)) return;
   submitting = true; updateComposer();
   const current = generation, draft = $('input').value, mode = $('mode').value || '';
   try {
@@ -150,7 +223,7 @@ async function submit(text) {
     if ($('input').value === draft) $('input').value = '';
     save(draftKey(target), $('input').value); save(draftKey(null), '');
     $('welcome').hidden = true;
-    setRunStatus('ready'); showPanel('Talk');
+    setRunStatus('ready', ''); showPanel('Talk');
     report(null); await list();
     if (current === generation) poll();
   } catch (error) {
@@ -345,25 +418,81 @@ function renderTool(event) {
     const summary = document.createElement('summary'), name = document.createElement('span'), state = document.createElement('span');
     state.className = 'tool-state'; summary.append(name, state); detail.append(summary);
     const args = document.createElement('pre'), result = document.createElement('pre'); detail.append(args, result);
-    record = {detail, name, state, args, result, output: '', finished: false}; toolsByKey.set(key, record);
+    record = {detail, name, state, args, result, output: '', finished: false, order: toolsByKey.size}; toolsByKey.set(key, record);
     if (toolsByKey.size === 1) $('toolOutput').replaceChildren();
-    appendToLog(event, detail);
-    const link = document.createElement('button'); link.className = 'tool-link';
-    link.onclick = () => { showPanel('Talk', true); detail.open = true; detail.scrollIntoView({block: 'nearest'}); };
-    $('toolOutput').append(link); record.link = link;
+    detail.dataset.call = key; detail.tabIndex = -1; $('toolOutput').append(detail);
+    const link = document.createElement('button'); link.className = 'tool-link'; link.dataset.call = key;
+    link.onclick = () => { showPanel('Output'); detail.open = true; detail.scrollIntoView({block: 'nearest'}); detail.focus(); };
+    appendToLog(event, link); record.link = link;
   }
   if (record.finished && payload.status !== 'finished') return;
   record.name.textContent = payload.tool_name || t('工具');
   record.finished = payload.status === 'finished';
-  const label = record.finished ? '已完成' : '运行中';
+  const label = record.finished ? payload.is_error ? '失败' : '已完成' : '运行中';
   setLabel(record.state, payload.elapsed_ms != null ? '{status} · {seconds}s' : '{status}', {status: t(label), seconds: (payload.elapsed_ms / 1000).toFixed(1)});
-  setLabel(record.link, '{tool} · {status}', {tool: payload.tool_name || t('工具'), status: t(label)});
-  record.state.dataset.toolStatus = record.link.dataset.toolStatus = label;
   if (payload.arguments_json != null) record.args.textContent = pretty(payload.arguments_json);
+  let args;
+  try { args = JSON.parse(record.args.textContent || '{}'); } catch { args = {}; }
+  const subject = args?.path || args?.command || args?.query || args?.url || '';
+  const toolSummary = record.name.textContent + (typeof subject === 'string' && subject ? ' ' + subject.replace(/\s+/g, ' ').slice(0, 100) : '');
+  setLabel(record.link, '{tool} · {status}', {tool: toolSummary, status: t(label)});
+  record.state.dataset.toolStatus = record.link.dataset.toolStatus = label;
+  record.link.title = toolSummary; record.link.dataset.finished = String(record.finished);
+  record.link.dataset.failed = String(!!payload.is_error);
   if (payload.output_delta) record.output += payload.output_delta;
   record.result.textContent = payload.result_json != null ? pretty(payload.result_json) : record.output;
   record.result.hidden = !record.result.textContent; record.args.hidden = !record.args.textContent;
+  // Completed tool rows are updated in place; live completion must update the list too.
+  if (record.finished && !record.filesRecorded) {
+    record.filesRecorded = true; recordChangedFiles(payload, record.order);
+  }
 }
+function recordChangedFiles(payload, order) {
+  if (payload.is_error) return;
+  const changes = new Map(), result = payload.result_json || '';
+  let args;
+  try { args = JSON.parse(payload.arguments_json || '{}'); } catch { return; }
+  const operation = {write_file: ['wrote ', 'W'], edit_file: ['edited ', 'M'], delete_file: ['Deleted file ', 'D']}[payload.tool_name];
+  if (operation && typeof args.path === 'string' && result === operation[0] + args.path) changes.set(args.path, operation[1]);
+  if (payload.tool_name === 'apply_patch') {
+    for (const match of result.matchAll(/^([AMD]) (.+)$/gm)) changes.set(match[2], match[1]);
+    // A successful move reports the destination; retain the removed source too.
+    let source;
+    for (const line of (args.patch || '').replace(/\r\n/g, '\n').split('\n')) {
+      if (line.startsWith('*** Update File: ')) source = line.slice(17);
+      else if (line.startsWith('*** Move to: ') && changes.has(line.slice(13)) && source) changes.set(source, 'D');
+      else if (line.startsWith('*** ')) source = undefined;
+    }
+  }
+  if (!changes.size) return;
+  const root = $('workspace').title.replace(/\/$/, '');
+  for (let [path, operation] of changes) {
+    if (root && path.startsWith(root + '/')) path = path.slice(root.length + 1);
+    const parts = [];
+    for (const part of path.split('/')) {
+      if (part === '..') parts.pop();
+      else if (part && part !== '.') parts.push(part);
+    }
+    path = parts.join('/');
+    if (!path) continue;
+    if ((changedFilesByPath.get(path)?.order ?? -1) > order) continue;
+    changedFilesByPath.set(path, {operation, order});
+    if ($('file').dataset.path === path) { $('file').hidden = true; $('file').textContent = ''; $('fileStatus').textContent = ''; delete $('fileStatus').dataset.i18n; fileRequest++; }
+  }
+  $('changedFiles').replaceChildren();
+  for (const [path, {operation}] of changedFilesByPath) {
+    const row = document.createElement('div'); row.className = 'file-change'; row.dataset.operation = operation;
+    const badge = document.createElement('span'); badge.className = 'file-operation';
+    setLabel(badge, {W: '写入', A: '新增', M: '修改', D: '删除'}[operation]);
+    const link = document.createElement(operation === 'D' ? 'span' : 'a'); link.className = 'file-name'; link.textContent = path;
+    if (operation !== 'D') {
+      link.href = '/api/threads/' + thread + '/file?path=' + encodeURIComponent(path);
+      link.onclick = event => { event.preventDefault(); return openChangedFile(path); };
+    }
+    row.append(badge, link); $('changedFiles').append(row);
+  }
+}
+
 function renderPlan(payload) {
   $('plan').replaceChildren(); $('boardPlan').replaceChildren();
   if (payload.explanation) { const explanation = document.createElement('div'); explanation.className = 'plan-explanation'; explanation.textContent = payload.explanation; $('plan').append(explanation); }
@@ -375,6 +504,8 @@ function renderPlan(payload) {
   });
 }
 function renderEvent(event, target) {
+  renderActivity(event);
+  if (['agent_activity', 'run_status'].includes(event.kind)) return;
   const payload = event.payload || {};
   if (event.kind === 'input') {
     inputModesByID.set(String(event.sequence), payload.mode || '');
@@ -393,9 +524,10 @@ function renderEvent(event, target) {
     if (promptsByKey.has(payload.interrupt_id)) return;
     const box = required(event, payload, target);
     box.dataset.mode = (payload.consumed_message_ids || []).some(id => inputModesByID.get(id) === 'plan') ? 'plan' : '';
-    if (endedRuns.has(event.run_id)) resolvePrompt(box);
+    const resolved = endedRuns.has(event.run_id) || ['closing', 'closed'].includes($('runStatus').dataset.status);
+    if (resolved) resolvePrompt(box);
     promptsByKey.set(payload.interrupt_id, box); appendToLog(event, box);
-    if (!endedRuns.has(event.run_id)) { setRunStatus('blocked'); showPanel('Talk'); }
+    if (!resolved) { setRunStatus('blocked', event.run_id); showPanel('Talk'); }
   } else if (event.kind === 'tool' || event.kind === 'tool_call') {
     renderTool(event);
   } else if (event.kind === 'plan' || event.kind === 'plan_updated') {
@@ -459,7 +591,8 @@ async function poll() {
       if (['idle', 'closed'].includes(row.status)) promptsByKey.forEach(box => resolvePrompt(box));
       await list();
     }
-  } catch (error) { if (current === generation) report(error); }
+    if ($('status').dataset.errorSource === 'poll') report(null);
+  } catch (error) { if (current === generation) report(error, 'poll'); }
   finally {
     if (current === generation) { polling = false; timer = setTimeout(poll, 500); }
   }
@@ -473,26 +606,26 @@ $('input').onkeydown = event => {
 };
 $('new').onclick = () => { reset(null); list().catch(report); $('input').focus(); };
 $('search').oninput = showTasks;
+$('parentTask').onclick = () => select($('parentTask').dataset.id).catch(report);
 $('mode').onchange = () => setLabel($('composerHint'), $('mode').value === 'plan' ? '按步骤执行并跟踪进度' : '在当前项目中工作');
 $('messages').onscroll = () => {
   if ($('notebook').hidden || $('panelTalk').hidden) return;
   followConversation = isNearBottom(); $('jumpBottom').hidden = followConversation;
 };
 $('jumpBottom').onclick = () => { $('messages').scrollTop = $('messages').scrollHeight; $('jumpBottom').hidden = true; };
-$('fileForm').onsubmit = async event => {
-  event.preventDefault();
-  if (!thread) { setLabel($('fileStatus'), '请先创建或选择任务'); return; }
-  const path = $('filePath').value.trim(), current = generation, target = thread, request = ++fileRequest;
-  if (!path) return;
+async function openChangedFile(path) {
+  const current = generation, target = thread, request = ++fileRequest;
+  $('file').hidden = true; $('file').textContent = ''; $('file').dataset.path = path;
   setLabel($('fileStatus'), '正在读取…');
   try {
     const result = await api('/api/threads/' + target + '/file?path=' + encodeURIComponent(path));
     if (current !== generation || request !== fileRequest) return;
-    delete $('file').dataset.i18n; delete $('fileStatus').dataset.i18n; $('file').textContent = result.content || ''; $('fileStatus').textContent = result.path;
+    $('file').textContent = result.content || ''; $('file').hidden = false;
+    delete $('fileStatus').dataset.i18n; $('fileStatus').textContent = result.path;
   } catch (error) {
     if (current === generation && request === fileRequest) { delete $('fileStatus').dataset.i18n; $('fileStatus').textContent = error.message; }
   }
-};
+}
 document.querySelectorAll('[data-panel]').forEach(button => {
   button.onclick = () => showPanel(button.dataset.panel, true);
   button.onkeydown = event => {

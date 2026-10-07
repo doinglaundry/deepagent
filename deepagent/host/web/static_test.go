@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -104,5 +105,24 @@ func TestResumeRejectsSimpleCrossOriginRequest(t *testing.T) {
 	New(nil, t.TempDir()).Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("resume form status=%d", response.Code)
+	}
+}
+
+func TestThreadViewExposesParentIdentityAsString(t *testing.T) {
+	view := viewThread(&dalmodel.Thread{
+		ThreadID: 2000000000000026246,
+		Metadata: map[string]string{"parent_thread_id": "2000000000000020608"},
+	})
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	err = json.Unmarshal(raw, &fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields["parent_thread_id"] != "2000000000000020608" {
+		t.Fatalf("parent identity lost or rounded: %s", raw)
 	}
 }

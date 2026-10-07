@@ -47,4 +47,5 @@ type ToolEndPayload struct {
 	ToolStartTime   time.Time
 	ArgumentsInJSON string
 	Result          string
+	IsError         bool
 }

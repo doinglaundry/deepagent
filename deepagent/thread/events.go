@@ -51,7 +51,7 @@ func agentEventPayloadForOutput(ev run.Event, usage *types.ContextUsageSnapshot)
 		out.ContextUsage = contextUsage
 		return eventpkg.EventTypeRunStatus, out, nil
 	case run.EventLLMRequesting:
-		return "", nil, nil
+		return eventpkg.EventTypeAgentActivity, &eventpkg.AgentActivityEventPayload{Phase: "thinking"}, nil
 	case run.EventInputConsumed:
 		input, err := agentEventPayload[types.Input](ev)
 		if err != nil {
@@ -125,6 +125,7 @@ func agentEventPayloadForOutput(ev run.Event, usage *types.ContextUsageSnapshot)
 			ToolName:      payload.Name,
 			ArgumentsJSON: stringPtrIfNotEmpty(payload.ArgumentsInJSON),
 			ResultJSON:    stringPtrIfNotEmpty(payload.Result),
+			IsError:       payload.IsError,
 			Status:        eventpkg.ToolCallStatusFinished,
 			ContextUsage:  contextUsage,
 		}

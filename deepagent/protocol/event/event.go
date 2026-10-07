@@ -16,6 +16,7 @@ const (
 	EventTypePlanUpdated        Type = "plan_updated"
 	EventTypeError              Type = "error"
 	EventTypeAssistantDelta     Type = "assistant_delta"
+	EventTypeAgentActivity      Type = "agent_activity"
 	EventTypeTokens             Type = "tokens"
 	RunStatusStarted                 = "started"
 	RunStatusFinished                = "finished"
@@ -91,6 +92,12 @@ type MessageEventPayload struct {
 	ConsumedMessageIDs []string            `json:"consumed_message_ids,omitempty"`
 	ConsumedInputsMeta []map[string]string `json:"consumed_inputs_meta,omitempty"`
 }
+
+// AgentActivityEventPayload is a live phase hint, without model request contents.
+type AgentActivityEventPayload struct {
+	Phase string `json:"phase"`
+}
+
 type AssistantDeltaEventPayload struct {
 	Delta                string              `json:"delta,omitempty"`
 	ThinkingContentDelta string              `json:"thinking_content_delta,omitempty"`
@@ -103,6 +110,7 @@ type ToolCallEventPayload struct {
 	ToolName           string              `json:"tool_name,omitempty"`
 	ArgumentsJSON      *string             `json:"arguments_json,omitempty"`
 	ResultJSON         *string             `json:"result_json,omitempty"`
+	IsError            bool                `json:"is_error,omitempty"`
 	OutputDelta        *string             `json:"output_delta,omitempty"`
 	Status             string              `json:"status,omitempty"`
 	ElapsedMs          *int64              `json:"elapsed_ms,omitempty"`

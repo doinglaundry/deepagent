@@ -48,14 +48,15 @@ func writeError(w http.ResponseWriter, status int, err error) {
 }
 
 type threadView struct {
-	ID        string `json:"id"`
-	SessionID string `json:"session_id"`
-	Title     string `json:"title"`
-	Untitled  bool   `json:"untitled,omitempty"`
-	Status    string `json:"status"`
-	WorkDir   string `json:"work_dir"`
-	RunID     string `json:"run_id,omitempty"`
-	RunStatus string `json:"run_status,omitempty"`
+	ID             string `json:"id"`
+	ParentThreadID string `json:"parent_thread_id,omitempty"`
+	SessionID      string `json:"session_id"`
+	Title          string `json:"title"`
+	Untitled       bool   `json:"untitled,omitempty"`
+	Status         string `json:"status"`
+	WorkDir        string `json:"work_dir"`
+	RunID          string `json:"run_id,omitempty"`
+	RunStatus      string `json:"run_status,omitempty"`
 }
 
 func viewThread(thread *dalmodel.Thread) threadView {
@@ -64,7 +65,8 @@ func viewThread(thread *dalmodel.Thread) threadView {
 	}
 	view := threadView{
 		ID: strconv.FormatInt(thread.ThreadID, 10), SessionID: thread.SessionID,
-		Status: thread.DisplayStatus(time.Now()), Title: strings.TrimSpace(thread.Metadata["title"]),
+		ParentThreadID: thread.Metadata["parent_thread_id"],
+		Status:         thread.DisplayStatus(time.Now()), Title: strings.TrimSpace(thread.Metadata["title"]),
 	}
 	if thread.LastRun != nil {
 		view.RunID, view.RunStatus = thread.LastRun.RunID, thread.LastRun.Status

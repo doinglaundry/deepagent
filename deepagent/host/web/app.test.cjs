@@ -229,7 +229,7 @@ test('history pages finish loading before live updates can overtake older messag
 test('untitled task names never fall back to internal database IDs', async () => {
   const app = load(url => url.startsWith('/api/threads?') ? {data: [{id: '2000000000000000001', title: ''}]} : undefined);
   await tick();
-  assert.equal(app.get('threads').children[0].textContent, '未命名任务');
+  assert.equal(app.get('threads').querySelectorAll('.task-name')[0].textContent, '未命名任务');
 });
 
 
@@ -322,16 +322,68 @@ test('a live response groups its already stored pending input before the reply w
 });
 
 
-test('tool details stay in the conversation and the tools tab links to that single record', () => {
+test('conversation shows compact tool activity that opens the matching details in Tools', () => {
   const app = load(() => undefined);
   app.context.renderEvent({run_id: 'run', kind: 'tool_call', payload: {tool_call_id: 'call', tool_name: 'read_file', status: 'started', arguments_json: '{"path":"README.md"}'}}, 'thread');
   app.context.renderEvent({sequence: '2', run_id: 'run', kind: 'tool', payload: {tool_call_id: 'call', tool_name: 'read_file', status: 'finished', result_json: 'file contents'}}, 'thread');
-  const details = app.get('messages').querySelectorAll('.tool-record');
+  app.context.renderEvent({run_id: 'run', kind: 'tool_call', payload: {tool_call_id: 'call', tool_name: 'read_file', status: 'started'}}, 'thread');
+  const links = app.get('messages').querySelectorAll('.tool-link');
+  const details = app.get('toolOutput').querySelectorAll('.tool-record');
+  assert.equal(links.length, 1);
+  assert.equal(app.get('messages').querySelectorAll('.tool-record').length, 0);
+  assert.ok(links[0].textContent.includes('README.md'));
+  assert.ok(links[0].textContent.includes('已完成'));
+  assert.ok(!app.get('messages').textContent.includes('file contents'));
   assert.equal(details.length, 1);
-  assert.equal(details[0].open, undefined, 'tool details are collapsed by default');
   assert.ok(details[0].textContent.includes('file contents'));
-  assert.equal(app.get('toolOutput').querySelectorAll('.tool-record').length, 0);
-  assert.equal(app.get('toolOutput').querySelectorAll('.tool-link').length, 1);
+  assert.equal(details[0].open, undefined);
+  let scrolled = false;
+  details[0].scrollIntoView = () => scrolled = true;
+  links[0].onclick();
+  assert.equal(app.get('panelOutput').hidden, false);
+  assert.equal(app.get('panelTalk').hidden, true);
+  assert.equal(details[0].open, true);
+  assert.equal(scrolled, true);
+});
+
+test('live activity follows model, tool, reply and blocked events; finished Runs hide it', () => {
+  const app = load(() => undefined);
+  app.context.setRunStatus('running', 'run');
+  app.context.renderEvent({run_id: 'run', kind: 'agent_activity', payload: {phase: 'thinking'}}, 'thread');
+  assert.equal(app.get('activity').textContent, '正在思考');
+  assert.equal(app.get('activity').hidden, false);
+  app.context.renderEvent({run_id: 'run', kind: 'tool_call', payload: {tool_call_id: 'call', tool_name: 'execute', status: 'started', arguments_json: '{"command":"pwd"}'}}, 'thread');
+  assert.equal(app.get('activity').textContent, '正在调用工具');
+  app.context.renderEvent({run_id: 'run', kind: 'agent_activity', payload: {phase: 'thinking'}}, 'thread');
+  assert.equal(app.get('activity').textContent, '正在思考');
+  app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {llm_response_id: 'reply', delta: '结果'}}, 'thread');
+  assert.equal(app.get('activity').textContent, '正在回复');
+  app.context.setRunStatus('running', 'run');
+  assert.equal(app.get('activity').textContent, '正在回复', 'polling the same Run must not lose its phase');
+  app.context.renderEvent({run_id: 'run', kind: 'run_status', payload: {status: 'blocked'}}, 'thread');
+  assert.equal(app.get('activity').textContent, '等待你的回复');
+  app.context.renderEvent({run_id: 'run', kind: 'run_status', payload: {status: 'started'}}, 'thread');
+  app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {thinking_content_delta: 'private reasoning'}}, 'thread');
+  assert.equal(app.get('activity').textContent, '正在思考');
+  assert.ok(!app.get('messages').textContent.includes('private reasoning'));
+  app.context.renderEvent({run_id: 'run', kind: 'run_status', payload: {status: 'finished'}}, 'thread');
+  assert.equal(app.get('activity').hidden, true);
+});
+
+test('history, ended Runs and other Runs cannot overwrite current live activity', () => {
+  const app = load(() => undefined);
+  app.context.setRunStatus('running', 'current');
+  app.context.renderEvent({run_id: 'current', kind: 'agent_activity', payload: {phase: 'thinking'}}, 'thread');
+  app.context.renderEvent({sequence: '1', run_id: 'current', kind: 'tool', payload: {tool_call_id: 'past', tool_name: 'execute', status: 'finished'}}, 'thread');
+  app.context.renderEvent({run_id: 'old', kind: 'tool_call', payload: {tool_call_id: 'old', tool_name: 'execute', status: 'started'}}, 'thread');
+  assert.equal(app.get('activity').textContent, '正在思考');
+  app.context.renderEvent({run_id: 'current', kind: 'run_status', payload: {status: 'finished'}}, 'thread');
+  app.context.renderEvent({run_id: 'current', kind: 'agent_activity', payload: {phase: 'thinking'}}, 'thread');
+  assert.equal(app.get('activity').hidden, true);
+  app.context.setRunStatus('closed', 'current');
+  app.context.renderEvent({run_id: 'next', kind: 'run_status', payload: {status: 'started'}}, 'thread');
+  assert.equal(app.get('activity').hidden, true);
+  assert.equal(app.get('runStatus').dataset.status, 'closed');
 });
 
 test('appended inputs retain their position after earlier output in the same Run', () => {
@@ -370,4 +422,193 @@ test('English interface labels do not translate user messages or model replies',
   app.context.renderEvent({sequence: '2', run_id: 'run', kind: 'assistant', text: '原始中文回答'}, 'thread');
   assert.equal(app.get('messages').querySelectorAll('.msg.user')[0].textContent, '原始中文任务');
   assert.equal(app.get('messages').querySelectorAll('.msg.assistant')[0].textContent, '原始中文回答');
+});
+
+
+test('task list groups children beneath their parent and distinguishes task types', async () => {
+  const rows = [
+    {id: 'child', parent_thread_id: 'main', title: '代码分析', status: 'closed'},
+    {id: 'other', title: '另一个主任务', status: 'idle'},
+    {id: 'main', title: '理解项目', status: 'idle'},
+    {id: 'nested', parent_thread_id: 'child', title: '子任务的子任务', status: 'idle'}
+  ];
+  const app = load(url => url.startsWith('/api/threads?') ? {data: rows} : undefined);
+  await app.context.list();
+  const buttons = app.get('threads').children;
+  assert.deepEqual(buttons.map(button => button.dataset.id), ['other', 'main', 'child', 'nested']);
+  assert.deepEqual(buttons.map(button => button.dataset.depth), ['0', '0', '1', '2']);
+  assert.ok(buttons[1].textContent.includes('主任务'));
+  assert.ok(buttons[2].textContent.includes('子任务'));
+  assert.ok(buttons[2].textContent.includes('已关闭'));
+});
+
+test('searching for a child retains its parent context without unrelated tasks', async () => {
+  const rows = [
+    {id: 'child', parent_thread_id: 'main', title: 'HTTP 分析', status: 'closed'},
+    {id: 'sibling', parent_thread_id: 'main', title: '沙箱分析', status: 'closed'},
+    {id: 'main', title: '理解项目', status: 'idle'},
+    {id: 'other', title: '另一个任务', status: 'idle'}
+  ];
+  const app = load(url => url.startsWith('/api/threads?') ? {data: rows} : undefined);
+  await app.context.list();
+  app.get('search').value = 'HTTP'; app.context.showTasks();
+  assert.deepEqual(app.get('threads').children.map(button => button.dataset.id), ['main', 'child']);
+});
+
+test('closing and closed tasks hide the composer and cannot submit even with a draft', async () => {
+  const app = load(() => undefined);
+  app.get('input').value = '保留这条草稿';
+  for (const status of ['closing', 'closed']) {
+    app.context.showThread({id: 'child', parent_thread_id: 'main', status});
+    assert.equal(app.get('.composer').hidden, true);
+    assert.equal(app.get('.composer-note').hidden, true);
+    assert.equal(app.get('send').disabled, true);
+    await app.context.submit('保留这条草稿');
+  }
+  assert.equal(app.calls.filter(call => call.options?.method === 'POST').length, 0);
+  assert.equal(app.get('input').value, '保留这条草稿');
+  app.context.showThread({id: 'main', status: 'idle'});
+  assert.equal(app.get('.composer').hidden, false);
+  assert.equal(app.get('send').disabled, false);
+});
+
+test('a closed child can return to its parent and restore the composer', async () => {
+  const app = load(url => {
+    if (url === '/api/threads/child') return {data: {id: 'child', parent_thread_id: 'main', status: 'closed'}};
+    if (url === '/api/threads/main') return {data: {id: 'main', title: '主任务', status: 'idle'}};
+  });
+  await app.context.select('child'); await tick();
+  assert.equal(app.get('taskContext').hidden, false);
+  assert.equal(app.get('.composer').hidden, true);
+  await app.get('parentTask').onclick(); await tick();
+  assert.equal(app.context.localStorage.selectedThread, 'main');
+  assert.equal(app.get('taskContext').hidden, true);
+  assert.equal(app.get('.composer').hidden, false);
+});
+
+
+test('changed files come only from completed successful mutations and survive replay', () => {
+  const app = load(() => undefined);
+  app.context.reset('one');
+  app.context.showThread({work_dir: '/project'});
+  const event = (id, tool, path, result, extra = {}) => ({sequence:'1', kind: 'tool', run_id: 'run', payload: {
+    tool_call_id: id, tool_name: tool, arguments_json: JSON.stringify({path}), result_json: result, status: 'finished', ...extra
+  }});
+  app.context.renderEvent(event('read', 'read_file', 'README.md', 'contents'), 'one');
+  app.context.renderEvent(event('pending', 'write_file', 'pending.md', 'wrote pending.md', {status:'started'}), 'one');
+  app.context.renderEvent(event('error', 'write_file', 'failed.md', 'wrote failed.md', {is_error:true}), 'one');
+  app.context.renderEvent(event('denied', 'write_file', 'denied.md', 'tool denied by user'), 'one');
+  app.context.renderEvent(event('missing', 'delete_file', 'missing.md', 'File does not exist: missing.md'), 'one');
+  assert.equal(app.get('changedFiles').children.length, 0);
+  const write = event('write', 'write_file', '/project/src/a.go', 'wrote /project/src/a.go');
+  app.context.renderEvent(write, 'one'); app.context.renderEvent(write, 'one');
+  app.context.renderEvent(event('edit', 'edit_file', './src/a.go', 'edited ./src/a.go'), 'one');
+  const links = app.get('changedFiles').querySelectorAll('a');
+  assert.equal(links.length, 1);
+  assert.equal(links[0].textContent, 'src/a.go');
+  assert.ok(app.get('changedFiles').textContent.includes('修改'));
+  app.context.reset('two');
+  assert.equal(app.get('changedFiles').children.length, 0);
+  assert.equal(app.get('file').hidden, true);
+});
+
+test('patch results list added, modified, deleted and moved files without guessing failed patches', () => {
+  const app = load(() => undefined);
+  app.context.reset('one');
+  const patch = '*** Begin Patch\n*** Update File: old.md\n*** Move to: new.md\n@@\n-old\n+new\n*** End Patch';
+  const event = {sequence:'1', kind:'tool', run_id:'run', payload:{tool_call_id:'patch', tool_name:'apply_patch',
+    status:'finished', arguments_json:JSON.stringify({patch}), result_json:'A added.md\nM src/a.go\nD removed.md\nM new.md'}};
+  app.context.renderEvent(event, 'one');
+  app.context.renderEvent(event, 'one');
+  const rows = app.get('changedFiles').children;
+  assert.equal(rows.length, 5);
+  assert.equal(app.get('changedFiles').querySelectorAll('a').length, 3);
+  assert.ok(rows.some(row => row.textContent === '删除old.md'));
+  assert.ok(rows.some(row => row.textContent === '删除removed.md'));
+  app.context.renderEvent({...event, payload:{...event.payload, tool_call_id:'failed', is_error:true, result_json:'A failed.md'}}, 'one');
+  assert.equal(app.get('changedFiles').children.length, 5);
+});
+
+test('changed-file links load the current file, clear stale previews and ignore an old task response', async () => {
+  let release;
+  const app = load(url => {
+    if (url.includes('/file?path=src%2Fa.go')) return {data:{path:'src/a.go', content:'new content'}};
+    if (url.includes('/file?path=old.md')) return new Promise(resolve => release = resolve);
+    if (url.includes('/file?path=missing.md')) return {ok:false, data:{error:'file no longer exists'}};
+  });
+  app.context.reset('one');
+  for (const path of ['src/a.go', 'old.md', 'missing.md']) app.context.renderEvent({sequence:'1', kind:'tool', run_id:'run', payload:{
+    tool_call_id:path, tool_name:'write_file', status:'finished', arguments_json:JSON.stringify({path}), result_json:'wrote '+path
+  }}, 'one');
+  const links = app.get('changedFiles').querySelectorAll('a');
+  await links[0].onclick({preventDefault(){}});
+  assert.equal(app.get('file').textContent, 'new content');
+  assert.equal(app.get('file').hidden, false);
+  await links[2].onclick({preventDefault(){}});
+  assert.equal(app.get('file').textContent, '');
+  assert.equal(app.get('file').hidden, true);
+  assert.equal(app.get('fileStatus').textContent, 'file no longer exists');
+  const pending = links[1].onclick({preventDefault(){}});
+  app.context.reset('two');
+  release({data:{path:'old.md', content:'wrong task'}}); await pending;
+  assert.equal(app.get('file').textContent, '');
+  assert.equal(app.get('changedFiles').children.length, 0);
+});
+
+test('live tool completion updates files even when the saved tool row stays behind the poll cursor', () => {
+  const app = load(() => undefined);
+  app.context.reset('one');
+  const event = (id, tool, result, sequence) => ({kind:sequence ? 'tool':'tool_call', sequence, run_id:'run', payload:{
+    tool_call_id:id, tool_name:tool, arguments_json:'{"path":"a.md"}', result_json:result, status:'finished'
+  }});
+  app.context.renderEvent({...event('old','delete_file','', '1'),payload:{...event('old','delete_file','', '1').payload,status:'started'}}, 'one');
+  app.context.renderEvent(event('new','write_file','wrote a.md'), 'one');
+  assert.equal(app.get('changedFiles').querySelectorAll('a').length,1);
+  app.context.renderEvent(event('old','delete_file','Deleted file a.md','1'), 'one');
+  app.context.renderEvent(event('new','write_file','wrote a.md','2'), 'one');
+  assert.equal(app.get('changedFiles').children.length,1);
+  assert.equal(app.get('changedFiles').querySelectorAll('a').length,1, 'older saved completion must not undo a later live write');
+});
+
+test('loading old questions cannot reopen a closed task or show its composer', () => {
+  const app = load(() => undefined);
+  app.context.reset('child');
+  app.context.showThread({id:'child', parent_thread_id:'main', status:'closed'});
+  app.context.renderEvent({sequence:'1', run_id:'old-run', kind:'approval', payload:{
+    kind:'approval', interrupt_id:'old-approval', checkpoint_id:'old-run', tool_name:'write_file'
+  }}, 'child');
+  assert.equal(app.get('runStatus').dataset.status,'closed');
+  assert.equal(app.get('.composer').hidden,true);
+  assert.ok(app.get('messages').querySelectorAll('.prompt')[0].querySelectorAll().every(control => control.disabled));
+});
+
+
+test('live blocked status updates activity without creating a duplicate generic question', () => {
+  const app = load(() => undefined);
+  app.context.setRunStatus('running', 'run');
+  app.context.renderEvent({run_id: 'run', kind: 'run_status', payload: {status: 'blocked', checkpoint_id: 'run', interrupt_id: 'approval'}}, 'thread');
+  assert.equal(app.get('messages').querySelectorAll('.prompt').length, 0);
+  assert.equal(app.get('activity').textContent, '等待你的回复');
+  app.context.renderEvent({sequence: '3', run_id: 'run', kind: 'approval', payload: {kind: 'approval', checkpoint_id: 'run', interrupt_id: 'approval', tool_name: 'execute', arguments_json: '{"command":"pwd"}'}}, 'thread');
+  const prompts = app.get('messages').querySelectorAll('.prompt');
+  assert.equal(prompts.length, 1);
+  assert.ok(prompts[0].textContent.includes('execute'));
+  assert.ok(prompts[0].querySelectorAll('button').some(button => button.textContent === '允许'));
+});
+
+test('poll connection failure clears after recovery without hiding a failed submission', async () => {
+  let disconnected = true;
+  const app = load(url => {
+    if (url.includes('/events?') && disconnected) throw new TypeError('Failed to fetch');
+  });
+  await app.context.select('network'); await tick();
+  assert.equal(app.get('status').hidden, false);
+  assert.equal(app.get('status').textContent, '本地服务暂时无法连接，正在重试…');
+  disconnected = false;
+  await app.context.poll();
+  assert.equal(app.get('status').hidden, true);
+  app.context.report({message: 'submission denied'});
+  await app.context.poll();
+  assert.equal(app.get('status').textContent, 'submission denied');
+  assert.equal(app.get('status').hidden, false);
 });

@@ -438,3 +438,43 @@ func TestThread_CloseCancelsActiveRun(t *testing.T) {
 		t.Fatal(closeErr)
 	}
 }
+
+func TestThreadAdapter_ToolFailureRemainsVisibleInPersistedPayload(t *testing.T) {
+	var end types.ToolEndPayload
+	err := json.Unmarshal([]byte(`{"Name":"write_file","CallID":"failed","Result":"permission denied","IsError":true}`), &end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, payload, err := agentEventPayloadForOutput(runpkg.Event{Type: runpkg.EventToolEnd, Payload: end}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	err = json.Unmarshal(raw, &fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields["is_error"] != true {
+		t.Fatalf("failed mutation lost error status: %s", raw)
+	}
+}
+
+func TestThreadOutput_ModelRequestPublishesOnlyThinkingPhase(t *testing.T) {
+	output, err := workerEvent("session", "thread", runpkg.Event{
+		ID: "event", RunID: "run", Type: runpkg.EventLLMRequesting,
+		Payload: types.LLMRequestingPayload{Messages: []*schema.Message{schema.UserMessage("private request")}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output == nil {
+		t.Fatal("model activity was discarded before reaching the UI")
+	}
+	if output.Type != "agent_activity" || output.RunID != "run" || string(output.Payload) != `{"phase":"thinking"}` {
+		t.Fatalf("unexpected activity: %+v", output)
+	}
+}

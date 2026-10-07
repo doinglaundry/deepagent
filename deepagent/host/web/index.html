@@ -25,26 +25,28 @@
       <button class="board-link" data-panel="Plan" data-i18n="查看完整计划 →">查看完整计划 →</button>
     </section>
     <button class="hotspot agent" data-panel="Output" aria-label="点击搭档查看工具执行" data-i18n-label="点击搭档查看工具执行"><span class="speech" id="agentStatus" data-i18n="准备好后，把任务交给我。">准备好后，把任务交给我。</span><span class="agent-target" aria-hidden="true"></span><span class="buddy-label" data-i18n="查看搭档正在做什么">查看搭档正在做什么</span></button>
-    <button class="hotspot cabinet" data-panel="File"><span class="cabinet-label"><span data-i18n="▤ 成果柜">▤ 成果柜</span><small data-i18n="查看项目文件">查看项目文件</small></span></button>
+    <button class="hotspot cabinet" data-panel="File"><span class="cabinet-label"><span data-i18n="▤ 成果柜">▤ 成果柜</span><small data-i18n="查看文件改动">查看文件改动</small></span></button>
     <div class="scene-nav"><button data-panel="Talk"><strong data-i18n="对话">对话</strong><small data-i18n="一起讨论你的目标">一起讨论你的目标</small></button><button data-panel="Plan"><strong data-i18n="计划">计划</strong><small data-i18n="任务一步步推进">任务一步步推进</small></button><button data-panel="Output"><strong data-i18n="工具">工具</strong><small data-i18n="搭档如何使用能力">搭档如何使用能力</small></button></div>
   </section>
-    <aside id="notebook" class="notebook" aria-label="工作记录" data-i18n-label="工作记录" hidden>
+    <aside id="notebook" class="notebook" aria-label="工作记录" data-i18n-label="工作记录">
       <header class="notebook-heading"><strong data-i18n="工作记录">工作记录</strong><button id="closeNotebook" aria-label="收起工作记录" data-i18n-label="收起工作记录">×</button></header>
       <div class="tabs" role="tablist" aria-label="工作记录" data-i18n-label="工作记录">
         <button id="tabTalk" role="tab" aria-controls="panelTalk" aria-selected="true" data-panel="Talk" data-i18n="对话">对话</button><button id="tabPlan" role="tab" aria-controls="panelPlan" aria-selected="false" data-panel="Plan" data-i18n="计划">计划</button><button id="tabOutput" role="tab" aria-controls="panelOutput" aria-selected="false" data-panel="Output" data-i18n="工具">工具</button><button id="tabFile" role="tab" aria-controls="panelFile" aria-selected="false" data-panel="File" data-i18n="文件">文件</button><button id="tabTasks" role="tab" aria-controls="panelTasks" aria-selected="false" data-panel="Tasks" data-i18n="任务">任务</button>
       </div>
-      <div id="panelTalk" class="panel conversation" role="tabpanel" aria-labelledby="tabTalk"><div id="messages" class="messages" data-i18n-empty="这里记录你和搭档的对话。先给它一个任务吧。" aria-label="对话消息" data-i18n-label="对话消息"></div><button id="jumpBottom" class="jump-bottom" hidden data-i18n="↓ 回到最新">↓ 回到最新</button></div>
+      <div id="taskContext" class="task-context" hidden><span id="taskContextLabel" data-i18n="子任务">子任务</span><button id="parentTask" type="button" data-i18n="返回主任务">返回主任务</button></div>
+      <div id="panelTalk" class="panel conversation" role="tabpanel" aria-labelledby="tabTalk"><div id="messages" class="messages" data-i18n-empty="这里记录你和搭档的对话。先给它一个任务吧。" aria-label="对话消息" data-i18n-label="对话消息"></div><div id="activity" class="activity" role="status" aria-live="polite" hidden></div><button id="jumpBottom" class="jump-bottom" hidden data-i18n="↓ 回到最新">↓ 回到最新</button></div>
       <div id="panelPlan" class="panel" role="tabpanel" aria-labelledby="tabPlan" hidden><p class="panel-label" data-i18n="任务步骤">任务步骤</p><div id="plan" data-i18n-empty="Agent 更新计划后，步骤会出现在这里。"></div></div>
       <div id="panelOutput" class="panel" role="tabpanel" aria-labelledby="tabOutput" hidden><p class="panel-label" data-i18n="搭档的执行记录">搭档的执行记录</p><div id="toolOutput" data-i18n-empty="工具调用的参数、结果和运行状态会出现在这里。"></div></div>
-      <div id="panelFile" class="panel" role="tabpanel" aria-labelledby="tabFile" hidden><p class="panel-label" data-i18n="项目文件 · 只读预览">项目文件 · 只读预览</p><form id="fileForm"><input id="filePath" placeholder="例如 README.md" data-i18n-placeholder="例如 README.md" aria-label="文件相对路径" data-i18n-label="文件相对路径"><button type="submit" data-i18n="打开">打开</button></form><div id="fileStatus" role="status"></div><pre id="file" data-i18n="输入相对路径查看文件">输入相对路径查看文件</pre></div>
+      <div id="panelFile" class="panel" role="tabpanel" aria-labelledby="tabFile" hidden><p class="panel-label" data-i18n="当前任务的文件改动">当前任务的文件改动</p><div id="changedFiles" data-i18n-empty="当前任务还没有文件改动。"></div><div id="fileStatus" role="status" aria-live="polite"></div><pre id="file" hidden></pre></div>
       <div id="panelTasks" class="panel" role="tabpanel" aria-labelledby="tabTasks" hidden><label class="search"><input id="search" placeholder="搜索任务" data-i18n-placeholder="搜索任务" aria-label="搜索任务" data-i18n-label="搜索任务"></label><nav id="threads" aria-label="最近任务" data-i18n-label="最近任务"></nav></div>
+
+      <div class="composer-area">
+        <div id="status" role="status" aria-live="polite" hidden></div>
+        <div class="caption"><span id="phaseLabel" data-i18n="就绪">就绪</span><span id="phaseCaption" data-i18n="给搭档一个任务，我们一起推进">给搭档一个任务，我们一起推进</span></div>
+        <form class="composer"><textarea id="input" rows="1" placeholder="描述你的任务，或随时补充想法…" data-i18n-placeholder="描述你的任务，或随时补充想法…" aria-label="输入消息" data-i18n-label="输入消息"></textarea><select id="mode" aria-label="执行模式" data-i18n-label="执行模式"><option value="" data-i18n="执行">执行</option><option value="plan" data-i18n="计划">计划</option></select><button id="send" type="submit" aria-label="发送消息" data-i18n-label="发送消息" data-i18n="发送 ↗">发送 ↗</button></form>
+        <div class="composer-note"><span id="composerHint" data-i18n="在当前项目中工作">在当前项目中工作</span><span data-i18n="Enter 发送 · Shift + Enter 换行">Enter 发送 · Shift + Enter 换行</span></div>
+      </div>
     </aside>
-  </div>
-  <div class="composer-area">
-    <div id="status" role="status" aria-live="polite" hidden></div>
-    <div class="caption"><span id="phaseLabel" data-i18n="就绪">就绪</span><span id="phaseCaption" data-i18n="给搭档一个任务，我们一起推进">给搭档一个任务，我们一起推进</span></div>
-    <form class="composer"><span class="input-mark" aria-hidden="true">✦</span><textarea id="input" rows="1" placeholder="描述你的任务，或随时补充想法…" data-i18n-placeholder="描述你的任务，或随时补充想法…" aria-label="输入消息" data-i18n-label="输入消息"></textarea><select id="mode" aria-label="执行模式" data-i18n-label="执行模式"><option value="" data-i18n="执行">执行</option><option value="plan" data-i18n="计划">计划</option></select><button id="send" type="submit" aria-label="发送消息" data-i18n-label="发送消息" data-i18n="发送 ↗">发送 ↗</button></form>
-    <div class="composer-note"><span id="composerHint" data-i18n="在当前项目中工作">在当前项目中工作</span><span data-i18n="Enter 发送 · Shift + Enter 换行">Enter 发送 · Shift + Enter 换行</span></div>
   </div>
 </main>
 </body>

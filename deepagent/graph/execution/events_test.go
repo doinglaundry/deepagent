@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -234,5 +235,40 @@ func TestRun_InputConsumedEventsFollowSuccessfulHistoryWrites(t *testing.T) {
 				t.Fatal("model called after failed input write")
 			}
 		})
+	}
+}
+
+func TestRun_ToolEndDistinguishesFailedMutation(t *testing.T) {
+	chatModel := &sequenceModel{responses: [][]*schema.Message{
+		{schema.AssistantMessage("", []schema.ToolCall{{ID: "failed", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
+		{schema.AssistantMessage("failed tool handled", nil)},
+	}}
+	failed := false
+	graph, err := New(context.Background(), WithConfig(&Config{
+		Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: &failingContractTool{failure: errors.New("permission denied")}}},
+		Emit: func(_ context.Context, event types.RuntimeEvent) error {
+			if event.Kind != "tool_end" {
+				return nil
+			}
+			raw, marshalErr := json.Marshal(event.Data)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			var fields map[string]any
+			decodeErr := json.Unmarshal(raw, &fields)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			failed = fields["IsError"] == true
+			return nil
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer graph.Close(context.Background())
+	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	if err != nil || !failed {
+		t.Fatalf("failed tool reported as success: err=%v failure=%v", err, failed)
 	}
 }

@@ -182,10 +182,6 @@ func workerEvent(_ string, threadID string, ev run.Event, usage *types.ContextUs
 		return nil, nil
 	}
 
-	if ev.Type == run.EventLLMRequesting {
-		return nil, nil
-	}
-
 	eventType, eventPayload, err := agentEventPayloadForOutput(ev, usage)
 	if err != nil {
 		return nil, err

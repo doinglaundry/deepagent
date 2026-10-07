@@ -97,6 +97,7 @@ var outputEventRules = map[string]outputEventRule{
 	eventpkg.EventTypePlanUpdated.String():      {action: outputActionSaveMessage, messageType: "plan", sender: model.SenderTypeSystem, messageKeySource: messageKeyLatestInRun},
 	eventpkg.EventTypeError.String():            {action: outputActionSaveMessage, messageType: "error", sender: model.SenderTypeSystem, messageKeySource: messageKeyFromPayloadHash},
 	eventpkg.EventTypeAssistantDelta.String():   {action: outputActionLiveOnly},
+	eventpkg.EventTypeAgentActivity.String():    {action: outputActionLiveOnly},
 }
 
 func outputEventRuleFor(eventType string, payload outputPayload) outputEventRule {

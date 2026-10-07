@@ -67,7 +67,7 @@ func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*t
 		if err != nil {
 			return nil, err
 		}
-		err = graph.emitEvent(ctx, runState, "tool_end", result.CallID, types.ToolEndPayload{MultiContent: result.MultiContent, Name: call.Name, CallID: call.ID, ArgumentsInJSON: call.Arguments, ToolStartTime: callState.StartedAt, Result: result.Content})
+		err = graph.emitEvent(ctx, runState, "tool_end", result.CallID, types.ToolEndPayload{MultiContent: result.MultiContent, Name: call.Name, CallID: call.ID, ArgumentsInJSON: call.Arguments, ToolStartTime: callState.StartedAt, Result: result.Content, IsError: result.IsError})
 		if err != nil {
 			return nil, err
 		}
