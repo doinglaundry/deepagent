@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -20,7 +21,7 @@ const reminderTag = `<system_reminder type="plan">`
 
 // The plan belongs to RunState. This middleware retains no copy, so compaction
 // and checkpoint restore cannot leave a stale middleware-owned plan behind.
-func (*Plan) ModifyModelRequest(ctx context.Context, _ []*schema.Message, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
+func (*Plan) ModifyModelRequest(ctx context.Context, _ []*messagepkg.Message, messages []*messagepkg.Message, _ *types.GraphState) ([]*messagepkg.Message, error) {
 	runState := types.GetRunState(ctx)
 	if runState == nil || len(runState.Plan) == 0 {
 		return messages, nil
@@ -47,12 +48,12 @@ func (*Plan) ModifyModelRequest(ctx context.Context, _ []*schema.Message, messag
 		fmt.Fprintf(&reminderPrompt, "- [%s] %s\n", planStep.Status, planStep.Step)
 	}
 	reminderPrompt.WriteString("Update this plan with update_plan as work progresses.\n</system_reminder>")
-	return append([]*schema.Message{schema.SystemMessage(reminderPrompt.String())}, messages...), nil
+	return append([]*messagepkg.Message{messagepkg.NewSystemMessage(reminderPrompt.String())}, messages...), nil
 }
 
 // Planning guidance is request context; the plan itself remains in RunState.
-func (*Plan) BuildPrompt(context.Context) ([]*schema.Message, error) {
-	return []*schema.Message{schema.SystemMessage(`<plan_mode>
+func (*Plan) BuildPrompt(context.Context) ([]*messagepkg.Message, error) {
+	return []*messagepkg.Message{messagepkg.NewSystemMessage(`<plan_mode>
 Use update_plan to maintain the task plan for work with multiple steps.
 Mark a step in_progress before starting and completed when finished.
 Keep at most one step in_progress unless work actually runs in parallel.

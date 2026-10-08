@@ -5,8 +5,7 @@ import (
 	"errors"
 
 	"eino-cli/deepagent/graph/types"
-
-	"github.com/cloudwego/eino/schema"
+	messagepkg "eino-cli/deepagent/message"
 )
 
 // Handle observes a Run without controlling Graph execution.
@@ -28,11 +27,11 @@ func (h *Handle) Wait(ctx context.Context) error {
 func (h *Handle) IsActive() bool {
 	return h != nil && h.run != nil && h.run.IsActive()
 }
-func (h *Handle) ConsumedInputs() []*schema.Message {
+func (h *Handle) ConsumedInputs() []*messagepkg.Message {
 	if h == nil || h.run == nil {
 		return nil
 	}
-	var result []*schema.Message
+	var result []*messagepkg.Message
 	for _, input := range h.run.Inputs() {
 		result = append(result, types.CopyMessage(input.Message))
 	}

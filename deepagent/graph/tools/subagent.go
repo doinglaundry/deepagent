@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -21,7 +22,7 @@ type ChildRequest struct {
 }
 
 type ChildRunner interface {
-	Run(context.Context, ChildRequest, types.ModelChunkSink) (*schema.Message, error)
+	Run(context.Context, ChildRequest, types.ModelChunkSink) (*messagepkg.Message, error)
 }
 
 type taskTool struct {
@@ -122,7 +123,7 @@ func (streamingTaskTool *streamingTaskTool) StreamableRun(ctx context.Context, a
 			}
 		}()
 		emittedContent := false
-		childMessage, err := streamingTaskTool.runner.Run(ctx, childRequest, func(ctx context.Context, chunk *schema.Message) error {
+		childMessage, err := streamingTaskTool.runner.Run(ctx, childRequest, func(ctx context.Context, chunk *messagepkg.Message) error {
 			if chunk == nil || chunk.Content == "" {
 				return nil
 			}

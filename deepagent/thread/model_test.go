@@ -7,9 +7,8 @@ import (
 
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	runpkg "eino-cli/deepagent/run"
-
-	"github.com/cloudwego/eino/schema"
 )
 
 func TestModelEventsShareResponseIdentity(t *testing.T) {
@@ -17,7 +16,7 @@ func TestModelEventsShareResponseIdentity(t *testing.T) {
 	defer cancel()
 	events := make(chan runpkg.Event, 32)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &threadModel{}}}, events, ThreadOptions{})
-	accepted, err := thread.SubmitInput(ctx, schema.UserMessage("hello"))
+	accepted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}

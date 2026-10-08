@@ -8,9 +8,9 @@ import (
 
 	deeptools "eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 )
 
@@ -57,7 +57,7 @@ type Event struct {
 	RunID          string `json:"TurnID" yaml:"turnid"`
 	Type           EventType
 	Payload        any
-	ConsumedInputs []*schema.Message
+	ConsumedInputs []*messagepkg.Message
 	// ConsumedInputsMeta contains caller-provided metadata for ConsumedInputs.
 	// When present, ConsumedInputsMeta[i] describes ConsumedInputs[i].
 	ConsumedInputsMeta []any
@@ -70,11 +70,11 @@ type EventLocation struct {
 
 // 结构化事件载荷，避免使用 map[string]any
 type RunStartPayload struct {
-	Input *schema.Message
+	Input *messagepkg.Message
 }
 
 type PendingInputProcessingStartedPayload struct {
-	Inputs []*schema.Message
+	Inputs []*messagepkg.Message
 }
 
 type RunEndPayload struct {
@@ -150,7 +150,7 @@ type ErrorPayload struct {
 
 func (r *Run) PublishEvent(ctx context.Context, kind EventType, payload any) error {
 	r.mu.Lock()
-	messages := make([]*schema.Message, 0, len(r.consumed))
+	messages := make([]*messagepkg.Message, 0, len(r.consumed))
 	metadata := make([]any, 0, len(r.consumed))
 	for _, input := range r.consumed {
 		messages = append(messages, types.CopyMessage(input.Message))

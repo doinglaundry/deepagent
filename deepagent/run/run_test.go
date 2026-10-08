@@ -11,6 +11,7 @@ import (
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -69,7 +70,7 @@ func TestRun_WaitIncludesFinishAndResourceCleanup(t *testing.T) {
 			return nil
 		},
 	})
-	r.AddInputs(types.Input{MessageID: "input", Message: schema.UserMessage("go")})
+	r.AddInputs(types.Input{MessageID: "input", Message: messagepkg.NewUserMessage("go")})
 	go r.Execute(runCtx)
 	select {
 	case <-finishing:
@@ -137,7 +138,7 @@ func TestRun_InterruptDeadlineCoversCompletionHook(t *testing.T) {
 			Conversation: conversation.New("thread", nil, nil, nil),
 		},
 		Events: make(chan Event, 32),
-		RunCompleted: func(ctx context.Context, _, _ string, _ model.ToolCallingChatModel, _ []*schema.Message) {
+		RunCompleted: func(ctx context.Context, _, _ string, _ model.ToolCallingChatModel, _ []*messagepkg.Message) {
 			<-ctx.Done()
 			hookCause <- context.Cause(ctx)
 		},

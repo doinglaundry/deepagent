@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
-	"github.com/cloudwego/eino/schema"
+
+	messagepkg "eino-cli/deepagent/message"
 )
 
 // Input keeps the original multimodal message and its caller-owned identity metadata.
 type Input struct {
 	MessageID string
-	Message   *schema.Message
+	Message   *messagepkg.Message
 	Meta      any
 }
 
@@ -41,7 +42,7 @@ func init() { gob.Register(map[string]string{}); gob.Register(map[string]any{});
 
 type persistedInput struct {
 	MessageID string
-	Message   *schema.Message
+	Message   *messagepkg.Message
 	Meta      []byte
 }
 
@@ -73,7 +74,7 @@ func (input *Input) UnmarshalJSON(raw []byte) error {
 	input.Meta = metadata
 	return nil
 }
-func CopyMessage(message *schema.Message) *schema.Message {
+func CopyMessage(message *messagepkg.Message) *messagepkg.Message {
 	if message == nil {
 		return nil
 	}
@@ -81,7 +82,7 @@ func CopyMessage(message *schema.Message) *schema.Message {
 	if err != nil {
 		return nil
 	}
-	var copiedMessage schema.Message
+	var copiedMessage messagepkg.Message
 	if json.Unmarshal(encodedMessage, &copiedMessage) != nil {
 		return nil
 	}

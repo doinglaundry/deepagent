@@ -14,6 +14,7 @@ import (
 
 	"eino-cli/deepagent/config"
 	"eino-cli/deepagent/dal/model"
+	messagepkg "eino-cli/deepagent/message"
 	eventpkg "eino-cli/deepagent/protocol/event"
 	threadpkg "eino-cli/deepagent/thread"
 
@@ -152,7 +153,7 @@ func TestThreadHostBuildsPromptsAndToolsForEachRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		posted, err := thread.SubmitInput(ctx, schema.UserMessage("hello"))
+		posted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("hello"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -196,12 +197,14 @@ func TestCreateThreadDockerAllocationFailure(t *testing.T) {
 
 type failingConversationRepository struct{ err error }
 
-func (s failingConversationRepository) Append(context.Context, *model.ConversationEntry) error {
+func (s failingConversationRepository) AppendMessage(context.Context, *messagepkg.Message) error {
 	return s.err
 }
-
-func (s failingConversationRepository) LoadAfter(context.Context, string, int64, int) ([]*model.ConversationEntry, error) {
-	return nil, s.err
+func (s failingConversationRepository) SaveContext(context.Context, *messagepkg.Message, []*messagepkg.Message) error {
+	return s.err
+}
+func (s failingConversationRepository) LoadContext(context.Context, string) ([]*messagepkg.Message, []string, int64, error) {
+	return nil, nil, 0, s.err
 }
 
 func TestCreateThreadDockerResourceOwnership(t *testing.T) {

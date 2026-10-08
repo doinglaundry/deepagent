@@ -5,18 +5,18 @@ import (
 
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	inputpkg "eino-cli/deepagent/protocol/input"
 	"eino-cli/deepagent/run"
 
 	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
 )
 
 // ContextManager preserves the Thread context contract.
 type ContextManager interface {
 	ReloadHistory(context.Context) error
-	AddHistory(context.Context, string, ...*schema.Message) error
-	GetHistory(context.Context) []*schema.Message
+	AddHistory(context.Context, string, ...*messagepkg.Message) error
+	GetHistory(context.Context) []*messagepkg.Message
 	GetContextUsage() types.ContextUsageSnapshot
 	RecordModelUsage(context.Context, *model.TokenUsage)
 	Compact(context.Context, string) (*conversation.ContextCompactedPayload, error)
@@ -28,7 +28,7 @@ type ThreadOptions struct {
 	CompactionStrategy     conversation.CompactionStrategy
 	TokenCounter           conversation.TokenCounter
 	ContextWindow          int64
-	ConversationEntryID    conversation.ConversationEntryIDProvider
+	MessageID              conversation.MessageIDProvider
 }
 
 type SubmitInputResult struct {
@@ -71,7 +71,7 @@ func WithRunStartHook(hook OnRunStartFunc) SubmitInputOption {
 type RunStartRequest struct {
 	ThreadID  string
 	RunID     string `json:"TurnID" yaml:"turnid"`
-	Input     *schema.Message
+	Input     *messagepkg.Message
 	InputMeta any
 	Resume    *ResumeRunOptions
 }

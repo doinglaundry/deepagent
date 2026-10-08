@@ -5,15 +5,15 @@ import (
 	"testing"
 
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
 )
 
 func TestContext_CumulativeUsageSurvivesCompaction(t *testing.T) {
 	ctx := context.Background()
 	conversation := New("thread", &testStore{}, &testCompactor{}, nil)
-	err := conversation.AddHistory(ctx, "run", schema.UserMessage("old"), schema.AssistantMessage("done", nil), schema.UserMessage("new"))
+	err := conversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("old"), messagepkg.NewAssistantMessage("done", nil), messagepkg.NewUserMessage("new"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,14 +51,14 @@ func TestContext_CumulativeUsageSurvivesCompaction(t *testing.T) {
 func TestContextSnapshotRestoresProviderBaselineAtDurableCursor(t *testing.T) {
 	ctx := context.Background()
 	store := &testStore{}
-	tokenCounter := func(messages []*schema.Message) int { return len(messages) * 3 }
+	tokenCounter := func(messages []*messagepkg.Message) int { return len(messages) * 3 }
 	liveConversation := New("thread", store, nil, tokenCounter)
-	err := liveConversation.AddHistory(ctx, "run", schema.UserMessage("input"), schema.AssistantMessage("answer", nil))
+	err := liveConversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("input"), messagepkg.NewAssistantMessage("answer", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	liveConversation.RecordModelUsage(ctx, &model.TokenUsage{PromptTokens: 400, CompletionTokens: 10, TotalTokens: 410})
-	err = liveConversation.AddHistory(ctx, "run", schema.ToolMessage("addition", "call"))
+	err = liveConversation.AddHistory(ctx, "run", messagepkg.NewToolMessage("addition", "call"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestContextSnapshotRestoresProviderBaselineAtDurableCursor(t *testing.T) {
 	if restoredConversation.GetContextUsage() != liveConversation.GetContextUsage() {
 		t.Fatalf("provider baseline lost: restored=%+v original=%+v", restoredConversation.GetContextUsage(), liveConversation.GetContextUsage())
 	}
-	err = restoredConversation.AddHistory(ctx, "run", schema.UserMessage("followup"))
+	err = restoredConversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("followup"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,18 +87,18 @@ func TestContextSnapshotRestoresProviderBaselineAtDurableCursor(t *testing.T) {
 func TestContextSnapshotRejectsAheadAndPreservesNewerHistory(t *testing.T) {
 	ctx := context.Background()
 	store := &testStore{}
-	liveConversation := New("thread", store, nil, func(messages []*schema.Message) int { return len(messages) * 3 })
-	err := liveConversation.AddHistory(ctx, "run", schema.UserMessage("input"))
+	liveConversation := New("thread", store, nil, func(messages []*messagepkg.Message) int { return len(messages) * 3 })
+	err := liveConversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("input"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	liveConversation.RecordModelUsage(ctx, &model.TokenUsage{TotalTokens: 410})
 	snapshot := liveConversation.SnapshotContext()
-	err = liveConversation.AddHistory(ctx, "run", schema.UserMessage("newer"))
+	err = liveConversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("newer"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredConversation := New("thread", store, nil, func(messages []*schema.Message) int { return len(messages) * 3 })
+	restoredConversation := New("thread", store, nil, func(messages []*messagepkg.Message) int { return len(messages) * 3 })
 	err = restoredConversation.ReloadHistory(ctx)
 	if err != nil {
 		t.Fatal(err)

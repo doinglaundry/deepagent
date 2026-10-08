@@ -11,6 +11,7 @@ import (
 	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/manager"
+	messagepkg "eino-cli/deepagent/message"
 	"eino-cli/deepagent/run"
 	threadpkg "eino-cli/deepagent/thread"
 
@@ -126,7 +127,7 @@ func (m *pausedHostModel) Stream(ctx context.Context, _ []*schema.Message, _ ...
 
 func startPausedRun(t *testing.T, thread *threadpkg.Thread, chatModel *pausedHostModel) *run.Handle {
 	t.Helper()
-	posted, err := thread.SubmitInput(context.Background(), schema.UserMessage("hello"))
+	posted, err := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +200,7 @@ func TestThreadHost_FinishedRunKeepsThreadUntilIdleTimeout(t *testing.T) {
 	go func() { done <- runTestThread(host, thread, ctx, ctx, testClaim(), output.Items) }()
 
 	for _, text := range []string{"first", "second"} {
-		posted, err := thread.SubmitInput(ctx, schema.UserMessage(text))
+		posted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage(text))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -260,7 +261,7 @@ func TestThreadHost_FailedRunReleasesThreadWithoutWaitingForIdle(t *testing.T) {
 	host := testHost(client)
 	done := make(chan error, 1)
 	go func() { done <- runTestThread(host, thread, ctx, ctx, testClaim(), output.Items) }()
-	_, err = thread.SubmitInput(ctx, schema.UserMessage("fail"))
+	_, err = thread.SubmitInput(ctx, messagepkg.NewUserMessage("fail"))
 	if err != nil {
 		t.Fatal(err)
 	}

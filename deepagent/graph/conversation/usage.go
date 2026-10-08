@@ -5,8 +5,9 @@ import (
 	"fmt"
 
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
+
 	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
 )
 
 func (conversation *Conversation) GetContextUsage() types.ContextUsageSnapshot {
@@ -87,8 +88,8 @@ func (conversation *Conversation) recomputeContextUsage() {
 	conversation.contextUsage = types.ContextUsageSnapshot{ContextWindow: conversation.contextUsage.ContextWindow,
 		Source: types.ContextUsageSourceEstimated, CurrentTotal: int64(conversation.tokenCounter(conversation.messages))}
 }
-func (conversation *Conversation) addMessageUsage(message *schema.Message) {
-	tokens := int64(conversation.tokenCounter([]*schema.Message{message}))
+func (conversation *Conversation) addMessageUsage(message *messagepkg.Message) {
+	tokens := int64(conversation.tokenCounter([]*messagepkg.Message{message}))
 	if conversation.contextUsage.Source == types.ContextUsageSourceModelUsage {
 		conversation.contextUsage.EstimatedAfterLastModel += tokens
 	}

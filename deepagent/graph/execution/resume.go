@@ -2,16 +2,19 @@ package execution
 
 import (
 	"context"
-	checkpointer "eino-cli/deepagent/graph/checkpoint"
-	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
 	"encoding/json"
 	"fmt"
-	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
 	"strings"
 	"sync"
 	"time"
+
+	checkpointer "eino-cli/deepagent/graph/checkpoint"
+	"eino-cli/deepagent/graph/tools"
+	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
+
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
 )
 
 func (graph *Graph) savePendingInterrupts(ctx context.Context, checkpointID string, interruptInfo *compose.InterruptInfo) error {
@@ -72,7 +75,7 @@ type approvalCancelKey struct{}
 
 func init() { schema.RegisterName[*initialCheckpoint]("deepagent_initial_checkpoint_v1") }
 
-func (graph *Graph) invokeGraph(ctx context.Context, runState *types.RunState, runOptions RunOptions) (result *schema.Message, initialCheckpointSaved bool, err error) {
+func (graph *Graph) invokeGraph(ctx context.Context, runState *types.RunState, runOptions RunOptions) (result *messagepkg.Message, initialCheckpointSaved bool, err error) {
 	invokeOptions := append([]compose.Option(nil), runOptions.composeOpts...)
 	if len(graph.config.Callbacks) > 0 {
 		invokeOptions = append(invokeOptions, compose.WithCallbacks(graph.config.Callbacks...))

@@ -8,7 +8,7 @@ import (
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
-	"github.com/cloudwego/eino/schema"
+	messagepkg "eino-cli/deepagent/message"
 )
 
 // configure 将配置装配为当前 Graph 使用的工具、模型和中间件，不构图、不调用模型。
@@ -52,7 +52,7 @@ func (graph *Graph) configure(ctx context.Context) (err error) {
 	}
 	// 固定说明属于配置；动态提示仍由中间件在每次模型请求前生成。
 	if config.FilesystemConfig != nil && config.Filesystem != nil {
-		config.Prompts = append(config.Prompts, schema.SystemMessage(tools.FilesystemPrompt))
+		config.Prompts = append(config.Prompts, messagepkg.NewSystemMessage(tools.FilesystemPrompt))
 	}
 	graph.config.Prompts = config.Prompts
 	graph.middlewares, graph.toolSet, graph.graphState = middlewares, toolSet, graphState

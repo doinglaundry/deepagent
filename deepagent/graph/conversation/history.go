@@ -3,16 +3,15 @@ package conversation
 import (
 	"context"
 
-	dalmodel "eino-cli/deepagent/dal/model"
-	"github.com/cloudwego/eino/schema"
+	messagepkg "eino-cli/deepagent/message"
 )
 
-type TokenCounter func([]*schema.Message) int
+type TokenCounter func([]*messagepkg.Message) int
 
-// ConversationRepository 负责保存对话条目，并按顺序加载历史。
+// 调用方只处理 Message；压缩存储格式和记录重放留在 DAL。
 type ConversationRepository interface {
-	Append(context.Context, *dalmodel.ConversationEntry) error
-	LoadAfter(ctx context.Context, threadID string, sequence int64, limit int) ([]*dalmodel.ConversationEntry, error)
+	AppendMessage(context.Context, *messagepkg.Message) error
+	SaveContext(context.Context, *messagepkg.Message, []*messagepkg.Message) error
+	LoadContext(context.Context, string) (messages []*messagepkg.Message, messageIDs []string, sequence int64, err error)
 }
-
-type ConversationEntryIDProvider func(context.Context, string, string, *schema.Message) (int64, error)
+type MessageIDProvider func(context.Context, *messagepkg.Message) (string, error)

@@ -9,6 +9,7 @@ import (
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool/utils"
@@ -26,7 +27,9 @@ func (promptService *promptService) Read(_ context.Context, scope string) (*Snap
 	return &Snapshot{Scope: scope, Summary: promptService.summary}, promptService.err
 }
 
-func (*promptService) Observe(context.Context, string, string, []*schema.Message) error { return nil }
+func (*promptService) Observe(context.Context, string, string, []*messagepkg.Message) error {
+	return nil
+}
 
 func (*promptService) Consolidate(context.Context, string) error { return nil }
 
@@ -64,7 +67,7 @@ func TestMemoryPrompt_ReadsCurrentScopeBeforeEachModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, executeErr := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	_, executeErr := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -96,7 +99,7 @@ func TestMemoryPrompt_ReadFailurePreventsModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if !errors.Is(err, want) || len(chatModel.inputs) != 0 {
 		t.Fatalf("err=%v model=%d", err, len(chatModel.inputs))
 	}

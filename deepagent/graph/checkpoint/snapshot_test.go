@@ -6,13 +6,12 @@ import (
 	"testing"
 
 	"eino-cli/deepagent/graph/types"
-
-	"github.com/cloudwego/eino/schema"
+	messagepkg "eino-cli/deepagent/message"
 )
 
 func newPreservedCheckpoint(t *testing.T) ([]byte, []byte) {
 	t.Helper()
-	state := types.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhaseBlocked, Consumed: []types.Input{{MessageID: "original", Message: schema.UserMessage("original"), Meta: map[string]string{"MessageID": "9007199254740993"}}}}
+	state := types.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhaseBlocked, Consumed: []types.Input{{MessageID: "original", Message: messagepkg.NewUserMessage("original"), Meta: map[string]string{"MessageID": "9007199254740993"}}}}
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +108,7 @@ func TestCheckpointMutationsPreserveUnknownWireFields(t *testing.T) {
 			var err error
 			switch operation {
 			case "append":
-				err = AppendInputs(ctx, rawStore, "checkpoint", "thread", "run", []types.Input{{MessageID: "pending", Message: schema.UserMessage("pending")}})
+				err = AppendInputs(ctx, rawStore, "checkpoint", "thread", "run", []types.Input{{MessageID: "pending", Message: messagepkg.NewUserMessage("pending")}})
 			case "fence":
 				err = store.FenceTool(ctx, "checkpoint", types.ToolCall{ID: "call", Name: "write", Arguments: "{}"}, true)
 			case "pending":
@@ -241,7 +240,7 @@ func TestToolFencesShareSnapshotButResumeRejectsUnknownOutcomes(t *testing.T) {
 	if len(calls) != 3 || calls[1].Status != types.CallOutcomeUnknown || calls[2].Status != types.CallOutcomeUnknown {
 		t.Fatalf("calls=%+v", calls)
 	}
-	err = AppendInputs(ctx, rawStore, "checkpoint", "thread", "run", []types.Input{{Message: schema.UserMessage("accepted before interruption")}})
+	err = AppendInputs(ctx, rawStore, "checkpoint", "thread", "run", []types.Input{{Message: messagepkg.NewUserMessage("accepted before interruption")}})
 	if err != nil {
 		t.Fatal("accepted input must be sealed even when side-effect outcome requires reconciliation", err)
 	}
@@ -285,7 +284,7 @@ func TestTerminalCheckpointCannotResumeOrAcceptInputs(t *testing.T) {
 	if err == nil {
 		t.Fatal("terminal checkpoint resumed")
 	}
-	err = AppendInputs(context.Background(), rawStore, "checkpoint", "thread", "run", []types.Input{{Message: schema.UserMessage("late")}})
+	err = AppendInputs(context.Background(), rawStore, "checkpoint", "thread", "run", []types.Input{{Message: messagepkg.NewUserMessage("late")}})
 	if err == nil || string(rawStore.data["checkpoint"]) != before {
 		t.Fatal("terminal checkpoint mutated")
 	}

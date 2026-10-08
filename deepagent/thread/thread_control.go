@@ -12,10 +12,10 @@ import (
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	inputpkg "eino-cli/deepagent/protocol/input"
 	"eino-cli/deepagent/run"
 
-	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 )
 
@@ -296,10 +296,10 @@ func (t *Thread) emitCompactInterruptedEvent(ctx context.Context, op *compactOpe
 }
 
 type userInputCommand struct {
-	message *TransportMessage
-	input   inputpkg.UserMessage
-	schema  *schema.Message
-	mode    inputpkg.UserMessageMode
+	message      *TransportMessage
+	input        inputpkg.UserMessage
+	inputMessage *messagepkg.Message
+	mode         inputpkg.UserMessageMode
 }
 
 type resumeRunCommand struct {
@@ -312,7 +312,7 @@ type compactCommand struct {
 	message            *TransportMessage
 	runID              string
 	consumedMessageIDs []string
-	consumedInputs     []*schema.Message
+	consumedInputs     []*messagepkg.Message
 	consumedInputsMeta []any
 }
 
@@ -321,16 +321,20 @@ func decodeUserInputCommand(message *TransportMessage) (cmd userInputCommand, er
 	if err != nil {
 		return userInputCommand{}, err
 	}
-	userInput, err := protocolUserMessageToSchemaMessage(input)
+	userInput, err := decodeDialogueMessage(input)
 	if err != nil {
 		return userInputCommand{}, err
 	}
-	attachAttribute(userInput, attributeFromWorkerMessage(message))
+	userInput.MessageID = strings.TrimSpace(message.ID)
+	if message.Sender != nil {
+		userInput.SenderID = strings.TrimSpace(message.Sender.ID)
+		userInput.SenderType = strings.TrimSpace(string(message.Sender.Type))
+	}
 	return userInputCommand{
-		message: message,
-		input:   input,
-		schema:  userInput,
-		mode:    userInputMode(message, input.Mode),
+		message:      message,
+		input:        input,
+		inputMessage: userInput,
+		mode:         userInputMode(message, input.Mode),
 	}, nil
 }
 
@@ -381,14 +385,14 @@ func compactConsumedMessageIDs(message *TransportMessage) []string {
 	return []string{strings.TrimSpace(message.ID)}
 }
 
-func compactConsumedInputsFromIDs(ids []string) []*schema.Message {
+func compactConsumedInputsFromIDs(ids []string) []*messagepkg.Message {
 	if len(ids) == 0 {
 		return nil
 	}
-	out := make([]*schema.Message, 0, len(ids))
+	out := make([]*messagepkg.Message, 0, len(ids))
 	for _, id := range ids {
-		msg := schema.SystemMessage("compact")
-		attachAttribute(msg, MessageAttribute{MessageID: id})
+		msg := messagepkg.NewSystemMessage("compact")
+		msg.MessageID = id
 		out = append(out, msg)
 	}
 	return out

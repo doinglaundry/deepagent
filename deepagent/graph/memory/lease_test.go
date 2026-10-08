@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	messagepkg "eino-cli/deepagent/message"
 	memorypkg "eino-cli/deepagent/protocol/memory"
 
 	"github.com/cloudwego/eino/components/model"
@@ -47,7 +48,7 @@ func TestMemory_ScopeLeaseAndDuplicateExtraction(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		input := []*schema.Message{schema.UserMessage("stable fact")}
+		input := []*messagepkg.Message{messagepkg.NewUserMessage("stable fact")}
 		for range 2 {
 			err := first.Observe(ctx, "user/one", "same-thread", input)
 			if err != nil {
@@ -86,7 +87,7 @@ func TestMemory_ScopeLeaseAndDuplicateExtraction(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		input := []*schema.Message{schema.UserMessage("fact")}
+		input := []*messagepkg.Message{messagepkg.NewUserMessage("fact")}
 		done := make(chan error, 1)
 		go func() { done <- memoryService.Observe(ctx, "user/one", "thread", input) }()
 		select {

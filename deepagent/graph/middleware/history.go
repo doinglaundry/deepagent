@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -16,15 +17,15 @@ func NewPatchToolCalls() Middleware { return &patchToolCalls{} }
 
 func (*patchToolCalls) GetName() string { return "patch_tool_calls" }
 
-func (*patchToolCalls) ModifyModelRequest(_ context.Context, _ []*schema.Message, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
+func (*patchToolCalls) ModifyModelRequest(_ context.Context, _ []*messagepkg.Message, messages []*messagepkg.Message, _ *types.GraphState) ([]*messagepkg.Message, error) {
 	return PatchDanglingToolCalls(messages), nil
 }
 
 // PatchDanglingToolCalls closes assistant/tool pairs left incomplete by a
 // crashed or interrupted Worker. The repaired copy is model-visible only; the
 // durable original remains an accurate record of what was persisted.
-func PatchDanglingToolCalls(messages []*schema.Message) []*schema.Message {
-	patchedMessages := make([]*schema.Message, 0, len(messages))
+func PatchDanglingToolCalls(messages []*messagepkg.Message) []*messagepkg.Message {
+	patchedMessages := make([]*messagepkg.Message, 0, len(messages))
 	pendingCalls := make(map[string]schema.ToolCall)
 	pendingCallIDs := make([]string, 0)
 	appendInterruptedResults := func() {
@@ -33,7 +34,9 @@ func PatchDanglingToolCalls(messages []*schema.Message) []*schema.Message {
 			if !exists {
 				continue
 			}
-			patchedMessages = append(patchedMessages, schema.ToolMessage(interruptedToolResult, callID, schema.WithToolName(toolCall.Function.Name)))
+			result := messagepkg.NewToolMessage(interruptedToolResult, callID)
+			result.ToolName = toolCall.Function.Name
+			patchedMessages = append(patchedMessages, result)
 		}
 		clear(pendingCalls)
 		pendingCallIDs = pendingCallIDs[:0]

@@ -12,6 +12,7 @@ import (
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -26,7 +27,7 @@ func TestRun_ModelToolModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	out, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func TestRun_ReturnDirectDoesNotCallModelAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	out, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +65,7 @@ func TestRun_ApprovalDenyNeverExecutesTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("do it")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("do it")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatalf("expected checkpointed interruption, got %v", err)
@@ -115,7 +116,7 @@ func TestRun_FilesystemWriteRequiresApprovalWithoutExplicitPolicy(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("write")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("write")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
 		descriptor, found := first.toolSet.GetToolDescriptor("write_file")
@@ -152,7 +153,7 @@ func TestCheckpoint_SaveFailureDoesNotPublishBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("input")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("input")}, WithCheckpointID("checkpoint"))
 	if err == nil {
 		t.Fatal("checkpoint failure swallowed")
 	}
@@ -179,7 +180,7 @@ func TestRun_ResumeDoesNotRepeatCompletedTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("input")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("input")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -234,7 +235,7 @@ func TestRun_EagerExecutesBeforeModelStreamEnds(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+			result, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -262,7 +263,7 @@ func TestRun_EmitsTokensAndReturnsFinalMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	result, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	result, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +287,7 @@ func TestRun_CancelAndAgentCloseReleaseResources(t *testing.T) {
 			}
 			finished := make(chan error, 1)
 			go func() {
-				_, runErr := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("wait")})
+				_, runErr := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("wait")})
 				finished <- runErr
 			}()
 			select {
@@ -335,7 +336,7 @@ func TestGraph_InterruptBeforeInvokeDoesNotClaimExecution(t *testing.T) {
 	if compiledGraph.Interrupt() {
 		t.Fatal("unstarted graph claimed an active interruption")
 	}
-	result, err := compiledGraph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	result, err := compiledGraph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}

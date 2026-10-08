@@ -12,10 +12,9 @@ import (
 	"eino-cli/deepagent/graph/conversation"
 	deeptools "eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	eventpkg "eino-cli/deepagent/protocol/event"
 	"eino-cli/deepagent/run"
-
-	"github.com/cloudwego/eino/schema"
 )
 
 var (
@@ -57,7 +56,7 @@ func agentEventPayloadForOutput(ev run.Event, usage *types.ContextUsageSnapshot)
 		if err != nil {
 			return "", nil, err
 		}
-		out := messageEventPayloadFromRunStart(run.RunStartPayload{Input: input.Message}, []*schema.Message{input.Message})
+		out := messageEventPayloadFromRunStart(run.RunStartPayload{Input: input.Message}, []*messagepkg.Message{input.Message})
 		if out == nil {
 			out = &eventpkg.MessageEventPayload{}
 		}
@@ -82,7 +81,7 @@ func agentEventPayloadForOutput(ev run.Event, usage *types.ContextUsageSnapshot)
 			ContextUsage:  contextUsage,
 		}
 		if payload.Message != nil {
-			out.Parts = schemaAssistantMessageToProtocolParts(payload.Message)
+			out.Parts = getAssistantMessageParts(payload.Message)
 			out.ThinkingContent = payload.Message.ReasoningContent
 		}
 		return eventpkg.EventTypeAssistantMessage, out, nil
@@ -269,7 +268,7 @@ func agentEventPayloadForOutput(ev run.Event, usage *types.ContextUsageSnapshot)
 	}
 }
 
-func attachConsumedInputs(payload any, inputs []*schema.Message, meta []any) (err error) {
+func attachConsumedInputs(payload any, inputs []*messagepkg.Message, meta []any) (err error) {
 	consumed := ConsumedMessageIDs(inputs)
 	copied, err := copyConsumedInputMetadata(meta)
 	if len(consumed) == 0 && len(copied) == 0 {
@@ -511,24 +510,27 @@ func int64PtrIfPositive(value int64) *int64 {
 	return &value
 }
 
-func messageEventPayloadFromRunStart(payload run.RunStartPayload, consumedInputs []*schema.Message) *eventpkg.MessageEventPayload {
+func messageEventPayloadFromRunStart(payload run.RunStartPayload, consumedInputs []*messagepkg.Message) *eventpkg.MessageEventPayload {
 	input := payload.Input
 	if input == nil && len(consumedInputs) > 0 {
 		input = consumedInputs[0]
 	}
-	parts := schemaUserMessageToProtocolParts(input)
-	attr := attributeFromConsumedInputs(consumedInputs)
-	if len(parts) == 0 && attr.empty() {
+	parts := getUserMessageParts(input)
+	source := firstIdentifiedInput(consumedInputs)
+	if source == nil {
+		source = &messagepkg.Message{}
+	}
+	if len(parts) == 0 && source.MessageID == "" && source.SenderID == "" && source.SenderType == "" {
 		return nil
 	}
 	event := &eventpkg.MessageEventPayload{
 		Parts:     parts,
-		MessageID: stringPtrIfNotEmpty(attr.MessageID),
+		MessageID: stringPtrIfNotEmpty(source.MessageID),
 	}
-	if attr.SenderID != "" || attr.SenderType != "" {
+	if source.SenderID != "" || source.SenderType != "" {
 		event.Sender = &eventpkg.Sender{
-			SenderType: senderTypeFromString(attr.SenderType),
-			SenderID:   attr.SenderID,
+			SenderType: senderTypeFromString(source.SenderType),
+			SenderID:   source.SenderID,
 		}
 	}
 	return event
@@ -541,14 +543,13 @@ func textParts(content string) []eventpkg.MessagePart {
 	return []eventpkg.MessagePart{{Type: "text", Text: content}}
 }
 
-func attributeFromConsumedInputs(inputs []*schema.Message) MessageAttribute {
+func firstIdentifiedInput(inputs []*messagepkg.Message) *messagepkg.Message {
 	for _, input := range inputs {
-		attr := attributeFromMessage(input)
-		if !attr.empty() {
-			return attr
+		if input != nil && (input.MessageID != "" || input.SenderID != "" || input.SenderType != "") {
+			return input
 		}
 	}
-	return MessageAttribute{}
+	return nil
 }
 
 func senderTypeFromString(senderType string) eventpkg.SenderType {

@@ -12,11 +12,11 @@ import (
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	inputpkg "eino-cli/deepagent/protocol/input"
 	"eino-cli/deepagent/run"
 
 	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 )
 
@@ -36,16 +36,17 @@ type Thread struct {
 	outputBridge         *threadOutputBridge
 	compact              *compactOperation
 
-	ThreadID     string
-	mu           sync.Mutex
-	current      *run.Run
-	inputRuns    map[string]*run.Run // MessageID -> original Run, guarded by mu.
-	pending      []types.Input
-	conversation execution.Conversation
-	events       chan run.Event
-	config       *run.Config
-	closed       bool
-	accepting    bool
+	ThreadID          string
+	mu                sync.Mutex
+	current           *run.Run
+	inputRuns         map[string]*run.Run // MessageID -> original Run, guarded by mu.
+	pending           []types.Input
+	conversation      execution.Conversation
+	messageIDProvider conversation.MessageIDProvider
+	events            chan run.Event
+	config            *run.Config
+	closed            bool
+	accepting         bool
 }
 
 // NewThread 创建内部状态并接管配置中的资源，不执行模型或加载历史。
@@ -62,13 +63,14 @@ func NewThread(cfg ThreadConfig) (*Thread, error) {
 		cfg.ThreadID, historyOptions.ConversationRepository,
 		historyOptions.CompactionStrategy, historyOptions.TokenCounter,
 		conversation.WithContextWindow(historyOptions.ContextWindow),
-		conversation.WithEntryID(historyOptions.ConversationEntryID),
+		conversation.WithMessageID(historyOptions.MessageID),
 	)
 	return &Thread{
 		ThreadID:             cfg.ThreadID,
 		sessionID:            cfg.SessionID,
 		threadInfo:           ContextThreadIdentity{ThreadID: cfg.ThreadID, SessionID: cfg.SessionID, UserID: cfg.UserID},
 		conversation:         history,
+		messageIDProvider:    historyOptions.MessageID,
 		events:               events,
 		config:               cfg.RunConfig.Clone(),
 		inputRuns:            make(map[string]*run.Run),
@@ -143,7 +145,7 @@ func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (po
 				MessageID: workerMessageID(cmd.message),
 			})
 		}))
-		result, err := t.SubmitInput(ctx, cmd.schema, opts...)
+		result, err := t.SubmitInput(ctx, cmd.inputMessage, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("submit input: %w", err)
 		}
@@ -169,7 +171,7 @@ func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (po
 	}
 }
 
-func (t *Thread) SubmitInput(ctx context.Context, message *schema.Message, opts ...SubmitInputOption) (*SubmitInputResult, error) {
+func (t *Thread) SubmitInput(ctx context.Context, message *messagepkg.Message, opts ...SubmitInputOption) (*SubmitInputResult, error) {
 	if message == nil {
 		return nil, ErrInvalidOp
 	}
@@ -183,7 +185,27 @@ func (t *Thread) SubmitInput(ctx context.Context, message *schema.Message, opts 
 	if clonedMessage == nil {
 		return nil, fmt.Errorf("failed to copy input message")
 	}
-	input := types.Input{MessageID: options.MessageID, Message: clonedMessage, Meta: options.InputMeta}
+	if options.MessageID != "" {
+		if clonedMessage.MessageID != "" && clonedMessage.MessageID != options.MessageID {
+			return nil, fmt.Errorf("input message identity mismatch")
+		}
+		clonedMessage.MessageID = options.MessageID
+	}
+	if clonedMessage.MessageID == "" && t.messageIDProvider != nil {
+		messageID, err := t.messageIDProvider(ctx, clonedMessage)
+		if err != nil {
+			return nil, err
+		}
+		if messageID == "" {
+			return nil, fmt.Errorf("message id provider returned an empty identity")
+		}
+		clonedMessage.MessageID = messageID
+	}
+	clonedMessage.ThreadID = t.ThreadID
+	if clonedMessage.CreatedAt == 0 {
+		clonedMessage.CreatedAt = time.Now().Unix()
+	}
+	input := types.Input{MessageID: clonedMessage.MessageID, Message: clonedMessage, Meta: options.InputMeta}
 	for {
 		err := ctx.Err()
 		if err != nil {
@@ -216,6 +238,7 @@ func (t *Thread) SubmitInput(ctx context.Context, message *schema.Message, opts 
 					return nil, ctx.Err()
 				}
 			}
+			input.Message.RunID = current.ID()
 			t.pending = append(t.pending, input)
 			if input.MessageID != "" {
 				t.inputRuns[input.MessageID] = current
@@ -225,6 +248,7 @@ func (t *Thread) SubmitInput(ctx context.Context, message *schema.Message, opts 
 			return result, nil
 		}
 		id := uuid.NewString()
+		input.Message.RunID = id
 		request := RunStartRequest{ThreadID: t.ThreadID, RunID: id, Input: input.Message, InputMeta: input.Meta}
 		r, runCtx, err := t.startRun(ctx, request, options.ConfigProvider, options.OnRunStart, options.EnablePlan)
 		if err != nil {
@@ -427,10 +451,10 @@ func (t *Thread) drainInput(_ context.Context, runID string) ([]types.Input, boo
 	return inputs, len(inputs) > 0, nil
 }
 
-func (t *Thread) DrainInput(ctx context.Context) []*schema.Message {
+func (t *Thread) DrainInput(ctx context.Context) []*messagepkg.Message {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	var out []*schema.Message
+	var out []*messagepkg.Message
 	if t.current == nil {
 		return nil
 	}

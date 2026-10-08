@@ -2,16 +2,19 @@ package execution
 
 import (
 	"context"
-	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"sort"
+
+	"eino-cli/deepagent/graph/tools"
+	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
+
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
-	"io"
-	"sort"
 )
 
 func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*types.RunState, error) {
@@ -58,7 +61,7 @@ func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*t
 				return nil, err
 			}
 		}
-		message := schema.ToolMessage(result.Content, result.CallID)
+		message := messagepkg.NewToolMessage(result.Content, result.CallID)
 		if len(result.MultiContent) > 0 {
 			message.Content = ""
 			message.UserInputMultiContent = result.MultiContent

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	messagepkg "eino-cli/deepagent/message"
 	memorypkg "eino-cli/deepagent/protocol/memory"
 
 	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
 )
 
 type Config struct {
@@ -24,7 +24,7 @@ type Config struct {
 
 type Service interface {
 	Read(ctx context.Context, scope string) (*Snapshot, error)
-	Observe(ctx context.Context, scope, threadID string, messages []*schema.Message) error
+	Observe(ctx context.Context, scope, threadID string, messages []*messagepkg.Message) error
 	Consolidate(ctx context.Context, scope string) error
 }
 

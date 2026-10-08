@@ -4,15 +4,14 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strconv"
 	"testing"
 	"time"
 
-	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/middleware"
 	deeptools "eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	inputpkg "eino-cli/deepagent/protocol/input"
 	runpkg "eino-cli/deepagent/run"
 
@@ -31,7 +30,7 @@ func TestThread_UsageResetsForEachRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		result, err := th.SubmitInput(ctx, schema.UserMessage("go"))
+		result, err := th.SubmitInput(ctx, messagepkg.NewUserMessage("go"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,12 +82,12 @@ func TestPendingInputStaysInOneRun(t *testing.T) {
 	thread := newTestThread("thread-1", &runpkg.Config{Graph: execution.Config{
 		Model: chatModel, CheckpointStore: &legacyParityMemoryCheckpoints{},
 	}}, events, ThreadOptions{})
-	first, err := thread.SubmitInput(context.Background(), schema.UserMessage("first"))
+	first, err := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("first"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	second, err := thread.SubmitInput(context.Background(), schema.UserMessage("second"))
+	second, err := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("second"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +127,7 @@ func TestInterruptedRunLeavesThreadReusable(t *testing.T) {
 	thread := newTestThread("thread-1", &runpkg.Config{Graph: execution.Config{
 		Model: chatModel, CheckpointStore: &legacyParityMemoryCheckpoints{},
 	}}, events, ThreadOptions{})
-	_, err := thread.SubmitInput(context.Background(), schema.UserMessage("original"))
+	_, err := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("original"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +149,7 @@ func TestInterruptedRunLeavesThreadReusable(t *testing.T) {
 	for len(events) > 0 {
 		<-events
 	}
-	_, submitInputErr := thread.SubmitInput(context.Background(), schema.UserMessage("again"))
+	_, submitInputErr := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("again"))
 	if submitInputErr != nil {
 		t.Fatal(submitInputErr)
 	}
@@ -186,7 +185,7 @@ func TestBlockedRunResumesFromCheckpointOnNewThread(t *testing.T) {
 
 	firstEvents := make(chan runpkg.Event, 64)
 	first := newTestThread("thread-1", config, firstEvents, ThreadOptions{})
-	started, err := first.SubmitInput(context.Background(), schema.UserMessage("export"))
+	started, err := first.SubmitInput(context.Background(), messagepkg.NewUserMessage("export"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,16 +238,10 @@ waitBlocked:
 }
 
 func TestReloadRepairsInterruptedToolCallBeforeNewInput(t *testing.T) {
-	store := &legacyParityDedupConversationRepository{
-		seen: map[int64]struct{}{1: {}, 2: {}},
-		records: []*dalmodel.ConversationEntry{
-			{Type: dalmodel.ConversationEntryMessage, ThreadID: "thread-1", MessageID: 1, Seq: 1, Message: schema.UserMessage("previous")},
-			{Type: dalmodel.ConversationEntryMessage, ThreadID: "thread-1", MessageID: 2, Seq: 2, Message: &schema.Message{
-				Role:      schema.Assistant,
-				ToolCalls: []schema.ToolCall{{ID: "call-1", Type: "function", Function: schema.FunctionCall{Name: "write_file", Arguments: `{}`}}},
-			}},
-		},
-	}
+	store := &historyMemory{records: []*messagepkg.Message{
+		{ThreadID: "thread-1", MessageID: "1", Seq: 1, Role: schema.User, Content: "previous"},
+		{ThreadID: "thread-1", MessageID: "2", Seq: 2, Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: "call-1", Type: "function", Function: schema.FunctionCall{Name: "write_file", Arguments: `{}`}}}},
+	}}
 	chatModel := &legacyParityScriptedModel{stream: func(context.Context, int, []*schema.Message) *schema.StreamReader[*schema.Message] {
 		return legacyParityMessageStream(schema.AssistantMessage("recovered", nil))
 	}}
@@ -260,7 +253,7 @@ func TestReloadRepairsInterruptedToolCallBeforeNewInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, submitInputErr := thread.SubmitInput(context.Background(), schema.UserMessage("new task"))
+	_, submitInputErr := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("new task"))
 	if submitInputErr != nil {
 		t.Fatal(submitInputErr)
 	}
@@ -303,7 +296,7 @@ func TestRunBudgetsStopUnboundedToolLoop(t *testing.T) {
 				MaxSteps: test.maxSteps, MaxModelCalls: test.maxModelCalls,
 				CheckpointStore: &legacyParityMemoryCheckpoints{},
 			}}, events, ThreadOptions{})
-			_, err := thread.SubmitInput(context.Background(), schema.UserMessage("loop"))
+			_, err := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("loop"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -331,7 +324,7 @@ func TestManagerMessageIDSurvivesInputDecoding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := MessageID(command.schema)
+	got := command.inputMessage.MessageID
 	if got != "2000000000000000042" {
 		t.Fatalf("message id = %q", got)
 	}
@@ -352,9 +345,9 @@ func TestInputDecodingPreservesMultimediaParts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := command.schema.UserInputMultiContent
+	parts := command.inputMessage.UserInputMultiContent
 	if len(parts) != 2 || parts[1].Image == nil || parts[1].Image.URL == nil || *parts[1].Image.URL != "https://example.test/photo.png" {
-		t.Fatalf("multimedia input was flattened: %+v", command.schema)
+		t.Fatalf("multimedia input was flattened: %+v", command.inputMessage)
 	}
 }
 
@@ -373,28 +366,22 @@ func TestThread_MultimodalRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	copy := types.CopyMessage(command.schema)
-	got := MessageID(copy)
+	copy := types.CopyMessage(command.inputMessage)
+	got := copy.MessageID
 	if got != "9007199254740993" {
 		t.Fatalf("message ID changed: %q", got)
 	}
 	want := inputPartsForEvent(command.input.Parts)
-	schemaUserMessageToProtocolPartsGot := schemaUserMessageToProtocolParts(copy)
-	if !reflect.DeepEqual(schemaUserMessageToProtocolPartsGot, want) {
-		t.Fatalf("multimodal event parts changed: got %+v, want %+v", schemaUserMessageToProtocolPartsGot, want)
+	getUserMessagePartsGot := getUserMessageParts(copy)
+	if !reflect.DeepEqual(getUserMessagePartsGot, want) {
+		t.Fatalf("multimodal event parts changed: got %+v, want %+v", getUserMessagePartsGot, want)
 	}
 }
 
 func TestThread_RedeliveryPreservesMessageIdentity(t *testing.T) {
 	ctx := context.Background()
 	store := &redeliveryConversationRepository{}
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &redeliveryModel{}}}, make(chan runpkg.Event, 128), ThreadOptions{ConversationRepository: store, ConversationEntryID: func(_ context.Context, _, _ string, message *schema.Message) (int64, error) {
-		id, err := strconv.ParseInt(MessageID(message), 10, 64)
-		if err != nil {
-			return 0, nil // The test store assigns assistant IDs.
-		}
-		return id, nil
-	}})
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &redeliveryModel{}}}, make(chan runpkg.Event, 128), ThreadOptions{ConversationRepository: store})
 	initHistoryErr := thread.InitHistory(ctx)
 	if initHistoryErr != nil {
 		t.Fatal(initHistoryErr)
@@ -404,7 +391,7 @@ func TestThread_RedeliveryPreservesMessageIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		accepted, err := thread.SubmitInput(ctx, types.CopyMessage(command.schema))
+		accepted, err := thread.SubmitInput(ctx, types.CopyMessage(command.inputMessage))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -415,9 +402,9 @@ func TestThread_RedeliveryPreservesMessageIdentity(t *testing.T) {
 	}
 	userCount := 0
 	for _, record := range store.records {
-		if record.Message != nil && record.Message.Role == schema.User {
+		if record.Role == schema.User {
 			userCount++
-			if record.MessageID != 9007199254740993 || MessageID(record.Message) != "9007199254740993" {
+			if record.MessageID != "9007199254740993" {
 				t.Fatalf("redelivery changed message identity: %+v", record)
 			}
 		}
@@ -446,7 +433,7 @@ func TestThreadOwnsSuccessiveRunsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := thread.SubmitInput(ctx, schema.UserMessage("first"), WithMessageID("1"))
+	first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithMessageID("1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +441,7 @@ func TestThreadOwnsSuccessiveRunsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := thread.SubmitInput(ctx, schema.UserMessage("second"), WithMessageID("2"))
+	second, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("second"), WithMessageID("2"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +455,7 @@ func TestThreadOwnsSuccessiveRunsAndHistory(t *testing.T) {
 	if len(m.inputs) != 2 || len(m.inputs[1]) != 3 || m.inputs[1][0].Content != "first" || m.inputs[1][2].Content != "second" {
 		t.Fatalf("next Run lost Thread history: %+v", m.inputs)
 	}
-	repeated, err := thread.SubmitInput(ctx, schema.UserMessage("first"), WithMessageID("1"))
+	repeated, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithMessageID("1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +478,7 @@ func TestThreadCloseWaitsBeforeClosingResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted, err := thread.SubmitInput(ctx, schema.UserMessage("wait"))
+	accepted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("wait"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +515,7 @@ func TestThreadCancellationBeforeGraphClosesMiddleware(t *testing.T) {
 	mw := &threadCloseMiddleware{ready: make(chan struct{})}
 	events := make(chan runpkg.Event)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &publicModel{}, Middlewares: []middleware.Middleware{mw}}}, events, ThreadOptions{})
-	accepted, err := thread.SubmitInput(runCtx, schema.UserMessage("go"))
+	accepted, err := thread.SubmitInput(runCtx, messagepkg.NewUserMessage("go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,12 +553,12 @@ func TestThread_SubmitAndAppendUseSameRun(t *testing.T) {
 	if initHistoryErr != nil {
 		t.Fatal(initHistoryErr)
 	}
-	first, err := thread.SubmitInput(ctx, schema.UserMessage("first"), WithInputMeta("id-1"))
+	first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithInputMeta("id-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-model.started
-	second, err := thread.SubmitInput(ctx, schema.UserMessage("second"), WithInputMeta("id-2"))
+	second, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("second"), WithInputMeta("id-2"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,15 +588,15 @@ func TestThread_SubmitInputRejectsInvalidMessageWhileIdle(t *testing.T) {
 	events := make(chan runpkg.Event, 100)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, events, ThreadOptions{ConversationRepository: history})
 
-	unsupported := schema.UserMessage("unsupported")
+	unsupported := messagepkg.NewUserMessage("unsupported")
 	unsupported.Extra = map[string]any{"value": func() {}}
-	cyclic := schema.UserMessage("cyclic")
+	cyclic := messagepkg.NewUserMessage("cyclic")
 	cyclicExtra := map[string]any{}
 	cyclicExtra["self"] = cyclicExtra
 	cyclic.Extra = cyclicExtra
 	inputs := []struct {
 		name    string
-		message *schema.Message
+		message *messagepkg.Message
 	}{
 		{name: "unsupported extra", message: unsupported},
 		{name: "cyclic extra", message: cyclic},
@@ -645,7 +632,7 @@ func TestThread_SubmitInputRejectsInvalidMessageWhileActive(t *testing.T) {
 	defer cancel()
 	model := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, make(chan runpkg.Event, 100), ThreadOptions{})
-	first, err := thread.SubmitInput(ctx, schema.UserMessage("first"))
+	first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -655,15 +642,15 @@ func TestThread_SubmitInputRejectsInvalidMessageWhileActive(t *testing.T) {
 		t.Fatalf("model did not start: %v", ctx.Err())
 	}
 
-	unsupported := schema.UserMessage("unsupported")
+	unsupported := messagepkg.NewUserMessage("unsupported")
 	unsupported.Extra = map[string]any{"value": func() {}}
-	cyclic := schema.UserMessage("cyclic")
+	cyclic := messagepkg.NewUserMessage("cyclic")
 	cyclicExtra := map[string]any{}
 	cyclicExtra["self"] = cyclicExtra
 	cyclic.Extra = cyclicExtra
 	inputs := []struct {
 		name    string
-		message *schema.Message
+		message *messagepkg.Message
 	}{
 		{name: "unsupported extra", message: unsupported},
 		{name: "cyclic extra", message: cyclic},
@@ -705,7 +692,7 @@ func TestRun_NoEventsAfterActiveRunBecomesNil(t *testing.T) {
 	defer cancel()
 	events := make(chan runpkg.Event) // Force producer to wait for each event publication.
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &threadModel{}}}, events, ThreadOptions{})
-	result, err := thread.SubmitInput(ctx, schema.UserMessage("input"))
+	result, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("input"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -741,11 +728,11 @@ func TestThread_InputAcceptedAtFinishBoundary(t *testing.T) {
 	defer cancel()
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &threadModel{}}}, make(chan runpkg.Event, 10000), ThreadOptions{})
 	for i := 0; i < 50; i++ {
-		first, err := thread.SubmitInput(ctx, schema.UserMessage("first"))
+		first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		second, err := thread.SubmitInput(ctx, schema.UserMessage("boundary"))
+		second, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("boundary"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -782,7 +769,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	if firstInitHistoryErr != nil {
 		t.Fatal(firstInitHistoryErr)
 	}
-	started, err := first.SubmitInput(ctx, schema.UserMessage("ask me"), WithInputMeta(map[string]string{"MessageID": "9007199254740993", "Sender": "user"}))
+	started, err := first.SubmitInput(ctx, messagepkg.NewUserMessage("ask me"), WithInputMeta(map[string]string{"MessageID": "9007199254740993", "Sender": "user"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -857,12 +844,12 @@ func TestThread_RedeliveryWithSameMessageIDDoesNotCallModelAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := thread.SubmitInput(ctx, schema.UserMessage("first"), WithMessageID("same"))
+	first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithMessageID("same"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-m.started
-	_, err = thread.SubmitInput(ctx, schema.UserMessage("first"), WithMessageID("same"))
+	_, err = thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithMessageID("same"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -874,7 +861,7 @@ func TestThread_RedeliveryWithSameMessageIDDoesNotCallModelAgain(t *testing.T) {
 	if m.calls != 1 || len(first.RunHandle.ConsumedInputs()) != 1 {
 		t.Fatalf("redelivery repeated model work: calls=%d inputs=%v", m.calls, first.RunHandle.ConsumedInputs())
 	}
-	late, err := thread.SubmitInput(ctx, schema.UserMessage("first"), WithMessageID("same"))
+	late, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithMessageID("same"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -900,7 +887,7 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := first.SubmitInput(ctx, schema.UserMessage("ask me"), WithMessageID("original"))
+	started, err := first.SubmitInput(ctx, messagepkg.NewUserMessage("ask me"), WithMessageID("original"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -925,11 +912,11 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-m.started
-	_, err = restored.SubmitInput(ctx, schema.UserMessage("ask me"), WithMessageID("original"))
+	_, err = restored.SubmitInput(ctx, messagepkg.NewUserMessage("ask me"), WithMessageID("original"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = restored.SubmitInput(ctx, schema.UserMessage("follow-up"), WithMessageID("follow-up"))
+	_, err = restored.SubmitInput(ctx, messagepkg.NewUserMessage("follow-up"), WithMessageID("follow-up"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -951,7 +938,7 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("restored input repeated in model history: %v", m.inputs[2])
 	}
-	late, err := restored.SubmitInput(ctx, schema.UserMessage("ask me"), WithMessageID("original"))
+	late, err := restored.SubmitInput(ctx, messagepkg.NewUserMessage("ask me"), WithMessageID("original"))
 	if err != nil {
 		t.Fatal(err)
 	}

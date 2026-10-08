@@ -2,19 +2,22 @@ package execution
 
 import (
 	"context"
-	"eino-cli/deepagent/graph/middleware"
-	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
 	"errors"
 	"fmt"
-	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
-	yaml "gopkg.in/yaml.v3"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"eino-cli/deepagent/graph/middleware"
+	"eino-cli/deepagent/graph/tools"
+	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
+
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
+	yaml "gopkg.in/yaml.v3"
 )
 
 // LoadSubAgents reads dir/name/SUBAGENT.yaml in deterministic name order.
@@ -129,7 +132,7 @@ type childRunner struct{ config Config }
 
 func NewChildRunner(config Config) tools.ChildRunner { return &childRunner{config: *config.Clone()} }
 
-func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.ChildRequest, emit types.ModelChunkSink) (*schema.Message, error) {
+func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.ChildRequest, emit types.ModelChunkSink) (*messagepkg.Message, error) {
 	if childRunner.config.Depth >= 4 {
 		return nil, fmt.Errorf("maximum child depth reached")
 	}
@@ -153,7 +156,7 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.Chil
 	}
 	config.DrainInput = nil
 	config.Emit = nil
-	var messageChunks []*schema.Message
+	var messageChunks []*messagepkg.Message
 	hasEmittedOutput := false
 	if emit != nil {
 		config.Emit = func(ctx context.Context, event types.RuntimeEvent) error {
@@ -181,7 +184,7 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.Chil
 				contentBuilder.WriteString(chunk.Content)
 			}
 			if contentBuilder.String() != message.Content {
-				messageChunks = []*schema.Message{message}
+				messageChunks = []*messagepkg.Message{message}
 			}
 			for _, chunk := range messageChunks {
 				err := emit(ctx, chunk)
@@ -225,7 +228,7 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.Chil
 		}
 		hasSubAgent = true
 		if subAgent.SystemPrompt != "" {
-			config.Prompts = append(config.Prompts, schema.SystemMessage(subAgent.SystemPrompt))
+			config.Prompts = append(config.Prompts, messagepkg.NewSystemMessage(subAgent.SystemPrompt))
 		}
 		config.ReadOnlyToolsOnly = config.ReadOnlyToolsOnly || subAgent.ReadOnly
 		if !subAgent.EnableFilesystem {
@@ -254,9 +257,9 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.Chil
 		return nil, err
 	}
 	defer childGraph.Close(context.Background())
-	var inputMessages []*schema.Message
+	var inputMessages []*messagepkg.Message
 	if !isResuming {
-		inputMessages = append(inputMessages, schema.UserMessage(childRequest.Prompt))
+		inputMessages = append(inputMessages, messagepkg.NewUserMessage(childRequest.Prompt))
 	}
 	response, err := childGraph.Invoke(ctx, inputMessages, func(runOptions *RunOptions) {
 		if checkpointStore != nil {

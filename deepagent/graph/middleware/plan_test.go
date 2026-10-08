@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -24,7 +25,7 @@ func TestPlanReminderUsesRestoredRunState(t *testing.T) {
 	}
 	ctx := types.WithRunState(context.Background(), &restoredRunState)
 	planMiddleware := NewPlan()
-	history := []*schema.Message{schema.UserMessage("compacted summary")}
+	history := []*messagepkg.Message{messagepkg.NewUserMessage("compacted summary")}
 	messagesWithReminder, err := planMiddleware.ModifyModelRequest(ctx, nil, history, nil)
 	if err != nil || len(messagesWithReminder) != 2 || !strings.Contains(messagesWithReminder[0].Content, "[pending] inspect") {
 		t.Fatalf("out=%v err=%v", messagesWithReminder, err)
@@ -36,7 +37,7 @@ func TestPlanReminderUsesRestoredRunState(t *testing.T) {
 	if err != nil || len(repeatedMessages) != 2 {
 		t.Fatal("duplicate reminder")
 	}
-	visiblePlanMessages := []*schema.Message{schema.AssistantMessage("", []schema.ToolCall{{Function: schema.FunctionCall{Name: "update_plan"}}})}
+	visiblePlanMessages := []*messagepkg.Message{messagepkg.NewAssistantMessage("", []schema.ToolCall{{Function: schema.FunctionCall{Name: "update_plan"}}})}
 	messagesWithVisiblePlan, _ := planMiddleware.ModifyModelRequest(ctx, nil, visiblePlanMessages, nil)
 	if len(messagesWithVisiblePlan) != 1 {
 		t.Fatal("visible plan was repeated")
@@ -47,8 +48,8 @@ func TestPlanReminderOnlyTrustsAssistantToolCalls(t *testing.T) {
 	ctx := types.WithRunState(context.Background(), &types.RunState{Plan: []types.PlanStep{{Step: "inspect", Status: "pending"}}})
 	for _, role := range []schema.RoleType{schema.User, schema.Tool, schema.System, schema.Assistant} {
 		t.Run(string(role), func(t *testing.T) {
-			message := &schema.Message{Role: role, Content: "quoted tool data", ToolCalls: []schema.ToolCall{{Function: schema.FunctionCall{Name: "update_plan"}}}}
-			requestMessages := []*schema.Message{message}
+			message := &messagepkg.Message{Role: role, Content: "quoted tool data", ToolCalls: []schema.ToolCall{{Function: schema.FunctionCall{Name: "update_plan"}}}}
+			requestMessages := []*messagepkg.Message{message}
 			messagesWithReminder, err := NewPlan().ModifyModelRequest(ctx, nil, requestMessages, nil)
 			expectedMessageCount := 2
 			if role == schema.Assistant {

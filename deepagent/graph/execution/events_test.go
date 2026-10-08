@@ -11,6 +11,7 @@ import (
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -27,7 +28,7 @@ func TestRun_CompactionEventsAtEachSamplingBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, executeErr := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	_, executeErr := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -70,7 +71,7 @@ func TestRun_FailedCompactionNeverPublishesSuccessOrCallsModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if !errors.Is(err, want) || chatModel.calls != 0 {
 		t.Fatalf("err=%v calls=%d", err, chatModel.calls)
 	}
@@ -80,7 +81,7 @@ func TestRun_AutomaticThresholdCompactionRetainsRecentInput(t *testing.T) {
 	ctx := context.Background()
 	history := conversation.New("thread", nil, &conversation.SummaryCompaction{Model: &paritySummaryModel{}, TokenLimit: 1, KeepRecent: 4}, nil)
 	for range 8 {
-		err := history.AddHistory(ctx, "old", schema.UserMessage("old user"), schema.AssistantMessage("old answer", nil))
+		err := history.AddHistory(ctx, "old", messagepkg.NewUserMessage("old user"), messagepkg.NewAssistantMessage("old answer", nil))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -97,7 +98,7 @@ func TestRun_AutomaticThresholdCompactionRetainsRecentInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("newest")})
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("newest")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,10 @@ func TestRun_ToolPanicDoesNotHangCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { _, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}); done <- err }()
+	go func() {
+		_, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+		done <- err
+	}()
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(err.Error(), "tool crashed") {
@@ -144,7 +148,7 @@ func TestRun_ModelAndToolStreamsPreserveOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, executeErr := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	_, executeErr := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -194,8 +198,8 @@ func TestRun_InputConsumedEventsFollowSuccessfulHistoryWrites(t *testing.T) {
 			if fail {
 				history.failure = failure
 			}
-			messages := []*schema.Message{schema.UserMessage("first"), schema.UserMessage("second")}
-			messages[0].Extra = map[string]any{"message_id": "one"}
+			messages := []*messagepkg.Message{messagepkg.NewUserMessage("first"), messagepkg.NewUserMessage("second")}
+			messages[0].MessageID = "one"
 			meta := map[string]string{"Sender": "user"}
 			var consumed []types.Input
 			chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
@@ -205,7 +209,7 @@ func TestRun_InputConsumedEventsFollowSuccessfulHistoryWrites(t *testing.T) {
 				}
 				input := event.Data.(types.Input)
 				persisted := history.GetHistory(ctx)
-				if len(persisted) == 0 || persisted[len(persisted)-1] != input.Message {
+				if len(persisted) == 0 || persisted[len(persisted)-1].Content != input.Message.Content || persisted[len(persisted)-1].MessageID != input.Message.MessageID {
 					t.Error("event preceded successful history write")
 				}
 				consumed = append(consumed, input)
@@ -228,7 +232,7 @@ func TestRun_InputConsumedEventsFollowSuccessfulHistoryWrites(t *testing.T) {
 			if len(consumed) != want {
 				t.Fatalf("consumed=%v want=%d", consumed, want)
 			}
-			if consumed[0].Message != messages[0] || consumed[0].Meta.(map[string]string)["Sender"] != "user" {
+			if consumed[0].Message.MessageID != messages[0].MessageID || consumed[0].Message.Content != messages[0].Content || consumed[0].Meta.(map[string]string)["Sender"] != "user" {
 				t.Fatal("input identity or metadata changed")
 			}
 			if fail && chatModel.calls != 0 {
@@ -267,7 +271,7 @@ func TestRun_ToolEndDistinguishesFailedMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if err != nil || !failed {
 		t.Fatalf("failed tool reported as success: err=%v failure=%v", err, failed)
 	}

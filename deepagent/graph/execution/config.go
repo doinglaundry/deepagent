@@ -2,24 +2,26 @@ package execution
 
 import (
 	"context"
+	"time"
+
 	"eino-cli/deepagent/graph/conversation"
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	"eino-cli/deepagent/graph/middleware"
 	skillspkg "eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
+
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
-	"time"
 )
 
 type Conversation interface {
 	ReloadHistory(context.Context) error
-	AddHistory(context.Context, string, ...*schema.Message) error
-	GetHistory(context.Context) []*schema.Message
-	BuildRequest(context.Context, []*schema.Message) ([]*schema.Message, error)
+	AddHistory(context.Context, string, ...*messagepkg.Message) error
+	GetHistory(context.Context) []*messagepkg.Message
+	BuildRequest(context.Context, []*messagepkg.Message) ([]*messagepkg.Message, error)
 	GetContextUsage() types.ContextUsageSnapshot
 	SnapshotContext() types.ContextSnapshot
 	RestoreContext(context.Context, types.ContextSnapshot) error
@@ -51,7 +53,7 @@ type Config struct {
 	Depth             int
 	ThreadID          string
 	RunID             string
-	Prompts           []*schema.Message
+	Prompts           []*messagepkg.Message
 	Conversation      Conversation
 	Emit              func(context.Context, types.RuntimeEvent) error
 	DrainInput        func(context.Context, string) ([]types.Input, bool, error)
@@ -137,7 +139,7 @@ func (config *Config) Clone() (cloned *Config) {
 	value := *config
 	cloned = &value
 	cloned.ToolDescriptors = append([]tools.ToolDescriptor(nil), config.ToolDescriptors...)
-	cloned.Prompts = append([]*schema.Message(nil), config.Prompts...)
+	cloned.Prompts = append([]*messagepkg.Message(nil), config.Prompts...)
 	cloned.SubAgents = append([]*SubAgent(nil), config.SubAgents...)
 	cloned.Middlewares = append([]middleware.Middleware(nil), config.Middlewares...)
 	cloned.Callbacks = append([]callbacks.Handler(nil), config.Callbacks...)

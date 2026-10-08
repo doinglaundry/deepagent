@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	dalmodel "eino-cli/deepagent/dal/model"
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	runpkg "eino-cli/deepagent/run"
 
 	"github.com/cloudwego/eino/components/model"
@@ -121,45 +121,7 @@ func legacyParityWaitRunEnd(t *testing.T, events <-chan runpkg.Event) runpkg.Eve
 	}
 }
 
-type legacyParityDedupConversationRepository struct {
-	mu      sync.Mutex
-	records []*dalmodel.ConversationEntry
-	seen    map[int64]struct{}
-}
-
-func (s *legacyParityDedupConversationRepository) Append(_ context.Context, record *dalmodel.ConversationEntry) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.seen == nil {
-		s.seen = make(map[int64]struct{})
-	}
-	_, exists := s.seen[record.MessageID]
-	if exists {
-		return nil
-	}
-	s.seen[record.MessageID] = struct{}{}
-	copy := *record
-	record.Seq = int64(len(s.records) + 1)
-	copy.Seq = record.Seq
-	s.records = append(s.records, &copy)
-	return nil
-}
-
-func (s *legacyParityDedupConversationRepository) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*dalmodel.ConversationEntry, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var records []*dalmodel.ConversationEntry
-	for _, record := range s.records {
-		if record.ThreadID != threadID || record.Seq <= sequence {
-			continue
-		}
-		records = append(records, record)
-		if limit > 0 && len(records) >= limit {
-			break
-		}
-	}
-	return records, nil
-}
+type legacyParityDedupConversationRepository = historyMemory
 
 type redeliveryModel struct{}
 
@@ -175,27 +137,7 @@ func (m *redeliveryModel) Stream(context.Context, []*schema.Message, ...model.Op
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("done", nil)}), nil
 }
 
-type redeliveryConversationRepository struct{ records []*dalmodel.ConversationEntry }
-
-func (s *redeliveryConversationRepository) Append(_ context.Context, record *dalmodel.ConversationEntry) error {
-	record.Seq = int64(len(s.records) + 1)
-	s.records = append(s.records, record)
-	return nil
-}
-
-func (s *redeliveryConversationRepository) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*dalmodel.ConversationEntry, error) {
-	var result []*dalmodel.ConversationEntry
-	for _, record := range s.records {
-		if record.ThreadID != threadID || record.Seq <= sequence {
-			continue
-		}
-		result = append(result, record)
-		if limit > 0 && len(result) >= limit {
-			break
-		}
-	}
-	return result, nil
-}
+type redeliveryConversationRepository = historyMemory
 
 type pendingQuestionModel struct {
 	resumeModel
@@ -266,12 +208,12 @@ func (s *pendingCheckpointStore) Set(ctx context.Context, id string, raw []byte)
 
 type pendingConversationRepository struct{ historyMemory }
 
-func (s *pendingConversationRepository) Append(ctx context.Context, record *dalmodel.ConversationEntry) error {
+func (s *pendingConversationRepository) AppendMessage(ctx context.Context, record *messagepkg.Message) error {
 	err := ctx.Err()
 	if err != nil {
 		return err
 	}
-	return s.historyMemory.Append(ctx, record)
+	return s.historyMemory.AppendMessage(ctx, record)
 }
 
 type pendingSaveStore struct {
@@ -281,8 +223,8 @@ type pendingSaveStore struct {
 	failure error
 }
 
-func (s *pendingSaveStore) Append(ctx context.Context, r *dalmodel.ConversationEntry) error {
-	if r.Message.Content == "accepted pending" {
+func (s *pendingSaveStore) AppendMessage(ctx context.Context, r *messagepkg.Message) error {
+	if r.Content == "accepted pending" {
 		close(s.started)
 		select {
 		case <-s.release:
@@ -293,7 +235,7 @@ func (s *pendingSaveStore) Append(ctx context.Context, r *dalmodel.ConversationE
 			return s.failure
 		}
 	}
-	return s.historyMemory.Append(ctx, r)
+	return s.historyMemory.AppendMessage(ctx, r)
 }
 
 type publicModel struct {
@@ -384,29 +326,60 @@ func (m *threadModel) Stream(ctx context.Context, input []*schema.Message, _ ...
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("answer", nil)}), nil
 }
 
-type historyMemory struct{ records []*dalmodel.ConversationEntry }
-
-func (s *historyMemory) Append(_ context.Context, r *dalmodel.ConversationEntry) error {
-	r.Seq = int64(len(s.records) + 1)
-	if r.MessageID == 0 {
-		r.MessageID = r.Seq
-	}
-	s.records = append(s.records, r)
-	return nil
+type historyMemory struct {
+	mu       sync.Mutex
+	records  []*messagepkg.Message
+	contexts map[*messagepkg.Message][]*messagepkg.Message
 }
 
-func (s *historyMemory) LoadAfter(_ context.Context, threadID string, sequence int64, limit int) ([]*dalmodel.ConversationEntry, error) {
-	var result []*dalmodel.ConversationEntry
-	for _, r := range s.records {
-		if r.ThreadID != threadID || r.Seq <= sequence {
-			continue
-		}
-		result = append(result, r)
-		if limit > 0 && len(result) >= limit {
-			break
+func (store *historyMemory) AppendMessage(_ context.Context, message *messagepkg.Message) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for _, record := range store.records {
+		if message.MessageID != "" && record.ThreadID == message.ThreadID && record.MessageID == message.MessageID {
+			message.Seq = record.Seq
+			return nil
 		}
 	}
-	return result, nil
+	message.Seq = int64(len(store.records) + 1)
+	if message.MessageID == "" {
+		message.MessageID = fmt.Sprint(message.Seq)
+	}
+	copy := *message
+	store.records = append(store.records, &copy)
+	return nil
+}
+func (store *historyMemory) SaveContext(ctx context.Context, summary *messagepkg.Message, messages []*messagepkg.Message) error {
+	err := store.AppendMessage(ctx, summary)
+	if err != nil {
+		return err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.contexts == nil {
+		store.contexts = make(map[*messagepkg.Message][]*messagepkg.Message)
+	}
+	store.contexts[store.records[len(store.records)-1]] = append([]*messagepkg.Message(nil), messages...)
+	return nil
+}
+func (store *historyMemory) LoadContext(_ context.Context, threadID string) (messages []*messagepkg.Message, ids []string, sequence int64, err error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for _, record := range store.records {
+		if record.ThreadID != threadID {
+			continue
+		}
+		copy := *record
+		sequence = record.Seq
+		ids = append(ids, record.MessageID)
+		context, compacted := store.contexts[record]
+		if compacted {
+			messages = append([]*messagepkg.Message(nil), context...)
+		} else {
+			messages = append(messages, &copy)
+		}
+	}
+	return messages, ids, sequence, nil
 }
 
 type threadCheckpointMemory struct{ values map[string][]byte }

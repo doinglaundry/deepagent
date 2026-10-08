@@ -12,11 +12,10 @@ import (
 	"eino-cli/deepagent/graph/modelhub"
 	skillspkg "eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/manager"
-	threadpkg "eino-cli/deepagent/thread"
+	messagepkg "eino-cli/deepagent/message"
 	"eino-cli/deepagent/threadhost"
 
 	modelpkg "github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
 )
 
 // Run owns process-wide resources and starts the canonical distributed Worker.
@@ -75,12 +74,12 @@ func Run(ctx context.Context, cfg Config) error {
 			ConversationRepository: conversationDAO, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
 			MemoryStore: coordinator, Collaboration: coordinator,
 			IsToolAlwaysAllowed: coordinator.IsToolAlwaysAllowed,
-			ConversationEntryID: func(idCtx context.Context, _, _ string, message *schema.Message) (int64, error) {
-				parseIntId, parseErr := strconv.ParseInt(threadpkg.MessageID(message), 10, 64)
-				if parseErr == nil && parseIntId > 0 {
-					return parseIntId, nil
+			MessageID: func(idCtx context.Context, _ *messagepkg.Message) (string, error) {
+				id, err := dalcache.GenerateID(idCtx, redisClient)
+				if err != nil {
+					return "", err
 				}
-				return dalcache.GenerateID(idCtx, redisClient)
+				return strconv.FormatInt(id, 10), nil
 			},
 		},
 	}

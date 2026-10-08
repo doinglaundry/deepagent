@@ -16,6 +16,7 @@ import (
 	"eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -34,7 +35,7 @@ func TestLoopGuardStopsRepeatedToolsAndIsRunLocal(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+		result, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,7 +60,7 @@ func TestLoopGuardRestoresWindowFromCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer first.Close(ctx)
-	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
 		t.Fatalf("interrupt=%+v err=%v", info, err)
@@ -91,7 +92,7 @@ func TestLoopGuardDistinctCallsExpireFromWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	out, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	out, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if err != nil || out == nil || out.Content != "done" || counter.count.Load() != 3 {
 		t.Fatalf("out=%v err=%v calls=%d", out, err, counter.count.Load())
 	}
@@ -105,7 +106,7 @@ func TestMiddleware_OrderAndAfterRunOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, executeErr := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	_, executeErr := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -127,7 +128,7 @@ func TestRun_FinalEventFollowsAfterRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, executeErr := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("input")})
+	_, executeErr := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("input")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -142,7 +143,7 @@ func TestRun_ModelMiddlewareModifiesRequestAndStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	out, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("input")})
+	out, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("input")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestRun_ModelMiddlewareErrorStopsModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("input")})
+	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("input")})
 	if !errors.Is(err, want) || chatModel.calls != 0 {
 		t.Fatalf("err=%v calls=%d", err, chatModel.calls)
 	}
@@ -206,7 +207,7 @@ func TestDuplicateStatelessMiddlewareNamesRemainSupported(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	result, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("input")})
+	result, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("input")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +236,7 @@ func TestRun_TranscriptObservesCanonicalEvents(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, executeErr := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+		_, executeErr := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 		if executeErr != nil {
 			t.Fatal(executeErr)
 		}
@@ -255,8 +256,8 @@ func TestRun_TranscriptObservesCanonicalEvents(t *testing.T) {
 		var roles []string
 		for {
 			var record struct {
-				Role    string          `json:"role"`
-				Message *schema.Message `json:"message"`
+				Role    string              `json:"role"`
+				Message *messagepkg.Message `json:"message"`
 			}
 			err := decoder.Decode(&record)
 			if err == io.EOF {
@@ -286,7 +287,7 @@ func TestRun_TranscriptWriteFailureClosesWriterAndStopsModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if !errors.Is(err, want) || chatModel.calls != 0 || w.closes != 1 {
 		t.Fatalf("err=%v model=%d closes=%d", err, chatModel.calls, w.closes)
 	}
@@ -295,11 +296,11 @@ func TestRun_TranscriptWriteFailureClosesWriterAndStopsModel(t *testing.T) {
 func TestRun_PatchDanglingToolCallsOnlyInModelRequest(t *testing.T) {
 	ctx := context.Background()
 	history := conversation.New("thread", nil, nil, nil)
-	assistant := schema.AssistantMessage("", []schema.ToolCall{
+	assistant := messagepkg.NewAssistantMessage("", []schema.ToolCall{
 		{ID: "done", Function: schema.FunctionCall{Name: "read_file", Arguments: "{}"}},
 		{ID: "interrupted", Function: schema.FunctionCall{Name: "write_file", Arguments: "{}"}},
 	})
-	addHistoryErr := history.AddHistory(ctx, "old", schema.UserMessage("old input"), assistant, schema.ToolMessage("already done", "done"))
+	addHistoryErr := history.AddHistory(ctx, "old", messagepkg.NewUserMessage("old input"), assistant, messagepkg.NewToolMessage("already done", "done"))
 	if addHistoryErr != nil {
 		t.Fatal(addHistoryErr)
 	}
@@ -308,7 +309,7 @@ func TestRun_PatchDanglingToolCallsOnlyInModelRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, executeErr := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("continue")})
+	_, executeErr := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("continue")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -353,7 +354,7 @@ func TestRun_PlanRestoresFromCheckpointAfterContextCompaction(t *testing.T) {
 		}
 		return nil
 	}
-	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("inspect")}, WithCheckpointID("plan-checkpoint"))
+	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("inspect")}, WithCheckpointID("plan-checkpoint"))
 	_, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatalf("expected checkpoint: %v", err)
@@ -363,7 +364,7 @@ func TestRun_PlanRestoresFromCheckpointAfterContextCompaction(t *testing.T) {
 	}
 	// Model context no longer contains the tool exchange, as after compaction.
 	config.Conversation = conversation.New("thread", nil, nil, nil)
-	addHistoryErr := config.Conversation.AddHistory(ctx, "plan-run", schema.UserMessage("compacted summary"))
+	addHistoryErr := config.Conversation.AddHistory(ctx, "plan-run", messagepkg.NewUserMessage("compacted summary"))
 	if addHistoryErr != nil {
 		t.Fatal(addHistoryErr)
 	}
@@ -418,7 +419,7 @@ func TestRun_PlanEventsUseGraphSequenceAndDeliveryErrorsAreFatal(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+		_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 		if failDelivery {
 			if !errors.Is(err, want) || chatModel.calls != 1 {
 				t.Fatalf("delivery error swallowed: err=%v calls=%d", err, chatModel.calls)
@@ -464,7 +465,7 @@ func TestRun_PromptMiddlewareDoesNotRegisterTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer graph.Close(context.Background())
-			_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("hello")})
+			_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("hello")})
 			if err != nil {
 				t.Fatal(err)
 			}

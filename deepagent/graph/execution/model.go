@@ -2,16 +2,19 @@ package execution
 
 import (
 	"context"
-	"eino-cli/deepagent/graph/middleware"
-	"eino-cli/deepagent/graph/types"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
 	"io"
 	"strings"
 	"unicode"
+
+	"eino-cli/deepagent/graph/middleware"
+	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
+
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 )
 
 var ErrExceedMaxModelCalls = errors.New("exceeds max model calls")
@@ -36,7 +39,7 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 	}
 	runState.Phase = types.PhaseModeling
 	runState.ModelCalls++
-	prompts := append([]*schema.Message(nil), graph.config.Prompts...)
+	prompts := append([]*messagepkg.Message(nil), graph.config.Prompts...)
 	for _, currentMiddleware := range graph.middlewares {
 		promptMessages, err := currentMiddleware.BuildPrompt(ctx)
 		if err != nil {
@@ -58,8 +61,15 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 	if err != nil {
 		return nil, err
 	}
-	modelHandler := middleware.ModelHandler(func(ctx context.Context, input []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-		return graph.chatModel.Stream(ctx, input)
+	modelHandler := middleware.ModelHandler(func(ctx context.Context, input []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+		stream, err := graph.chatModel.Stream(ctx, messagepkg.ToEinoMessages(input))
+		if stream == nil {
+			return nil, err
+		}
+		converted := schema.StreamReaderWithConvert(stream, func(chunk *schema.Message) (*messagepkg.Message, error) {
+			return messagepkg.FromEino(chunk), nil
+		})
+		return converted, err
 	})
 	for i := len(graph.middlewares) - 1; i >= 0; i-- {
 		modelMiddleware, ok := graph.middlewares[i].(middleware.ModelMiddleware)
@@ -91,7 +101,7 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 		}
 		messageStream = modifiedStream
 	}
-	var messageChunks []*schema.Message
+	var messageChunks []*messagepkg.Message
 	toolCallBuffer := toolCallBuffer{}
 	defer func() { graph.toolExecutor.snapshotToolExecutions(runState.Calls) }()
 	for {
@@ -142,7 +152,7 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 	if len(messageChunks) == 0 {
 		return nil, fmt.Errorf("empty model response")
 	}
-	response, err := schema.ConcatMessages(messageChunks)
+	response, err := messagepkg.ConcatMessages(messageChunks)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +193,7 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 		seenCallIDs[toolCall.ID] = true
 		runState.Calls = append(runState.Calls, types.ToolCallState{Call: types.ToolCall{ID: toolCall.ID, Index: i, Name: toolCall.Function.Name, Arguments: toolCall.Function.Arguments}, Status: types.CallPending})
 	}
-	err = graph.emitEvent(ctx, runState, "llm_end", "", types.LLMEnd{CallbackOutput: model.CallbackOutput{Message: response}})
+	err = graph.emitEvent(ctx, runState, "llm_end", "", types.LLMEnd{Message: response})
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +208,7 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 
 // getResponseUsage parses provider metadata only; Conversation owns accumulation.
 // Older adapters put usage in Extra. Explicit Eino metadata takes precedence.
-func getResponseUsage(message *schema.Message) *model.TokenUsage {
+func getResponseUsage(message *messagepkg.Message) *model.TokenUsage {
 	if message.ResponseMeta != nil && message.ResponseMeta.Usage != nil {
 		providerUsage := message.ResponseMeta.Usage
 		return &model.TokenUsage{PromptTokens: providerUsage.PromptTokens, CompletionTokens: providerUsage.CompletionTokens, TotalTokens: providerUsage.TotalTokens}

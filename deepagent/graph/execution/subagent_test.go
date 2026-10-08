@@ -14,6 +14,7 @@ import (
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -42,7 +43,7 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("delegate")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("delegate")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 2 {
 		t.Fatalf("expected two child approvals: %v", err)
@@ -70,7 +71,7 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 
 func TestCheckpoint_ChildConversationRestoresProviderUsage(t *testing.T) {
 	ctx := context.Background()
-	counter := func(messages []*schema.Message) int { return len(messages) * 3 }
+	counter := func(messages []*messagepkg.Message) int { return len(messages) * 3 }
 	initial := conversation.New("", nil, nil, counter)
 	fresh := conversation.New("", nil, nil, counter)
 	reply := schema.AssistantMessage("", []schema.ToolCall{{ID: "approval", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})
@@ -86,7 +87,7 @@ func TestCheckpoint_ChildConversationRestoresProviderUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("work")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("work")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -137,7 +138,7 @@ func TestChildAgent_DirectoryConfigurationReachesTaskGraph(t *testing.T) {
 	if err != nil || !strings.Contains(string(raw), "reviewer") {
 		t.Fatalf("task schema does not advertise loaded agent: %s %v", raw, err)
 	}
-	_, executeErr := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("delegate")})
+	_, executeErr := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("delegate")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -174,7 +175,7 @@ func TestChildAgent_TaskStreamingReturnsOnlyFinalAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("delegate")})
+	out, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("delegate")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +212,7 @@ func TestChildAgent_NamedCapabilitiesAndContext(t *testing.T) {
 func TestChildAgent_UsesSameGraphWithIndependentBudget(t *testing.T) {
 	ctx := context.Background()
 	parentHistory := conversation.New("parent", nil, nil, nil)
-	addHistoryErr := parentHistory.AddHistory(ctx, "parent-run", schema.UserMessage("private parent context"))
+	addHistoryErr := parentHistory.AddHistory(ctx, "parent-run", messagepkg.NewUserMessage("private parent context"))
 	if addHistoryErr != nil {
 		t.Fatal(addHistoryErr)
 	}
@@ -251,7 +252,7 @@ func TestChildAgent_TaskIsRegisteredOnParentGraph(t *testing.T) {
 	if !ok {
 		t.Fatal("task is not registered")
 	}
-	result, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("delegate")})
+	result, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("delegate")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +411,7 @@ func TestChildAgent_CustomPromptRetainsSharedInstructions(t *testing.T) {
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
 	config := Config{
 		Model:     chatModel,
-		Prompts:   []*schema.Message{schema.SystemMessage("shared operating instructions")},
+		Prompts:   []*messagepkg.Message{messagepkg.NewSystemMessage("shared operating instructions")},
 		SubAgents: []*SubAgent{{Name: "review", SystemPrompt: "review-specific instructions"}},
 	}
 	_, err := NewChildRunner(config).Run(context.Background(), tools.ChildRequest{Name: "review", Prompt: "inspect"}, nil)

@@ -22,6 +22,7 @@ import (
 	skillspkg "eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	memorypkg "eino-cli/deepagent/protocol/memory"
 	"eino-cli/deepagent/run"
 	"eino-cli/deepagent/sandbox/aio"
@@ -29,7 +30,6 @@ import (
 
 	modelpkg "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
 )
 
 // RuntimeConfig contains process-owned values used to build each Thread and
@@ -60,7 +60,7 @@ type RuntimeDeps struct {
 	SkillLoader            skillspkg.SkillLoader
 	MemoryStore            memorypkg.Store
 	Collaboration          CollaborationBackend
-	ConversationEntryID    conversation.ConversationEntryIDProvider
+	MessageID              conversation.MessageIDProvider
 	ApprovalRemember       threadpkg.ApprovalRememberer
 	IsToolAlwaysAllowed    func(context.Context, int64, string) (bool, error)
 	InterruptResume        threadpkg.InterruptResumeDecoder
@@ -148,11 +148,11 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 			return nil, err
 		}
 		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, items...)
-		agentConfig.Prompts = append(agentConfig.Prompts, schema.SystemMessage(collaborationPrompt))
+		agentConfig.Prompts = append(agentConfig.Prompts, messagepkg.NewSystemMessage(collaborationPrompt))
 	}
 	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)
 	if prompt != "" {
-		agentConfig.Prompts = append(agentConfig.Prompts, schema.SystemMessage(prompt))
+		agentConfig.Prompts = append(agentConfig.Prompts, messagepkg.NewSystemMessage(prompt))
 	}
 	agentConfig.Middlewares = []middleware.Middleware{middleware.NewProjectInstructions(filesystem)}
 	if memoryService != nil {
@@ -160,7 +160,7 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 	}
 	runConfig := &run.Config{Graph: agentConfig}
 	if memoryService != nil {
-		runConfig.RunCompleted = func(doneCtx context.Context, threadID, _ string, _ modelpkg.ToolCallingChatModel, history []*schema.Message) {
+		runConfig.RunCompleted = func(doneCtx context.Context, threadID, _ string, _ modelpkg.ToolCallingChatModel, history []*messagepkg.Message) {
 			observeErr := memoryService.Observe(doneCtx, memoryScope(w.Runtime.MemoryUserID, info), threadID, history)
 			if observeErr != nil && !errors.Is(observeErr, memorypkg.ErrConflict) {
 				slog.ErrorContext(doneCtx, "extract long-term memory", "thread_id", threadID, "error", observeErr)
@@ -176,7 +176,7 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 	// 4. 配置 Thread 的历史和压缩，并绑定资源清理。
 	options := threadpkg.ThreadOptions{
 		ConversationRepository: w.Deps.ConversationRepository, ContextWindow: w.Runtime.ContextWindow,
-		ConversationEntryID: w.Deps.ConversationEntryID,
+		MessageID: w.Deps.MessageID,
 	}
 	if w.Runtime.CompactThresholdTokens > 0 {
 		options.CompactionStrategy = &conversation.SummaryCompaction{

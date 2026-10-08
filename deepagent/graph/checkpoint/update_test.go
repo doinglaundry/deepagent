@@ -6,18 +6,17 @@ import (
 	"testing"
 
 	"eino-cli/deepagent/graph/types"
-
-	"github.com/cloudwego/eino/schema"
+	messagepkg "eino-cli/deepagent/message"
 )
 
 func TestAppendInputsPreservesCheckpointFieldsAndInputCursor(t *testing.T) {
-	state := types.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhaseBlocked, PreparedInputs: 1, Consumed: []types.Input{{Message: schema.UserMessage("original")}}, Extensions: map[string]json.RawMessage{"middleware:test": json.RawMessage(`{"value":3}`)}}
+	state := types.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhaseBlocked, PreparedInputs: 1, Consumed: []types.Input{{Message: messagepkg.NewUserMessage("original")}}, Extensions: map[string]json.RawMessage{"middleware:test": json.RawMessage(`{"value":3}`)}}
 	encoded, _ := json.Marshal(state)
 	snapshot := []byte(`{"Type":{"PointerNum":1,"StructType":"_eino_checkpoint"},"future":"preserved","MapValues":{"State":{"Type":{"PointerNum":1,"SimpleType":"deepagent_run_state_v1"},"JSONValue":` + string(encoded) + `},"InterruptID2Addr":{"untouched":"address"},"Inputs":{"untouched":"node input"}}}`)
 	envelope := Envelope{Version: 1, ThreadID: "thread", RunID: "run", GraphVersion: "core-graph-v1", EinoSnapshot: snapshot}
 	original, _ := json.Marshal(envelope)
 	rawStore := &memoryStore{data: map[string][]byte{"checkpoint": original}}
-	input := types.Input{Message: schema.UserMessage("pending"), Meta: map[string]string{"MessageID": "9007199254740993"}}
+	input := types.Input{Message: messagepkg.NewUserMessage("pending"), Meta: map[string]string{"MessageID": "9007199254740993"}}
 	appendInputsErr := AppendInputs(context.Background(), rawStore, "checkpoint", "thread", "run", []types.Input{input})
 	if appendInputsErr != nil {
 		t.Fatal(appendInputsErr)

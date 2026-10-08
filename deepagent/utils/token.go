@@ -1,8 +1,10 @@
 package utils
 
-import "github.com/cloudwego/eino/schema"
+import (
+	messagepkg "eino-cli/deepagent/message"
+)
 
-func SimpleTokenCounter(messages []*schema.Message) int {
+func SimpleTokenCounter(messages []*messagepkg.Message) int {
 	n := 0
 	for _, m := range messages {
 		if m != nil {

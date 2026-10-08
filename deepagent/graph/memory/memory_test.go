@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	messagepkg "eino-cli/deepagent/message"
 	memorypkg "eino-cli/deepagent/protocol/memory"
 
 	"github.com/cloudwego/eino/components/model"
@@ -129,7 +130,7 @@ func TestExtractionConsolidationAndRestartBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	messages := []*schema.Message{schema.UserMessage("Use Go and MySQL.")}
+	messages := []*messagepkg.Message{messagepkg.NewUserMessage("Use Go and MySQL.")}
 	err = memoryService.Observe(ctx, "local", "session/thread", messages)
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +175,7 @@ func TestDurableArtifactsResumeOnDifferentWorkerDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = memoryService.Observe(ctx, "user/u1", "thread1", []*schema.Message{schema.UserMessage("Go preference")})
+	err = memoryService.Observe(ctx, "user/u1", "thread1", []*messagepkg.Message{messagepkg.NewUserMessage("Go preference")})
 	if err != nil {
 		t.Fatal(err)
 	}

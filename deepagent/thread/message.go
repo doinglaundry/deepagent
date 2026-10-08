@@ -1,13 +1,15 @@
 package thread
 
 import (
-	eventpkg "eino-cli/deepagent/protocol/event"
-	inputpkg "eino-cli/deepagent/protocol/input"
 	json "encoding/json"
 	fmt "fmt"
-	schema "github.com/cloudwego/eino/schema"
-	strconv "strconv"
 	strings "strings"
+
+	messagepkg "eino-cli/deepagent/message"
+	eventpkg "eino-cli/deepagent/protocol/event"
+	inputpkg "eino-cli/deepagent/protocol/input"
+
+	schema "github.com/cloudwego/eino/schema"
 )
 
 func parseUserMessage(message *TransportMessage) (inputpkg.UserMessage, error) {
@@ -33,172 +35,19 @@ const (
 
 	MetadataRunMode = inputpkg.MetadataRunMode
 	RunModePlan     = inputpkg.RunModePlan
-
-	einoMessageAttributeExtraKey = "__cloudagent_message_attribute__"
-	legacyMessageIDExtraKey      = "message_id"
 )
 
-type MessageAttribute struct {
-	MessageID  string `json:"message_id,omitempty"`
-	SenderID   string `json:"sender_id,omitempty"`
-	SenderType string `json:"sender_type,omitempty"`
-}
-
-func init() {
-	// MessageAttribute is stored in schema.Message.Extra. Eino checkpoint
-	// serialization needs a stable name to restore custom Extra values.
-	// Keep the historical names so existing local checkpoints remain readable.
-	schema.RegisterName[MessageAttribute]("_cloudagent_message_attribute")
-	schema.RegisterName[protocolInputParts]("_cloudagent_input_parts")
-	schema.RegisterName[inputpkg.MessagePart]("_cloudagent_input_message_part")
-}
-
-func attributeFromWorkerMessage(message *TransportMessage) MessageAttribute {
-	if message == nil {
-		return MessageAttribute{}
-	}
-	attr := MessageAttribute{MessageID: strings.TrimSpace(message.ID)}
-	if message.Sender != nil {
-		attr.SenderID = strings.TrimSpace(message.Sender.ID)
-		attr.SenderType = strings.TrimSpace(string(message.Sender.Type))
-	}
-	return attr
-}
-
-func attachAttribute(msg *schema.Message, attr MessageAttribute) {
-	if msg == nil || attr.empty() {
-		return
-	}
-	if msg.Extra == nil {
-		msg.Extra = make(map[string]any, 1)
-	}
-	msg.Extra[einoMessageAttributeExtraKey] = attr
-}
-
-func attributeFromMessage(msg *schema.Message) MessageAttribute {
-	if msg == nil || msg.Extra == nil {
-		return MessageAttribute{}
-	}
-	attr, ok := attributeFromExtraValue(msg.Extra[einoMessageAttributeExtraKey])
-	if ok {
-		return attr
-	}
-	messageID, stringIDFromAnyOK := stringIDFromAny(msg.Extra[legacyMessageIDExtraKey])
-	if stringIDFromAnyOK {
-		return MessageAttribute{MessageID: messageID}
-	}
-	return MessageAttribute{}
-}
-
-func ConsumedMessageIDs(inputs []*schema.Message) []string {
-	if len(inputs) == 0 {
-		return nil
-	}
-	ids := make([]string, 0, len(inputs))
+func ConsumedMessageIDs(inputs []*messagepkg.Message) []string {
+	var ids []string
 	for _, input := range inputs {
-		attr := attributeFromMessage(input)
-		if attr.MessageID != "" {
-			ids = append(ids, attr.MessageID)
+		if input != nil && input.MessageID != "" {
+			ids = append(ids, input.MessageID)
 		}
-	}
-	if len(ids) == 0 {
-		return nil
 	}
 	return ids
 }
 
-// MessageID returns the Manager mailbox identity attached to a user message.
-// It is used by durable history storage to make Worker redelivery idempotent.
-func MessageID(message *schema.Message) string {
-	return attributeFromMessage(message).MessageID
-}
-
-func attributeFromExtraValue(raw any) (MessageAttribute, bool) {
-	switch v := raw.(type) {
-	case MessageAttribute:
-		attr := v.normalized()
-		return attr, !attr.empty()
-	case *MessageAttribute:
-		if v == nil {
-			return MessageAttribute{}, false
-		}
-		attr := v.normalized()
-		return attr, !attr.empty()
-	case map[string]any:
-		attr := MessageAttribute{}
-		messageID, ok := stringIDFromAny(v["message_id"])
-		if ok {
-			attr.MessageID = messageID
-		}
-		senderID, stringIDFromAnyOK2 := stringIDFromAny(v["sender_id"])
-		if stringIDFromAnyOK2 {
-			attr.SenderID = senderID
-		}
-		senderType, stringIDFromAnyOK := stringIDFromAny(v["sender_type"])
-		if stringIDFromAnyOK {
-			attr.SenderType = senderType
-		}
-		attr = attr.normalized()
-		return attr, !attr.empty()
-	default:
-		return MessageAttribute{}, false
-	}
-}
-
-func (a MessageAttribute) normalized() MessageAttribute {
-	return MessageAttribute{
-		MessageID:  strings.TrimSpace(a.MessageID),
-		SenderID:   strings.TrimSpace(a.SenderID),
-		SenderType: strings.TrimSpace(a.SenderType),
-	}
-}
-
-func (a MessageAttribute) empty() bool {
-	a = a.normalized()
-	return a.MessageID == "" && a.SenderID == "" && a.SenderType == ""
-}
-
-func stringIDFromAny(raw any) (string, bool) {
-	switch v := raw.(type) {
-	case string:
-		id := strings.TrimSpace(v)
-		return id, id != ""
-	case int64:
-		if v == 0 {
-			return "", false
-		}
-		return strconv.FormatInt(v, 10), true
-	case int:
-		if v == 0 {
-			return "", false
-		}
-		return strconv.FormatInt(int64(v), 10), true
-	case int32:
-		if v == 0 {
-			return "", false
-		}
-		return strconv.FormatInt(int64(v), 10), true
-	case float64:
-		if v == 0 {
-			return "", false
-		}
-		return strconv.FormatInt(int64(v), 10), true
-	case json.Number:
-		n, err := v.Int64()
-		if err == nil && n != 0 {
-			return strconv.FormatInt(n, 10), true
-		}
-		return "", false
-	default:
-		return "", false
-	}
-}
-
-const protocolInputPartsExtraKey = "__cloudagent_input_parts__"
-
-type protocolInputParts []inputpkg.MessagePart
-
-func protocolUserMessageToSchemaMessage(input inputpkg.UserMessage) (*schema.Message, error) {
+func decodeDialogueMessage(input inputpkg.UserMessage) (*messagepkg.Message, error) {
 	originalParts := normalizeProtocolInputParts(input.Parts)
 	parts := make([]schema.MessageInputPart, 0, len(originalParts))
 	text := make([]string, 0, len(originalParts))
@@ -216,13 +65,13 @@ func protocolUserMessageToSchemaMessage(input inputpkg.UserMessage) (*schema.Mes
 		}
 	}
 
-	msg := &schema.Message{Role: schema.User, Extra: protocolExtraToSchemaExtra(input.Extra)}
+	msg := &messagepkg.Message{Role: schema.User, Extra: protocolExtraToSchemaExtra(input.Extra)}
 	if hasNonTextPart {
 		msg.UserInputMultiContent = parts
 	} else {
 		msg.Content = strings.Join(text, "\n")
 	}
-	attachOriginalProtocolInputParts(msg, originalParts)
+	msg.OriginalParts = cloneProtocolInputParts(originalParts)
 	return msg, nil
 }
 
@@ -263,13 +112,12 @@ func protocolPartToSchemaInputPart(part inputpkg.MessagePart) (schema.MessageInp
 	}
 }
 
-func schemaUserMessageToProtocolParts(message *schema.Message) []eventpkg.MessagePart {
-	originalProtocolInputPartsParts := originalProtocolInputParts(message)
-	if len(originalProtocolInputPartsParts) > 0 {
-		return inputPartsForEvent(originalProtocolInputPartsParts)
-	}
+func getUserMessageParts(message *messagepkg.Message) []eventpkg.MessagePart {
 	if message == nil {
 		return nil
+	}
+	if len(message.OriginalParts) > 0 {
+		return inputPartsForEvent(message.OriginalParts)
 	}
 	if len(message.UserInputMultiContent) == 0 {
 		return textParts(message.Content)
@@ -324,7 +172,7 @@ func schemaInputPartToProtocolPart(part schema.MessageInputPart) (eventpkg.Messa
 	}
 }
 
-func schemaAssistantMessageToProtocolParts(message *schema.Message) []eventpkg.MessagePart {
+func getAssistantMessageParts(message *messagepkg.Message) []eventpkg.MessagePart {
 	if message == nil {
 		return nil
 	}
@@ -361,35 +209,6 @@ func schemaOutputPartToProtocolPart(part schema.MessageOutputPart) (eventpkg.Mes
 		return out, true
 	default:
 		return eventpkg.MessagePart{Type: eventpkg.MessagePartType(strings.TrimSuffix(string(part.Type), "_url")), Extra: schemaExtraToProtocolExtra(part.Extra)}, true
-	}
-}
-
-func attachOriginalProtocolInputParts(msg *schema.Message, parts []inputpkg.MessagePart) {
-	if msg == nil || len(parts) == 0 {
-		return
-	}
-	if msg.Extra == nil {
-		msg.Extra = make(map[string]any, 1)
-	}
-	msg.Extra[protocolInputPartsExtraKey] = protocolInputParts(cloneProtocolInputParts(parts))
-}
-
-func originalProtocolInputParts(msg *schema.Message) []inputpkg.MessagePart {
-	if msg == nil || msg.Extra == nil {
-		return nil
-	}
-	switch parts := msg.Extra[protocolInputPartsExtraKey].(type) {
-	case protocolInputParts:
-		return cloneProtocolInputParts([]inputpkg.MessagePart(parts))
-	case *protocolInputParts:
-		if parts == nil {
-			return nil
-		}
-		return cloneProtocolInputParts([]inputpkg.MessagePart(*parts))
-	case []inputpkg.MessagePart:
-		return cloneProtocolInputParts(parts)
-	default:
-		return nil
 	}
 }
 

@@ -2,9 +2,12 @@ package execution
 
 import (
 	"context"
+	"fmt"
+
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/types"
-	"fmt"
+	messagepkg "eino-cli/deepagent/message"
+
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -92,7 +95,7 @@ func (graph *Graph) continueRun(ctx context.Context, runState *types.RunState) (
 	return runState, nil
 }
 
-func (graph *Graph) executeFinishNode(ctx context.Context, runState *types.RunState) (*schema.Message, error) {
+func (graph *Graph) executeFinishNode(ctx context.Context, runState *types.RunState) (*messagepkg.Message, error) {
 	runState.Pending = nil
 	historyMessages := graph.conversation.GetHistory(ctx)
 	if len(historyMessages) == 0 {

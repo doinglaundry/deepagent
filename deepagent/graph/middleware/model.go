@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -52,7 +53,7 @@ func (*LoopGuard) RequiresCompleteModelResponse() bool { return true }
 
 func (loopGuard *LoopGuard) GetStateHandler() types.RunTimeStateful { return loopGuard }
 
-func (loopGuard *LoopGuard) ModifyModelResponse(ctx context.Context, message *schema.Message, _ *types.GraphState) (*schema.Message, error) {
+func (loopGuard *LoopGuard) ModifyModelResponse(ctx context.Context, message *messagepkg.Message, _ *types.GraphState) (*messagepkg.Message, error) {
 	if message == nil || len(message.ToolCalls) == 0 {
 		return message, nil
 	}
@@ -133,7 +134,7 @@ type ModelRetry struct {
 func (*ModelRetry) GetName() string { return "model_retry" }
 
 func (modelRetry *ModelRetry) WrapModel(nextModel ModelHandler) ModelHandler {
-	return func(ctx context.Context, messages []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	return func(ctx context.Context, messages []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
 		maxAttempts := modelRetry.MaxAttempts
 		if maxAttempts < 1 {
 			maxAttempts = 1
@@ -223,7 +224,7 @@ func (circuitBreaker *CircuitBreaker) UnmarshalRuntimeState(encodedState string)
 }
 
 func (circuitBreaker *CircuitBreaker) WrapModel(nextModel ModelHandler) ModelHandler {
-	return func(ctx context.Context, messages []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	return func(ctx context.Context, messages []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr

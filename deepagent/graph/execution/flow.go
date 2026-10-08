@@ -2,16 +2,18 @@ package execution
 
 import (
 	"context"
-	checkpointer "eino-cli/deepagent/graph/checkpoint"
-	"eino-cli/deepagent/graph/types"
 	"encoding/json"
 	"fmt"
+
+	checkpointer "eino-cli/deepagent/graph/checkpoint"
+	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
+
 	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
 )
 
 func (graph *Graph) buildGraph(ctx context.Context) error {
-	einoGraph := compose.NewGraph[*types.RunState, *schema.Message](compose.WithGenLocalState(graph.newLocalState))
+	einoGraph := compose.NewGraph[*types.RunState, *messagepkg.Message](compose.WithGenLocalState(graph.newLocalState))
 
 	prepareNode := compose.InvokableLambda(graph.executePrepareNode)
 	err := einoGraph.AddLambdaNode("prepare", prepareNode)
@@ -47,7 +49,7 @@ func (graph *Graph) buildGraph(ctx context.Context) error {
 	return err
 }
 
-func (graph *Graph) connectGraphEdges(einoGraph *compose.Graph[*types.RunState, *schema.Message]) error {
+func (graph *Graph) connectGraphEdges(einoGraph *compose.Graph[*types.RunState, *messagepkg.Message]) error {
 	err := einoGraph.AddEdge(compose.START, "prepare")
 	if err != nil {
 		return err

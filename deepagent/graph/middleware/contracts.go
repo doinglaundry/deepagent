@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -15,10 +16,10 @@ type Middleware interface {
 	GetName() string
 	PrepareAgent(context.Context) error
 	GetStateHandler() types.RunTimeStateful
-	BuildPrompt(context.Context) ([]*schema.Message, error)
-	ModifyModelRequest(context.Context, []*schema.Message, []*schema.Message, *types.GraphState) ([]*schema.Message, error)
-	ModifyModelResponse(context.Context, *schema.Message, *types.GraphState) (*schema.Message, error)
-	ModifyModelStreamResponse(context.Context, *schema.StreamReader[*schema.Message], *types.GraphState) (*schema.StreamReader[*schema.Message], error)
+	BuildPrompt(context.Context) ([]*messagepkg.Message, error)
+	ModifyModelRequest(context.Context, []*messagepkg.Message, []*messagepkg.Message, *types.GraphState) ([]*messagepkg.Message, error)
+	ModifyModelResponse(context.Context, *messagepkg.Message, *types.GraphState) (*messagepkg.Message, error)
+	ModifyModelStreamResponse(context.Context, *schema.StreamReader[*messagepkg.Message], *types.GraphState) (*schema.StreamReader[*messagepkg.Message], error)
 }
 
 // BaseMiddleware makes every hook optional. Concrete middleware only needs to
@@ -31,17 +32,17 @@ func (BaseMiddleware) PrepareAgent(context.Context) error { return nil }
 
 func (BaseMiddleware) GetStateHandler() types.RunTimeStateful { return nil }
 
-func (BaseMiddleware) BuildPrompt(context.Context) ([]*schema.Message, error) { return nil, nil }
+func (BaseMiddleware) BuildPrompt(context.Context) ([]*messagepkg.Message, error) { return nil, nil }
 
-func (BaseMiddleware) ModifyModelRequest(_ context.Context, _ []*schema.Message, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
+func (BaseMiddleware) ModifyModelRequest(_ context.Context, _ []*messagepkg.Message, messages []*messagepkg.Message, _ *types.GraphState) ([]*messagepkg.Message, error) {
 	return messages, nil
 }
 
-func (BaseMiddleware) ModifyModelResponse(_ context.Context, message *schema.Message, _ *types.GraphState) (*schema.Message, error) {
+func (BaseMiddleware) ModifyModelResponse(_ context.Context, message *messagepkg.Message, _ *types.GraphState) (*messagepkg.Message, error) {
 	return message, nil
 }
 
-func (BaseMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schema.StreamReader[*schema.Message], _ *types.GraphState) (*schema.StreamReader[*schema.Message], error) {
+func (BaseMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schema.StreamReader[*messagepkg.Message], _ *types.GraphState) (*schema.StreamReader[*messagepkg.Message], error) {
 	return stream, nil
 }
 
@@ -56,7 +57,7 @@ type EventObserver interface {
 	Observe(context.Context, types.RuntimeEvent) error
 }
 
-type ModelHandler func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error)
+type ModelHandler func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error)
 
 type ModelMiddleware interface {
 	WrapModel(ModelHandler) ModelHandler

@@ -12,6 +12,7 @@ import (
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	inputpkg "eino-cli/deepagent/protocol/input"
 	runpkg "eino-cli/deepagent/run"
 
@@ -30,8 +31,8 @@ func TestThread_ApprovalCancellationRestoresInputOwnershipWithoutReplay(t *testi
 	events := make(chan runpkg.Event, 32)
 	first := newTestThread("1", cfg, events, ThreadOptions{})
 	defer first.Close(ctx)
-	message := schema.UserMessage("execute once")
-	attachAttribute(message, MessageAttribute{MessageID: "101"})
+	message := messagepkg.NewUserMessage("execute once")
+	message.MessageID = "101"
 	started, err := first.SubmitInput(ctx, message, WithMessageID("101"))
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +92,7 @@ func TestThread_ApprovalCancellationRestoresInputOwnershipWithoutReplay(t *testi
 func TestThread_UnknownToolOutcomeEndsOriginalRunWithoutReplayingInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	input := types.Input{MessageID: "2000000000000000664", Message: schema.UserMessage("write once"), Meta: map[string]string{"sender": "user"}}
+	input := types.Input{MessageID: "2000000000000000664", Message: messagepkg.NewUserMessage("write once"), Meta: map[string]string{"sender": "user"}}
 	state := &types.RunState{
 		Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhaseBlocked,
 		Consumed: []types.Input{input}, PreparedInputs: 1,
@@ -162,7 +163,7 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			if initHistoryErr != nil {
 				t.Fatal(initHistoryErr)
 			}
-			started, err := first.SubmitInput(ctx, schema.UserMessage("ask"))
+			started, err := first.SubmitInput(ctx, messagepkg.NewUserMessage("ask"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -287,7 +288,7 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			if firstInitHistoryErr != nil {
 				t.Fatal(firstInitHistoryErr)
 			}
-			run, err := first.SubmitInput(ctx, schema.UserMessage("ask me"))
+			run, err := first.SubmitInput(ctx, messagepkg.NewUserMessage("ask me"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -296,7 +297,7 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			pending, err := first.SubmitInput(ctx, schema.UserMessage("pending question"), WithInputMeta(map[string]string{"MessageID": "pending-id"}))
+			pending, err := first.SubmitInput(ctx, messagepkg.NewUserMessage("pending question"), WithInputMeta(map[string]string{"MessageID": "pending-id"}))
 			if err != nil || pending.RunID != run.RunID {
 				t.Fatalf("pending=%+v err=%v", pending, err)
 			}
@@ -389,7 +390,7 @@ func TestThread_CancelPersistsAcceptedPendingBeforeFinalEventAndWait(t *testing.
 			if initHistoryErr != nil {
 				t.Fatal(initHistoryErr)
 			}
-			first, err := thread.SubmitInput(runCtx, schema.UserMessage("first"))
+			first, err := thread.SubmitInput(runCtx, messagepkg.NewUserMessage("first"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -398,7 +399,7 @@ func TestThread_CancelPersistsAcceptedPendingBeforeFinalEventAndWait(t *testing.
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			next, err := thread.SubmitInput(runCtx, schema.UserMessage("accepted pending"), WithInputMeta(map[string]string{"message_id": "pending-id"}))
+			next, err := thread.SubmitInput(runCtx, messagepkg.NewUserMessage("accepted pending"), WithInputMeta(map[string]string{"message_id": "pending-id"}))
 			if err != nil || next.RunID != first.RunID {
 				t.Fatalf("next=%+v err=%v", next, err)
 			}

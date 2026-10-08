@@ -4,7 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/cloudwego/eino/components/model"
+	messagepkg "eino-cli/deepagent/message"
+
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -15,20 +16,20 @@ type RuntimeEvent struct {
 	Data     any
 }
 type ToolChunkSink func(context.Context, ToolCall, string) error
-type ModelChunkSink func(context.Context, *schema.Message) error
+type ModelChunkSink func(context.Context, *messagepkg.Message) error
 
 // Event payloads are shared by graph producers and the thread event stream.
 type LLMTokenChunk struct {
-	Message       *schema.Message `json:"-"`
+	Message       *messagepkg.Message `json:"-"`
 	Text          string
 	ReasoningText string
 	LLMResponseID string
 }
 type LLMEnd struct {
-	model.CallbackOutput
+	Message       *messagepkg.Message
 	LLMResponseID string
 }
-type LLMRequestingPayload = model.CallbackInput
+type LLMRequestingPayload struct{ Messages []*messagepkg.Message }
 type ToolStartPayload struct {
 	Name          string
 	CallID        string

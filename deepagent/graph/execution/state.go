@@ -2,21 +2,26 @@ package execution
 
 import (
 	"context"
-	"eino-cli/deepagent/graph/types"
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
+
 	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
 )
 
-func (graph *Graph) newRunState(inputMessages []*schema.Message, runOptions RunOptions) *types.RunState {
+func (graph *Graph) newRunState(inputMessages []*messagepkg.Message, runOptions RunOptions) *types.RunState {
 	runState := &types.RunState{Version: 1, ThreadID: graph.config.ThreadID, RunID: graph.runID, AgentName: graph.config.Name, Depth: graph.config.Depth, Phase: types.PhasePreparing}
 	for i, message := range inputMessages {
 		if message != nil {
-			consumedInput := types.Input{Message: message}
+			copy := *message
+			copy.ThreadID, copy.RunID = graph.config.ThreadID, graph.runID
+			consumedInput := types.Input{MessageID: copy.MessageID, Message: &copy}
 			if i < len(runOptions.InputIDs) {
 				consumedInput.MessageID = runOptions.InputIDs[i]
+				consumedInput.Message.MessageID = consumedInput.MessageID
 			}
 			if i < len(runOptions.InputMeta) {
 				consumedInput.Meta = runOptions.InputMeta[i]
@@ -96,7 +101,7 @@ func (graph *Graph) restoreChildConversation(ctx context.Context, runState *type
 	if !ok {
 		return nil
 	}
-	var historyMessages []*schema.Message
+	var historyMessages []*messagepkg.Message
 	err := json.Unmarshal(historyJSON, &historyMessages)
 	if err != nil {
 		return err

@@ -14,6 +14,7 @@ import (
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -32,7 +33,7 @@ func TestCheckpoint_PartialBatchPreservesBlockedAndPendingStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -101,7 +102,7 @@ func TestRun_ResumeContinuesGraphAndModelBudgets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+			_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 			info, ok := compose.ExtractInterruptInfo(err)
 			if !ok {
 				t.Fatalf("initial run did not interrupt: %v", err)
@@ -145,7 +146,7 @@ func TestRun_NewAgentsGenerateDistinctRunIDs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+		_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +171,7 @@ func TestCheckpoint_AutomaticRunIdentityRestoresOnNewAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -224,7 +225,7 @@ func TestCheckpoint_ForceNewRunDoesNotReuseSuspendedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("old")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("old")}, WithCheckpointID("checkpoint"))
 	_, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -236,7 +237,7 @@ func TestCheckpoint_ForceNewRunDoesNotReuseSuspendedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("new")}, WithCheckpointID("checkpoint"), WithForceNewRun())
+	out, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("new")}, WithCheckpointID("checkpoint"), WithForceNewRun())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +256,7 @@ func TestCheckpoint_ForceInitialSaveFailureDoesNotExecuteOrOverwriteOldSnapshot(
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("new")}, WithCheckpointID("checkpoint"), WithForceNewRun())
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("new")}, WithCheckpointID("checkpoint"), WithForceNewRun())
 	if err == nil || chatModel.calls != 0 || !bytes.Equal(store.values["checkpoint"], old) {
 		t.Fatalf("failed force initialization changed state: err=%v models=%d snapshot=%q", err, chatModel.calls, store.values["checkpoint"])
 	}
@@ -297,7 +298,7 @@ func TestCheckpoint_FreshRunCreatesCursorAndFencesBeforeSideEffect(t *testing.T)
 				t.Fatal(err)
 			}
 			defer graph.Close(ctx)
-			_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, opts...)
+			_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, opts...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -344,7 +345,7 @@ func TestCheckpoint_TerminalStorageFailureDoesNotPublishSuccess(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer first.Close(ctx)
-			_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+			_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 			info, ok := compose.ExtractInterruptInfo(err)
 			if !ok {
 				t.Fatal(err)
@@ -407,7 +408,7 @@ func TestCheckpoint_FailedOrCanceledResumeCannotReplayApprovedTool(t *testing.T)
 				t.Fatal(err)
 			}
 			defer first.Close(ctx)
-			_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+			_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 			info, ok := compose.ExtractInterruptInfo(err)
 			if !ok {
 				t.Fatal(err)
@@ -463,7 +464,7 @@ func TestCheckpoint_PendingApprovalSurvivesPolicyChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer first.Close(ctx)
-	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
 		t.Fatalf("interrupt=%+v err=%v", info, err)
@@ -508,7 +509,7 @@ func TestCheckpoint_PendingWriteFailureCannotLoseApprovalObligation(t *testing.T
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	if !errors.Is(err, store.failure) {
 		t.Fatalf("failure lost: %v", err)
 	}
@@ -562,7 +563,7 @@ func TestCheckpoint_CompletedApprovalRemovedBeforeNextInterruptSnapshot(t *testi
 					t.Fatal(err)
 				}
 				defer graph.Close(ctx)
-				_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+				_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 				info, ok := compose.ExtractInterruptInfo(err)
 				if !ok || len(info.InterruptContexts) != 1 {
 					t.Fatalf("first interrupt: %v", err)
@@ -644,7 +645,7 @@ func TestRun_FollowUpArgumentAliasesPreserveQuestionAndResume(t *testing.T) {
 				{schema.AssistantMessage("", []schema.ToolCall{{ID: "question", Function: schema.FunctionCall{Name: "ask_user", Arguments: raw}}})},
 				{schema.AssistantMessage("done", nil)},
 			}}
-			var observed *schema.Message
+			var observed *messagepkg.Message
 			emit := func(_ context.Context, e types.RuntimeEvent) error {
 				if e.Kind == "llm_end" {
 					payload := e.Data.(types.LLMEnd)
@@ -658,7 +659,7 @@ func TestRun_FollowUpArgumentAliasesPreserveQuestionAndResume(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer graph.Close(ctx)
-			_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+			_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 			info, ok := compose.ExtractInterruptInfo(err)
 			if !ok || len(info.InterruptContexts) != 1 {
 				t.Fatalf("interrupt=%+v err=%v", info, err)
@@ -709,7 +710,7 @@ func TestCheckpoint_ExecutionFencePreventsCrashReplayAndGatesTool(t *testing.T) 
 				t.Fatal(err)
 			}
 			defer first.Close(ctx)
-			_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+			_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 			info, ok := compose.ExtractInterruptInfo(err)
 			if !ok {
 				t.Fatal(err)
@@ -774,7 +775,7 @@ func TestCheckpoint_ParallelFencesRetainEveryCall(t *testing.T) {
 		}
 		return nil
 	}
-	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	_, ok := compose.ExtractInterruptInfo(err)
 	if !ok || counter.count.Load() != 0 {
 		t.Fatalf("initial interrupt: %v", err)
@@ -834,7 +835,7 @@ func TestCheckpoint_DisappearingRestoredSnapshotPreventsToolExecution(t *testing
 		t.Fatal(err)
 	}
 	defer first.Close(ctx)
-	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)

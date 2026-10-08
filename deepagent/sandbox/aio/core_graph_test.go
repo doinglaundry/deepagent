@@ -18,6 +18,7 @@ import (
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -119,7 +120,7 @@ func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer agent.Close(context.Background())
-			result, err := agent.Invoke(context.Background(), []*schema.Message{schema.UserMessage("inspect file")})
+			result, err := agent.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("inspect file")})
 			if err != nil || result.Content != "done" {
 				t.Fatalf("result=%v err=%v", result, err)
 			}

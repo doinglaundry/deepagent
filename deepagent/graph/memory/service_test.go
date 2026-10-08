@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cloudwego/eino/schema"
+	messagepkg "eino-cli/deepagent/message"
 )
 
 func TestService_OneInstanceKeepsScopesSeparate(t *testing.T) {
@@ -19,7 +19,7 @@ func TestService_OneInstanceKeepsScopesSeparate(t *testing.T) {
 			t.Fatal(err)
 		}
 		ctx := context.Background()
-		observeErr := service.Observe(ctx, "user/one", "same-thread", []*schema.Message{schema.UserMessage("fact")})
+		observeErr := service.Observe(ctx, "user/one", "same-thread", []*messagepkg.Message{messagepkg.NewUserMessage("fact")})
 		if observeErr != nil {
 			t.Fatal(observeErr)
 		}

@@ -10,8 +10,7 @@ import (
 
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	skillspkg "eino-cli/deepagent/graph/skills"
-
-	"github.com/cloudwego/eino/schema"
+	messagepkg "eino-cli/deepagent/message"
 )
 
 type projectInstructions struct {
@@ -25,7 +24,7 @@ func NewProjectInstructions(filesystem filesystempkg.Filesystem) Middleware {
 
 func (*projectInstructions) GetName() string { return "project_instructions" }
 
-func (projectInstructions *projectInstructions) BuildPrompt(ctx context.Context) ([]*schema.Message, error) {
+func (projectInstructions *projectInstructions) BuildPrompt(ctx context.Context) ([]*messagepkg.Message, error) {
 	// Read the complete bounded backend file rather than the tool's default
 	// 2000-line window; the requested section may occur near the end.
 	lineLimit := int(^uint(0) >> 1)
@@ -40,7 +39,7 @@ func (projectInstructions *projectInstructions) BuildPrompt(ctx context.Context)
 	if disciplineInstructions == "" {
 		return nil, nil
 	}
-	return []*schema.Message{schema.SystemMessage("<agent_discipline>\n" + disciplineInstructions + "\n</agent_discipline>")}, nil
+	return []*messagepkg.Message{messagepkg.NewSystemMessage("<agent_discipline>\n" + disciplineInstructions + "\n</agent_discipline>")}, nil
 }
 
 func extractProjectInstructionSection(instructionsText, sectionTitle string) string {
@@ -74,7 +73,7 @@ func NewSkillMiddleware(skillLoader skillspkg.SkillLoader) Middleware {
 
 func (skillMiddleware *SkillMiddleware) GetName() string { return "skill" }
 
-func (skillMiddleware *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*schema.Message, error) {
+func (skillMiddleware *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*messagepkg.Message, error) {
 
 	if skillMiddleware == nil || skillMiddleware.skillLoader == nil {
 		return nil, nil
@@ -98,5 +97,5 @@ func (skillMiddleware *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*sch
 	for _, skill := range validSkills {
 		fmt.Fprintf(&skillPrompt, "- %s: %s (source: %s)\n", skill.Name, skill.Description, skill.Path)
 	}
-	return []*schema.Message{schema.SystemMessage(skillPrompt.String())}, nil
+	return []*messagepkg.Message{messagepkg.NewSystemMessage(skillPrompt.String())}, nil
 }

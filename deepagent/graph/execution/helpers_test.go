@@ -18,6 +18,7 @@ import (
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -120,7 +121,7 @@ type inputEventConversation struct {
 	failure error
 }
 
-func (inputEventConversation *inputEventConversation) AddHistory(ctx context.Context, run string, messages ...*schema.Message) error {
+func (inputEventConversation *inputEventConversation) AddHistory(ctx context.Context, run string, messages ...*messagepkg.Message) error {
 	if inputEventConversation.failure != nil && messages[0].Content == "second" {
 		return inputEventConversation.failure
 	}
@@ -291,7 +292,7 @@ func (orderedMiddleware *orderedMiddleware) FinishRun(context.Context, *types.Ru
 }
 
 func (orderedMiddleware *orderedMiddleware) WrapModel(next middleware.ModelHandler) middleware.ModelHandler {
-	return func(ctx context.Context, input []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	return func(ctx context.Context, input []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
 		*orderedMiddleware.order = append(*orderedMiddleware.order, "model:"+orderedMiddleware.name)
 		return next(ctx, input)
 	}
@@ -315,17 +316,17 @@ type modelTransformMiddleware struct {
 	failure       error
 }
 
-func (modelTransformMiddleware *modelTransformMiddleware) ModifyModelRequest(_ context.Context, _ []*schema.Message, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
+func (modelTransformMiddleware *modelTransformMiddleware) ModifyModelRequest(_ context.Context, _ []*messagepkg.Message, messages []*messagepkg.Message, _ *types.GraphState) ([]*messagepkg.Message, error) {
 	modelTransformMiddleware.before++
 	if modelTransformMiddleware.failure != nil {
 		return nil, modelTransformMiddleware.failure
 	}
-	return append([]*schema.Message{schema.SystemMessage("middleware prompt")}, messages...), nil
+	return append([]*messagepkg.Message{messagepkg.NewSystemMessage("middleware prompt")}, messages...), nil
 }
 
-func (modelTransformMiddleware *modelTransformMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schema.StreamReader[*schema.Message], _ *types.GraphState) (*schema.StreamReader[*schema.Message], error) {
+func (modelTransformMiddleware *modelTransformMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schema.StreamReader[*messagepkg.Message], _ *types.GraphState) (*schema.StreamReader[*messagepkg.Message], error) {
 	modelTransformMiddleware.after++
-	return schema.StreamReaderWithConvert(stream, func(message *schema.Message) (*schema.Message, error) {
+	return schema.StreamReaderWithConvert(stream, func(message *messagepkg.Message) (*messagepkg.Message, error) {
 		copy := *message
 		copy.Content = "rewritten"
 		return &copy, nil
@@ -434,11 +435,11 @@ type promptContractMiddleware struct {
 
 func (promptContractMiddleware *promptContractMiddleware) GetName() string { return "prompt_contract" }
 
-func (promptContractMiddleware *promptContractMiddleware) BuildPrompt(context.Context) ([]*schema.Message, error) {
-	return []*schema.Message{schema.SystemMessage("instructions")}, nil
+func (promptContractMiddleware *promptContractMiddleware) BuildPrompt(context.Context) ([]*messagepkg.Message, error) {
+	return []*messagepkg.Message{messagepkg.NewSystemMessage("instructions")}, nil
 }
 
-func (promptContractMiddleware *promptContractMiddleware) ModifyModelRequest(_ context.Context, initial, messages []*schema.Message, _ *types.GraphState) ([]*schema.Message, error) {
+func (promptContractMiddleware *promptContractMiddleware) ModifyModelRequest(_ context.Context, initial, messages []*messagepkg.Message, _ *types.GraphState) ([]*messagepkg.Message, error) {
 	if len(initial) != 1 || initial[0].Role != schema.System {
 		return nil, errors.New("initialContext no longer contains middleware prompts")
 	}
@@ -539,14 +540,14 @@ func (*cancelableCheckpointRead) Set(context.Context, string, []byte) error {
 
 type streamErrorMiddleware struct {
 	middleware.BaseMiddleware
-	reader *schema.StreamReader[*schema.Message]
+	reader *schema.StreamReader[*messagepkg.Message]
 	err    error
 }
 
 func (*streamErrorMiddleware) GetName() string { return "stream_open_error" }
 
 func (streamErrorMiddleware *streamErrorMiddleware) WrapModel(middleware.ModelHandler) middleware.ModelHandler {
-	return func(context.Context, []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	return func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
 		return streamErrorMiddleware.reader, streamErrorMiddleware.err
 	}
 }
@@ -576,7 +577,7 @@ func testChildApprovalResume(t *testing.T, allow bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("delegate")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("delegate")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
 		t.Fatalf("missing child approval: %v %+v", err, info)
@@ -711,7 +712,7 @@ type boundedChildRunner struct {
 	release      chan struct{}
 }
 
-func (boundedChildRunner *boundedChildRunner) Run(ctx context.Context, req tools.ChildRequest, _ types.ModelChunkSink) (*schema.Message, error) {
+func (boundedChildRunner *boundedChildRunner) Run(ctx context.Context, req tools.ChildRequest, _ types.ModelChunkSink) (*messagepkg.Message, error) {
 	boundedChildRunner.mu.Lock()
 	boundedChildRunner.active++
 	if boundedChildRunner.active > boundedChildRunner.peak {
@@ -722,7 +723,7 @@ func (boundedChildRunner *boundedChildRunner) Run(ctx context.Context, req tools
 	boundedChildRunner.started <- req.Prompt
 	select {
 	case <-boundedChildRunner.release:
-		return schema.AssistantMessage(req.Prompt, nil), nil
+		return messagepkg.NewAssistantMessage(req.Prompt, nil), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

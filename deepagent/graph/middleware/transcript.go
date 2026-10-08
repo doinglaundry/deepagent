@@ -10,8 +10,7 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/types"
-
-	"github.com/cloudwego/eino/schema"
+	messagepkg "eino-cli/deepagent/message"
 )
 
 // Transcript opens an independently owned writer per run. The caller chooses
@@ -70,14 +69,14 @@ func (transcript *Transcript) Close(context.Context) error {
 // The existing time/role/content/tools fields remain readable by transcript
 // consumers. Extra identity and reasoning fields preserve useful source data.
 type transcriptMessage struct {
-	Time       time.Time       `json:"time"`
-	Role       string          `json:"role"`
-	Content    string          `json:"content,omitempty"`
-	Tools      []string        `json:"tools,omitempty"`
-	Sequence   uint64          `json:"sequence"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	Reasoning  string          `json:"reasoning,omitempty"`
-	Message    *schema.Message `json:"message"`
+	Time       time.Time           `json:"time"`
+	Role       string              `json:"role"`
+	Content    string              `json:"content,omitempty"`
+	Tools      []string            `json:"tools,omitempty"`
+	Sequence   uint64              `json:"sequence"`
+	ToolCallID string              `json:"tool_call_id,omitempty"`
+	Reasoning  string              `json:"reasoning,omitempty"`
+	Message    *messagepkg.Message `json:"message"`
 }
 
 func (transcript *Transcript) Observe(_ context.Context, runtimeEvent types.RuntimeEvent) error {
@@ -86,7 +85,7 @@ func (transcript *Transcript) Observe(_ context.Context, runtimeEvent types.Runt
 	if transcript.writer == nil {
 		return nil
 	}
-	var messages []*schema.Message
+	var messages []*messagepkg.Message
 	var isSnapshot bool
 	switch runtimeEvent.Kind {
 	case "llm_requesting":
@@ -95,11 +94,11 @@ func (transcript *Transcript) Observe(_ context.Context, runtimeEvent types.Runt
 		isSnapshot = true
 	case "llm_end":
 		eventPayload, _ := runtimeEvent.Data.(types.LLMEnd)
-		messages = []*schema.Message{eventPayload.Message}
+		messages = []*messagepkg.Message{eventPayload.Message}
 	case "tool_end":
 		eventPayload, ok := runtimeEvent.Data.(types.ToolEndPayload)
 		if ok {
-			messages = []*schema.Message{schema.ToolMessage(eventPayload.Result, eventPayload.CallID)}
+			messages = []*messagepkg.Message{messagepkg.NewToolMessage(eventPayload.Result, eventPayload.CallID)}
 			if len(eventPayload.MultiContent) > 0 {
 				messages[0].Content = ""
 				messages[0].UserInputMultiContent = eventPayload.MultiContent
@@ -110,7 +109,8 @@ func (transcript *Transcript) Observe(_ context.Context, runtimeEvent types.Runt
 	}
 	messageHashes := make([][32]byte, len(messages))
 	for i, message := range messages {
-		encodedMessage, err := json.Marshal(message)
+		// 事件与历史中的同一内容可能有不同业务元数据；元数据不参与重复判断。
+		encodedMessage, err := json.Marshal(messagepkg.ToEino(message))
 		if err != nil {
 			return err
 		}

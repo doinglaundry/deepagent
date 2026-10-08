@@ -11,8 +11,7 @@ import (
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/types"
-
-	"github.com/cloudwego/eino/schema"
+	messagepkg "eino-cli/deepagent/message"
 )
 
 // Run owns the identity, accepted inputs and completion of one execution.
@@ -39,7 +38,7 @@ func New(ctx context.Context, id string, cfg Config) (*Run, context.Context) {
 }
 
 // Execute completes only after cleanup and Thread's terminal output are delivered.
-func (r *Run) Execute(ctx context.Context) (result *schema.Message, err error) {
+func (r *Run) Execute(ctx context.Context) (result *messagepkg.Message, err error) {
 	r.mu.Lock()
 	if r.started {
 		r.mu.Unlock()
@@ -91,7 +90,7 @@ func (r *Run) Execute(ctx context.Context) (result *schema.Message, err error) {
 		r.cancel(context.Canceled)
 	}
 	inputs := r.Inputs()
-	messages := make([]*schema.Message, 0, len(inputs))
+	messages := make([]*messagepkg.Message, 0, len(inputs))
 	options := execution.RunOptions{}
 	if r.config.Resume != nil {
 		options = *r.config.Resume
@@ -103,7 +102,7 @@ func (r *Run) Execute(ctx context.Context) (result *schema.Message, err error) {
 		options.InputIDs = append(options.InputIDs, input.MessageID)
 		options.InputMeta = append(options.InputMeta, input.Meta)
 	}
-	var first *schema.Message
+	var first *messagepkg.Message
 	if len(messages) > 0 {
 		first = messages[0]
 	}

@@ -11,6 +11,7 @@ import (
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	eventpkg "eino-cli/deepagent/protocol/event"
 	inputpkg "eino-cli/deepagent/protocol/input"
 	runpkg "eino-cli/deepagent/run"
@@ -19,12 +20,12 @@ import (
 )
 
 func TestThreadAdapter_InputConsumedPreservesIndividualIdentityAndMedia(t *testing.T) {
-	first, second := schema.UserMessage("first"), schema.UserMessage("describe")
-	attachAttribute(first, MessageAttribute{MessageID: "one"})
-	attachAttribute(second, MessageAttribute{MessageID: "two", SenderID: "person", SenderType: "user"})
+	first, second := messagepkg.NewUserMessage("first"), messagepkg.NewUserMessage("describe")
+	first.MessageID = "one"
+	second.MessageID, second.SenderID, second.SenderType = "two", "person", "user"
 	url := "https://example.test/image.png"
 	second.UserInputMultiContent = []schema.MessageInputPart{{Type: schema.ChatMessagePartTypeText, Text: "describe"}, {Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{URL: &url, MIMEType: "image/png"}}}}
-	kind, payload, err := agentEventPayloadForOutput(runpkg.Event{Type: runpkg.EventInputConsumed, Payload: types.Input{Message: second}, ConsumedInputs: []*schema.Message{first, second}}, nil)
+	kind, payload, err := agentEventPayloadForOutput(runpkg.Event{Type: runpkg.EventInputConsumed, Payload: types.Input{Message: second}, ConsumedInputs: []*messagepkg.Message{first, second}}, nil)
 	if err != nil || kind != eventpkg.EventTypeInputConsumed {
 		t.Fatalf("kind=%s err=%v", kind, err)
 	}
@@ -142,7 +143,7 @@ func TestThreadExternalInterruptTimeoutRetainsMetadata(t *testing.T) {
 	}}
 	events := make(chan runpkg.Event, 32)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: &legacyParityMemoryCheckpoints{}}}, events, ThreadOptions{})
-	accepted, err := thread.SubmitInput(ctx, schema.UserMessage("wait"))
+	accepted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("wait"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +313,7 @@ func TestThread_CancelDeliversFinalEventsBeforeInactive(t *testing.T) {
 	m := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
 	events := make(chan runpkg.Event)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, events, ThreadOptions{})
-	accepted, err := thread.SubmitInput(runCtx, schema.UserMessage("go"))
+	accepted, err := thread.SubmitInput(runCtx, messagepkg.NewUserMessage("go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +386,7 @@ func TestThread_CancellationKeepsHistoryAndThreadUsable(t *testing.T) {
 	defer cancel()
 	m := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
 	th := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, make(chan runpkg.Event, 100), ThreadOptions{})
-	first, err := th.SubmitInput(runCtx, schema.UserMessage("original"))
+	first, err := th.SubmitInput(runCtx, messagepkg.NewUserMessage("original"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +400,7 @@ func TestThread_CancellationKeepsHistoryAndThreadUsable(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel=%v", err)
 	}
-	second, err := th.SubmitInput(ctx, schema.UserMessage("again"))
+	second, err := th.SubmitInput(ctx, messagepkg.NewUserMessage("again"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +418,7 @@ func TestThread_CloseCancelsActiveRun(t *testing.T) {
 	defer cancel()
 	m := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, make(chan runpkg.Event, 16), ThreadOptions{})
-	accepted, err := thread.SubmitInput(ctx, schema.UserMessage("run"))
+	accepted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("run"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +430,7 @@ func TestThread_CloseCancelsActiveRun(t *testing.T) {
 	if thread.CurrentRun() != nil || accepted.RunHandle.IsActive() {
 		t.Fatal("close returned with active run")
 	}
-	_, submitInputErr := thread.SubmitInput(ctx, schema.UserMessage("late"))
+	_, submitInputErr := thread.SubmitInput(ctx, messagepkg.NewUserMessage("late"))
 	if submitInputErr == nil {
 		t.Fatal("closed thread accepted input")
 	}
@@ -466,7 +467,7 @@ func TestThreadAdapter_ToolFailureRemainsVisibleInPersistedPayload(t *testing.T)
 func TestThreadOutput_ModelRequestPublishesOnlyThinkingPhase(t *testing.T) {
 	output, err := workerEvent("session", "thread", runpkg.Event{
 		ID: "event", RunID: "run", Type: runpkg.EventLLMRequesting,
-		Payload: types.LLMRequestingPayload{Messages: []*schema.Message{schema.UserMessage("private request")}},
+		Payload: types.LLMRequestingPayload{Messages: []*messagepkg.Message{messagepkg.NewUserMessage("private request")}},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

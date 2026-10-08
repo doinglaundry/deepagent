@@ -2,16 +2,18 @@ package execution
 
 import (
 	"context"
+	"errors"
+	"sync"
+
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
-	"errors"
+	messagepkg "eino-cli/deepagent/message"
+
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
-	"sync"
 )
 
 // Graph owns Eino nodes, model/tool execution and checkpoint state.
@@ -27,7 +29,7 @@ type Graph struct {
 	middlewares       []middleware.Middleware
 	graphState        *types.GraphState
 	config            Config
-	runnable          compose.Runnable[*types.RunState, *schema.Message]
+	runnable          compose.Runnable[*types.RunState, *messagepkg.Message]
 	conversation      Conversation
 	toolSet           *tools.ToolSet
 	toolExecutor      *toolExecutor
@@ -83,7 +85,7 @@ func New(ctx context.Context, opts ...Option) (*Graph, error) {
 }
 
 // Invoke executes the Eino Graph once. Resume restores its saved local state.
-func (graph *Graph) Invoke(ctx context.Context, input []*schema.Message, opts ...RunOptionFunc) (result *schema.Message, err error) {
+func (graph *Graph) Invoke(ctx context.Context, input []*messagepkg.Message, opts ...RunOptionFunc) (result *messagepkg.Message, err error) {
 	ctx, err = graph.beginInvoke(ctx)
 	if err != nil {
 		return nil, err

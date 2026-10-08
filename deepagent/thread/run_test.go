@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/execution"
+	messagepkg "eino-cli/deepagent/message"
 	runpkg "eino-cli/deepagent/run"
 
 	"github.com/cloudwego/eino/schema"
@@ -17,7 +18,7 @@ func TestRunConfigurationOnlyChangesWhenStartingRun(t *testing.T) {
 	defer cancel()
 	model := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, make(chan runpkg.Event, 100), ThreadOptions{})
-	first, err := thread.SubmitInput(ctx, schema.UserMessage("first"), WithPlan(true))
+	first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithPlan(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +28,7 @@ func TestRunConfigurationOnlyChangesWhenStartingRun(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	providerCalled := false
-	second, err := thread.SubmitInput(ctx, schema.UserMessage("pending"), WithPlan(false), WithRunConfigProvider(func(context.Context, RunStartRequest) (*runpkg.Config, error) {
+	second, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("pending"), WithPlan(false), WithRunConfigProvider(func(context.Context, RunStartRequest) (*runpkg.Config, error) {
 		providerCalled = true
 		return nil, nil
 	}))
@@ -42,7 +43,7 @@ func TestRunConfigurationOnlyChangesWhenStartingRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := thread.SubmitInput(ctx, schema.UserMessage("next"), WithPlan(false))
+	third, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("next"), WithPlan(false))
 	if err != nil {
 		t.Fatal(err)
 	}

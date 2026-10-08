@@ -2,20 +2,18 @@ package conversation
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
-	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 	"eino-cli/deepagent/utils"
-	"github.com/cloudwego/eino/schema"
 )
 
 type Option func(*Conversation)
 
-func WithEntryID(provider ConversationEntryIDProvider) Option {
-	return func(conversation *Conversation) { conversation.entryID = provider }
+func WithMessageID(provider MessageIDProvider) Option {
+	return func(conversation *Conversation) { conversation.messageID = provider }
 }
 func WithContextWindow(window int64) Option {
 	return func(conversation *Conversation) { conversation.contextUsage.ContextWindow = window }
@@ -25,13 +23,12 @@ func WithContextWindow(window int64) Option {
 type Conversation struct {
 	mu                     sync.Mutex
 	threadID               string
-	messages               []*schema.Message
-	seenMessageIDs         map[int64]struct{}
+	messages               []*messagepkg.Message
+	seenMessageIDs         map[string]struct{}
 	historySequence        int64
-	version                uint64
 	conversationRepository ConversationRepository
 	compactor              CompactionStrategy
-	entryID                ConversationEntryIDProvider
+	messageID              MessageIDProvider
 	tokenCounter           TokenCounter
 	contextUsage           types.ContextUsageSnapshot
 	runUsage               types.Usage
@@ -41,7 +38,7 @@ func New(threadID string, conversationRepository ConversationRepository, compact
 	if counter == nil {
 		counter = utils.SimpleTokenCounter
 	}
-	conversation := &Conversation{threadID: threadID, conversationRepository: conversationRepository, compactor: compactor, tokenCounter: counter, seenMessageIDs: make(map[int64]struct{})}
+	conversation := &Conversation{threadID: threadID, conversationRepository: conversationRepository, compactor: compactor, tokenCounter: counter, seenMessageIDs: make(map[string]struct{})}
 	conversation.recomputeContextUsage()
 	for _, opt := range opts {
 		if opt != nil {
@@ -50,66 +47,77 @@ func New(threadID string, conversationRepository ConversationRepository, compact
 	}
 	return conversation
 }
-func (conversation *Conversation) AddHistory(ctx context.Context, runID string, messages ...*schema.Message) error {
+func (conversation *Conversation) AddHistory(ctx context.Context, runID string, messages ...*messagepkg.Message) error {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
 	for _, message := range messages {
 		if message == nil {
 			continue
 		}
-		conversationEntry, err := conversation.buildConversationEntry(ctx, runID, message, dalmodel.ConversationEntryMessage)
+		// 输入也会被 RunHandle 并发读取，不能在原对象上补写持久化元数据。
+		copy := *message
+		message = &copy
+		err := conversation.initializeMessage(ctx, runID, message)
 		if err != nil {
 			return err
 		}
-		_, exists := conversation.seenMessageIDs[conversationEntry.MessageID]
-		if conversationEntry.MessageID > 0 && exists {
+		_, exists := conversation.seenMessageIDs[message.MessageID]
+		if message.MessageID != "" && exists {
 			continue
 		}
 		if conversation.conversationRepository != nil {
-			err = conversation.conversationRepository.Append(ctx, conversationEntry)
+			err = conversation.conversationRepository.AppendMessage(ctx, message)
 			if err != nil {
 				return err
 			}
 		}
-		if conversationEntry.MessageID > 0 {
-			conversation.seenMessageIDs[conversationEntry.MessageID] = struct{}{}
+		if message.MessageID != "" {
+			conversation.seenMessageIDs[message.MessageID] = struct{}{}
 		}
+
 		conversation.messages = append(conversation.messages, message)
-		conversation.version++
 		conversation.addMessageUsage(message)
-		conversation.historySequence = max(conversation.historySequence, conversationEntry.Seq)
+		conversation.historySequence = max(conversation.historySequence, message.Seq)
 	}
 	return nil
 }
-func (conversation *Conversation) GetHistory(context.Context) []*schema.Message {
+func (conversation *Conversation) GetHistory(context.Context) []*messagepkg.Message {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	return append([]*schema.Message(nil), conversation.messages...)
+	return append([]*messagepkg.Message(nil), conversation.messages...)
 }
-func (conversation *Conversation) BuildRequest(ctx context.Context, prompts []*schema.Message) ([]*schema.Message, error) {
+func (conversation *Conversation) BuildRequest(ctx context.Context, prompts []*messagepkg.Message) ([]*messagepkg.Message, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, err
 	}
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	request := make([]*schema.Message, 0, len(prompts)+len(conversation.messages))
+	request := make([]*messagepkg.Message, 0, len(prompts)+len(conversation.messages))
 	request = append(request, prompts...)
 	return append(request, conversation.messages...), nil
 }
-func (conversation *Conversation) buildConversationEntry(ctx context.Context, runID string, message *schema.Message, kind dalmodel.ConversationEntryType) (*dalmodel.ConversationEntry, error) {
+
+// 消息身份只分配一次；重投、checkpoint 和数据库使用同一个 MessageID。
+func (conversation *Conversation) initializeMessage(ctx context.Context, runID string, message *messagepkg.Message) error {
 	err := ctx.Err()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	conversationEntry := &dalmodel.ConversationEntry{ThreadID: conversation.threadID, RunID: runID, Type: kind, Message: message, CreatedAt: time.Now().Unix()}
-	if conversation.entryID != nil {
-		conversationEntry.MessageID, err = conversation.entryID(ctx, conversation.threadID, runID, message)
+	if message.MessageID == "" && conversation.messageID != nil {
+		message.MessageID, err = conversation.messageID(ctx, message)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return conversationEntry, nil
+	message.ThreadID = conversation.threadID
+	if message.RunID == "" {
+		message.RunID = runID
+	}
+	if message.CreatedAt == 0 {
+		message.CreatedAt = time.Now().Unix()
+	}
+	return nil
 }
 func (conversation *Conversation) ReloadHistory(ctx context.Context) error {
 	conversation.mu.Lock()
@@ -117,48 +125,17 @@ func (conversation *Conversation) ReloadHistory(ctx context.Context) error {
 	if conversation.conversationRepository == nil {
 		return nil
 	}
-	var messages []*schema.Message
-	seenMessageIDs := make(map[int64]struct{})
-	var sequence int64
-	for {
-		conversationEntries, err := conversation.conversationRepository.LoadAfter(ctx, conversation.threadID, sequence, 200)
-		if err != nil {
-			return err
-		}
-		for _, conversationEntry := range conversationEntries {
-			if conversationEntry == nil || conversationEntry.Seq <= sequence {
-				return fmt.Errorf("history sequence must advance past %d", sequence)
-			}
-			sequence = conversationEntry.Seq
-			_, exists := seenMessageIDs[conversationEntry.MessageID]
-			if conversationEntry.MessageID > 0 && exists {
-				continue
-			}
-			if conversationEntry.MessageID > 0 {
-				seenMessageIDs[conversationEntry.MessageID] = struct{}{}
-			}
-			switch conversationEntry.Type {
-			case dalmodel.ConversationEntryMessage:
-				if conversationEntry.Message != nil {
-					messages = append(messages, conversationEntry.Message)
-				}
-			case dalmodel.ConversationEntryCompact:
-				if len(conversationEntry.CompactedMessages) == 0 || conversationEntry.CompactedMessages[0] == nil || conversationEntry.CompactedMessages[0].Role != schema.System {
-					return fmt.Errorf("compact record requires a summary and rebuilt context")
-				}
-				messages = append([]*schema.Message(nil), conversationEntry.CompactedMessages...)
-			default:
-				return fmt.Errorf("unknown history record type %q", conversationEntry.Type)
-			}
-		}
-		if len(conversationEntries) < 200 {
-			break
-		}
+	messages, messageIDs, sequence, err := conversation.conversationRepository.LoadContext(ctx, conversation.threadID)
+	if err != nil {
+		return err
+	}
+	seenMessageIDs := make(map[string]struct{}, len(messageIDs))
+	for _, messageID := range messageIDs {
+		seenMessageIDs[messageID] = struct{}{}
 	}
 	conversation.messages = messages
 	conversation.seenMessageIDs = seenMessageIDs
 	conversation.historySequence = sequence
-	conversation.version++
 	conversation.recomputeContextUsage()
 	return nil
 }

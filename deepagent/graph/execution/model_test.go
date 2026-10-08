@@ -9,6 +9,7 @@ import (
 
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
@@ -33,7 +34,7 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 		{schema.AssistantMessage("done", nil)}, {schema.AssistantMessage("new", nil)},
 	}}
 	seen := 0
-	var complete *schema.Message
+	var complete *messagepkg.Message
 	config := Config{Model: chatModel, Emit: func(_ context.Context, event types.RuntimeEvent) error {
 		if complete == nil && event.Kind == "llm_token" {
 			seen++
@@ -51,7 +52,7 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +77,7 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer next.Close(context.Background())
-	message, err := next.Invoke(context.Background(), []*schema.Message{schema.UserMessage("next")})
+	message, err := next.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("next")})
 	if err != nil || message.Content != "new" || len(message.ToolCalls) != 0 {
 		t.Fatalf("cross-stream state: message=%+v err=%v", message, err)
 	}
@@ -104,7 +105,7 @@ func TestModelStreamPropagatesStreamFailureWithoutReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if !errors.Is(err, want) || chatModel.calls != 1 {
 		t.Fatalf("stream error swallowed or replayed: err=%v calls=%d", err, chatModel.calls)
 	}
@@ -186,7 +187,7 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 			}
 			defer graph.Close(ctx)
 		}
-		_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+		_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -214,7 +215,7 @@ func TestCheckpoint_ResumeContinuesCumulativeUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -263,7 +264,7 @@ func TestRun_LegacyExtraUsageUsesConversation(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer graph.Close(context.Background())
-			_, executeErr := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+			_, executeErr := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 			if executeErr != nil {
 				t.Fatal(executeErr)
 			}
@@ -285,7 +286,7 @@ func TestRootResumeRestoresProviderContextBeforeNextModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Invoke(ctx, []*schema.Message{schema.UserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)

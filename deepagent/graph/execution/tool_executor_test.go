@@ -12,6 +12,7 @@ import (
 
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -26,7 +27,7 @@ func TestRun_ReadOnlyToolSetCannotExecuteUnclassifiedTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, err = graph.Invoke(ctx, []*schema.Message{schema.UserMessage("go")})
+	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +54,7 @@ func TestPolicy_DenyPreventsExecutionAndApproval(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+		result, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -219,7 +220,7 @@ func TestRun_ToolErrorVisibleButCancellationStopsGraph(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer graph.Close(context.Background())
-			out, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("go")})
+			out, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
 			if errors.Is(failure, context.Canceled) || errors.Is(failure, context.DeadlineExceeded) {
 				if !errors.Is(err, failure) || chatModel.calls != 1 {
 					t.Fatalf("cancellation swallowed: err=%v calls=%d", err, chatModel.calls)
@@ -264,7 +265,7 @@ func TestRun_PolicyAndExecutionReceiveModelArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	answer, err := graph.Invoke(ctx, []*schema.Message{schema.UserMessage("run")})
+	answer, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("run")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +405,7 @@ func TestRun_EnhancedToolPreservesMultimodalHistoryAndState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("show image")})
+	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show image")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +453,7 @@ func TestRun_EnhancedToolPolicyAndReturnDirect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		message, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("show image")})
+		message, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show image")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -484,7 +485,7 @@ func TestRun_EnhancedStreamPreservesTextOrderAndImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("show")})
+	output, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +521,7 @@ func TestRun_EnhancedStreamPolicyAndReturnDirect(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			output, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("show")})
+			output, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -553,7 +554,7 @@ func TestRun_EnhancedStreamCancelReleasesProducer(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("show")})
+		_, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show")})
 		done <- err
 	}()
 	<-opened
@@ -583,7 +584,7 @@ func TestRun_EnhancedStreamOpenErrorClosesReturnedReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := graph.Invoke(context.Background(), []*schema.Message{schema.UserMessage("show")})
+	message, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show")})
 	if err != nil || message.Content != want.Error() {
 		t.Fatalf("message=%v err=%v", message, err)
 	}

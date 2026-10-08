@@ -10,20 +10,21 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/types"
+	messagepkg "eino-cli/deepagent/message"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
-type childRunFunc func(context.Context, ChildRequest, types.ModelChunkSink) (*schema.Message, error)
+type childRunFunc func(context.Context, ChildRequest, types.ModelChunkSink) (*messagepkg.Message, error)
 
-func (runChild childRunFunc) Run(ctx context.Context, childRequest ChildRequest, emitChunk types.ModelChunkSink) (*schema.Message, error) {
+func (runChild childRunFunc) Run(ctx context.Context, childRequest ChildRequest, emitChunk types.ModelChunkSink) (*messagepkg.Message, error) {
 	return runChild(ctx, childRequest, emitChunk)
 }
 
 func TestStreamingTaskConsumerCloseCancelsSilentChild(t *testing.T) {
 	childStarted, childStopped := make(chan struct{}), make(chan struct{})
-	childRunner := childRunFunc(func(ctx context.Context, _ ChildRequest, _ types.ModelChunkSink) (*schema.Message, error) {
+	childRunner := childRunFunc(func(ctx context.Context, _ ChildRequest, _ types.ModelChunkSink) (*messagepkg.Message, error) {
 		close(childStarted)
 		<-ctx.Done()
 		close(childStopped)
@@ -45,11 +46,11 @@ func TestStreamingTaskConsumerCloseCancelsSilentChild(t *testing.T) {
 
 func TestStreamingTaskFallbackAndPanic(t *testing.T) {
 	for _, shouldPanic := range []bool{false, true} {
-		childRunner := childRunFunc(func(context.Context, ChildRequest, types.ModelChunkSink) (*schema.Message, error) {
+		childRunner := childRunFunc(func(context.Context, ChildRequest, types.ModelChunkSink) (*messagepkg.Message, error) {
 			if shouldPanic {
 				panic("child failure")
 			}
-			return schema.AssistantMessage("final", nil), nil
+			return messagepkg.NewAssistantMessage("final", nil), nil
 		})
 		stream, err := NewStreamingTaskTool(childRunner, false).Tool.(einotool.StreamableTool).StreamableRun(context.Background(), `{"prompt":"go"}`)
 		if err != nil {
@@ -90,9 +91,9 @@ func TestTaskToolNameContract(t *testing.T) {
 		for _, mode := range []string{"invoke", "stream"} {
 			t.Run(testCase.name+"/"+mode, func(t *testing.T) {
 				childCalls := 0
-				childRunner := childRunFunc(func(_ context.Context, childRequest ChildRequest, _ types.ModelChunkSink) (*schema.Message, error) {
+				childRunner := childRunFunc(func(_ context.Context, childRequest ChildRequest, _ types.ModelChunkSink) (*messagepkg.Message, error) {
 					childCalls++
-					return schema.AssistantMessage(childRequest.Name, nil), nil
+					return messagepkg.NewAssistantMessage(childRequest.Name, nil), nil
 				})
 				toolDescriptor := NewTaskTool(childRunner, testCase.names...)
 				if mode == "stream" {
