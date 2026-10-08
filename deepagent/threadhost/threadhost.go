@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"eino-cli/deepagent/graph/computer"
 	"eino-cli/deepagent/helper/serialiser"
 	"eino-cli/deepagent/manager"
 	threadpkg "eino-cli/deepagent/thread"
@@ -32,6 +33,9 @@ type Config struct {
 
 // ThreadHost owns scanning, claims, input delivery and lease release.
 type ThreadHost struct {
+	browserMu          sync.Mutex
+	browsers           map[int64]*computer.Browser
+	browserExpirations map[int64]*time.Timer
 	Config
 	Client  manager.Client
 	Runtime RuntimeConfig
@@ -98,7 +102,7 @@ func (w *ThreadHost) Run(ctx context.Context) (err error) {
 	}
 	sem := make(chan struct{}, w.Concurrency)
 	var wg sync.WaitGroup
-	defer wg.Wait()
+	defer func() { wg.Wait(); err = errors.Join(err, w.closeBrowsers(context.WithoutCancel(ctx))) }()
 	for {
 		select {
 		case <-ctx.Done():
@@ -142,6 +146,14 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 		return fmt.Errorf("lease expired thread_id=%d: %w", claim.Lease.ThreadID, context.DeadlineExceeded)
 	}
 
+	retainBrowser := false
+	defer func() {
+		if retainBrowser && err == nil && ctx.Err() == nil {
+			w.retainThreadBrowser(claim.Thread.ThreadID, 5*time.Minute)
+		} else {
+			err = errors.Join(err, w.closeThreadBrowser(context.WithoutCancel(ctx), claim.Thread.ThreadID))
+		}
+	}()
 	runCtx, stopLease, waitLease := w.startLease(ctx, claim.Lease)
 	defer stopLease()
 
@@ -180,6 +192,7 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 		idleSince: time.Now(), wasActive: active != nil,
 	}
 	result, closeErr := run.run(output.Items)
+	retainBrowser = result.reason == "blocked" && closeErr == nil
 	return run.finish(result, closeErr, waitLease)
 }
 

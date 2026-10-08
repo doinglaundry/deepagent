@@ -1,6 +1,6 @@
 # DeepAgent Computer Use 最小实现设计
 
-日期：2026-10-08。状态：待书面设计审阅，尚未实施。
+日期：2026-10-08。状态：已确认接口简化，正在实施。
 
 ## 目标
 
@@ -35,8 +35,7 @@ ThreadHost → Thread → Run → 现有 Eino Graph
 | deepagent/graph/computer/browser.go | Chrome 会话、页面元素定位、浏览器动作与截图 |
 | deepagent/graph/computer/desktop.go | Go 与 Swift 的通信、Run 桌面占用与观察有效性 |
 | deepagent/graph/computer/native/main.swift | Mac 应用窗口、辅助功能元素、截图、键盘和鼠标；本机文件锁 |
-| deepagent/graph/tools/browser.go | 浏览器 Eino 工具 schema 与直接调用 |
-| deepagent/graph/tools/computer.go | 桌面 Eino 工具 schema 与直接调用 |
+| deepagent/graph/tools/computer.go | 两组 Eino 工具 schema 与直接调用，复用参数解码和图像结果转换 |
 | deepagent/graph/middleware/computer.go | 每次 Run 的桌面资源清理与模型请求图像裁剪；不注册工具、不保存第二份 Graph 状态 |
 
 配置和资源接入只修改现有 appconfig/config.go、worker/app.go、threadhost/thread.go 与启动/构建说明；现有 Web 静态页仅按需补动作状态和图片展示。复用既有 Graph 生命周期，不新建 Graph 节点或修改主循环。普通工具结果和图片结果继续经过当前 tools.go 与 message 转换路径。
@@ -44,24 +43,24 @@ ThreadHost → Thread → Run → 现有 Eino Graph
 构造入口保持直接：
 
 ```go
-func NewBrowser(ctx context.Context, profileDir string, allowedOrigins []string) (*Browser, error)
-func NewDesktop(helperPath string, allowedApps []string) (*Desktop, error)
+func NewBrowser(ctx context.Context, profileDir string) (*Browser, error)
+func NewDesktop(ctx context.Context) (*Desktop, error)
 func NewBrowserTools(browser *computer.Browser) []ToolDescriptor
 func NewComputerTools(desktop *computer.Desktop) []ToolDescriptor
 ```
 
-方法按动作命名，如 Open、Observe、Click、TypeText、PressKey、Scroll、Close。不得引入另一套 Tool.Invoke 协议。所有 Go 赋值与 if 条件分开，不使用 if 初始化语句。
+底层只用 PerformAction（包含 observe 和 release 操作）与 Close 表达实际行为；PerformAction 直接执行固定的浏览器/系统动作，不是一套额外的工具协议。不得引入另一套 Tool.Invoke 协议。所有 Go 赋值与 if 条件分开，不使用 if 初始化语句。
 
 ## 功能与默认行为
 
 - 浏览器工具：browser_open、browser_observe、browser_click、browser_type_text、browser_press_key、browser_scroll。
 - Mac 工具：computer_open_app、computer_observe、computer_click、computer_type_text、computer_press_key、computer_scroll。
 - 观察工具为只读；动作工具要求审批。全部 ParallelSafe=false，禁止 eager 执行。
-- 每个动作返回当前观察结果与截图。浏览器优先页面元素；Mac 优先辅助功能元素，无法访问元素的界面才用窗口内坐标。
-- appconfig 增加 computer_enabled、browser_origins、computer_apps、computer_helper 四项。默认禁用；启用时限制明确的网站 origin 和应用 bundle ID，并要求本机辅助程序存在。这些配置只用于 Worker/ThreadHost 创建资源，不扩散到 Graph Config。
+- 每个动作返回当前观察结果与截图；动作导致跨 origin 跳转时只返回 URL 和重新观察的提示，不读取或返回新 origin 内容，由下一次 browser_observe 的 Policy 重新检查。浏览器优先页面元素；Mac 优先辅助功能元素，无法访问元素的界面才用窗口内坐标。
+- appconfig 增加 computer_enabled、browser_origins、computer_apps 三项。默认禁用；启用时限制明确的网站 origin 和应用 bundle ID，并要求本机辅助程序存在。辅助程序固定命名 deepagent-computer，放在 Worker 可执行文件同目录，不增加路径配置。网站与应用限制仅由 ThreadHost 的现有 Policy 判断，Browser/Desktop 不保存授权列表；限制检查必须先于只读放行和始终允许。配置不扩散到 Graph Config。
 - Chrome 使用每个 Thread 独立的 profile 与受控实例。第一版不接管用户已打开的个人 Chrome；可在该实例内人工登录。
 - 桌面辅助程序按 Run 持有本机文件锁；多个 Worker、多个任务不得同时操作同一 Mac。ThreadHost 为默认子代理配置 ToolMask，排除 browser_ 与 computer_ 工具；工具执行入口也检查 RunState.Depth，防止通过其他子代理配置继承绕过限制。
-- 浏览器归 Thread 所有，多轮 Run 复用；Thread 关闭或构造失败时关闭浏览器。Desktop 是 Worker 资源；每次 Run 的资源清理使用现有 RunFactory 与 ResourceCloser，在工具取消完成后释放该 Run 的占用。未获取占用时 Close 也是安全的。
+- 浏览器属于逻辑 Thread；ThreadHost 在审批 blocked 后最多保留该实例五分钟，原 Worker 及时续跑可复用；领取时原子取消过期定时器。超时关闭后必须重新观察。正常结束、关闭、失败及 Worker 退出时关闭；另一 Worker 或重启后使用隔离 profile，旧观察失效。Profile 在当前 Worker 内可保留登录数据，不承诺跨 Worker 复制登录。Desktop 是 Worker 资源；每次 Run 的资源清理使用现有 RunFactory 与 ResourceCloser，在工具取消完成后释放该 Run 的占用。未获取占用时 Close 也是安全的。
 - 临时按键/鼠标输入不会持有跨工具状态；每次操作都完成按下与释放。
 
 ## 中断、恢复与授权

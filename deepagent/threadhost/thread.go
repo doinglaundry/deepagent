@@ -14,6 +14,7 @@ import (
 
 	"eino-cli/deepagent/config"
 	dalmodel "eino-cli/deepagent/dal/model"
+	"eino-cli/deepagent/graph/computer"
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/execution"
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
@@ -30,11 +31,14 @@ import (
 
 	modelpkg "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
 )
 
 // RuntimeConfig contains process-owned values used to build each Thread and
 // each Run. Stable resources are resolved once when the Thread is created.
 type RuntimeConfig struct {
+	BrowserOrigins         []string
+	ComputerApps           []string
 	FilesystemKind         string
 	Docker                 config.SandboxConfig
 	Models                 map[string]modelpkg.ToolCallingChatModel
@@ -54,6 +58,7 @@ type RuntimeConfig struct {
 
 // RuntimeDeps are long-lived resources shared by Thread runtimes.
 type RuntimeDeps struct {
+	Desktop             *computer.Desktop
 	ConversationDB      conversation.ConversationDB
 	Checkpoint          compose.CheckPointStore
 	Tools               []tools.ToolDescriptor
@@ -126,6 +131,10 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 		FilesystemConfig: &execution.FilesystemConfig{},
 	}
 	agentConfig.Policy = tools.PolicyFunc(func(ctx context.Context, call types.ToolCall, descriptor tools.ToolDescriptor) (tools.Decision, error) {
+		scopeErr := validateComputerTarget(w.Runtime, call)
+		if scopeErr != nil {
+			return tools.Decision{Action: tools.Deny, Reason: scopeErr.Error()}, nil
+		}
 		if !descriptor.RequiresApproval {
 			return tools.Decision{Action: tools.Allow}, nil
 		}
@@ -155,6 +164,19 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 		agentConfig.Prompts = append(agentConfig.Prompts, messagepkg.NewSystemMessage(prompt))
 	}
 	agentConfig.Middlewares = []middleware.Middleware{middleware.NewProjectInstructions(filesystem)}
+	if w.Deps.Desktop != nil {
+		browser, err := w.getThreadBrowser(ctx, info.ThreadID)
+		if err != nil {
+			return nil, err
+		}
+		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.NewBrowserTools(browser)...)
+		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.NewComputerTools(w.Deps.Desktop)...)
+		agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewComputer(w.Deps.Desktop))
+		agentConfig.Prompts = append(agentConfig.Prompts, messagepkg.NewSystemMessage(tools.ComputerPrompt))
+		agentConfig.SubAgents[0].ToolMask = func(_ context.Context, info *schema.ToolInfo) bool {
+			return !strings.HasPrefix(info.Name, "browser_") && !strings.HasPrefix(info.Name, "computer_")
+		}
+	}
 	if memoryService != nil {
 		agentConfig.Middlewares = append(agentConfig.Middlewares, longmemory.NewPrompt(memoryService, memoryScope(w.Runtime.MemoryUserID, info)))
 	}

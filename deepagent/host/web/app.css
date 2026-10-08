@@ -189,3 +189,5 @@ a { color:var(--accent); }
   .speech { top:-65px; }
 }
 @media(prefers-reduced-motion:reduce) { *,*:before { animation:none!important; transition:none!important; } }
+
+.tool-screenshot { display:block; width:100%; height:auto; margin-top:12px; border-radius:6px; }

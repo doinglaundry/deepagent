@@ -126,6 +126,8 @@ const english = {
   "失败": "Failed",
   "正在思考": "Thinking",
   "正在调用工具": "Calling tools",
+ "正在浏览网页": "Browsing the web",
+ "正在操作电脑": "Using the computer",
   "正在回复": "Responding",
   "{tool} · {status}": "{tool} · {status}",
   "请先创建或选择任务": "Create or select a task first",

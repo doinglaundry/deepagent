@@ -268,6 +268,9 @@ func TestRun_TranscriptObservesCanonicalEvents(t *testing.T) {
 			if record.Message == nil {
 				t.Fatal("missing original message")
 			}
+			if record.Role == "tool" && record.Message.ToolName != "counter" {
+				t.Fatalf("transcript lost tool name: %+v", record.Message)
+			}
 			roles = append(roles, record.Role)
 		}
 		if len(roles) != 4 || roles[0] != "user" || roles[1] != "assistant" || roles[2] != "tool" || roles[3] != "assistant" {

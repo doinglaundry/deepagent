@@ -62,6 +62,7 @@ func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*t
 			}
 		}
 		message := messagepkg.NewToolMessage(result.Content, result.CallID)
+		message.ToolName = call.Name
 		if len(result.MultiContent) > 0 {
 			message.Content = ""
 			message.UserInputMultiContent = result.MultiContent

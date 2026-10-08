@@ -106,6 +106,7 @@ type AssistantDeltaEventPayload struct {
 	ConsumedInputsMeta   []map[string]string `json:"consumed_inputs_meta,omitempty"`
 }
 type ToolCallEventPayload struct {
+	Parts              []MessagePart       `json:"parts,omitempty"`
 	ToolCallID         string              `json:"tool_call_id,omitempty"`
 	ToolName           string              `json:"tool_name,omitempty"`
 	ArgumentsJSON      *string             `json:"arguments_json,omitempty"`

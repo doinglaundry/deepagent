@@ -123,6 +123,7 @@ func agentEventPayloadForOutput(ev run.Event, usage *types.ContextTokenUsage) (e
 			ToolName:      payload.Name,
 			ArgumentsJSON: stringPtrIfNotEmpty(payload.ArgumentsInJSON),
 			ResultJSON:    stringPtrIfNotEmpty(payload.Result),
+			Parts:         getUserMessageParts(&messagepkg.Message{UserInputMultiContent: payload.MultiContent}),
 			IsError:       payload.IsError,
 			Status:        eventpkg.ToolCallStatusFinished,
 			ContextUsage:  contextUsage,

@@ -99,6 +99,7 @@ func (transcript *Transcript) Observe(_ context.Context, runtimeEvent types.Runt
 		eventPayload, ok := runtimeEvent.Data.(types.ToolEndPayload)
 		if ok {
 			messages = []*messagepkg.Message{messagepkg.NewToolMessage(eventPayload.Result, eventPayload.CallID)}
+			messages[0].ToolName = eventPayload.Name
 			if len(eventPayload.MultiContent) > 0 {
 				messages[0].Content = ""
 				messages[0].UserInputMultiContent = eventPayload.MultiContent

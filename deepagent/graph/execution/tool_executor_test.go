@@ -418,7 +418,7 @@ func TestRun_EnhancedToolPreservesMultimodalHistoryAndState(t *testing.T) {
 			found = msg
 		}
 	}
-	if found == nil || len(found.UserInputMultiContent) != 2 || found.UserInputMultiContent[1].Image == nil || *found.UserInputMultiContent[1].Image.URL != "https://example.test/image.png" {
+	if found == nil || found.ToolName != "image" || len(found.UserInputMultiContent) != 2 || found.UserInputMultiContent[1].Image == nil || *found.UserInputMultiContent[1].Image.URL != "https://example.test/image.png" {
 		t.Fatalf("model lost image: %+v", found)
 	}
 	raw, err := json.Marshal(&types.RunState{Calls: []types.ToolCallState{completed}})

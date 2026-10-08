@@ -499,6 +499,18 @@ func TestThreadOutput_ModelRequestPublishesOnlyThinkingPhase(t *testing.T) {
 	}
 }
 
+func TestThreadAdapter_ToolScreenshotPreserved(t *testing.T) {
+	image := "cG5n"
+	_, payload, err := agentEventPayloadForOutput(runpkg.Event{Type: runpkg.EventToolEnd, Payload: types.ToolEndPayload{CallID: "screen", Name: "browser_observe", MultiContent: []schema.MessageInputPart{{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{Base64Data: &image, MIMEType: "image/png"}}}}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := payload.(*eventpkg.ToolCallEventPayload)
+	if len(tool.Parts) != 1 || tool.Parts[0].Base64Data != image {
+		t.Fatalf("screenshot missing: %+v", tool)
+	}
+}
+
 func TestThreadAdapter_CompactionEventsPreserveCapturedUsage(t *testing.T) {
 	ctxUsage := types.ContextTokenUsage{MaxContextTokens: 10000, TotalTokens: 5500, PromptTokens: 4000, CompletionTokens: 500}
 	liveUsage := types.ContextTokenUsage{MaxContextTokens: 20000, TotalTokens: 300, PromptTokens: 250, CompletionTokens: 50}

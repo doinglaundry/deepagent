@@ -423,3 +423,17 @@ bash scripts/test-distributed.sh
 | Docker 文件工具不可用 | 镜像是否提供 AIO API，Docker 服务是否可访问 |
 | `web_search` 不可用 | 是否启用 Web 并配置 `search_url` |
 | 子任务一直等待 | Worker 是否还有可用并发名额 |
+
+### Browser and Mac computer use
+
+```sh
+sh scripts/build-computer.sh
+.eino-cli/bin/deepagent-computer --request-permissions
+.eino-cli/bin/deepagent-worker -config yaml/deepagent.yaml
+```
+
+在本地配置中设置 `computer_enabled: true`，并填写 `browser_origins`（精确的网站 origin）和 `computer_apps`（应用 bundle ID，例如 `com.apple.TextEdit`）。首次使用需要在 macOS「系统设置 → 隐私与安全性」授予辅助功能和屏幕录制权限。系统可能将权限归属到启动 Worker 的 Codex 或终端，也需启用对应项。
+
+浏览器工具使用独立 Chrome；桌面工具操作指定应用窗口。每次动作使用最新截图的 `observation_id`；界面变化或 Worker 重启后需要重新观察。动作沿用现有工具审批，“始终允许”不会扩大网站或应用范围。截图显示在工作记录的工具页，模型请求只保留最近的电脑截图，历史仍保留全部截图。电脑工具仅根 Agent 可用，桌面在本机按 Run 互斥。
+
+审批暂停时 Chrome 最多保留五分钟；同一 Worker 及时续跑可复用页面。超时或重启 Worker 后旧观察失效，需要重新打开和观察，不会按旧截图执行动作。

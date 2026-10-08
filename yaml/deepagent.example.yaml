@@ -53,3 +53,10 @@ mcp: []
 web:
   enabled: false
   # search_url: https://your-search-service/search?q={query}
+
+# Mac computer use: build the native helper beside the Worker first.
+computer_enabled: false
+browser_origins:
+  - "https://example.com"
+computer_apps:
+  - "com.apple.TextEdit"

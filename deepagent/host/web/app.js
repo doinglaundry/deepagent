@@ -127,7 +127,7 @@ function setRunStatus(status, runID = $('runStatus').dataset.runID || '', runSta
 function updateActivity() {
   const status = $('runStatus').dataset.status;
   const phase = status === 'running' ? activityPhase || 'working' : status === 'blocked' ? 'waiting' : 'queued';
-  const label = {thinking: '正在思考', tools: '正在调用工具', responding: '正在回复', working: '正在处理任务', waiting: '等待你的回复', queued: '等待执行'}[phase];
+  const label = {thinking: '正在思考', tools: '正在调用工具', browser: '正在浏览网页', computer: '正在操作电脑', responding: '正在回复', working: '正在处理任务', waiting: '等待你的回复', queued: '等待执行'}[phase];
   $('activity').hidden = !['ready', 'running', 'blocked'].includes(status);
   $('activity').dataset.phase = phase; setLabel($('activity'), label);
   if (status === 'running') { setLabel($('phaseLabel'), label); setLabel($('agentStatus'), label); }
@@ -149,7 +149,7 @@ function renderActivity(event) {
   }
   if ($('runStatus').dataset.status !== 'running') return;
   if (event.kind === 'agent_activity' && payload.phase === 'thinking') activityPhase = 'thinking';
-  else if (event.kind === 'tool_call' && payload.status === 'started' && !toolsByKey.get(event.run_id + ':' + payload.tool_call_id)?.finished) activityPhase = 'tools';
+  else if (event.kind === 'tool_call' && payload.status === 'started' && !toolsByKey.get(event.run_id + ':' + payload.tool_call_id)?.finished) activityPhase = payload.tool_name?.startsWith('browser_') ? 'browser' : payload.tool_name?.startsWith('computer_') ? 'computer' : 'tools';
   else if (event.kind === 'assistant_delta') {
     if (payload.delta) activityPhase = 'responding';
     else if (payload.thinking_content_delta) activityPhase = 'thinking';
@@ -442,6 +442,15 @@ function renderTool(event) {
   if (payload.output_delta) record.output += payload.output_delta;
   record.result.textContent = payload.result_json != null ? pretty(payload.result_json) : record.output;
   record.result.hidden = !record.result.textContent; record.args.hidden = !record.args.textContent;
+  if (payload.parts && !record.screenshots) {
+    record.screenshots = true;
+    for (const part of payload.parts) {
+      if (part.type !== 'image' || part.mime_type !== 'image/png' || !part.base64_data) continue;
+      const image = document.createElement('img'); image.className = 'tool-screenshot';
+      image.src = 'data:image/png;base64,' + part.base64_data; image.alt = payload.tool_name || 'Screenshot';
+      record.detail.append(image);
+    }
+  }
   // Completed tool rows are updated in place; live completion must update the list too.
   if (record.finished && !record.filesRecorded) {
     record.filesRecorded = true; recordChangedFiles(payload, record.order);

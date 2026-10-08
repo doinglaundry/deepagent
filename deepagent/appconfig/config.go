@@ -3,6 +3,7 @@ package appconfig
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -19,6 +20,9 @@ import (
 type ManagerConfig = manager.Config
 
 type Config struct {
+	ComputerEnabled        bool                 `yaml:"computer_enabled"`
+	BrowserOrigins         []string             `yaml:"browser_origins"`
+	ComputerApps           []string             `yaml:"computer_apps"`
 	FilesystemKind         string               `yaml:"filesystem_kind"`
 	Docker                 config.SandboxConfig `yaml:"docker"`
 	Manager                ManagerConfig        `yaml:"manager"`
@@ -72,6 +76,15 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if c.ComputerEnabled {
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("computer use requires macOS")
+		}
+		err := threadhost.ValidateComputerTargets(c.BrowserOrigins, c.ComputerApps)
+		if err != nil {
+			return err
+		}
+	}
 	switch c.FilesystemKind {
 	case "", "local":
 	case "docker":

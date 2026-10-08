@@ -612,3 +612,12 @@ test('poll connection failure clears after recovery without hiding a failed subm
   assert.equal(app.get('status').textContent, 'submission denied');
   assert.equal(app.get('status').hidden, false);
 });
+
+test('computer screenshot stays in Tools and appears once', () => {
+ const app=load(()=>({data:[]}));
+ const event={kind:'tool_call',run_id:'screen',payload:{tool_call_id:'call',tool_name:'browser_observe',status:'finished',parts:[{type:'image',mime_type:'image/png',base64_data:'cG5n'}]}};
+ app.context.renderTool(event); app.context.renderTool(event);
+ const images=app.get('toolOutput').querySelectorAll('img');
+ assert.equal(images.length,1); assert.equal(images[0].src,'data:image/png;base64,cG5n');
+ assert.equal(app.get('messages').querySelectorAll('img').length,0);
+});
