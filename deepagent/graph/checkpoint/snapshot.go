@@ -41,16 +41,16 @@ func decodeSnapshot(snapshot []byte) (*snapshotState, error) {
 	}
 	err = json.Unmarshal(snapshotState.snapshotFields["MapValues"], &snapshotState.graphFields)
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("checkpoint requires canonical RunState")
 	}
 	err = json.Unmarshal(snapshotState.graphFields["State"], &snapshotState.localStateFields)
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("checkpoint requires canonical RunState")
 	}
 	var stateType struct{ SimpleType string }
 	err = json.Unmarshal(snapshotState.localStateFields["Type"], &stateType)
 	if err != nil || stateType.SimpleType != "deepagent_run_state_v1" {
-		return nil, nil
+		return nil, fmt.Errorf("checkpoint requires canonical RunState")
 	}
 	err = json.Unmarshal(snapshotState.localStateFields["JSONValue"], &snapshotState.runStateFields)
 	if err != nil || snapshotState.runStateFields == nil {
@@ -60,16 +60,19 @@ func decodeSnapshot(snapshot []byte) (*snapshotState, error) {
 }
 
 // 业务更新需要本项目的 RunState，同时保留 Eino 的执行位置和未知字段。
-func decodeActiveSnapshot(snapshot []byte) (*snapshotState, *types.RunState, error) {
+func decodeActiveSnapshot(snapshot []byte, threadID, runID string) (*snapshotState, *types.RunState, error) {
 	snapshotState, err := decodeSnapshot(snapshot)
 	if err != nil {
 		return nil, nil, err
 	}
-	if snapshotState == nil {
-		return nil, nil, fmt.Errorf("checkpoint requires canonical RunState")
-	}
 	runState, err := snapshotState.decodeActiveRunState()
-	return snapshotState, runState, err
+	if err != nil {
+		return nil, nil, err
+	}
+	if runState.ThreadID != threadID || runState.RunID != runID || runState.RunID == "" {
+		return nil, nil, fmt.Errorf("checkpoint identity mismatch")
+	}
+	return snapshotState, runState, nil
 }
 
 // 直接解析 Eino 保存的 RunState，校验输入游标和终止状态。
@@ -109,16 +112,20 @@ func (snapshotState *snapshotState) encodeSnapshot() ([]byte, error) {
 	return json.Marshal(snapshotState.snapshotFields)
 }
 
-func markSnapshotBlocked(snapshot []byte) ([]byte, error) {
+// ReadRunID 从快照中的 RunState 获取原 Run 身份，供未指定 RunID 的恢复使用。
+func ReadRunID(snapshot []byte, threadID string) (string, error) {
 	snapshotState, err := decodeSnapshot(snapshot)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	if snapshotState == nil {
-		return snapshot, nil
+	runState, err := snapshotState.decodeActiveRunState()
+	if err != nil {
+		return "", err
 	}
-	snapshotState.runStateFields["Phase"] = json.RawMessage(`"blocked"`)
-	return snapshotState.encodeSnapshot()
+	if runState.ThreadID != threadID || runState.RunID == "" {
+		return "", fmt.Errorf("checkpoint identity mismatch")
+	}
+	return runState.RunID, nil
 }
 
 // ValidateResume checks explicit targets against Eino's persisted interrupt

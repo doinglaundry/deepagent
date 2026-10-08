@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	checkpointer "eino-cli/deepagent/graph/checkpoint"
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/types"
 	messagepkg "eino-cli/deepagent/message"
@@ -171,15 +170,10 @@ type pendingCheckpointStore struct {
 }
 
 func (s *pendingCheckpointStore) Set(ctx context.Context, id string, raw []byte) error {
-	var checkpoint checkpointer.Checkpoint
-	err := json.Unmarshal(raw, &checkpoint)
-	if err != nil {
-		return err
-	}
 	var snapshot struct {
 		MapValues map[string]struct{ JSONValue types.RunState }
 	}
-	decodeErr := json.Unmarshal(checkpoint.Snapshot, &snapshot)
+	decodeErr := json.Unmarshal(raw, &snapshot)
 	if decodeErr != nil {
 		return decodeErr
 	}

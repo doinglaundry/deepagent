@@ -41,7 +41,6 @@ type RunState struct {
 	Version        int
 	ThreadID       string
 	RunID          string
-	AgentName      string
 	Depth          int
 	Phase          Phase
 	ModelCalls     int

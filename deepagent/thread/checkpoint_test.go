@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	checkpointer "eino-cli/deepagent/graph/checkpoint"
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
@@ -104,11 +103,7 @@ func TestThread_UnknownToolOutcomeEndsOriginalRunWithoutReplayingInput(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(checkpointer.Checkpoint{Version: 1, ThreadID: "thread", RunID: "run", GraphVersion: "core-graph-v1", Snapshot: snapshot})
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &threadCheckpointMemory{values: map[string][]byte{"checkpoint": raw}}
+	store := &threadCheckpointMemory{values: map[string][]byte{"checkpoint": snapshot}}
 	model := &threadModel{}
 	events := make(chan runpkg.Event, 32)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model, CheckpointStore: store}}, events, ThreadOptions{})

@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	checkpointer "eino-cli/deepagent/graph/checkpoint"
 	"eino-cli/deepagent/graph/conversation"
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	"eino-cli/deepagent/graph/middleware"
@@ -32,15 +31,10 @@ type terminalWriteFailureStore struct {
 }
 
 func (terminalWriteFailureStore *terminalWriteFailureStore) Set(ctx context.Context, id string, raw []byte) error {
-	var checkpoint checkpointer.Checkpoint
-	err := json.Unmarshal(raw, &checkpoint)
-	if err != nil {
-		return err
-	}
 	var snapshot struct {
 		MapValues map[string]struct{ JSONValue types.RunState }
 	}
-	decodeErr := json.Unmarshal(checkpoint.Snapshot, &snapshot)
+	decodeErr := json.Unmarshal(raw, &snapshot)
 	if decodeErr != nil {
 		return decodeErr
 	}
@@ -360,15 +354,10 @@ type pendingWriteFailure struct {
 }
 
 func (pendingWriteFailure *pendingWriteFailure) Set(ctx context.Context, id string, raw []byte) error {
-	var checkpoint checkpointer.Checkpoint
-	err := json.Unmarshal(raw, &checkpoint)
-	if err != nil {
-		return err
-	}
 	var snapshot struct {
 		MapValues map[string]struct{ JSONValue types.RunState }
 	}
-	decodeErr := json.Unmarshal(checkpoint.Snapshot, &snapshot)
+	decodeErr := json.Unmarshal(raw, &snapshot)
 	if decodeErr != nil {
 		return decodeErr
 	}
@@ -804,15 +793,10 @@ type executionFenceStore struct {
 }
 
 func (executionFenceStore *executionFenceStore) Set(ctx context.Context, id string, raw []byte) error {
-	var checkpoint checkpointer.Checkpoint
-	err := json.Unmarshal(raw, &checkpoint)
-	if err != nil {
-		return err
-	}
 	var snapshot struct {
 		MapValues map[string]struct{ JSONValue types.RunState }
 	}
-	decodeErr := json.Unmarshal(checkpoint.Snapshot, &snapshot)
+	decodeErr := json.Unmarshal(raw, &snapshot)
 	if decodeErr != nil {
 		return decodeErr
 	}

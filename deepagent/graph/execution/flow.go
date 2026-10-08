@@ -105,7 +105,7 @@ func (graph *Graph) buildGraphCompileOptions() []compose.GraphCompileOption {
 		compose.WithMaxRunSteps(graph.config.MaxSteps),
 	}
 	if graph.config.CheckpointStore != nil {
-		store := checkpointer.NewGraphStore(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID, "core-graph-v1")
+		store := checkpointer.NewGraphStore(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID)
 		compileOptions = append(compileOptions, compose.WithCheckPointStore(store))
 	}
 	return compileOptions

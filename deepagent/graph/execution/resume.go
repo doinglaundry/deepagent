@@ -56,7 +56,7 @@ func (graph *Graph) savePendingInterrupts(ctx context.Context, checkpointID stri
 	if graph.config.CheckpointStore != nil && checkpointID != "" {
 		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		err := checkpointer.NewGraphStore(graph.config.CheckpointStore, graph.config.ThreadID, graph.runState.RunID, "core-graph-v1").SaveInterrupts(saveCtx, checkpointID, pendingInterrupts)
+		err := checkpointer.NewGraphStore(graph.config.CheckpointStore, graph.config.ThreadID, graph.runState.RunID).SaveInterrupts(saveCtx, checkpointID, pendingInterrupts)
 		if err != nil {
 			return fmt.Errorf("persist pending interrupt metadata: %w", err)
 		}
@@ -91,7 +91,7 @@ func (graph *Graph) invokeGraph(ctx context.Context, runState *types.RunState, r
 	}
 	if graph.config.CheckpointStore != nil && runOptions.CheckpointID != "" && (runOptions.WriteToCheckpointID == "" || runOptions.WriteToCheckpointID == runOptions.CheckpointID) {
 		ctx = context.WithValue(ctx, initialCheckpointKey{}, runState)
-		store := checkpointer.NewGraphStore(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID, "core-graph-v1")
+		store := checkpointer.NewGraphStore(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID)
 		var fenceMu sync.Mutex
 		graph.toolExecutor.persistToolExecutionFence = func(ctx context.Context, call types.ToolCall) error {
 			fenceMu.Lock()
@@ -147,18 +147,7 @@ func (graph *Graph) resolveRunID(ctx context.Context, runOptions RunOptions) (st
 	if err != nil || !exists {
 		return runID, err
 	}
-	var checkpoint checkpointer.Checkpoint
-	err = json.Unmarshal(raw, &checkpoint)
-	if err != nil {
-		return "", err
-	}
-	if checkpoint.Version != 1 {
-		return "", fmt.Errorf("unsupported checkpoint version %d", checkpoint.Version)
-	}
-	if checkpoint.ThreadID != graph.config.ThreadID || checkpoint.RunID == "" {
-		return "", fmt.Errorf("checkpoint identity mismatch")
-	}
-	return checkpoint.RunID, nil
+	return checkpointer.ReadRunID(raw, graph.config.ThreadID)
 }
 
 func (runOptions RunOptions) getOutputCheckpointID() string {

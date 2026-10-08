@@ -8,60 +8,60 @@ import (
 
 	"eino-cli/deepagent/graph/types"
 	messagepkg "eino-cli/deepagent/message"
+
+	"github.com/cloudwego/eino/compose"
 )
 
 func TestCheckpointValidatesIdentityAndRoundTripsSnapshot(t *testing.T) {
 	ctx := context.Background()
-	raw := &memoryStore{}
-	store := NewGraphStore(raw, "thread", "run", "graph-v1")
-	setErr := store.Set(ctx, "checkpoint", []byte("eino snapshot"))
-	if setErr != nil {
-		t.Fatal(setErr)
+	storage := &memoryStore{}
+	store := NewGraphStore(storage, "thread", "run")
+	err := store.Set(ctx, "checkpoint", newPreservedSnapshot(t))
+	if err != nil {
+		t.Fatal(err)
 	}
-	got, ok, err := store.Get(ctx, "checkpoint")
-	if err != nil || !ok || string(got) != "eino snapshot" {
-		t.Fatalf("%s %v %v", got, ok, err)
+	snapshot, exists, err := store.Get(ctx, "checkpoint")
+	if err != nil || !exists {
+		t.Fatalf("exists=%v err=%v", exists, err)
 	}
-	for _, other := range []*GraphStore{NewGraphStore(raw, "other", "run", "graph-v1"), NewGraphStore(raw, "thread", "other", "graph-v1"), NewGraphStore(raw, "thread", "run", "graph-v2")} {
+	runID, err := ReadRunID(snapshot, "thread")
+	if err != nil || runID != "run" {
+		t.Fatalf("run=%q err=%v", runID, err)
+	}
+	readSavedSnapshotFields(t, snapshot)
+	for _, other := range []*GraphStore{NewGraphStore(storage, "other", "run"), NewGraphStore(storage, "thread", "other")} {
 		_, _, err := other.Get(ctx, "checkpoint")
 		if err == nil {
-			t.Fatal("accepted incompatible checkpoint")
+			t.Fatal("accepted another Run's checkpoint")
 		}
 	}
 }
 
 func TestCheckpointStoreFailurePropagates(t *testing.T) {
 	sentinel := errors.New("storage unavailable")
-	store := NewGraphStore(&memoryStore{err: sentinel}, "thread", "run", "v1")
-	setErr := store.Set(context.Background(), "id", []byte("snapshot"))
+	store := NewGraphStore(&memoryStore{err: sentinel}, "thread", "run")
+	setErr := store.Set(context.Background(), "id", newPreservedSnapshot(t))
 	if !errors.Is(setErr, sentinel) {
 		t.Fatal(setErr)
 	}
 }
 
 func TestFreshCheckpointReplacesForeignIdentityAndInvalidBytes(t *testing.T) {
-	for _, existing := range [][]byte{
-		[]byte(`obsolete bytes`),
-		[]byte(`{"Version":1,"ThreadID":"thread","RunID":"old","GraphVersion":"graph-v1","EinoSnapshot":"b2xk","OldOwnerField":true}`),
-	} {
-		rawStore := &memoryStore{data: map[string][]byte{"checkpoint": existing}}
-		store := NewGraphStore(rawStore, "thread", "fresh", "graph-v1")
-		err := store.Set(context.Background(), "checkpoint", []byte("fresh snapshot"))
+	snapshot := []byte(`{"MapValues":{"State":{"Type":{"SimpleType":"deepagent_run_state_v1"},"JSONValue":{"Version":1,"ThreadID":"thread","RunID":"fresh","Phase":"preparing"}}}}`)
+	for _, existing := range [][]byte{[]byte(`invalid bytes`), newPreservedSnapshot(t)} {
+		storage := &memoryStore{data: map[string][]byte{"checkpoint": existing}}
+		store := NewGraphStore(storage, "thread", "fresh")
+		err := store.Set(context.Background(), "checkpoint", snapshot)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, exists, err := store.Get(context.Background(), "checkpoint")
-		if err != nil || !exists || string(got) != "fresh snapshot" {
-			t.Fatalf("snapshot=%s exists=%v err=%v", got, exists, err)
+		restored, exists, err := store.Get(context.Background(), "checkpoint")
+		if err != nil || !exists {
+			t.Fatalf("exists=%v err=%v", exists, err)
 		}
-		var checkpoint map[string]json.RawMessage
-		err = json.Unmarshal(rawStore.data["checkpoint"], &checkpoint)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, oldField := checkpoint["OldOwnerField"]
-		if oldField {
-			t.Fatal("foreign execution metadata retained")
+		runID, err := ReadRunID(restored, "thread")
+		if err != nil || runID != "fresh" {
+			t.Fatalf("run=%q err=%v", runID, err)
 		}
 	}
 }
@@ -70,21 +70,15 @@ func TestAppendInputsPreservesCheckpointFieldsAndInputCursor(t *testing.T) {
 	state := types.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhaseBlocked, PreparedInputs: 1, Consumed: []types.Input{{Message: messagepkg.NewUserMessage("original")}}, Extensions: map[string]json.RawMessage{"middleware:test": json.RawMessage(`{"value":3}`)}}
 	encoded, _ := json.Marshal(state)
 	snapshot := []byte(`{"Type":{"PointerNum":1,"StructType":"_eino_checkpoint"},"future":"preserved","MapValues":{"State":{"Type":{"PointerNum":1,"SimpleType":"deepagent_run_state_v1"},"JSONValue":` + string(encoded) + `},"InterruptID2Addr":{"untouched":"address"},"Inputs":{"untouched":"node input"}}}`)
-	checkpoint := Checkpoint{Version: 1, ThreadID: "thread", RunID: "run", GraphVersion: "core-graph-v1", Snapshot: snapshot}
-	original, _ := json.Marshal(checkpoint)
+	original := snapshot
 	rawStore := &memoryStore{data: map[string][]byte{"checkpoint": original}}
 	input := types.Input{Message: messagepkg.NewUserMessage("pending"), Meta: map[string]string{"MessageID": "9007199254740993"}}
 	appendInputsErr := AppendInputs(context.Background(), rawStore, "checkpoint", "thread", "run", []types.Input{input})
 	if appendInputsErr != nil {
 		t.Fatal(appendInputsErr)
 	}
-	var saved Checkpoint
-	savedDecodeErr := json.Unmarshal(rawStore.data["checkpoint"], &saved)
-	if savedDecodeErr != nil {
-		t.Fatal(savedDecodeErr)
-	}
 	var root, fields, value map[string]json.RawMessage
-	rootDecodeErr := json.Unmarshal(saved.Snapshot, &root)
+	rootDecodeErr := json.Unmarshal(rawStore.data["checkpoint"], &root)
 	if rootDecodeErr != nil {
 		t.Fatal(rootDecodeErr)
 	}
@@ -129,9 +123,9 @@ func TestAppendInputsPreservesCheckpointFieldsAndInputCursor(t *testing.T) {
 func TestCheckpointMutationsPreserveUnknownWireFields(t *testing.T) {
 	for _, operation := range []string{"append", "fence", "pending", "finalize"} {
 		t.Run(operation, func(t *testing.T) {
-			raw, snapshot := newPreservedCheckpoint(t)
-			rawStore := &memoryStore{data: map[string][]byte{"checkpoint": raw}}
-			store := NewGraphStore(rawStore, "thread", "run", "core-graph-v1")
+			snapshot := newPreservedSnapshot(t)
+			rawStore := &memoryStore{data: map[string][]byte{"checkpoint": snapshot}}
+			store := NewGraphStore(rawStore, "thread", "run")
 			ctx := context.Background()
 			var err error
 			switch operation {
@@ -156,7 +150,7 @@ func TestCheckpointMutationsPreserveUnknownWireFields(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, state := readSavedCheckpointFields(t, rawStore.data["checkpoint"])
+			state := readSavedSnapshotFields(t, rawStore.data["checkpoint"])
 			var calls []map[string]json.RawMessage
 			err = json.Unmarshal(state["Calls"], &calls)
 			if err != nil {
@@ -183,87 +177,65 @@ func TestCheckpointMutationsPreserveUnknownWireFields(t *testing.T) {
 	}
 }
 
-func TestCheckpointRejectsInvalidPreparedCursor(t *testing.T) {
-	for _, cursor := range []string{"-1", "2"} {
-		t.Run(cursor, func(t *testing.T) {
-			raw, snapshot := newPreservedCheckpoint(t)
-			var root, fields, wrapper, state map[string]json.RawMessage
-			err := json.Unmarshal(snapshot, &root)
+func TestCheckpointRejectsInvalidRunState(t *testing.T) {
+	for _, invalid := range []struct{ name, field, value string }{
+		{"negative input cursor", "PreparedInputs", "-1"},
+		{"input cursor beyond messages", "PreparedInputs", "2"},
+		{"unsupported format", "Version", "2"},
+	} {
+		t.Run(invalid.name, func(t *testing.T) {
+			snapshotState, err := decodeSnapshot(newPreservedSnapshot(t))
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = json.Unmarshal(root["MapValues"], &fields)
+			snapshotState.runStateFields[invalid.field] = json.RawMessage(invalid.value)
+			snapshot, err := snapshotState.encodeSnapshot()
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = json.Unmarshal(fields["State"], &wrapper)
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = json.Unmarshal(wrapper["JSONValue"], &state)
-			if err != nil {
-				t.Fatal(err)
-			}
-			state["PreparedInputs"] = json.RawMessage(cursor)
-			wrapper["JSONValue"], err = json.Marshal(state)
-			if err != nil {
-				t.Fatal(err)
-			}
-			fields["State"], err = json.Marshal(wrapper)
-			if err != nil {
-				t.Fatal(err)
-			}
-			root["MapValues"], err = json.Marshal(fields)
-			if err != nil {
-				t.Fatal(err)
-			}
-			snapshot, err = json.Marshal(root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var checkpoint Checkpoint
-			err = json.Unmarshal(raw, &checkpoint)
-			if err != nil {
-				t.Fatal(err)
-			}
-			checkpoint.Snapshot = snapshot
-			raw, err = json.Marshal(checkpoint)
-			if err != nil {
-				t.Fatal(err)
-			}
-			rawStore := &memoryStore{data: map[string][]byte{"checkpoint": raw}}
-			store := NewGraphStore(rawStore, "thread", "run", "core-graph-v1")
+			storage := &memoryStore{data: map[string][]byte{"checkpoint": snapshot}}
+			store := NewGraphStore(storage, "thread", "run")
 			_, _, err = store.Get(context.Background(), "checkpoint")
 			if err == nil {
-				t.Fatal("invalid input cursor accepted")
+				t.Fatal("invalid RunState resumed")
 			}
-			if string(rawStore.data["checkpoint"]) != string(raw) {
+			err = store.Set(context.Background(), "checkpoint", snapshot)
+			if err == nil {
+				t.Fatal("invalid RunState saved")
+			}
+			if string(storage.data["checkpoint"]) != string(snapshot) {
 				t.Fatal("invalid checkpoint was mutated")
 			}
 		})
 	}
 }
 
-func TestBlockedNormalizationLeavesForeignStateUntouched(t *testing.T) {
+func TestGraphStoreRejectsMissingOrForeignRunState(t *testing.T) {
 	for _, snapshot := range []string{
-		`{"MapValues":{}}`,
+		`{}`, `{"MapValues":{}}`,
 		`{"MapValues":{"State":{"Type":{"SimpleType":"other"},"JSONValue":{"Phase":"modeling"}}}}`,
+		`{"MapValues":{"State":{"Type":{"SimpleType":"deepagent_run_state_v1"},"JSONValue":null}}}`,
 	} {
-		got, err := markSnapshotBlocked([]byte(snapshot))
-		if err != nil || string(got) != snapshot {
-			t.Fatalf("snapshot=%s err=%v", got, err)
+		storage := &memoryStore{data: map[string][]byte{"checkpoint": []byte(snapshot)}}
+		store := NewGraphStore(storage, "thread", "run")
+		_, _, err := store.Get(context.Background(), "checkpoint")
+		if err == nil {
+			t.Fatal("invalid RunState resumed")
 		}
-	}
-	_, err := markSnapshotBlocked([]byte(`{"MapValues":{"State":{"Type":{"SimpleType":"deepagent_run_state_v1"},"JSONValue":null}}}`))
-	if err == nil {
-		t.Fatal("missing canonical state accepted")
+		err = store.Set(context.Background(), "checkpoint", []byte(snapshot))
+		if err == nil {
+			t.Fatal("invalid RunState saved")
+		}
+		if string(storage.data["checkpoint"]) != snapshot {
+			t.Fatal("invalid checkpoint was mutated")
+		}
 	}
 }
 
 func TestToolFencesShareSnapshotButResumeRejectsUnknownOutcomes(t *testing.T) {
-	raw, _ := newPreservedCheckpoint(t)
+	raw := newPreservedSnapshot(t)
 	rawStore := &memoryStore{data: map[string][]byte{"checkpoint": raw}}
-	store := NewGraphStore(rawStore, "thread", "run", "core-graph-v1")
+	store := NewGraphStore(rawStore, "thread", "run")
 	ctx := context.Background()
 	for _, id := range []string{"first", "second"} {
 		err := store.MarkToolOutcomeUnknown(ctx, "checkpoint", types.ToolCall{ID: id, Name: "write", Arguments: "{}"}, true)
@@ -275,7 +247,7 @@ func TestToolFencesShareSnapshotButResumeRejectsUnknownOutcomes(t *testing.T) {
 	if err == nil {
 		t.Fatal("unknown side effect was resumable")
 	}
-	_, state := readSavedCheckpointFields(t, rawStore.data["checkpoint"])
+	state := readSavedSnapshotFields(t, rawStore.data["checkpoint"])
 	var calls []types.ToolCallState
 	err = json.Unmarshal(state["Calls"], &calls)
 	if err != nil {
@@ -291,9 +263,9 @@ func TestToolFencesShareSnapshotButResumeRejectsUnknownOutcomes(t *testing.T) {
 }
 
 func TestInterruptMetadataRejectsUnknownToolOutcome(t *testing.T) {
-	raw, _ := newPreservedCheckpoint(t)
+	raw := newPreservedSnapshot(t)
 	storage := &memoryStore{data: map[string][]byte{"checkpoint": raw}}
-	store := NewGraphStore(storage, "thread", "run", "core-graph-v1")
+	store := NewGraphStore(storage, "thread", "run")
 	ctx := context.Background()
 	err := store.MarkToolOutcomeUnknown(ctx, "checkpoint", types.ToolCall{ID: "call"}, true)
 	if err != nil {
@@ -315,10 +287,10 @@ func TestInterruptMetadataRejectsUnknownToolOutcome(t *testing.T) {
 }
 
 func TestTerminalCheckpointCannotResumeOrAcceptInputs(t *testing.T) {
-	raw, snapshot := newPreservedCheckpoint(t)
-	rawStore := &memoryStore{data: map[string][]byte{"checkpoint": raw}}
-	store := NewGraphStore(rawStore, "thread", "run", "core-graph-v1")
-	_, state, err := decodeActiveSnapshot(snapshot)
+	snapshot := newPreservedSnapshot(t)
+	rawStore := &memoryStore{data: map[string][]byte{"checkpoint": snapshot}}
+	store := NewGraphStore(rawStore, "thread", "run")
+	_, state, err := decodeActiveSnapshot(snapshot, "thread", "run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,8 +328,8 @@ func TestTerminalCheckpointCannotResumeOrAcceptInputs(t *testing.T) {
 }
 
 func TestSaveTerminalStateReplacesKnownOptionalToolResultFields(t *testing.T) {
-	raw, snapshot := newPreservedCheckpoint(t)
-	snapshotState, _, err := decodeActiveSnapshot(snapshot)
+	snapshot := newPreservedSnapshot(t)
+	snapshotState, _, err := decodeActiveSnapshot(snapshot, "thread", "run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,19 +347,6 @@ func TestSaveTerminalStateReplacesKnownOptionalToolResultFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var checkpoint map[string]json.RawMessage
-	err = json.Unmarshal(raw, &checkpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkpoint["EinoSnapshot"], err = json.Marshal(snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err = json.Marshal(checkpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
 	state, err := snapshotState.decodeActiveRunState()
 	if err != nil {
 		t.Fatal(err)
@@ -395,12 +354,12 @@ func TestSaveTerminalStateReplacesKnownOptionalToolResultFields(t *testing.T) {
 	state.Phase = types.PhaseCompleted
 	state.Calls[0].Result.Content = "new"
 	state.Calls[0].Result.MultiContent = nil
-	rawStore := &memoryStore{data: map[string][]byte{"checkpoint": raw}}
-	err = NewGraphStore(rawStore, "thread", "run", "core-graph-v1").SaveTerminalState(context.Background(), "checkpoint", state, true)
+	rawStore := &memoryStore{data: map[string][]byte{"checkpoint": snapshot}}
+	err = NewGraphStore(rawStore, "thread", "run").SaveTerminalState(context.Background(), "checkpoint", state, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, fields := readSavedCheckpointFields(t, rawStore.data["checkpoint"])
+	fields := readSavedSnapshotFields(t, rawStore.data["checkpoint"])
 	err = json.Unmarshal(fields["Calls"], &calls)
 	if err != nil {
 		t.Fatal(err)
@@ -413,6 +372,68 @@ func TestSaveTerminalStateReplacesKnownOptionalToolResultFields(t *testing.T) {
 	_, stale := result["MultiContent"]
 	if stale || string(result["Content"]) != `"new"` || string(result["FutureResult"]) != "true" {
 		t.Fatalf("result=%s", calls[0]["Result"])
+	}
+}
+
+// A checkpoint written by Eino must be readable without a second wrapper.
+func TestGraphStoreResumesEinoSnapshotFromFile(t *testing.T) {
+	ctx := context.Background()
+	storage, err := NewFile(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &types.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhasePreparing}
+	build := func(storage compose.CheckPointStore) compose.Runnable[*types.RunState, *types.RunState] {
+		graph := compose.NewGraph[*types.RunState, *types.RunState](compose.WithGenLocalState(func(context.Context) *types.RunState { return state }))
+		err := graph.AddLambdaNode("work", compose.InvokableLambda(func(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+			var restored *types.RunState
+			err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, localState *types.RunState) error { restored = localState; return nil })
+			return restored, err
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = graph.AddEdge(compose.START, "work")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = graph.AddEdge("work", compose.END)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runnable, err := graph.Compile(ctx, compose.WithCheckPointStore(storage), compose.WithInterruptBeforeNodes([]string{"work"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return runnable
+	}
+	original := build(storage)
+	_, err = original.Invoke(ctx, state, compose.WithCheckPointID("checkpoint"))
+	_, interrupted := compose.ExtractInterruptInfo(err)
+	if !interrupted {
+		t.Fatalf("expected checkpoint interrupt, got %v", err)
+	}
+	restored := build(NewGraphStore(storage, "thread", "run"))
+	result, err := restored.Invoke(ctx, nil, compose.WithCheckPointID("checkpoint"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ThreadID != "thread" || result.RunID != "run" {
+		t.Fatalf("lost Run identity: %+v", result)
+	}
+}
+
+func TestGraphStoreRejectsForeignStateBeforeWriting(t *testing.T) {
+	snapshot := newPreservedSnapshot(t)
+	original := snapshot
+	storage := &memoryStore{data: map[string][]byte{"checkpoint": original}}
+	store := NewGraphStore(storage, "other", "run")
+	err := store.Set(context.Background(), "checkpoint", snapshot)
+	if err == nil {
+		t.Fatal("foreign RunState was accepted")
+	}
+	if string(storage.data["checkpoint"]) != string(original) {
+		t.Fatal("rejected write changed checkpoint")
 	}
 }
 
@@ -437,7 +458,7 @@ func (memoryStore *memoryStore) Set(_ context.Context, id string, value []byte) 
 	return nil
 }
 
-func newPreservedCheckpoint(t *testing.T) ([]byte, []byte) {
+func newPreservedSnapshot(t *testing.T) []byte {
 	t.Helper()
 	state := types.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhaseBlocked, Consumed: []types.Input{{MessageID: "original", Message: messagepkg.NewUserMessage("original"), Meta: map[string]string{"MessageID": "9007199254740993"}}}}
 	encoded, err := json.Marshal(state)
@@ -457,37 +478,13 @@ func newPreservedCheckpoint(t *testing.T) ([]byte, []byte) {
 		t.Fatal(err)
 	}
 	snapshot := []byte(`{"FutureRoot":{"kept":true},"MapValues":{"FutureField":{"kept":true},"Inputs":{"untouched":"node input"},"InterruptID2Addr":{"MapValues":{"\"interrupt\"":{}}},"State":{"FutureWrapper":{"kept":true},"Type":{"SimpleType":"deepagent_run_state_v1","FutureType":"type"},"JSONValue":` + string(encoded) + `}}}`)
-	raw, err := json.Marshal(Checkpoint{Version: 1, ThreadID: "thread", RunID: "run", GraphVersion: "core-graph-v1", Snapshot: snapshot})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var checkpoint map[string]json.RawMessage
-	err = json.Unmarshal(raw, &checkpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkpoint["FutureEnvelope"] = json.RawMessage(`{"kept":true}`)
-	raw, err = json.Marshal(checkpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return raw, snapshot
+	return snapshot
 }
 
-func readSavedCheckpointFields(t *testing.T, raw []byte) (map[string]json.RawMessage, map[string]json.RawMessage) {
+func readSavedSnapshotFields(t *testing.T, snapshot []byte) map[string]json.RawMessage {
 	t.Helper()
-	var checkpoint map[string]json.RawMessage
-	err := json.Unmarshal(raw, &checkpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var snapshot []byte
-	err = json.Unmarshal(checkpoint["EinoSnapshot"], &snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var root, fields, wrapper, state map[string]json.RawMessage
-	err = json.Unmarshal(snapshot, &root)
+	err := json.Unmarshal(snapshot, &root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +504,6 @@ func readSavedCheckpointFields(t *testing.T, raw []byte) (map[string]json.RawMes
 		name string
 		raw  json.RawMessage
 	}{
-		{"checkpoint", checkpoint["FutureEnvelope"]},
 		{"root", root["FutureRoot"]},
 		{"field", fields["FutureField"]},
 		{"wrapper", wrapper["FutureWrapper"]},
@@ -523,5 +519,5 @@ func readSavedCheckpointFields(t *testing.T, raw []byte) (map[string]json.RawMes
 	if string(fields["InterruptID2Addr"]) != `{"MapValues":{"\"interrupt\"":{}}}` {
 		t.Fatal("Eino interrupt address changed")
 	}
-	return checkpoint, state
+	return state
 }

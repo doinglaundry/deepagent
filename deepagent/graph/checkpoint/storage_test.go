@@ -5,8 +5,9 @@ import (
 	"os"
 	"testing"
 
+	dalcache "eino-cli/deepagent/dal/cache"
+
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 )
 
 func TestRedisCheckpointsNamespaceAndRoundTrip(t *testing.T) {
@@ -15,14 +16,16 @@ func TestRedisCheckpointsNamespaceAndRoundTrip(t *testing.T) {
 		t.Skip("set DEEPAGENT_TEST_REDIS_ADDR for Redis integration")
 	}
 	ctx := context.Background()
-	client := redis.NewClient(&redis.Options{Addr: redisAddress})
-	defer client.Close()
-	prefix := "deepagent:test:checkpoint:" + uuid.NewString()
-	redisStore, err := NewRedis(client, prefix)
+	client, err := dalcache.NewRedis(dalcache.RedisConfig{Addr: redisAddress})
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherRedisStore, _ := NewRedis(client, prefix+":other")
+	prefix := "deepagent:test:checkpoint:" + uuid.NewString()
+	redisStore, err := NewRedisStore(client, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRedisStore, _ := NewRedisStore(client, prefix+":other")
 	defer client.Del(ctx, prefix+":key")
 	err = redisStore.Set(ctx, "key", []byte("checkpoint state"))
 	if err != nil {

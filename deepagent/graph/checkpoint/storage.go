@@ -8,38 +8,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
+
+	dalcache "eino-cli/deepagent/dal/cache"
 
 	redis "github.com/redis/go-redis/v9"
 )
 
-type Redis struct {
-	client rawClient
+// RedisStore 使用通用 Redis 客户端，适配 Eino 的字节存储接口。
+type RedisStore struct {
+	client dalcache.RedisClient
 	prefix string
 }
 
-type rawClient interface {
-	GetRaw(context.Context, string) ([]byte, error)
-	SetRaw(context.Context, string, []byte, time.Duration) error
-}
-
-type universalRawClient struct{ redis.UniversalClient }
-
-func NewRedisStore(client rawClient, prefix string) (*Redis, error) {
+func NewRedisStore(client dalcache.RedisClient, prefix string) (*RedisStore, error) {
 	if client == nil || strings.TrimSpace(prefix) == "" {
 		return nil, errors.New("Redis checkpoint client and namespace prefix required")
 	}
-	return &Redis{client: client, prefix: strings.TrimSuffix(prefix, ":") + ":"}, nil
+	return &RedisStore{client: client, prefix: strings.TrimSuffix(prefix, ":") + ":"}, nil
 }
 
-func NewRedis(client redis.UniversalClient, prefix string) (*Redis, error) {
-	if client == nil || strings.TrimSpace(prefix) == "" {
-		return nil, errors.New("Redis checkpoint client and namespace prefix required")
-	}
-	return NewRedisStore(universalRawClient{client}, prefix)
-}
-
-func (redisStore *Redis) Get(ctx context.Context, key string) ([]byte, bool, error) {
+func (redisStore *RedisStore) Get(ctx context.Context, key string) ([]byte, bool, error) {
 	keyErr := validateCheckpointKey(key)
 	if keyErr != nil {
 		return nil, false, keyErr
@@ -51,20 +39,12 @@ func (redisStore *Redis) Get(ctx context.Context, key string) ([]byte, bool, err
 	return data, err == nil, err
 }
 
-func (redisStore *Redis) Set(ctx context.Context, key string, data []byte) error {
+func (redisStore *RedisStore) Set(ctx context.Context, key string, data []byte) error {
 	err := validateCheckpointKey(key)
 	if err != nil {
 		return err
 	}
 	return redisStore.client.SetRaw(ctx, redisStore.prefix+key, data, 0)
-}
-
-func (redisClient universalRawClient) GetRaw(ctx context.Context, key string) ([]byte, error) {
-	return redisClient.Get(ctx, key).Bytes()
-}
-
-func (redisClient universalRawClient) SetRaw(ctx context.Context, key string, value []byte, ttl time.Duration) error {
-	return redisClient.Set(ctx, key, value, ttl).Err()
 }
 
 type File struct{ root string }

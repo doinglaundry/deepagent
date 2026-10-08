@@ -13,7 +13,7 @@ import (
 )
 
 func (graph *Graph) newRunState(inputMessages []*messagepkg.Message, runOptions RunOptions) *types.RunState {
-	runState := &types.RunState{Version: 1, ThreadID: graph.config.ThreadID, RunID: graph.runID, AgentName: graph.config.Name, Depth: graph.config.Depth, Phase: types.PhasePreparing}
+	runState := &types.RunState{Version: 1, ThreadID: graph.config.ThreadID, RunID: graph.runID, Depth: graph.config.Depth, Phase: types.PhasePreparing}
 	for i, message := range inputMessages {
 		if message != nil {
 			copy := *message
@@ -38,9 +38,6 @@ func (graph *Graph) newRunState(inputMessages []*messagepkg.Message, runOptions 
 func (graph *Graph) getLocalState(ctx context.Context) (*types.RunState, error) {
 	var runState *types.RunState
 	err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, localRunState *types.RunState) error {
-		if localRunState.Version != 1 {
-			return fmt.Errorf("unsupported run state version %d", localRunState.Version)
-		}
 		if localRunState.PreparedInputs < 0 || localRunState.PreparedInputs > len(localRunState.Consumed) {
 			return fmt.Errorf("invalid prepared input cursor")
 		}

@@ -291,7 +291,7 @@ func (t *Thread) startRun(ctx context.Context, request RunStartRequest, provider
 			return nil, nil, fmt.Errorf("resume requires checkpoint store")
 		}
 		if !request.Resume.ForceNewRun {
-			store = checkpointer.NewGraphStore(store, t.ThreadID, request.RunID, "core-graph-v1")
+			store = checkpointer.NewGraphStore(store, t.ThreadID, request.RunID)
 		}
 		snapshot, exists, err := store.Get(ctx, request.Resume.CheckpointID)
 		unknown := errors.As(err, &unknownOutcome)
