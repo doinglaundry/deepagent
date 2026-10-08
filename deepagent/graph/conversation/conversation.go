@@ -9,7 +9,27 @@ import (
 	"eino-cli/deepagent/graph/types"
 	messagepkg "eino-cli/deepagent/message"
 	"eino-cli/deepagent/utils"
+
+	"github.com/cloudwego/eino/components/model"
 )
+
+// IConversation 定义 Graph 使用的历史、压缩和用量能力。
+type IConversation interface {
+	ReloadHistory(context.Context) error
+	AddHistory(context.Context, string, ...*messagepkg.Message) error
+	GetHistory(context.Context) []*messagepkg.Message
+	BuildRequest(context.Context, []*messagepkg.Message) ([]*messagepkg.Message, error)
+	GetContextUsage() types.ContextTokenUsage
+	SnapshotContext() (int64, types.ContextTokenUsage)
+	RestoreContext(context.Context, int64, types.ContextTokenUsage) error
+	RecordModelUsage(context.Context, *model.TokenUsage)
+	GetRunUsage() types.Usage
+	RestoreRunUsage(context.Context, types.Usage) error
+	NeedsCompaction(context.Context) bool
+	Compact(context.Context, string) (*types.ContextTokenUsage, error)
+}
+
+var _ IConversation = (*Conversation)(nil)
 
 // Conversation publishes changes only after durable writes succeed.
 type Conversation struct {

@@ -146,7 +146,7 @@ func (graph *Graph) finishInvoke(ctx context.Context, runState *types.RunState, 
 		if checkpointID != "" {
 			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			required := currentRunState != runState && checkpointID == runOptions.CheckpointID
-			saveErr := checkpointer.New(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID, "core-graph-v1").Finalize(saveCtx, checkpointID, currentRunState, required)
+			saveErr := checkpointer.NewGraphStore(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID, "core-graph-v1").SaveTerminalState(saveCtx, checkpointID, currentRunState, required)
 			cancel()
 			if saveErr != nil {
 				err = errors.Join(err, fmt.Errorf("persist terminal checkpoint: %w", saveErr))

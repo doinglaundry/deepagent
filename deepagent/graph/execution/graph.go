@@ -30,7 +30,7 @@ type Graph struct {
 	graphState        *types.GraphState
 	config            Config
 	runnable          compose.Runnable[*types.RunState, *messagepkg.Message]
-	conversation      Conversation
+	conversation      conversation.IConversation
 	toolSet           *tools.ToolSet
 	toolExecutor      *toolExecutor
 	mu                sync.Mutex

@@ -2,40 +2,13 @@ package checkpointer
 
 import (
 	"context"
-	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"os"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
-func TestFileCheckpointSharedAndKeysConfined(t *testing.T) {
-	root := t.TempDir()
-	firstFileStore, err := NewFile(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondFileStore, err := NewFile(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	err = firstFileStore.Set(ctx, "checkpoint", []byte(`{"run":"same"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, exists, err := secondFileStore.Get(ctx, "checkpoint")
-	if err != nil || !exists || string(snapshot) != `{"run":"same"}` {
-		t.Fatal(string(snapshot), err)
-	}
-	err = firstFileStore.Set(ctx, "../../checkpoint", []byte("bad"))
-	if err == nil {
-		t.Fatal("traversal key accepted")
-	}
-	_, exists, err = secondFileStore.Get(ctx, "other")
-	if err != nil || exists {
-		t.Fatal("missing checkpoint exists", err)
-	}
-}
 func TestRedisCheckpointsNamespaceAndRoundTrip(t *testing.T) {
 	redisAddress := os.Getenv("DEEPAGENT_TEST_REDIS_ADDR")
 	if redisAddress == "" {
@@ -66,5 +39,34 @@ func TestRedisCheckpointsNamespaceAndRoundTrip(t *testing.T) {
 	_, _, err = redisStore.Get(ctx, "../key")
 	if err == nil {
 		t.Fatal("invalid identifier accepted")
+	}
+}
+
+func TestFileCheckpointSharedAndKeysConfined(t *testing.T) {
+	root := t.TempDir()
+	firstFileStore, err := NewFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFileStore, err := NewFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	err = firstFileStore.Set(ctx, "checkpoint", []byte(`{"run":"same"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, exists, err := secondFileStore.Get(ctx, "checkpoint")
+	if err != nil || !exists || string(snapshot) != `{"run":"same"}` {
+		t.Fatal(string(snapshot), err)
+	}
+	err = firstFileStore.Set(ctx, "../../checkpoint", []byte("bad"))
+	if err == nil {
+		t.Fatal("traversal key accepted")
+	}
+	_, exists, err = secondFileStore.Get(ctx, "other")
+	if err != nil || exists {
+		t.Fatal("missing checkpoint exists", err)
 	}
 }

@@ -177,13 +177,13 @@ func TestCheckpoint_AutomaticRunIdentityRestoresOnNewAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := graph.runState.RunID
-	var envelope checkpointer.Envelope
-	decodeErr := json.Unmarshal(store.values["checkpoint"], &envelope)
+	var checkpoint checkpointer.Checkpoint
+	decodeErr := json.Unmarshal(store.values["checkpoint"], &checkpoint)
 	if decodeErr != nil {
 		t.Fatal(decodeErr)
 	}
-	if original == "" || envelope.RunID != original {
-		t.Fatalf("state=%q envelope=%q", original, envelope.RunID)
+	if original == "" || checkpoint.RunID != original {
+		t.Fatalf("state=%q checkpoint=%q", original, checkpoint.RunID)
 	}
 	config.Conversation = graph.conversation
 	restored, err := New(ctx, WithConfig(&config))
@@ -306,7 +306,7 @@ func TestCheckpoint_FreshRunCreatesCursorAndFencesBeforeSideEffect(t *testing.T)
 			if counter.count.Load() != 1 || chatModel.calls != 2 || before != 1 || after != 1 || ended != 1 || len(store.fenced) == 0 {
 				t.Fatalf("lifecycle/fence: tools=%d models=%d before=%d after=%d end=%d fence=%d", counter.count.Load(), chatModel.calls, before, after, ended, len(store.fenced))
 			}
-			_, _, getErr := checkpointer.New(store, "", "run", "core-graph-v1").Get(ctx, "checkpoint")
+			_, _, getErr := checkpointer.NewGraphStore(store, "", "run", "core-graph-v1").Get(ctx, "checkpoint")
 			if getErr == nil || !strings.Contains(getErr.Error(), "terminal") {
 				t.Fatalf("successful run did not finalize checkpoint: %v", getErr)
 			}
@@ -383,7 +383,7 @@ func TestCheckpoint_TerminalStorageFailureDoesNotPublishSuccess(t *testing.T) {
 				if !errors.Is(err, failure) {
 					t.Fatalf("lost store failure: %v", err)
 				}
-				_, _, err = checkpointer.New(store, "", "run", "core-graph-v1").Get(ctx, "checkpoint")
+				_, _, err = checkpointer.NewGraphStore(store, "", "run", "core-graph-v1").Get(ctx, "checkpoint")
 				if err == nil || !strings.Contains(err.Error(), "unknown outcome") {
 					t.Fatalf("failed terminal write lost fence: %v", err)
 				}
@@ -589,7 +589,7 @@ func TestCheckpoint_CompletedApprovalRemovedBeforeNextInterruptSnapshot(t *testi
 				if len(store.writes) <= before {
 					t.Fatal("no checkpoint saved")
 				}
-				var envelope checkpointer.Envelope
+				var checkpoint checkpointer.Checkpoint
 				if approved {
 					// The execution fence precedes Eino's next interrupt snapshot.
 					before++
@@ -597,14 +597,14 @@ func TestCheckpoint_CompletedApprovalRemovedBeforeNextInterruptSnapshot(t *testi
 				if len(store.writes) <= before {
 					t.Fatal("no interrupt snapshot after execution fence")
 				}
-				envelopeDecodeErr := json.Unmarshal(store.writes[before], &envelope)
+				envelopeDecodeErr := json.Unmarshal(store.writes[before], &checkpoint)
 				if envelopeDecodeErr != nil {
 					t.Fatal(envelopeDecodeErr)
 				}
 				var snapshot struct {
 					MapValues map[string]struct{ JSONValue types.RunState }
 				}
-				decodeErr := json.Unmarshal(envelope.EinoSnapshot, &snapshot)
+				decodeErr := json.Unmarshal(checkpoint.Snapshot, &snapshot)
 				if decodeErr != nil {
 					t.Fatal(decodeErr)
 				}
@@ -791,15 +791,15 @@ func TestCheckpoint_ParallelFencesRetainEveryCall(t *testing.T) {
 	if err != nil || counter.count.Load() != 2 {
 		t.Fatalf("parallel resume: %v calls=%d", err, counter.count.Load())
 	}
-	var envelope checkpointer.Envelope
-	envelopeDecodeErr := json.Unmarshal(store.fenced, &envelope)
+	var checkpoint checkpointer.Checkpoint
+	envelopeDecodeErr := json.Unmarshal(store.fenced, &checkpoint)
 	if envelopeDecodeErr != nil {
 		t.Fatal(envelopeDecodeErr)
 	}
 	var snapshot struct {
 		MapValues map[string]struct{ JSONValue types.RunState }
 	}
-	decodeErr := json.Unmarshal(envelope.EinoSnapshot, &snapshot)
+	decodeErr := json.Unmarshal(checkpoint.Snapshot, &snapshot)
 	if decodeErr != nil {
 		t.Fatal(decodeErr)
 	}

@@ -171,15 +171,15 @@ type pendingCheckpointStore struct {
 }
 
 func (s *pendingCheckpointStore) Set(ctx context.Context, id string, raw []byte) error {
-	var envelope checkpointer.Envelope
-	err := json.Unmarshal(raw, &envelope)
+	var checkpoint checkpointer.Checkpoint
+	err := json.Unmarshal(raw, &checkpoint)
 	if err != nil {
 		return err
 	}
 	var snapshot struct {
 		MapValues map[string]struct{ JSONValue types.RunState }
 	}
-	decodeErr := json.Unmarshal(envelope.EinoSnapshot, &snapshot)
+	decodeErr := json.Unmarshal(checkpoint.Snapshot, &snapshot)
 	if decodeErr != nil {
 		return decodeErr
 	}

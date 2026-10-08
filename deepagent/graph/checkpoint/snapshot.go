@@ -3,9 +3,24 @@ package checkpointer
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"eino-cli/deepagent/graph/types"
 )
+
+// snapshotState edits only Eino's canonical JSON local state. The surrounding
+// maps retain execution inputs, interrupt addresses and unknown wire fields.
+type snapshotState struct {
+	snapshotFields   map[string]json.RawMessage
+	graphFields      map[string]json.RawMessage
+	localStateFields map[string]json.RawMessage
+	runStateFields   map[string]json.RawMessage
+}
+
+// interruptTree 只读取 Eino 的中断地址及嵌套子图。
+type interruptTree struct {
+	MapValues map[string]*interruptTree `json:",omitempty"`
+}
 
 // ToolOutcomeUnknownError stops replay while preserving the original inputs
 // for the failed Run's terminal event and delayed message redelivery.
@@ -18,62 +33,49 @@ func (outcomeError *ToolOutcomeUnknownError) Error() string {
 	return fmt.Sprintf("tool call %s has unknown outcome; explicit reconciliation required", outcomeError.CallID)
 }
 
-// snapshotState edits only Eino's canonical JSON local state. The surrounding
-// maps retain execution inputs, interrupt addresses and unknown wire fields.
-type snapshotState struct {
-	root, fields, wrapper, value map[string]json.RawMessage
-}
-
 func decodeSnapshot(snapshot []byte) (*snapshotState, error) {
 	snapshotState := &snapshotState{}
-	err := json.Unmarshal(snapshot, &snapshotState.root)
+	err := json.Unmarshal(snapshot, &snapshotState.snapshotFields)
 	if err != nil {
 		return nil, fmt.Errorf("decode Eino checkpoint: %w", err)
 	}
-	err = json.Unmarshal(snapshotState.root["MapValues"], &snapshotState.fields)
+	err = json.Unmarshal(snapshotState.snapshotFields["MapValues"], &snapshotState.graphFields)
 	if err != nil {
 		return nil, nil
 	}
-	err = json.Unmarshal(snapshotState.fields["State"], &snapshotState.wrapper)
+	err = json.Unmarshal(snapshotState.graphFields["State"], &snapshotState.localStateFields)
 	if err != nil {
 		return nil, nil
 	}
 	var stateType struct{ SimpleType string }
-	err = json.Unmarshal(snapshotState.wrapper["Type"], &stateType)
+	err = json.Unmarshal(snapshotState.localStateFields["Type"], &stateType)
 	if err != nil || stateType.SimpleType != "deepagent_run_state_v1" {
 		return nil, nil
 	}
-	err = json.Unmarshal(snapshotState.wrapper["JSONValue"], &snapshotState.value)
-	if err != nil || snapshotState.value == nil {
+	err = json.Unmarshal(snapshotState.localStateFields["JSONValue"], &snapshotState.runStateFields)
+	if err != nil || snapshotState.runStateFields == nil {
 		return nil, fmt.Errorf("invalid checkpoint RunState: %v", err)
 	}
 	return snapshotState, nil
 }
 
-func (snapshotState *snapshotState) encodeSnapshot() ([]byte, error) {
-	var err error
-	snapshotState.wrapper["JSONValue"], err = json.Marshal(snapshotState.value)
+// 业务更新需要本项目的 RunState，同时保留 Eino 的执行位置和未知字段。
+func decodeActiveSnapshot(snapshot []byte) (*snapshotState, *types.RunState, error) {
+	snapshotState, err := decodeSnapshot(snapshot)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	snapshotState.fields["State"], err = json.Marshal(snapshotState.wrapper)
-	if err != nil {
-		return nil, err
+	if snapshotState == nil {
+		return nil, nil, fmt.Errorf("checkpoint requires canonical RunState")
 	}
-	snapshotState.root["MapValues"], err = json.Marshal(snapshotState.fields)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(snapshotState.root)
+	runState, err := snapshotState.decodeActiveRunState()
+	return snapshotState, runState, err
 }
 
-func (snapshotState *snapshotState) decodeRunState() (*types.RunState, error) {
-	raw, err := json.Marshal(snapshotState.value)
-	if err != nil {
-		return nil, err
-	}
+// 直接解析 Eino 保存的 RunState，校验输入游标和终止状态。
+func (snapshotState *snapshotState) decodeActiveRunState() (*types.RunState, error) {
 	var runState types.RunState
-	err = json.Unmarshal(raw, &runState)
+	err := json.Unmarshal(snapshotState.localStateFields["JSONValue"], &runState)
 	if err != nil {
 		return nil, err
 	}
@@ -83,18 +85,28 @@ func (snapshotState *snapshotState) decodeRunState() (*types.RunState, error) {
 	if runState.PreparedInputs < 0 || runState.PreparedInputs > len(runState.Consumed) {
 		return nil, fmt.Errorf("invalid prepared input cursor %d", runState.PreparedInputs)
 	}
+	switch runState.Phase {
+	case types.PhaseCompleted, types.PhaseFailed, types.PhaseInterrupted:
+		return nil, fmt.Errorf("checkpoint run is terminal: %s", runState.Phase)
+	}
 	return &runState, nil
 }
 
-func requireSnapshotState(snapshot []byte) (*snapshotState, error) {
-	snapshotState, err := decodeSnapshot(snapshot)
+func (snapshotState *snapshotState) encodeSnapshot() ([]byte, error) {
+	var err error
+	snapshotState.localStateFields["JSONValue"], err = json.Marshal(snapshotState.runStateFields)
 	if err != nil {
 		return nil, err
 	}
-	if snapshotState == nil {
-		return nil, fmt.Errorf("checkpoint requires canonical RunState")
+	snapshotState.graphFields["State"], err = json.Marshal(snapshotState.localStateFields)
+	if err != nil {
+		return nil, err
 	}
-	return snapshotState, nil
+	snapshotState.snapshotFields["MapValues"], err = json.Marshal(snapshotState.graphFields)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(snapshotState.snapshotFields)
 }
 
 func markSnapshotBlocked(snapshot []byte) ([]byte, error) {
@@ -105,63 +117,64 @@ func markSnapshotBlocked(snapshot []byte) ([]byte, error) {
 	if snapshotState == nil {
 		return snapshot, nil
 	}
-	snapshotState.value["Phase"] = json.RawMessage(`"blocked"`)
+	snapshotState.runStateFields["Phase"] = json.RawMessage(`"blocked"`)
 	return snapshotState.encodeSnapshot()
 }
 
-func rejectTerminalSnapshot(snapshot []byte) error {
-	snapshotState, err := decodeSnapshot(snapshot)
-	if err != nil || snapshotState == nil {
-		return err
+// ValidateResume checks explicit targets against Eino's persisted interrupt
+// addresses. No IDs means the existing before/after-node resume operation.
+func ValidateResume(snapshot []byte, interruptIDs []string, resumeData map[string]any) error {
+	if len(interruptIDs) == 0 && len(resumeData) == 0 {
+		return nil
 	}
-	runState, err := snapshotState.decodeRunState()
-	if err != nil {
-		return err
+	var checkpoint interruptTree
+	decodeErr := json.Unmarshal(snapshot, &checkpoint)
+	if decodeErr != nil {
+		return decodeErr
 	}
-	switch runState.Phase {
-	case types.PhaseCompleted, types.PhaseFailed, types.PhaseInterrupted:
-		return fmt.Errorf("checkpoint run is terminal: %s", runState.Phase)
+	knownInterruptIDs := map[string]bool{}
+	var collectInterruptIDs func(*interruptTree)
+	collectInterruptIDs = func(value *interruptTree) {
+		if value == nil {
+			return
+		}
+		addresses := value.MapValues["InterruptID2Addr"]
+		if addresses != nil {
+			for key := range addresses.MapValues {
+				knownInterruptIDs[key] = true
+			}
+		}
+		children := value.MapValues["SubGraphs"]
+		if children != nil {
+			for _, child := range children.MapValues {
+				collectInterruptIDs(child)
+			}
+		}
+	}
+	collectInterruptIDs(&checkpoint)
+	requestedInterruptIDs := map[string]bool{}
+	for _, id := range interruptIDs {
+		requestedInterruptIDs[id] = true
+	}
+	for id := range resumeData {
+		requestedInterruptIDs[id] = true
+	}
+	for id := range requestedInterruptIDs {
+		if id == "" || !knownInterruptIDs[strconv.Quote(id)] {
+			return fmt.Errorf("resume interrupt %q not present in checkpoint", id)
+		}
 	}
 	return nil
 }
 
-func rejectUnknownToolOutcome(snapshot []byte) error {
-	snapshotState, err := decodeSnapshot(snapshot)
-	if err != nil || snapshotState == nil {
-		return err
-	}
-	runState, err := snapshotState.decodeRunState()
-	if err != nil {
-		return err
-	}
+// 结果未知的工具调用不能重放，但仍允许在原快照中保存已接受的输入。
+func rejectUnknownToolOutcome(runState *types.RunState) error {
 	for _, call := range runState.Calls {
 		if call.Status == types.CallOutcomeUnknown || call.Status == types.CallRunning {
 			return &ToolOutcomeUnknownError{CallID: call.Call.ID, Inputs: runState.Consumed}
 		}
 	}
 	return nil
-}
-
-// mergeObject retains unrecognized nested call fields when terminal state
-// replaces known values. Arrays and scalars remain authoritative replacements.
-func mergeObject(old, current json.RawMessage, fieldName string) json.RawMessage {
-	var previous, next map[string]json.RawMessage
-	oldErr := json.Unmarshal(old, &previous)
-	nextErr := json.Unmarshal(current, &next)
-	if oldErr != nil || nextErr != nil || previous == nil || next == nil {
-		return current
-	}
-	if fieldName == "Result" {
-		_, includesContent := next["MultiContent"]
-		if !includesContent {
-			delete(previous, "MultiContent")
-		}
-	}
-	for key, value := range next {
-		previous[key] = mergeObject(previous[key], value, key)
-	}
-	merged, _ := json.Marshal(previous)
-	return merged
 }
 
 func preserveCallFields(old, current json.RawMessage) json.RawMessage {
@@ -187,5 +200,27 @@ func preserveCallFields(old, current json.RawMessage) json.RawMessage {
 		}
 	}
 	merged, _ := json.Marshal(next)
+	return merged
+}
+
+// mergeObject retains unrecognized nested call fields when terminal state
+// replaces known values. Arrays and scalars remain authoritative replacements.
+func mergeObject(old, current json.RawMessage, fieldName string) json.RawMessage {
+	var previous, next map[string]json.RawMessage
+	oldErr := json.Unmarshal(old, &previous)
+	nextErr := json.Unmarshal(current, &next)
+	if oldErr != nil || nextErr != nil || previous == nil || next == nil {
+		return current
+	}
+	if fieldName == "Result" {
+		_, includesContent := next["MultiContent"]
+		if !includesContent {
+			delete(previous, "MultiContent")
+		}
+	}
+	for key, value := range next {
+		previous[key] = mergeObject(previous[key], value, key)
+	}
+	merged, _ := json.Marshal(previous)
 	return merged
 }

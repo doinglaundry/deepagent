@@ -41,7 +41,7 @@ type Thread struct {
 	current           *run.Run
 	inputRuns         map[string]*run.Run // MessageID -> original Run, guarded by mu.
 	pending           []types.Input
-	conversation      execution.Conversation
+	conversation      conversation.IConversation
 	generateMessageID conversation.GetMessageIDFunc
 	events            chan run.Event
 	config            *run.Config
@@ -291,7 +291,7 @@ func (t *Thread) startRun(ctx context.Context, request RunStartRequest, provider
 			return nil, nil, fmt.Errorf("resume requires checkpoint store")
 		}
 		if !request.Resume.ForceNewRun {
-			store = checkpointer.New(store, t.ThreadID, request.RunID, "core-graph-v1")
+			store = checkpointer.NewGraphStore(store, t.ThreadID, request.RunID, "core-graph-v1")
 		}
 		snapshot, exists, err := store.Get(ctx, request.Resume.CheckpointID)
 		unknown := errors.As(err, &unknownOutcome)

@@ -17,21 +17,6 @@ import (
 	"github.com/cloudwego/eino/compose"
 )
 
-type Conversation interface {
-	ReloadHistory(context.Context) error
-	AddHistory(context.Context, string, ...*messagepkg.Message) error
-	GetHistory(context.Context) []*messagepkg.Message
-	BuildRequest(context.Context, []*messagepkg.Message) ([]*messagepkg.Message, error)
-	GetContextUsage() types.ContextTokenUsage
-	SnapshotContext() (int64, types.ContextTokenUsage)
-	RestoreContext(context.Context, int64, types.ContextTokenUsage) error
-	RecordModelUsage(context.Context, *model.TokenUsage)
-	GetRunUsage() types.Usage
-	RestoreRunUsage(context.Context, types.Usage) error
-	NeedsCompaction(context.Context) bool
-	Compact(context.Context, string) (*types.ContextTokenUsage, error)
-}
-
 type Config struct {
 	SubAgents         []*SubAgent
 	SkillLoader       skillspkg.SkillLoader
@@ -54,7 +39,7 @@ type Config struct {
 	ThreadID          string
 	RunID             string
 	Prompts           []*messagepkg.Message
-	Conversation      Conversation
+	Conversation      conversation.IConversation
 	Emit              func(context.Context, types.RuntimeEvent) error
 	DrainInput        func(context.Context, string) ([]types.Input, bool, error)
 	CheckpointStore   compose.CheckPointStore
@@ -295,6 +280,3 @@ func WithAllFeatures() (option Option) {
 	}
 	return option
 }
-
-// The default context also provides BuildRequest for the
-var _ Conversation = (*conversation.Conversation)(nil)

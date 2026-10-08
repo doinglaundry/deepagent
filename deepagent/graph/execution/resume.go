@@ -56,7 +56,7 @@ func (graph *Graph) savePendingInterrupts(ctx context.Context, checkpointID stri
 	if graph.config.CheckpointStore != nil && checkpointID != "" {
 		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		err := checkpointer.New(graph.config.CheckpointStore, graph.config.ThreadID, graph.runState.RunID, "core-graph-v1").SavePending(saveCtx, checkpointID, pendingInterrupts)
+		err := checkpointer.NewGraphStore(graph.config.CheckpointStore, graph.config.ThreadID, graph.runState.RunID, "core-graph-v1").SaveInterrupts(saveCtx, checkpointID, pendingInterrupts)
 		if err != nil {
 			return fmt.Errorf("persist pending interrupt metadata: %w", err)
 		}
@@ -91,7 +91,7 @@ func (graph *Graph) invokeGraph(ctx context.Context, runState *types.RunState, r
 	}
 	if graph.config.CheckpointStore != nil && runOptions.CheckpointID != "" && (runOptions.WriteToCheckpointID == "" || runOptions.WriteToCheckpointID == runOptions.CheckpointID) {
 		ctx = context.WithValue(ctx, initialCheckpointKey{}, runState)
-		store := checkpointer.New(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID, "core-graph-v1")
+		store := checkpointer.NewGraphStore(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID, "core-graph-v1")
 		var fenceMu sync.Mutex
 		graph.toolExecutor.persistToolExecutionFence = func(ctx context.Context, call types.ToolCall) error {
 			fenceMu.Lock()
@@ -99,7 +99,7 @@ func (graph *Graph) invokeGraph(ctx context.Context, runState *types.RunState, r
 			// Fresh local state is the input pointer returned by our Eino state
 			// generator. A restored state is decoded from the checkpoint instead.
 			restored := types.GetRunState(ctx) != runState
-			err := store.FenceTool(ctx, runOptions.CheckpointID, call, restored)
+			err := store.MarkToolOutcomeUnknown(ctx, runOptions.CheckpointID, call, restored)
 			if err != nil {
 				return fmt.Errorf("persist tool execution fence: %w", err)
 			}
@@ -147,18 +147,18 @@ func (graph *Graph) resolveRunID(ctx context.Context, runOptions RunOptions) (st
 	if err != nil || !exists {
 		return runID, err
 	}
-	var envelope checkpointer.Envelope
-	err = json.Unmarshal(raw, &envelope)
+	var checkpoint checkpointer.Checkpoint
+	err = json.Unmarshal(raw, &checkpoint)
 	if err != nil {
 		return "", err
 	}
-	if envelope.Version != 1 {
-		return "", fmt.Errorf("unsupported checkpoint version %d", envelope.Version)
+	if checkpoint.Version != 1 {
+		return "", fmt.Errorf("unsupported checkpoint version %d", checkpoint.Version)
 	}
-	if envelope.ThreadID != graph.config.ThreadID || envelope.RunID == "" {
+	if checkpoint.ThreadID != graph.config.ThreadID || checkpoint.RunID == "" {
 		return "", fmt.Errorf("checkpoint identity mismatch")
 	}
-	return envelope.RunID, nil
+	return checkpoint.RunID, nil
 }
 
 func (runOptions RunOptions) getOutputCheckpointID() string {
@@ -168,7 +168,7 @@ func (runOptions RunOptions) getOutputCheckpointID() string {
 	return runOptions.CheckpointID
 }
 
-// A child writes its Eino envelope here during execution. The caller embeds
+// A child writes its Eino checkpoint here during execution. The caller embeds
 // the bytes in the parent RunState before propagating interruption, so the
 // parent's Eino checkpoint is the only external persistence operation.
 type childCheckpointStore struct {

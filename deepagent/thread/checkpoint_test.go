@@ -104,7 +104,7 @@ func TestThread_UnknownToolOutcomeEndsOriginalRunWithoutReplayingInput(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(checkpointer.Envelope{Version: 1, ThreadID: "thread", RunID: "run", GraphVersion: "core-graph-v1", EinoSnapshot: snapshot})
+	raw, err := json.Marshal(checkpointer.Checkpoint{Version: 1, ThreadID: "thread", RunID: "run", GraphVersion: "core-graph-v1", Snapshot: snapshot})
 	if err != nil {
 		t.Fatal(err)
 	}

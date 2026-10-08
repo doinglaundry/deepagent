@@ -32,15 +32,15 @@ type terminalWriteFailureStore struct {
 }
 
 func (terminalWriteFailureStore *terminalWriteFailureStore) Set(ctx context.Context, id string, raw []byte) error {
-	var envelope checkpointer.Envelope
-	err := json.Unmarshal(raw, &envelope)
+	var checkpoint checkpointer.Checkpoint
+	err := json.Unmarshal(raw, &checkpoint)
 	if err != nil {
 		return err
 	}
 	var snapshot struct {
 		MapValues map[string]struct{ JSONValue types.RunState }
 	}
-	decodeErr := json.Unmarshal(envelope.EinoSnapshot, &snapshot)
+	decodeErr := json.Unmarshal(checkpoint.Snapshot, &snapshot)
 	if decodeErr != nil {
 		return decodeErr
 	}
@@ -360,15 +360,15 @@ type pendingWriteFailure struct {
 }
 
 func (pendingWriteFailure *pendingWriteFailure) Set(ctx context.Context, id string, raw []byte) error {
-	var envelope checkpointer.Envelope
-	err := json.Unmarshal(raw, &envelope)
+	var checkpoint checkpointer.Checkpoint
+	err := json.Unmarshal(raw, &checkpoint)
 	if err != nil {
 		return err
 	}
 	var snapshot struct {
 		MapValues map[string]struct{ JSONValue types.RunState }
 	}
-	decodeErr := json.Unmarshal(envelope.EinoSnapshot, &snapshot)
+	decodeErr := json.Unmarshal(checkpoint.Snapshot, &snapshot)
 	if decodeErr != nil {
 		return decodeErr
 	}
@@ -804,15 +804,15 @@ type executionFenceStore struct {
 }
 
 func (executionFenceStore *executionFenceStore) Set(ctx context.Context, id string, raw []byte) error {
-	var envelope checkpointer.Envelope
-	err := json.Unmarshal(raw, &envelope)
+	var checkpoint checkpointer.Checkpoint
+	err := json.Unmarshal(raw, &checkpoint)
 	if err != nil {
 		return err
 	}
 	var snapshot struct {
 		MapValues map[string]struct{ JSONValue types.RunState }
 	}
-	decodeErr := json.Unmarshal(envelope.EinoSnapshot, &snapshot)
+	decodeErr := json.Unmarshal(checkpoint.Snapshot, &snapshot)
 	if decodeErr != nil {
 		return decodeErr
 	}

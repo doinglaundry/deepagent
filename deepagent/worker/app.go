@@ -49,7 +49,7 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("load skills: %w", err)
 	}
 
-	checkpointStore, err := checkpointer.NewRaw(redisClient, "deepagent:checkpoint")
+	checkpointStore, err := checkpointer.NewRedisStore(redisClient, "deepagent:checkpoint")
 	if err != nil {
 		return fmt.Errorf("initialize checkpoints: %w", err)
 	}
