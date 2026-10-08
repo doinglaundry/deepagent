@@ -78,8 +78,8 @@ func TestCheckpoint_ChildConversationRestoresProviderUsage(t *testing.T) {
 	reply.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 400, CompletionTokens: 10, TotalTokens: 410}}
 	chatModel := &childUsageModel{sequenceModel: sequenceModel{responses: [][]*schema.Message{{reply}, {schema.AssistantMessage("done", nil)}}}, check: func() {
 		usage := fresh.GetContextUsage()
-		if usage.Source != types.ContextUsageSourceModelUsage || usage.LastModelTotal != 410 || usage.CurrentTotal != 413 || usage.EstimatedAfterLastModel != 3 {
-			t.Errorf("lost provider baseline: %+v", usage)
+		if usage.TotalTokens != 413 || usage.PromptTokens != 400 || usage.CompletionTokens != 10 {
+			t.Errorf("lost context token usage: %+v", usage)
 		}
 	}}
 	config := Config{Depth: 1, RunID: "child-run", Model: chatModel, Conversation: initial, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}

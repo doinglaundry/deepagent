@@ -195,15 +195,15 @@ func TestCreateThreadDockerAllocationFailure(t *testing.T) {
 	}
 }
 
-type failingConversationRepository struct{ err error }
+type failingConversationDB struct{ err error }
 
-func (s failingConversationRepository) AppendMessage(context.Context, *messagepkg.Message) error {
+func (s failingConversationDB) AppendMessage(context.Context, *messagepkg.Message) error {
 	return s.err
 }
-func (s failingConversationRepository) SaveContext(context.Context, []*messagepkg.Message) error {
+func (s failingConversationDB) SaveContext(context.Context, []*messagepkg.Message) error {
 	return s.err
 }
-func (s failingConversationRepository) LoadContext(context.Context, string) ([]*messagepkg.Message, []string, int64, error) {
+func (s failingConversationDB) LoadContext(context.Context, string) ([]*messagepkg.Message, []string, int64, error) {
 	return nil, nil, 0, s.err
 }
 
@@ -250,7 +250,7 @@ esac
 				host.Runtime.MemoryEnabled = true
 				host.Runtime.MemoryDir = memoryPath
 			case "init_failure":
-				host.Deps.ConversationRepository = failingConversationRepository{err: historyErr}
+				host.Deps.ConversationDB = failingConversationDB{err: historyErr}
 			}
 			thread, err := host.createThread(context.Background(), &model.Thread{
 				ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: dir},

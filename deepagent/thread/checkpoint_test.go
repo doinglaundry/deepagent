@@ -158,7 +158,7 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			cfg := &runpkg.Config{Graph: execution.Config{Model: &resumeModel{}, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{tools.NewFollowUpTool()}}}
 			history := &historyMemory{}
 			events := make(chan runpkg.Event, 64)
-			first := newTestThread("thread", cfg, events, ThreadOptions{ConversationRepository: history})
+			first := newTestThread("thread", cfg, events, ThreadOptions{ConversationDB: history})
 			initHistoryErr := first.InitHistory(ctx)
 			if initHistoryErr != nil {
 				t.Fatal(initHistoryErr)
@@ -178,7 +178,7 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 					question = e.Payload.(runpkg.FollowUpRequestedPayload)
 				}
 			}
-			next := newTestThread("thread", cfg, events, ThreadOptions{ConversationRepository: history})
+			next := newTestThread("thread", cfg, events, ThreadOptions{ConversationDB: history})
 			err = next.InitHistory(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -279,11 +279,11 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			if fail {
 				store.failure = failure
 			}
-			history := &pendingConversationRepository{}
+			history := &pendingConversationDB{}
 			m := &pendingQuestionModel{started: make(chan struct{}), release: make(chan struct{})}
 			cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{tools.NewFollowUpTool()}}}
 			events := make(chan runpkg.Event, 64)
-			first := newTestThread("thread", cfg, events, ThreadOptions{ConversationRepository: history})
+			first := newTestThread("thread", cfg, events, ThreadOptions{ConversationDB: history})
 			firstInitHistoryErr := first.InitHistory(ctx)
 			if firstInitHistoryErr != nil {
 				t.Fatal(firstInitHistoryErr)
@@ -347,7 +347,7 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			if len(first.ContextManager().GetHistory(ctx)) != 2 {
 				t.Fatal("pending input inserted before tool completion")
 			}
-			restored := newTestThread("thread", cfg, make(chan runpkg.Event, 64), ThreadOptions{ConversationRepository: history})
+			restored := newTestThread("thread", cfg, make(chan runpkg.Event, 64), ThreadOptions{ConversationDB: history})
 			initHistoryErr := restored.InitHistory(ctx)
 			if initHistoryErr != nil {
 				t.Fatal(initHistoryErr)
@@ -385,7 +385,7 @@ func TestThread_CancelPersistsAcceptedPendingBeforeFinalEventAndWait(t *testing.
 			}
 			model := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
 			events := make(chan runpkg.Event, 32)
-			thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, events, ThreadOptions{ConversationRepository: store})
+			thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, events, ThreadOptions{ConversationDB: store})
 			initHistoryErr := thread.InitHistory(ctx)
 			if initHistoryErr != nil {
 				t.Fatal(initHistoryErr)

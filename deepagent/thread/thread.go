@@ -42,7 +42,7 @@ type Thread struct {
 	inputRuns         map[string]*run.Run // MessageID -> original Run, guarded by mu.
 	pending           []types.Input
 	conversation      execution.Conversation
-	generateMessageID conversation.MessageIDGenerator
+	generateMessageID conversation.GetMessageIDFunc
 	events            chan run.Event
 	config            *run.Config
 	closed            bool
@@ -61,9 +61,9 @@ func NewThread(cfg ThreadConfig) (*Thread, error) {
 	historyOptions := cfg.Options
 	history := conversation.New(
 		cfg.ThreadID,
-		historyOptions.ConversationRepository,
-		historyOptions.CompactionStrategy,
-		historyOptions.TokenCounter,
+		historyOptions.ConversationDB,
+		historyOptions.Compactor,
+		historyOptions.CountTokenFunc,
 		historyOptions.ContextWindow,
 		historyOptions.GenerateMessageID,
 	)

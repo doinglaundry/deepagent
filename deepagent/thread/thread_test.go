@@ -248,7 +248,7 @@ func TestReloadRepairsInterruptedToolCallBeforeNewInput(t *testing.T) {
 	events := make(chan runpkg.Event, 64)
 	thread := newTestThread("thread-1", &runpkg.Config{Graph: execution.Config{
 		Model: chatModel, CheckpointStore: &legacyParityMemoryCheckpoints{},
-	}}, events, ThreadOptions{ConversationRepository: store})
+	}}, events, ThreadOptions{ConversationDB: store})
 	err := thread.InitHistory(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -380,8 +380,8 @@ func TestThread_MultimodalRoundTrip(t *testing.T) {
 
 func TestThread_RedeliveryPreservesMessageIdentity(t *testing.T) {
 	ctx := context.Background()
-	store := &redeliveryConversationRepository{}
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &redeliveryModel{}}}, make(chan runpkg.Event, 128), ThreadOptions{ConversationRepository: store})
+	store := &redeliveryConversationDB{}
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &redeliveryModel{}}}, make(chan runpkg.Event, 128), ThreadOptions{ConversationDB: store})
 	initHistoryErr := thread.InitHistory(ctx)
 	if initHistoryErr != nil {
 		t.Fatal(initHistoryErr)
@@ -586,7 +586,7 @@ func TestThread_SubmitInputRejectsInvalidMessageWhileIdle(t *testing.T) {
 	history := &historyMemory{}
 	model := &threadModel{}
 	events := make(chan runpkg.Event, 100)
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, events, ThreadOptions{ConversationRepository: history})
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, events, ThreadOptions{ConversationDB: history})
 
 	unsupported := messagepkg.NewUserMessage("unsupported")
 	unsupported.Extra = map[string]any{"value": func() {}}
@@ -764,7 +764,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	m := &resumeModel{}
 	config := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []deeptools.ToolDescriptor{deeptools.NewFollowUpTool()}}}
 	events := make(chan runpkg.Event, 100)
-	first := newTestThread("thread", config, events, ThreadOptions{ConversationRepository: history})
+	first := newTestThread("thread", config, events, ThreadOptions{ConversationDB: history})
 	firstInitHistoryErr := first.InitHistory(ctx)
 	if firstInitHistoryErr != nil {
 		t.Fatal(firstInitHistoryErr)
@@ -787,7 +787,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	if question.InterruptID == "" || question.Info.Question != "which one?" {
 		t.Fatalf("missing follow-up: %+v", question)
 	}
-	restored := newTestThread("thread", config, events, ThreadOptions{ConversationRepository: history})
+	restored := newTestThread("thread", config, events, ThreadOptions{ConversationDB: history})
 	restoredInitHistoryErr := restored.InitHistory(ctx)
 	if restoredInitHistoryErr != nil {
 		t.Fatal(restoredInitHistoryErr)
@@ -820,7 +820,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	if m.calls != 2 || len(m.inputs[1]) != 3 || m.inputs[1][2].Content != "a" {
 		t.Fatalf("resume restarted model or lost tool answer: calls=%d inputs=%v", m.calls, m.inputs)
 	}
-	replay := newTestThread("thread", config, events, ThreadOptions{ConversationRepository: history})
+	replay := newTestThread("thread", config, events, ThreadOptions{ConversationDB: history})
 	initHistoryErr := replay.InitHistory(ctx)
 	if initHistoryErr != nil {
 		t.Fatal(initHistoryErr)
@@ -882,7 +882,7 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 	history := &historyMemory{}
 	cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []deeptools.ToolDescriptor{deeptools.NewFollowUpTool()}}}
 	events := make(chan runpkg.Event, 100)
-	first := newTestThread("thread", cfg, events, ThreadOptions{ConversationRepository: history})
+	first := newTestThread("thread", cfg, events, ThreadOptions{ConversationDB: history})
 	err := first.InitHistory(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -902,7 +902,7 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 			question = event.Payload.(runpkg.FollowUpRequestedPayload)
 		}
 	}
-	restored := newTestThread("thread", cfg, events, ThreadOptions{ConversationRepository: history})
+	restored := newTestThread("thread", cfg, events, ThreadOptions{ConversationDB: history})
 	err = restored.InitHistory(ctx)
 	if err != nil {
 		t.Fatal(err)

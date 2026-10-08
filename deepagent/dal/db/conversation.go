@@ -107,7 +107,7 @@ func (dao *ConversationDAO) LoadContext(ctx context.Context, threadID string) ([
 		return nil, nil, 0, errors.New("conversation store is not initialized")
 	}
 	var messages []*messagepkg.Message
-	var messageIDs []string
+	var recordedMessageIDs []string
 	lastReadSeq := int64(0)
 	for {
 		var records []*conversationRow
@@ -127,7 +127,7 @@ func (dao *ConversationDAO) LoadContext(ctx context.Context, threadID string) ([
 			lastReadSeq = record.Seq
 
 			messageID := record.MessageID
-			messageIDs = append(messageIDs, messageID)
+			recordedMessageIDs = append(recordedMessageIDs, messageID)
 			switch record.Type {
 			case "message":
 				message := record.Message
@@ -156,7 +156,7 @@ func (dao *ConversationDAO) LoadContext(ctx context.Context, threadID string) ([
 			}
 		}
 		if len(records) < 200 {
-			return messages, messageIDs, lastReadSeq, nil
+			return messages, recordedMessageIDs, lastReadSeq, nil
 		}
 	}
 }

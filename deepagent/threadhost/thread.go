@@ -54,16 +54,16 @@ type RuntimeConfig struct {
 
 // RuntimeDeps are long-lived resources shared by Thread runtimes.
 type RuntimeDeps struct {
-	ConversationRepository conversation.ConversationRepository
-	Checkpoint             compose.CheckPointStore
-	Tools                  []tools.ToolDescriptor
-	SkillLoader            skillspkg.SkillLoader
-	MemoryStore            memorypkg.Store
-	Collaboration          CollaborationBackend
-	GenerateMessageID      conversation.MessageIDGenerator
-	ApprovalRemember       threadpkg.ApprovalRememberer
-	IsToolAlwaysAllowed    func(context.Context, int64, string) (bool, error)
-	InterruptResume        threadpkg.InterruptResumeDecoder
+	ConversationDB      conversation.ConversationDB
+	Checkpoint          compose.CheckPointStore
+	Tools               []tools.ToolDescriptor
+	SkillLoader         skillspkg.SkillLoader
+	MemoryStore         memorypkg.Store
+	Collaboration       CollaborationBackend
+	GenerateMessageID   conversation.GetMessageIDFunc
+	ApprovalRemember    threadpkg.ApprovalRememberer
+	IsToolAlwaysAllowed func(context.Context, int64, string) (bool, error)
+	InterruptResume     threadpkg.InterruptResumeDecoder
 }
 
 // createThread 准备资源和配置，再创建 Thread；初始化由 RunThread 负责。
@@ -175,11 +175,11 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 
 	// 4. 配置 Thread 的历史和压缩，并绑定资源清理。
 	options := threadpkg.ThreadOptions{
-		ConversationRepository: w.Deps.ConversationRepository, ContextWindow: w.Runtime.ContextWindow,
+		ConversationDB: w.Deps.ConversationDB, ContextWindow: w.Runtime.ContextWindow,
 		GenerateMessageID: w.Deps.GenerateMessageID,
 	}
 	if w.Runtime.CompactThresholdTokens > 0 {
-		options.CompactionStrategy = &conversation.SummaryCompaction{
+		options.Compactor = &conversation.SummaryCompaction{
 			Model: chatModel, TokenLimit: w.Runtime.CompactThresholdTokens,
 			KeepRecent: w.Runtime.KeepRecentMessages,
 		}

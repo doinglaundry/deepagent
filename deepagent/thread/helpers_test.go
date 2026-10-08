@@ -122,7 +122,7 @@ func legacyParityWaitRunEnd(t *testing.T, events <-chan runpkg.Event) runpkg.Eve
 	}
 }
 
-type legacyParityDedupConversationRepository = historyMemory
+type legacyParityDedupConversationDB = historyMemory
 
 type redeliveryModel struct{}
 
@@ -138,7 +138,7 @@ func (m *redeliveryModel) Stream(context.Context, []*schema.Message, ...model.Op
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("done", nil)}), nil
 }
 
-type redeliveryConversationRepository = historyMemory
+type redeliveryConversationDB = historyMemory
 
 type pendingQuestionModel struct {
 	resumeModel
@@ -207,9 +207,9 @@ func (s *pendingCheckpointStore) Set(ctx context.Context, id string, raw []byte)
 	return s.threadCheckpointMemory.Set(ctx, id, raw)
 }
 
-type pendingConversationRepository struct{ historyMemory }
+type pendingConversationDB struct{ historyMemory }
 
-func (s *pendingConversationRepository) AppendMessage(ctx context.Context, record *messagepkg.Message) error {
+func (s *pendingConversationDB) AppendMessage(ctx context.Context, record *messagepkg.Message) error {
 	err := ctx.Err()
 	if err != nil {
 		return err

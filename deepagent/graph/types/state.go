@@ -48,7 +48,8 @@ type RunState struct {
 	GraphSteps     int
 	EventSeq       uint64
 	PreparedInputs int
-	Context        *ContextSnapshot
+	HistorySeq     int64
+	ContextUsage   *ContextTokenUsage
 	Consumed       []Input
 	Calls          []ToolCallState
 	Plan           []PlanStep

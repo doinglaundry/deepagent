@@ -41,6 +41,25 @@ func TestThreadAdapter_InputConsumedPreservesIndividualIdentityAndMedia(t *testi
 	}
 }
 
+func TestThreadAdapter_ContextUsagePreservesTokensAndRatio(t *testing.T) {
+	contextTokenUsage := types.ContextTokenUsage{
+		MaxContextTokens: 10000,
+		TotalTokens:      5500,
+		PromptTokens:     4000,
+		CompletionTokens: 500,
+	}
+	payload := convertContextUsagePayload(&contextTokenUsage)
+	if payload == nil || payload.UsedTokens != 5500 || payload.MaxTokens == nil || *payload.MaxTokens != 10000 {
+		t.Fatalf("context capacity lost: %+v", payload)
+	}
+	if payload.Ratio == nil || *payload.Ratio != 0.55 {
+		t.Fatalf("incorrect context ratio: %+v", payload)
+	}
+	if payload.PromptTokens == nil || *payload.PromptTokens != 4000 || payload.CompletionTokens == nil || *payload.CompletionTokens != 500 {
+		t.Fatalf("model token usage lost: %+v", payload)
+	}
+}
+
 func TestThreadAdapter_FollowUpIncludesQuestion(t *testing.T) {
 	payload := followUpRequiredPayload(runpkg.FollowUpRequestedPayload{
 		InterruptID: "interrupt-1", CheckpointID: "checkpoint-1",
@@ -477,5 +496,51 @@ func TestThreadOutput_ModelRequestPublishesOnlyThinkingPhase(t *testing.T) {
 	}
 	if output.Type != "agent_activity" || output.RunID != "run" || string(output.Payload) != `{"phase":"thinking"}` {
 		t.Fatalf("unexpected activity: %+v", output)
+	}
+}
+
+func TestThreadAdapter_CompactionEventsPreserveCapturedUsage(t *testing.T) {
+	ctxUsage := types.ContextTokenUsage{MaxContextTokens: 10000, TotalTokens: 5500, PromptTokens: 4000, CompletionTokens: 500}
+	liveUsage := types.ContextTokenUsage{MaxContextTokens: 20000, TotalTokens: 300, PromptTokens: 250, CompletionTokens: 50}
+	input := messagepkg.NewUserMessage("input")
+	input.MessageID = "input-1"
+	for _, testCase := range []struct {
+		name   string
+		typeID runpkg.EventType
+		usage  types.ContextTokenUsage
+		want   types.ContextTokenUsage
+		status string
+	}{
+		{"started", runpkg.EventContextCompactStarted, ctxUsage, ctxUsage, eventpkg.RunStatusCompactStarted},
+		{"finished", runpkg.EventContextCompacted, ctxUsage, ctxUsage, eventpkg.RunStatusContextCompacted},
+		{"empty_started", runpkg.EventContextCompactStarted, types.ContextTokenUsage{}, liveUsage, eventpkg.RunStatusCompactStarted},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			kind, value, err := agentEventPayloadForOutput(runpkg.Event{
+				Type: testCase.typeID, Payload: testCase.usage, ConsumedInputs: []*messagepkg.Message{input},
+			}, &liveUsage)
+			if err != nil || kind != eventpkg.EventTypeRunStatus {
+				t.Fatalf("kind=%s err=%v", kind, err)
+			}
+			raw, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload eventpkg.ContextCompactedEventPayload
+			err = json.Unmarshal(raw, &payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			usage := payload.ContextUsage
+			if payload.Status != testCase.status || !reflect.DeepEqual(payload.ConsumedMessageIDs, []string{"input-1"}) {
+				t.Fatalf("compaction event identity lost: %s", raw)
+			}
+			if usage == nil || usage.UsedTokens != testCase.want.TotalTokens || usage.MaxTokens == nil || *usage.MaxTokens != testCase.want.MaxContextTokens {
+				t.Fatalf("compaction used live capacity instead of captured capacity: %s", raw)
+			}
+			if usage.PromptTokens == nil || *usage.PromptTokens != testCase.want.PromptTokens || usage.CompletionTokens == nil || *usage.CompletionTokens != testCase.want.CompletionTokens {
+				t.Fatalf("compaction lost model token usage: %s", raw)
+			}
+		})
 	}
 }

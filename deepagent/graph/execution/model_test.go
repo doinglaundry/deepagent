@@ -195,7 +195,7 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 			t.Fatalf("run %d cumulative=%+v", i, graph.runState.Usage)
 		}
 		got := graph.conversation.GetContextUsage()
-		if got.LastModelTotal != 5 || got.CurrentTotal != 5 {
+		if got.TotalTokens != 5 || got.PromptTokens != 3 || got.CompletionTokens != 2 {
 			t.Fatalf("context usage must remain last request: %+v", got)
 		}
 	}
@@ -268,7 +268,7 @@ func TestRun_LegacyExtraUsageUsesConversation(t *testing.T) {
 			if executeErr != nil {
 				t.Fatal(executeErr)
 			}
-			if len(totals) != 1 || totals[0].TotalTokens != want || graph.runState.Usage != totals[0] || graph.conversation.GetRunUsage() != totals[0] || graph.conversation.GetContextUsage().LastModelTotal != want {
+			if len(totals) != 1 || totals[0].TotalTokens != want || graph.runState.Usage != totals[0] || graph.conversation.GetRunUsage() != totals[0] || graph.conversation.GetContextUsage().TotalTokens != want {
 				t.Fatalf("events=%+v snapshot=%+v context=%+v", totals, graph.runState.Usage, graph.conversation.GetContextUsage())
 			}
 		})

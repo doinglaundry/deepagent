@@ -17,18 +17,18 @@ type ContextManager interface {
 	ReloadHistory(context.Context) error
 	AddHistory(context.Context, string, ...*messagepkg.Message) error
 	GetHistory(context.Context) []*messagepkg.Message
-	GetContextUsage() types.ContextUsageSnapshot
+	GetContextUsage() types.ContextTokenUsage
 	RecordModelUsage(context.Context, *model.TokenUsage)
-	Compact(context.Context, string) (*conversation.ContextCompactedPayload, error)
+	Compact(context.Context, string) (*types.ContextTokenUsage, error)
 	NeedsCompaction(context.Context) bool
 }
 
 type ThreadOptions struct {
-	ConversationRepository conversation.ConversationRepository
-	CompactionStrategy     conversation.CompactionStrategy
-	TokenCounter           conversation.TokenCounter
-	ContextWindow          int64
-	GenerateMessageID      conversation.MessageIDGenerator
+	ConversationDB    conversation.ConversationDB
+	Compactor         *conversation.SummaryCompaction
+	CountTokenFunc    conversation.CountTokenFunc
+	ContextWindow     int64
+	GenerateMessageID conversation.GetMessageIDFunc
 }
 
 type SubmitInputResult struct {

@@ -71,7 +71,7 @@ func Run(ctx context.Context, cfg Config) error {
 			MemoryUserID: cfg.MemoryUserID, MemoryLeaseTTL: cfg.MemoryLeaseTTL,
 		},
 		Deps: threadhost.RuntimeDeps{
-			ConversationRepository: conversationDAO, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
+			ConversationDB: conversationDAO, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
 			MemoryStore: coordinator, Collaboration: coordinator,
 			IsToolAlwaysAllowed: coordinator.IsToolAlwaysAllowed,
 			GenerateMessageID: func(idCtx context.Context, _ *messagepkg.Message) (string, error) {

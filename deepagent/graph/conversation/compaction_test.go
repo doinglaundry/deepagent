@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"eino-cli/deepagent/graph/types"
 	messagepkg "eino-cli/deepagent/message"
 
 	"github.com/cloudwego/eino/components/model"
@@ -59,12 +60,12 @@ func TestSummaryCompactionPreservesRecentToolExchange(t *testing.T) {
 		{Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "read"}}}},
 		messagepkg.NewToolMessage("result", "call"), messagepkg.NewAssistantMessage("done", nil),
 	}
-	summary, compactedCount, err := strategy.Compact(context.Background(), current)
+	summary, compactedmsgcnt, err := strategy.Summarize(context.Background(), current)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary == nil || summary.Role != schema.System || compactedCount != 2 {
-		t.Fatalf("summary=%+v compactedCount=%d", summary, compactedCount)
+	if summary == nil || summary.Role != schema.System || compactedmsgcnt != 2 {
+		t.Fatalf("summary=%+v compactedmsgcnt=%d", summary, compactedmsgcnt)
 	}
 	store := &testStore{}
 	liveConversation := New("thread", store, strategy, nil, 0, nil)
@@ -134,7 +135,7 @@ func TestCompactionPreservesConcurrentHistory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			compacted := make(chan *ContextCompactedPayload, 1)
+			compacted := make(chan *types.ContextTokenUsage, 1)
 			failed := make(chan error, 1)
 			go func() {
 				payload, err := liveConversation.Compact(ctx, "run")
@@ -172,7 +173,7 @@ func TestCompactionPreservesConcurrentHistory(t *testing.T) {
 			}
 			beforeUsage := liveConversation.GetContextUsage()
 			finishSummary()
-			var payload *ContextCompactedPayload
+			var payload *types.ContextTokenUsage
 			select {
 			case payload = <-compacted:
 			case <-time.After(5 * time.Second):
@@ -202,6 +203,31 @@ func TestCompactionPreservesConcurrentHistory(t *testing.T) {
 			}
 			if restoredConversation.GetContextUsage() != liveConversation.GetContextUsage() {
 				t.Fatal("merged context usage differs after reload")
+			}
+		})
+	}
+}
+
+func TestNeedsCompactionUsesTokenLimit(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		compactor *SummaryCompaction
+		tokens    int
+		want      bool
+	}{
+		{"no_compactor", nil, 100, false},
+		{"zero_limit", &SummaryCompaction{}, 100, false},
+		{"negative_limit", &SummaryCompaction{TokenLimit: -1}, 100, false},
+		{"below_limit", &SummaryCompaction{TokenLimit: 100}, 99, false},
+		{"at_limit", &SummaryCompaction{TokenLimit: 100}, 100, true},
+		{"above_limit", &SummaryCompaction{TokenLimit: 100}, 101, true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			conversation := New("thread", nil, testCase.compactor, nil, 0, nil)
+			conversation.RecordModelUsage(context.Background(), &model.TokenUsage{TotalTokens: testCase.tokens})
+			needsCompaction := conversation.NeedsCompaction(context.Background())
+			if needsCompaction != testCase.want {
+				t.Fatalf("NeedsCompaction=%t want=%t", needsCompaction, testCase.want)
 			}
 		})
 	}

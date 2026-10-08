@@ -99,9 +99,9 @@ func TestConversationDAORoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, ids, cursor, err := store.LoadContext(ctx, "thread")
-	if err != nil || len(loaded) != 3 || loaded[0].Content != "summary" || loaded[1].Content != "retain" || loaded[2].Content != "next" || len(ids) != 4 || cursor != 4 {
-		t.Fatalf("reload lost context or identities: messages=%+v ids=%v cursor=%d err=%v", loaded, ids, cursor, err)
+	loaded, recordedMessageIDs, cursor, err := store.LoadContext(ctx, "thread")
+	if err != nil || len(loaded) != 3 || loaded[0].Content != "summary" || loaded[1].Content != "retain" || loaded[2].Content != "next" || len(recordedMessageIDs) != 4 || cursor != 4 {
+		t.Fatalf("reload lost context or identities: messages=%+v ids=%v cursor=%d err=%v", loaded, recordedMessageIDs, cursor, err)
 	}
 	if loaded[0].MessageID != "3" || loaded[0].Seq != 3 || loaded[2].RunID != "next-run" {
 		t.Fatalf("reload lost message metadata: %+v", loaded)

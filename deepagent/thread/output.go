@@ -141,7 +141,7 @@ func (t *Thread) emitAgentEvent(ctx context.Context, ev run.Event) {
 
 const metadataAgentEventID = "agent_event_id"
 
-func threadOutputItem(sessionID string, threadID string, ev run.Event, usage *types.ContextUsageSnapshot) (item *TransportThreadOutputItem, err error) {
+func threadOutputItem(sessionID string, threadID string, ev run.Event, usage *types.ContextTokenUsage) (item *TransportThreadOutputItem, err error) {
 	event, err := workerEvent(sessionID, threadID, ev, usage)
 	if err != nil {
 		return nil, err
@@ -177,7 +177,7 @@ func yieldFromAgentEvent(ev run.Event) *TransportThreadYield {
 	}
 }
 
-func workerEvent(_ string, threadID string, ev run.Event, usage *types.ContextUsageSnapshot) (output *TransportEvent, err error) {
+func workerEvent(_ string, threadID string, ev run.Event, usage *types.ContextTokenUsage) (output *TransportEvent, err error) {
 	if isHiddenInternalToolEvent(ev) {
 		return nil, nil
 	}

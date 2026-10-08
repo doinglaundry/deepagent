@@ -215,8 +215,9 @@ func (graph *Graph) leaveNode(ctx context.Context, runState, nextRunState *types
 		runState.Extensions["child_history"] = historyJSON
 
 	}
-	contextSnapshot := graph.conversation.SnapshotContext()
-	runState.Context = &contextSnapshot
+	historySeq, contextTokenUsage := graph.conversation.SnapshotContext()
+	runState.HistorySeq = historySeq
+	runState.ContextUsage = &contextTokenUsage
 	graph.toolExecutor.snapshotChildCheckpoints(runState)
 	markRunError(ctx, runState, nodeErr)
 	snapshotErr := graph.graphState.SnapshotExtensions(runState)

@@ -73,12 +73,13 @@ type compactionEventConversation struct {
 
 func (*compactionEventConversation) NeedsCompaction(context.Context) bool { return true }
 
-func (compactionEventConversation *compactionEventConversation) Compact(context.Context, string) (*conversation.ContextCompactedPayload, error) {
+func (compactionEventConversation *compactionEventConversation) Compact(context.Context, string) (*types.ContextTokenUsage, error) {
 	compactionEventConversation.calls++
 	if compactionEventConversation.err != nil {
 		return nil, compactionEventConversation.err
 	}
-	return &conversation.ContextCompactedPayload{StrategyID: "test"}, nil
+	usage := compactionEventConversation.GetContextUsage()
+	return &usage, nil
 }
 
 type paritySummaryModel struct{ sequenceModel }

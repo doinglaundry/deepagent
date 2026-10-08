@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/types"
 	messagepkg "eino-cli/deepagent/message"
 
@@ -46,16 +45,16 @@ func (graph *Graph) compactContext(ctx context.Context, runState *types.RunState
 	if !graph.conversation.NeedsCompaction(ctx) {
 		return nil
 	}
-	err := graph.emitEvent(ctx, runState, "context_compact_started", "", conversation.ContextCompactStartedPayload{ContextUsage: graph.conversation.GetContextUsage()})
+	err := graph.emitEvent(ctx, runState, "context_compact_started", "", graph.conversation.GetContextUsage())
 	if err != nil {
 		return err
 	}
-	payload, err := graph.conversation.Compact(ctx, runState.RunID)
+	usage, err := graph.conversation.Compact(ctx, runState.RunID)
 	if err != nil {
 		return err
 	}
-	if payload != nil {
-		return graph.emitEvent(ctx, runState, "context_compacted", "", *payload)
+	if usage != nil {
+		return graph.emitEvent(ctx, runState, "context_compacted", "", *usage)
 	}
 	return nil
 }

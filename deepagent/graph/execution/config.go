@@ -22,14 +22,14 @@ type Conversation interface {
 	AddHistory(context.Context, string, ...*messagepkg.Message) error
 	GetHistory(context.Context) []*messagepkg.Message
 	BuildRequest(context.Context, []*messagepkg.Message) ([]*messagepkg.Message, error)
-	GetContextUsage() types.ContextUsageSnapshot
-	SnapshotContext() types.ContextSnapshot
-	RestoreContext(context.Context, types.ContextSnapshot) error
+	GetContextUsage() types.ContextTokenUsage
+	SnapshotContext() (int64, types.ContextTokenUsage)
+	RestoreContext(context.Context, int64, types.ContextTokenUsage) error
 	RecordModelUsage(context.Context, *model.TokenUsage)
 	GetRunUsage() types.Usage
 	RestoreRunUsage(context.Context, types.Usage) error
 	NeedsCompaction(context.Context) bool
-	Compact(context.Context, string) (*conversation.ContextCompactedPayload, error)
+	Compact(context.Context, string) (*types.ContextTokenUsage, error)
 }
 
 type Config struct {

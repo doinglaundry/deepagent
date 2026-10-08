@@ -13,38 +13,38 @@ import (
 
 // Conversation publishes changes only after durable writes succeed.
 type Conversation struct {
-	mu                     sync.Mutex
-	threadID               string
-	messages               []*messagepkg.Message
-	seenMessageIDs         map[string]struct{}
-	historySequence        int64
-	conversationRepository ConversationRepository
-	compactor              CompactionStrategy
-	generateMessageID      MessageIDGenerator
-	tokenCounter           TokenCounter
-	contextUsage           types.ContextUsageSnapshot
-	runUsage               types.Usage
+	mu                sync.Mutex
+	threadID          string
+	messages          []*messagepkg.Message
+	seenMessageIDs    map[string]struct{}
+	historySequence   int64
+	conversationDB    ConversationDB
+	compactor         *SummaryCompaction
+	generateMessageID GetMessageIDFunc
+	countTokenFunc    CountTokenFunc
+	contextTokenUsage types.ContextTokenUsage
+	runUsage          types.Usage
 }
 
 func New(
 	threadID string,
-	conversationRepository ConversationRepository,
-	compactor CompactionStrategy,
-	tokenCounter TokenCounter,
-	contextWindowTokens int64,
-	generateMessageID MessageIDGenerator,
+	conversationDB ConversationDB,
+	compactor *SummaryCompaction,
+	countTokenFunc CountTokenFunc,
+	maxContextTokens int64,
+	generateMessageID GetMessageIDFunc,
 ) *Conversation {
-	if tokenCounter == nil {
-		tokenCounter = utils.SimpleTokenCounter
+	if countTokenFunc == nil {
+		countTokenFunc = utils.SimpleTokenCounter
 	}
 	conversation := &Conversation{
-		threadID:               threadID,
-		conversationRepository: conversationRepository,
-		compactor:              compactor,
-		tokenCounter:           tokenCounter,
-		generateMessageID:      generateMessageID,
-		seenMessageIDs:         make(map[string]struct{}),
-		contextUsage:           types.ContextUsageSnapshot{ContextWindow: contextWindowTokens},
+		threadID:          threadID,
+		conversationDB:    conversationDB,
+		compactor:         compactor,
+		countTokenFunc:    countTokenFunc,
+		generateMessageID: generateMessageID,
+		seenMessageIDs:    make(map[string]struct{}),
+		contextTokenUsage: types.ContextTokenUsage{MaxContextTokens: maxContextTokens},
 	}
 	conversation.recomputeContextUsage()
 	return conversation
@@ -67,8 +67,8 @@ func (conversation *Conversation) AddHistory(ctx context.Context, runID string, 
 		if message.MessageID != "" && exists {
 			continue
 		}
-		if conversation.conversationRepository != nil {
-			err = conversation.conversationRepository.AppendMessage(ctx, message)
+		if conversation.conversationDB != nil {
+			err = conversation.conversationDB.AppendMessage(ctx, message)
 			if err != nil {
 				return err
 			}
@@ -124,15 +124,15 @@ func (conversation *Conversation) initializeMessage(ctx context.Context, runID s
 func (conversation *Conversation) ReloadHistory(ctx context.Context) error {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	if conversation.conversationRepository == nil {
+	if conversation.conversationDB == nil {
 		return nil
 	}
-	messages, messageIDs, lastReadSeq, err := conversation.conversationRepository.LoadContext(ctx, conversation.threadID)
+	messages, recordedMessageIDs, lastReadSeq, err := conversation.conversationDB.LoadContext(ctx, conversation.threadID)
 	if err != nil {
 		return err
 	}
-	seenMessageIDs := make(map[string]struct{}, len(messageIDs))
-	for _, messageID := range messageIDs {
+	seenMessageIDs := make(map[string]struct{}, len(recordedMessageIDs))
+	for _, messageID := range recordedMessageIDs {
 		seenMessageIDs[messageID] = struct{}{}
 	}
 	conversation.messages = messages

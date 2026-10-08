@@ -71,8 +71,8 @@ func (graph *Graph) restoreLocalState(ctx context.Context, runState *types.RunSt
 	if err != nil {
 		return err
 	}
-	if runState.Context != nil {
-		err = graph.conversation.RestoreContext(ctx, *runState.Context)
+	if runState.ContextUsage != nil {
+		err = graph.conversation.RestoreContext(ctx, runState.HistorySeq, *runState.ContextUsage)
 		if err != nil {
 			return err
 		}

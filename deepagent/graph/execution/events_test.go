@@ -40,12 +40,16 @@ func TestRun_CompactionEventsAtEachSamplingBoundary(t *testing.T) {
 		switch event.Kind {
 		case "context_compact_started":
 			started++
-			_, ok := event.Data.(conversation.ContextCompactStartedPayload)
+			_, ok := event.Data.(types.ContextTokenUsage)
 			if !ok {
 				t.Fatal("wrong started payload")
 			}
 		case "context_compacted":
 			finished++
+			_, ok := event.Data.(types.ContextTokenUsage)
+			if !ok {
+				t.Fatal("wrong finished payload")
+			}
 		case "llm_requesting":
 			requests++
 			if started != requests || finished != requests {

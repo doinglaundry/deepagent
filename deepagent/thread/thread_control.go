@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
 	messagepkg "eino-cli/deepagent/message"
@@ -51,11 +50,11 @@ func (t *Thread) InterruptRun(opts run.InterruptOptions) bool {
 	return true
 }
 
-func (t *Thread) Compact(ctx context.Context) (*conversation.ContextCompactedPayload, error) {
+func (t *Thread) Compact(ctx context.Context) (*types.ContextTokenUsage, error) {
 	return t.CompactWithRunID(ctx, uuid.NewString())
 }
 
-func (t *Thread) CompactWithRunID(ctx context.Context, runID string) (*conversation.ContextCompactedPayload, error) {
+func (t *Thread) CompactWithRunID(ctx context.Context, runID string) (*types.ContextTokenUsage, error) {
 	if runID == "" {
 		return nil, ErrInvalidOp
 	}
@@ -154,18 +153,16 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 	}()
 
 	t.emitAgentEvent(context.WithoutCancel(ctx), run.Event{
-		ID:       t.eventID(runID),
-		TS:       time.Now(),
-		ThreadID: t.ThreadID,
-		RunID:    runID,
-		Type:     run.EventContextCompactStarted,
-		Payload: conversation.ContextCompactStartedPayload{
-			ContextUsage: t.ContextManager().GetContextUsage(),
-		},
+		ID:                 t.eventID(runID),
+		TS:                 time.Now(),
+		ThreadID:           t.ThreadID,
+		RunID:              runID,
+		Type:               run.EventContextCompactStarted,
+		Payload:            t.ContextManager().GetContextUsage(),
 		ConsumedInputs:     cmd.consumedInputs,
 		ConsumedInputsMeta: cmd.consumedInputsMeta,
 	})
-	payload, err := t.conversation.Compact(compactCtx, runID)
+	usage, err := t.conversation.Compact(compactCtx, runID)
 	if err != nil {
 		if errors.Is(err, ErrThreadRunning) {
 			t.emitAgentEvent(context.WithoutCancel(ctx), run.Event{
@@ -199,9 +196,9 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 		})
 		return nil
 	}
-	if payload == nil {
-		usage := t.ContextManager().GetContextUsage()
-		payload = &conversation.ContextCompactedPayload{Before: usage, After: usage}
+	if usage == nil {
+		currentUsage := t.ContextManager().GetContextUsage()
+		usage = &currentUsage
 	}
 
 	t.emitAgentEvent(context.WithoutCancel(ctx), run.Event{
@@ -210,7 +207,7 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 		ThreadID:           t.ThreadID,
 		RunID:              runID,
 		Type:               run.EventContextCompacted,
-		Payload:            *payload,
+		Payload:            *usage,
 		ConsumedInputs:     cmd.consumedInputs,
 		ConsumedInputsMeta: cmd.consumedInputsMeta,
 	})

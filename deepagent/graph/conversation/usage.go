@@ -10,34 +10,35 @@ import (
 	"github.com/cloudwego/eino/components/model"
 )
 
-func (conversation *Conversation) GetContextUsage() types.ContextUsageSnapshot {
+func (conversation *Conversation) GetContextUsage() types.ContextTokenUsage {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	return conversation.contextUsage
+	return conversation.contextTokenUsage
 }
 func (conversation *Conversation) GetRunUsage() types.Usage {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
 	return conversation.runUsage
 }
-func (conversation *Conversation) RecordModelUsage(_ context.Context, usage *model.TokenUsage) {
-	if usage == nil {
+func (conversation *Conversation) RecordModelUsage(_ context.Context, modelUsage *model.TokenUsage) {
+	if modelUsage == nil {
 		return
 	}
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	total := int64(usage.TotalTokens)
-	if total == 0 {
-		total = int64(usage.PromptTokens + usage.CompletionTokens)
+	contextTokenUsage := types.ContextTokenUsage{
+		MaxContextTokens: conversation.contextTokenUsage.MaxContextTokens,
+		TotalTokens:      int64(modelUsage.TotalTokens),
+		PromptTokens:     int64(modelUsage.PromptTokens),
+		CompletionTokens: int64(modelUsage.CompletionTokens),
 	}
-	conversation.runUsage.PromptTokens += int64(usage.PromptTokens)
-	conversation.runUsage.CompletionTokens += int64(usage.CompletionTokens)
-	conversation.runUsage.TotalTokens += total
-	conversation.contextUsage = types.ContextUsageSnapshot{
-		ContextWindow: conversation.contextUsage.ContextWindow,
-		Source:        types.ContextUsageSourceModelUsage, CurrentTotal: total, LastModelTotal: total,
-		LastModelPromptTokens: int64(usage.PromptTokens), LastModelCompletionTokens: int64(usage.CompletionTokens),
+	if contextTokenUsage.TotalTokens == 0 {
+		contextTokenUsage.TotalTokens = contextTokenUsage.PromptTokens + contextTokenUsage.CompletionTokens
 	}
+	conversation.runUsage.PromptTokens += contextTokenUsage.PromptTokens
+	conversation.runUsage.CompletionTokens += contextTokenUsage.CompletionTokens
+	conversation.runUsage.TotalTokens += contextTokenUsage.TotalTokens
+	conversation.contextTokenUsage = contextTokenUsage
 }
 func (conversation *Conversation) RestoreRunUsage(ctx context.Context, usage types.Usage) error {
 	err := ctx.Err()
@@ -53,45 +54,40 @@ func (conversation *Conversation) RestoreRunUsage(ctx context.Context, usage typ
 	return nil
 }
 
-// Checkpoints bind usage to the exact durable history boundary it describes.
-func (conversation *Conversation) SnapshotContext() types.ContextSnapshot {
+// SnapshotContext 在同一把锁下读取历史序号和对应的用量。
+func (conversation *Conversation) SnapshotContext() (int64, types.ContextTokenUsage) {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	return types.ContextSnapshot{HistoryCursor: conversation.historySequence, Usage: conversation.contextUsage}
+	return conversation.historySequence, conversation.contextTokenUsage
 }
-func (conversation *Conversation) RestoreContext(ctx context.Context, snapshot types.ContextSnapshot) error {
+func (conversation *Conversation) RestoreContext(ctx context.Context, historySeq int64, contextTokenUsage types.ContextTokenUsage) error {
 	err := ctx.Err()
 	if err != nil {
 		return err
 	}
-	usage := snapshot.Usage
-	if usage.ContextWindow < 0 || usage.CurrentTotal < 0 || usage.LastModelTotal < 0 || usage.EstimatedAfterLastModel < 0 || usage.LastModelPromptTokens < 0 || usage.LastModelCompletionTokens < 0 {
-		return fmt.Errorf("invalid negative usage snapshot")
-	}
-	if usage.Source != types.ContextUsageSourceEstimated && usage.Source != types.ContextUsageSourceModelUsage {
-		return fmt.Errorf("invalid usage source %q", usage.Source)
-	}
-	if usage.Source == types.ContextUsageSourceModelUsage && usage.CurrentTotal != usage.LastModelTotal+usage.EstimatedAfterLastModel {
-		return fmt.Errorf("usage snapshot baseline mismatch")
+	if contextTokenUsage.MaxContextTokens < 0 ||
+		contextTokenUsage.TotalTokens < 0 ||
+		contextTokenUsage.PromptTokens < 0 ||
+		contextTokenUsage.CompletionTokens < 0 {
+		return fmt.Errorf("invalid negative context token usage")
 	}
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	if snapshot.HistoryCursor < 0 || snapshot.HistoryCursor > conversation.historySequence {
-		return fmt.Errorf("checkpoint history cursor %d exceeds durable cursor %d", snapshot.HistoryCursor, conversation.historySequence)
+	if historySeq < 0 || historySeq > conversation.historySequence {
+		return fmt.Errorf("checkpoint history cursor %d exceeds durable cursor %d", historySeq, conversation.historySequence)
 	}
-	if snapshot.HistoryCursor == conversation.historySequence {
-		conversation.contextUsage = usage
+	if historySeq == conversation.historySequence {
+		conversation.contextTokenUsage = contextTokenUsage
 	}
 	return nil
 }
 func (conversation *Conversation) recomputeContextUsage() {
-	conversation.contextUsage = types.ContextUsageSnapshot{ContextWindow: conversation.contextUsage.ContextWindow,
-		Source: types.ContextUsageSourceEstimated, CurrentTotal: int64(conversation.tokenCounter(conversation.messages))}
+	conversation.contextTokenUsage = types.ContextTokenUsage{
+		MaxContextTokens: conversation.contextTokenUsage.MaxContextTokens,
+		TotalTokens:      int64(conversation.countTokenFunc(conversation.messages)),
+	}
 }
 func (conversation *Conversation) addMessageUsage(message *messagepkg.Message) {
-	tokens := int64(conversation.tokenCounter([]*messagepkg.Message{message}))
-	if conversation.contextUsage.Source == types.ContextUsageSourceModelUsage {
-		conversation.contextUsage.EstimatedAfterLastModel += tokens
-	}
-	conversation.contextUsage.CurrentTotal += tokens
+	messageTokens := conversation.countTokenFunc([]*messagepkg.Message{message})
+	conversation.contextTokenUsage.TotalTokens += int64(messageTokens)
 }

@@ -54,14 +54,14 @@ func (store *testStore) SaveContext(ctx context.Context, messages []*messagepkg.
 	store.contexts[store.records[len(store.records)-1]] = slices.Clone(messages)
 	return nil
 }
-func (store *testStore) LoadContext(_ context.Context, threadID string) (messages []*messagepkg.Message, ids []string, sequence int64, err error) {
+func (store *testStore) LoadContext(_ context.Context, threadID string) (messages []*messagepkg.Message, recordedMessageIDs []string, sequence int64, err error) {
 	for _, record := range store.records {
 		if record.ThreadID != threadID {
 			continue
 		}
 		copy := *record
 		sequence = record.Seq
-		ids = append(ids, record.MessageID)
+		recordedMessageIDs = append(recordedMessageIDs, record.MessageID)
 		context, compacted := store.contexts[record]
 		if compacted {
 			messages = slices.Clone(context)
@@ -69,7 +69,7 @@ func (store *testStore) LoadContext(_ context.Context, threadID string) (message
 			messages = append(messages, &copy)
 		}
 	}
-	return messages, ids, sequence, nil
+	return messages, recordedMessageIDs, sequence, nil
 }
 func TestContext_PersistFailureDoesNotChangeHistory(t *testing.T) {
 	ctx := context.Background()
@@ -84,17 +84,12 @@ func TestContext_PersistFailureDoesNotChangeHistory(t *testing.T) {
 	}
 }
 
-type testCompactor struct{}
-
-func (*testCompactor) GetID() string { return "test" }
-func (*testCompactor) Compact(_ context.Context, messages []*messagepkg.Message) (*messagepkg.Message, int, error) {
-	return messagepkg.NewSystemMessage("summary"), len(messages) - 1, nil
-}
 func TestContext_ReloadEqualsCompactedContext(t *testing.T) {
 	ctx := context.Background()
 	store := &testStore{}
-	messageIDs := map[string]string{"older": "1", "retain": "2", "summary": "3", "later": "4"}
-	conversation := New("thread", store, &testCompactor{}, nil, 0, func(_ context.Context, message *messagepkg.Message) (string, error) {
+	summaryText := "Earlier conversation summary:\ngoal and decision"
+	messageIDs := map[string]string{"older": "1", "retain": "2", summaryText: "3", "later": "4"}
+	conversation := New("thread", store, &SummaryCompaction{Model: summaryModel{}, KeepRecent: 1}, nil, 0, func(_ context.Context, message *messagepkg.Message) (string, error) {
 		if message == nil {
 			return "", errors.New("identity requires a message")
 		}
@@ -116,13 +111,13 @@ func TestContext_ReloadEqualsCompactedContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored := New("thread", store, &testCompactor{}, nil, 0, nil)
+	restored := New("thread", store, nil, nil, 0, nil)
 	reloadHistoryErr := restored.ReloadHistory(ctx)
 	if reloadHistoryErr != nil {
 		t.Fatal(reloadHistoryErr)
 	}
 	messages := restored.GetHistory(ctx)
-	if len(messages) != 3 || messages[0].Content != "summary" || messages[1].Content != "retain" || messages[2].Content != "later" {
+	if len(messages) != 3 || messages[0].Content != summaryText || messages[1].Content != "retain" || messages[2].Content != "later" {
 		t.Fatalf("retained context lost: %v", messages)
 	}
 }
@@ -171,7 +166,8 @@ func TestReloadHistoryCrossesPageBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	history := restored.GetHistory(context.Background())
-	if len(history) != 205 || history[199].Content != "message 199" || history[204].Content != "message 204" || restored.SnapshotContext().HistoryCursor != 205 {
+	historySeq, _ := restored.SnapshotContext()
+	if len(history) != 205 || history[199].Content != "message 199" || history[204].Content != "message 204" || historySeq != 205 {
 		t.Fatal("reload lost messages or sequence at the page boundary")
 	}
 }

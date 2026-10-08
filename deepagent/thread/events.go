@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/deepagent/graph/conversation"
 	deeptools "eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/graph/types"
 	messagepkg "eino-cli/deepagent/message"
@@ -29,7 +28,7 @@ func (t *Thread) eventID(runID string) string {
 	return fmt.Sprintf("evt_%s_%s_%d", t.ThreadID, runID, time.Now().UnixNano())
 }
 
-func agentEventPayloadForOutput(ev run.Event, usage *types.ContextUsageSnapshot) (eventType eventpkg.EventType, payload any, err error) {
+func agentEventPayloadForOutput(ev run.Event, usage *types.ContextTokenUsage) (eventType eventpkg.EventType, payload any, err error) {
 	defer func() {
 		if err == nil && payload != nil {
 			err = attachConsumedInputs(payload, ev.ConsumedInputs, ev.ConsumedInputsMeta)
@@ -142,21 +141,21 @@ func agentEventPayloadForOutput(ev run.Event, usage *types.ContextUsageSnapshot)
 		out.ContextUsage = contextUsage
 		return eventpkg.EventTypePlanUpdated, out, nil
 	case run.EventContextCompactStarted:
-		payload, err := agentEventPayload[conversation.ContextCompactStartedPayload](ev)
+		usage, err := agentEventPayload[types.ContextTokenUsage](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		compactUsage := convertContextUsagePayload(&payload.ContextUsage)
-		if payload.ContextUsage == (types.ContextUsageSnapshot{}) {
+		compactUsage := convertContextUsagePayload(&usage)
+		if usage == (types.ContextTokenUsage{}) {
 			compactUsage = contextUsage
 		}
 		return eventpkg.EventTypeRunStatus, &eventpkg.CompactStartedEventPayload{Status: eventpkg.RunStatusCompactStarted, ContextUsage: compactUsage}, nil
 	case run.EventContextCompacted:
-		payload, err := agentEventPayload[conversation.ContextCompactedPayload](ev)
+		usage, err := agentEventPayload[types.ContextTokenUsage](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		return eventpkg.EventTypeRunStatus, &eventpkg.ContextCompactedEventPayload{Status: eventpkg.RunStatusContextCompacted, ContextUsage: convertContextUsagePayload(&payload.After)}, nil
+		return eventpkg.EventTypeRunStatus, &eventpkg.ContextCompactedEventPayload{Status: eventpkg.RunStatusContextCompacted, ContextUsage: convertContextUsagePayload(&usage)}, nil
 	case agentEventContextCompactInterrupted:
 		payload, err := agentEventPayload[contextCompactInterruptedPayload](ev)
 		if err != nil {
@@ -383,21 +382,21 @@ func planInputRequiredPayload(payload run.InterruptedPayload, info *types.Reques
 	}
 }
 
-func convertContextUsagePayload(snapshot *types.ContextUsageSnapshot) *eventpkg.ContextUsage {
-	if snapshot == nil {
+func convertContextUsagePayload(contextTokenUsage *types.ContextTokenUsage) *eventpkg.ContextUsage {
+	if contextTokenUsage == nil {
 		return nil
 	}
 	var ratio *float64
-	if snapshot.ContextWindow > 0 && snapshot.CurrentTotal > 0 {
-		value := float64(snapshot.CurrentTotal) / float64(snapshot.ContextWindow)
+	if contextTokenUsage.MaxContextTokens > 0 && contextTokenUsage.TotalTokens > 0 {
+		value := float64(contextTokenUsage.TotalTokens) / float64(contextTokenUsage.MaxContextTokens)
 		ratio = &value
 	}
 	return &eventpkg.ContextUsage{
-		UsedTokens:       snapshot.CurrentTotal,
-		MaxTokens:        int64PtrIfPositive(snapshot.ContextWindow),
+		UsedTokens:       contextTokenUsage.TotalTokens,
+		MaxTokens:        int64PtrIfPositive(contextTokenUsage.MaxContextTokens),
 		Ratio:            ratio,
-		PromptTokens:     int64PtrIfPositive(snapshot.LastModelPromptTokens),
-		CompletionTokens: int64PtrIfPositive(snapshot.LastModelCompletionTokens),
+		PromptTokens:     int64PtrIfPositive(contextTokenUsage.PromptTokens),
+		CompletionTokens: int64PtrIfPositive(contextTokenUsage.CompletionTokens),
 	}
 }
 
