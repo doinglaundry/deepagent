@@ -72,8 +72,8 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 func TestCheckpoint_ChildConversationRestoresProviderUsage(t *testing.T) {
 	ctx := context.Background()
 	counter := func(messages []*messagepkg.Message) int { return len(messages) * 3 }
-	initial := conversation.New("", nil, nil, counter)
-	fresh := conversation.New("", nil, nil, counter)
+	initial := conversation.New("", nil, nil, counter, 0, nil)
+	fresh := conversation.New("", nil, nil, counter, 0, nil)
 	reply := schema.AssistantMessage("", []schema.ToolCall{{ID: "approval", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})
 	reply.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 400, CompletionTokens: 10, TotalTokens: 410}}
 	chatModel := &childUsageModel{sequenceModel: sequenceModel{responses: [][]*schema.Message{{reply}, {schema.AssistantMessage("done", nil)}}}, check: func() {
@@ -211,7 +211,7 @@ func TestChildAgent_NamedCapabilitiesAndContext(t *testing.T) {
 
 func TestChildAgent_UsesSameGraphWithIndependentBudget(t *testing.T) {
 	ctx := context.Background()
-	parentHistory := conversation.New("parent", nil, nil, nil)
+	parentHistory := conversation.New("parent", nil, nil, nil, 0, nil)
 	addHistoryErr := parentHistory.AddHistory(ctx, "parent-run", messagepkg.NewUserMessage("private parent context"))
 	if addHistoryErr != nil {
 		t.Fatal(addHistoryErr)

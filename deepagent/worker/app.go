@@ -74,7 +74,7 @@ func Run(ctx context.Context, cfg Config) error {
 			ConversationRepository: conversationDAO, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
 			MemoryStore: coordinator, Collaboration: coordinator,
 			IsToolAlwaysAllowed: coordinator.IsToolAlwaysAllowed,
-			MessageID: func(idCtx context.Context, _ *messagepkg.Message) (string, error) {
+			GenerateMessageID: func(idCtx context.Context, _ *messagepkg.Message) (string, error) {
 				id, err := dalcache.GenerateID(idCtx, redisClient)
 				if err != nil {
 					return "", err

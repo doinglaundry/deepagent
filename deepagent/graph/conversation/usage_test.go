@@ -12,7 +12,7 @@ import (
 
 func TestContext_CumulativeUsageSurvivesCompaction(t *testing.T) {
 	ctx := context.Background()
-	conversation := New("thread", &testStore{}, &testCompactor{}, nil)
+	conversation := New("thread", &testStore{}, &testCompactor{}, nil, 1024, nil)
 	err := conversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("old"), messagepkg.NewAssistantMessage("done", nil), messagepkg.NewUserMessage("new"))
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestContext_CumulativeUsageSurvivesCompaction(t *testing.T) {
 		t.Fatalf("cumulative=%+v", runUsage)
 	}
 	contextUsage := conversation.GetContextUsage()
-	if contextUsage.CurrentTotal != 5 {
+	if contextUsage.CurrentTotal != 5 || contextUsage.ContextWindow != 1024 {
 		t.Fatalf("context estimate=%+v", contextUsage)
 	}
 	cRestoreRunUsageErr := conversation.RestoreRunUsage(ctx, types.Usage{TotalTokens: -1})
@@ -52,7 +52,7 @@ func TestContextSnapshotRestoresProviderBaselineAtDurableCursor(t *testing.T) {
 	ctx := context.Background()
 	store := &testStore{}
 	tokenCounter := func(messages []*messagepkg.Message) int { return len(messages) * 3 }
-	liveConversation := New("thread", store, nil, tokenCounter)
+	liveConversation := New("thread", store, nil, tokenCounter, 0, nil)
 	err := liveConversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("input"), messagepkg.NewAssistantMessage("answer", nil))
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestContextSnapshotRestoresProviderBaselineAtDurableCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := liveConversation.SnapshotContext()
-	restoredConversation := New("thread", store, nil, tokenCounter)
+	restoredConversation := New("thread", store, nil, tokenCounter, 0, nil)
 	err = restoredConversation.ReloadHistory(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestContextSnapshotRestoresProviderBaselineAtDurableCursor(t *testing.T) {
 func TestContextSnapshotRejectsAheadAndPreservesNewerHistory(t *testing.T) {
 	ctx := context.Background()
 	store := &testStore{}
-	liveConversation := New("thread", store, nil, func(messages []*messagepkg.Message) int { return len(messages) * 3 })
+	liveConversation := New("thread", store, nil, func(messages []*messagepkg.Message) int { return len(messages) * 3 }, 0, nil)
 	err := liveConversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("input"))
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestContextSnapshotRejectsAheadAndPreservesNewerHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredConversation := New("thread", store, nil, func(messages []*messagepkg.Message) int { return len(messages) * 3 })
+	restoredConversation := New("thread", store, nil, func(messages []*messagepkg.Message) int { return len(messages) * 3 }, 0, nil)
 	err = restoredConversation.ReloadHistory(ctx)
 	if err != nil {
 		t.Fatal(err)

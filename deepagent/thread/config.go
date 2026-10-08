@@ -28,7 +28,7 @@ type ThreadOptions struct {
 	CompactionStrategy     conversation.CompactionStrategy
 	TokenCounter           conversation.TokenCounter
 	ContextWindow          int64
-	MessageID              conversation.MessageIDProvider
+	GenerateMessageID      conversation.MessageIDGenerator
 }
 
 type SubmitInputResult struct {

@@ -60,7 +60,7 @@ type RuntimeDeps struct {
 	SkillLoader            skillspkg.SkillLoader
 	MemoryStore            memorypkg.Store
 	Collaboration          CollaborationBackend
-	MessageID              conversation.MessageIDProvider
+	GenerateMessageID      conversation.MessageIDGenerator
 	ApprovalRemember       threadpkg.ApprovalRememberer
 	IsToolAlwaysAllowed    func(context.Context, int64, string) (bool, error)
 	InterruptResume        threadpkg.InterruptResumeDecoder
@@ -176,7 +176,7 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 	// 4. 配置 Thread 的历史和压缩，并绑定资源清理。
 	options := threadpkg.ThreadOptions{
 		ConversationRepository: w.Deps.ConversationRepository, ContextWindow: w.Runtime.ContextWindow,
-		MessageID: w.Deps.MessageID,
+		GenerateMessageID: w.Deps.GenerateMessageID,
 	}
 	if w.Runtime.CompactThresholdTokens > 0 {
 		options.CompactionStrategy = &conversation.SummaryCompaction{

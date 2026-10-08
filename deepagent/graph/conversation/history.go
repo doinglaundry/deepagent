@@ -14,4 +14,6 @@ type ConversationRepository interface {
 	SaveContext(context.Context, []*messagepkg.Message) error
 	LoadContext(context.Context, string) (messages []*messagepkg.Message, messageIDs []string, lastReadSeq int64, err error)
 }
-type MessageIDProvider func(context.Context, *messagepkg.Message) (string, error)
+
+// MessageIDGenerator 为尚未分配身份的消息生成唯一 ID。
+type MessageIDGenerator func(ctx context.Context, message *messagepkg.Message) (string, error)

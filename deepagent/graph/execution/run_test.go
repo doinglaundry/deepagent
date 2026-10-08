@@ -183,7 +183,7 @@ func TestPublicConversationDoesNotDuplicateHistory(t *testing.T) {
 	ctx := context.Background()
 	chatModel := &publicModel{call: true}
 	currentMiddleware := &promptContractMiddleware{}
-	history := conversation.New("", nil, nil, nil)
+	history := conversation.New("", nil, nil, nil, 0, nil)
 	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, Conversation: history}), WithMiddleware(currentMiddleware), WithTools(tools.ToolDescriptor{Tool: &fakeToolCounter{}}))
 	if err != nil {
 		t.Fatal(err)

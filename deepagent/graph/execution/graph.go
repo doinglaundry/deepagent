@@ -71,7 +71,7 @@ func New(ctx context.Context, opts ...Option) (*Graph, error) {
 	}
 	threadConversation := config.Conversation
 	if threadConversation == nil {
-		threadConversation = conversation.New(config.ThreadID, nil, nil, nil)
+		threadConversation = conversation.New(config.ThreadID, nil, nil, nil, 0, nil)
 	}
 	graph := &Graph{config: config, conversation: threadConversation, runID: config.RunID}
 	if graph.runID == "" {

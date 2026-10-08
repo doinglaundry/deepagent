@@ -295,7 +295,7 @@ func TestRun_TranscriptWriteFailureClosesWriterAndStopsModel(t *testing.T) {
 
 func TestRun_PatchDanglingToolCallsOnlyInModelRequest(t *testing.T) {
 	ctx := context.Background()
-	history := conversation.New("thread", nil, nil, nil)
+	history := conversation.New("thread", nil, nil, nil, 0, nil)
 	assistant := messagepkg.NewAssistantMessage("", []schema.ToolCall{
 		{ID: "done", Function: schema.FunctionCall{Name: "read_file", Arguments: "{}"}},
 		{ID: "interrupted", Function: schema.FunctionCall{Name: "write_file", Arguments: "{}"}},
@@ -363,7 +363,7 @@ func TestRun_PlanRestoresFromCheckpointAfterContextCompaction(t *testing.T) {
 		t.Fatalf("published=%d state=%+v", published, first.runState.Plan)
 	}
 	// Model context no longer contains the tool exchange, as after compaction.
-	config.Conversation = conversation.New("thread", nil, nil, nil)
+	config.Conversation = conversation.New("thread", nil, nil, nil, 0, nil)
 	addHistoryErr := config.Conversation.AddHistory(ctx, "plan-run", messagepkg.NewUserMessage("compacted summary"))
 	if addHistoryErr != nil {
 		t.Fatal(addHistoryErr)

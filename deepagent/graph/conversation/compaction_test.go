@@ -17,7 +17,7 @@ import (
 
 func TestBuildRequestPreservesHistoricalMessages(t *testing.T) {
 	ctx := context.Background()
-	conversation := New("thread", nil, nil, nil)
+	conversation := New("thread", nil, nil, nil, 0, nil)
 	original := messagepkg.NewSystemMessage("historical instruction")
 	err := conversation.AddHistory(ctx, "old", original, messagepkg.NewUserMessage("prior"))
 	if err != nil {
@@ -67,7 +67,7 @@ func TestSummaryCompactionPreservesRecentToolExchange(t *testing.T) {
 		t.Fatalf("summary=%+v compactedCount=%d", summary, compactedCount)
 	}
 	store := &testStore{}
-	liveConversation := New("thread", store, strategy, nil)
+	liveConversation := New("thread", store, strategy, nil, 0, nil)
 	err = liveConversation.AddHistory(context.Background(), "run", current...)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestSummaryCompactionPreservesRecentToolExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredConversation := New("thread", store, nil, nil)
+	restoredConversation := New("thread", store, nil, nil, 0, nil)
 	err = restoredConversation.ReloadHistory(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestCompactionPreservesConcurrentHistory(t *testing.T) {
 				}
 			}}}
 			store := &testStore{}
-			liveConversation := New("thread", store, strategy, nil)
+			liveConversation := New("thread", store, strategy, nil, 0, nil)
 			err := liveConversation.AddHistory(ctx, "run", original[:3]...)
 			if err != nil {
 				t.Fatal(err)
@@ -154,7 +154,7 @@ func TestCompactionPreservesConcurrentHistory(t *testing.T) {
 			case "another_compaction":
 				_, err = liveConversation.Compact(ctx, "winner")
 			case "reload":
-				otherConversation := New("thread", store, strategy, nil)
+				otherConversation := New("thread", store, strategy, nil, 0, nil)
 				err = otherConversation.ReloadHistory(ctx)
 				if err == nil {
 					_, err = otherConversation.Compact(ctx, "winner")
@@ -192,7 +192,7 @@ func TestCompactionPreservesConcurrentHistory(t *testing.T) {
 			if payload == nil && liveConversation.GetContextUsage() != beforeUsage {
 				t.Fatal("uncommitted compaction changed usage")
 			}
-			restoredConversation := New("thread", store, nil, nil)
+			restoredConversation := New("thread", store, nil, nil, 0, nil)
 			err = restoredConversation.ReloadHistory(context.Background())
 			if err != nil {
 				t.Fatal(err)

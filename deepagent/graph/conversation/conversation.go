@@ -11,15 +11,6 @@ import (
 	"eino-cli/deepagent/utils"
 )
 
-type Option func(*Conversation)
-
-func WithMessageID(provider MessageIDProvider) Option {
-	return func(conversation *Conversation) { conversation.messageID = provider }
-}
-func WithContextWindow(window int64) Option {
-	return func(conversation *Conversation) { conversation.contextUsage.ContextWindow = window }
-}
-
 // Conversation publishes changes only after durable writes succeed.
 type Conversation struct {
 	mu                     sync.Mutex
@@ -29,23 +20,33 @@ type Conversation struct {
 	historySequence        int64
 	conversationRepository ConversationRepository
 	compactor              CompactionStrategy
-	messageID              MessageIDProvider
+	generateMessageID      MessageIDGenerator
 	tokenCounter           TokenCounter
 	contextUsage           types.ContextUsageSnapshot
 	runUsage               types.Usage
 }
 
-func New(threadID string, conversationRepository ConversationRepository, compactor CompactionStrategy, counter TokenCounter, opts ...Option) *Conversation {
-	if counter == nil {
-		counter = utils.SimpleTokenCounter
+func New(
+	threadID string,
+	conversationRepository ConversationRepository,
+	compactor CompactionStrategy,
+	tokenCounter TokenCounter,
+	contextWindowTokens int64,
+	generateMessageID MessageIDGenerator,
+) *Conversation {
+	if tokenCounter == nil {
+		tokenCounter = utils.SimpleTokenCounter
 	}
-	conversation := &Conversation{threadID: threadID, conversationRepository: conversationRepository, compactor: compactor, tokenCounter: counter, seenMessageIDs: make(map[string]struct{})}
+	conversation := &Conversation{
+		threadID:               threadID,
+		conversationRepository: conversationRepository,
+		compactor:              compactor,
+		tokenCounter:           tokenCounter,
+		generateMessageID:      generateMessageID,
+		seenMessageIDs:         make(map[string]struct{}),
+		contextUsage:           types.ContextUsageSnapshot{ContextWindow: contextWindowTokens},
+	}
 	conversation.recomputeContextUsage()
-	for _, opt := range opts {
-		if opt != nil {
-			opt(conversation)
-		}
-	}
 	return conversation
 }
 func (conversation *Conversation) AddHistory(ctx context.Context, runID string, messages ...*messagepkg.Message) error {
@@ -105,8 +106,8 @@ func (conversation *Conversation) initializeMessage(ctx context.Context, runID s
 	if err != nil {
 		return err
 	}
-	if message.MessageID == "" && conversation.messageID != nil {
-		message.MessageID, err = conversation.messageID(ctx, message)
+	if message.MessageID == "" && conversation.generateMessageID != nil {
+		message.MessageID, err = conversation.generateMessageID(ctx, message)
 		if err != nil {
 			return err
 		}

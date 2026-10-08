@@ -18,7 +18,7 @@ import (
 
 func TestRun_CompactionEventsAtEachSamplingBoundary(t *testing.T) {
 	ctx := context.Background()
-	c := &compactionEventConversation{Conversation: conversation.New("thread", nil, nil, nil)}
+	c := &compactionEventConversation{Conversation: conversation.New("thread", nil, nil, nil, 0, nil)}
 	chatModel := &sequenceModel{responses: [][]*schema.Message{
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 		{schema.AssistantMessage("done", nil)},
@@ -60,7 +60,7 @@ func TestRun_CompactionEventsAtEachSamplingBoundary(t *testing.T) {
 
 func TestRun_FailedCompactionNeverPublishesSuccessOrCallsModel(t *testing.T) {
 	want := errors.New("compaction store failed")
-	c := &compactionEventConversation{Conversation: conversation.New("thread", nil, nil, nil), err: want}
+	c := &compactionEventConversation{Conversation: conversation.New("thread", nil, nil, nil, 0, nil), err: want}
 	chatModel := &sequenceModel{}
 	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, Conversation: c, Emit: func(_ context.Context, e types.RuntimeEvent) error {
 		if e.Kind == "context_compacted" {
@@ -79,7 +79,7 @@ func TestRun_FailedCompactionNeverPublishesSuccessOrCallsModel(t *testing.T) {
 
 func TestRun_AutomaticThresholdCompactionRetainsRecentInput(t *testing.T) {
 	ctx := context.Background()
-	history := conversation.New("thread", nil, &conversation.SummaryCompaction{Model: &paritySummaryModel{}, TokenLimit: 1, KeepRecent: 4}, nil)
+	history := conversation.New("thread", nil, &conversation.SummaryCompaction{Model: &paritySummaryModel{}, TokenLimit: 1, KeepRecent: 4}, nil, 0, nil)
 	for range 8 {
 		err := history.AddHistory(ctx, "old", messagepkg.NewUserMessage("old user"), messagepkg.NewAssistantMessage("old answer", nil))
 		if err != nil {
@@ -193,7 +193,7 @@ func TestRun_InputConsumedEventsFollowSuccessfulHistoryWrites(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "partial write failure"}[fail], func(t *testing.T) {
 			ctx := context.Background()
-			history := &inputEventConversation{Conversation: conversation.New("thread", nil, nil, nil)}
+			history := &inputEventConversation{Conversation: conversation.New("thread", nil, nil, nil, 0, nil)}
 			failure := errors.New("input store failed")
 			if fail {
 				history.failure = failure

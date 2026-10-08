@@ -113,7 +113,7 @@ func TestConversationDAORoundTrip(t *testing.T) {
 	if err != nil || copy.Seq != first.Seq {
 		t.Fatalf("redelivery changed durable sequence: got=%d want=%d err=%v", copy.Seq, first.Seq, err)
 	}
-	restored := conversation.New("thread", store, nil, nil)
+	restored := conversation.New("thread", store, nil, nil, 0, nil)
 	err = restored.ReloadHistory(ctx)
 	if err != nil {
 		t.Fatal(err)

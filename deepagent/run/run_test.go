@@ -135,7 +135,7 @@ func TestRun_InterruptDeadlineCoversCompletionHook(t *testing.T) {
 	r, runCtx := New(ctx, "run", Config{
 		Graph: execution.Config{
 			Model: &lifecycleModel{}, Middlewares: []middleware.Middleware{mw},
-			Conversation: conversation.New("thread", nil, nil, nil),
+			Conversation: conversation.New("thread", nil, nil, nil, 0, nil),
 		},
 		Events: make(chan Event, 32),
 		RunCompleted: func(ctx context.Context, _, _ string, _ model.ToolCallingChatModel, _ []*messagepkg.Message) {

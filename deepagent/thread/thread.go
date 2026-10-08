@@ -42,7 +42,7 @@ type Thread struct {
 	inputRuns         map[string]*run.Run // MessageID -> original Run, guarded by mu.
 	pending           []types.Input
 	conversation      execution.Conversation
-	messageIDProvider conversation.MessageIDProvider
+	generateMessageID conversation.MessageIDGenerator
 	events            chan run.Event
 	config            *run.Config
 	closed            bool
@@ -60,17 +60,19 @@ func NewThread(cfg ThreadConfig) (*Thread, error) {
 	}
 	historyOptions := cfg.Options
 	history := conversation.New(
-		cfg.ThreadID, historyOptions.ConversationRepository,
-		historyOptions.CompactionStrategy, historyOptions.TokenCounter,
-		conversation.WithContextWindow(historyOptions.ContextWindow),
-		conversation.WithMessageID(historyOptions.MessageID),
+		cfg.ThreadID,
+		historyOptions.ConversationRepository,
+		historyOptions.CompactionStrategy,
+		historyOptions.TokenCounter,
+		historyOptions.ContextWindow,
+		historyOptions.GenerateMessageID,
 	)
 	return &Thread{
 		ThreadID:             cfg.ThreadID,
 		sessionID:            cfg.SessionID,
 		threadInfo:           ContextThreadIdentity{ThreadID: cfg.ThreadID, SessionID: cfg.SessionID, UserID: cfg.UserID},
 		conversation:         history,
-		messageIDProvider:    historyOptions.MessageID,
+		generateMessageID:    historyOptions.GenerateMessageID,
 		events:               events,
 		config:               cfg.RunConfig.Clone(),
 		inputRuns:            make(map[string]*run.Run),
@@ -191,8 +193,8 @@ func (t *Thread) SubmitInput(ctx context.Context, message *messagepkg.Message, o
 		}
 		clonedMessage.MessageID = options.MessageID
 	}
-	if clonedMessage.MessageID == "" && t.messageIDProvider != nil {
-		messageID, err := t.messageIDProvider(ctx, clonedMessage)
+	if clonedMessage.MessageID == "" && t.generateMessageID != nil {
+		messageID, err := t.generateMessageID(ctx, clonedMessage)
 		if err != nil {
 			return nil, err
 		}

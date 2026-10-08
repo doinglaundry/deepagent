@@ -18,7 +18,7 @@ type testStore struct {
 
 func TestMessageIDAllocationFailureDoesNotPublishMessage(t *testing.T) {
 	failure := errors.New("id allocation failed")
-	conversation := New("thread", &testStore{}, nil, nil, WithMessageID(func(context.Context, *messagepkg.Message) (string, error) { return "", failure }))
+	conversation := New("thread", &testStore{}, nil, nil, 0, func(context.Context, *messagepkg.Message) (string, error) { return "", failure })
 	err := conversation.AddHistory(context.Background(), "run", messagepkg.NewUserMessage("must not appear"))
 	if !errors.Is(err, failure) || len(conversation.GetHistory(context.Background())) != 0 {
 		t.Fatalf("allocation failure was swallowed: %v", err)
@@ -74,7 +74,7 @@ func (store *testStore) LoadContext(_ context.Context, threadID string) (message
 func TestContext_PersistFailureDoesNotChangeHistory(t *testing.T) {
 	ctx := context.Background()
 	store := &testStore{fail: true}
-	conversation := New("thread", store, nil, nil)
+	conversation := New("thread", store, nil, nil, 0, nil)
 	err := conversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("hello"))
 	if err == nil {
 		t.Fatal("expected persistence failure")
@@ -94,12 +94,12 @@ func TestContext_ReloadEqualsCompactedContext(t *testing.T) {
 	ctx := context.Background()
 	store := &testStore{}
 	messageIDs := map[string]string{"older": "1", "retain": "2", "summary": "3", "later": "4"}
-	conversation := New("thread", store, &testCompactor{}, nil, WithMessageID(func(_ context.Context, message *messagepkg.Message) (string, error) {
+	conversation := New("thread", store, &testCompactor{}, nil, 0, func(_ context.Context, message *messagepkg.Message) (string, error) {
 		if message == nil {
 			return "", errors.New("identity requires a message")
 		}
 		return messageIDs[message.Content], nil
-	}))
+	})
 	err := conversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("older"), messagepkg.NewUserMessage("retain"))
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestContext_ReloadEqualsCompactedContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored := New("thread", store, &testCompactor{}, nil)
+	restored := New("thread", store, &testCompactor{}, nil, 0, nil)
 	reloadHistoryErr := restored.ReloadHistory(ctx)
 	if reloadHistoryErr != nil {
 		t.Fatal(reloadHistoryErr)
@@ -129,14 +129,14 @@ func TestContext_ReloadEqualsCompactedContext(t *testing.T) {
 
 func TestHistoryRedeliveryUsesDurableMessageIdentity(t *testing.T) {
 	store := &testStore{}
-	provider := func(context.Context, *messagepkg.Message) (string, error) { return "42", nil }
-	first := New("thread-1", store, nil, nil, WithMessageID(provider))
+	generateMessageID := func(context.Context, *messagepkg.Message) (string, error) { return "42", nil }
+	first := New("thread-1", store, nil, nil, 0, generateMessageID)
 	err := first.AddHistory(context.Background(), "run-1", messagepkg.NewUserMessage("once"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	second := New("thread-1", store, nil, nil, WithMessageID(provider))
+	second := New("thread-1", store, nil, nil, 0, generateMessageID)
 	reloadHistoryErr := second.ReloadHistory(context.Background())
 	if reloadHistoryErr != nil {
 		t.Fatal(reloadHistoryErr)
@@ -156,7 +156,7 @@ func TestHistoryRedeliveryUsesDurableMessageIdentity(t *testing.T) {
 
 func TestReloadHistoryCrossesPageBoundary(t *testing.T) {
 	store := &testStore{}
-	first := New("thread", store, nil, nil)
+	first := New("thread", store, nil, nil, 0, nil)
 	messages := make([]*messagepkg.Message, 205)
 	for index := range messages {
 		messages[index] = messagepkg.NewUserMessage(fmt.Sprintf("message %d", index))
@@ -165,7 +165,7 @@ func TestReloadHistoryCrossesPageBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored := New("thread", store, nil, nil)
+	restored := New("thread", store, nil, nil, 0, nil)
 	err = restored.ReloadHistory(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestReloadHistoryCrossesPageBoundary(t *testing.T) {
 
 func TestAddHistoryDoesNotMutateInputMessage(t *testing.T) {
 	input := messagepkg.NewUserMessage("original")
-	history := New("thread", nil, nil, nil, WithMessageID(func(context.Context, *messagepkg.Message) (string, error) { return "42", nil }))
+	history := New("thread", nil, nil, nil, 0, func(context.Context, *messagepkg.Message) (string, error) { return "42", nil })
 	err := history.AddHistory(context.Background(), "run", input)
 	if err != nil {
 		t.Fatal(err)
