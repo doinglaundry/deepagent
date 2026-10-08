@@ -33,7 +33,7 @@ func (conversation *Conversation) Compact(ctx context.Context, runID string) (*C
 		conversation.mu.Unlock()
 		return nil, nil
 	}
-	originalMessages := append([]*messagepkg.Message(nil), conversation.messages...)
+	originalMessages := slices.Clone(conversation.messages)
 	conversation.mu.Unlock()
 
 	summary, compactedCount, err := conversation.compactor.Compact(ctx, originalMessages)
@@ -56,13 +56,13 @@ func (conversation *Conversation) Compact(ctx context.Context, runID string) (*C
 		return nil, err
 	}
 	if conversation.conversationRepository != nil {
-		err = conversation.conversationRepository.SaveContext(ctx, summary, compactedMessages)
+		err = conversation.conversationRepository.SaveContext(ctx, compactedMessages)
 		if err != nil {
 			return nil, err
 		}
 	}
 	before := conversation.contextUsage
-	conversation.messages = append([]*messagepkg.Message(nil), compactedMessages...)
+	conversation.messages = slices.Clone(compactedMessages)
 	conversation.recomputeContextUsage()
 	if summary.MessageID != "" {
 		conversation.seenMessageIDs[summary.MessageID] = struct{}{}

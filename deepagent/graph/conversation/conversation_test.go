@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	messagepkg "eino-cli/deepagent/message"
@@ -41,7 +42,8 @@ func (store *testStore) AppendMessage(_ context.Context, message *messagepkg.Mes
 	store.records = append(store.records, &copy)
 	return nil
 }
-func (store *testStore) SaveContext(ctx context.Context, summary *messagepkg.Message, messages []*messagepkg.Message) error {
+func (store *testStore) SaveContext(ctx context.Context, messages []*messagepkg.Message) error {
+	summary := messages[0]
 	err := store.AppendMessage(ctx, summary)
 	if err != nil {
 		return err
@@ -49,7 +51,7 @@ func (store *testStore) SaveContext(ctx context.Context, summary *messagepkg.Mes
 	if store.contexts == nil {
 		store.contexts = make(map[*messagepkg.Message][]*messagepkg.Message)
 	}
-	store.contexts[store.records[len(store.records)-1]] = append([]*messagepkg.Message(nil), messages...)
+	store.contexts[store.records[len(store.records)-1]] = slices.Clone(messages)
 	return nil
 }
 func (store *testStore) LoadContext(_ context.Context, threadID string) (messages []*messagepkg.Message, ids []string, sequence int64, err error) {
@@ -62,7 +64,7 @@ func (store *testStore) LoadContext(_ context.Context, threadID string) (message
 		ids = append(ids, record.MessageID)
 		context, compacted := store.contexts[record]
 		if compacted {
-			messages = append([]*messagepkg.Message(nil), context...)
+			messages = slices.Clone(context)
 		} else {
 			messages = append(messages, &copy)
 		}

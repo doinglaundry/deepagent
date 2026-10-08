@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"eino-cli/deepagent/dal/cache"
@@ -43,10 +44,11 @@ func NewConversationDAO(client *MySQLClient, tableName string, redis cache.Redis
 func (dao *ConversationDAO) AppendMessage(ctx context.Context, message *messagepkg.Message) error {
 	return dao.saveMessage(ctx, message, nil)
 }
-func (dao *ConversationDAO) SaveContext(ctx context.Context, summary *messagepkg.Message, messages []*messagepkg.Message) error {
-	if summary == nil || len(messages) == 0 || messages[0] != summary || summary.Role != schema.System {
+func (dao *ConversationDAO) SaveContext(ctx context.Context, messages []*messagepkg.Message) error {
+	if len(messages) == 0 || messages[0] == nil || messages[0].Role != schema.System {
 		return errors.New("compacted context must start with its system summary")
 	}
+	summary := messages[0]
 	return dao.saveMessage(ctx, summary, messages)
 }
 
@@ -55,9 +57,19 @@ func (dao *ConversationDAO) saveMessage(ctx context.Context, message *messagepkg
 	if message == nil {
 		return errors.New("conversation message is required")
 	}
-	record := &conversationRow{ThreadID: message.ThreadID, MessageID: message.MessageID, RunID: message.RunID, Seq: message.Seq, CreatedAt: message.CreatedAt, Type: "message", Message: message}
+	record := &conversationRow{
+		ThreadID:  message.ThreadID,
+		MessageID: message.MessageID,
+		RunID:     message.RunID,
+		Seq:       message.Seq,
+		CreatedAt: message.CreatedAt,
+		Type:      "message",
+		Message:   message,
+	}
 	if messages != nil {
-		record.Type, record.Message, record.CompactedMessages = "compact", nil, messages
+		record.Type = "compact"
+		record.Message = nil
+		record.CompactedMessages = messages
 	}
 	if dao == nil || dao.Client == nil || dao.Redis == nil {
 		return errors.New("conversation persistence requires MySQL and Redis")
@@ -90,44 +102,61 @@ func (dao *ConversationDAO) saveMessage(ctx context.Context, message *messagepkg
 }
 
 // LoadContext 重放数据库记录。压缩替换上下文，但保留被摘要覆盖的消息身份，防止重投。
-func (dao *ConversationDAO) LoadContext(ctx context.Context, threadID string) (messages []*messagepkg.Message, messageIDs []string, sequence int64, err error) {
+func (dao *ConversationDAO) LoadContext(ctx context.Context, threadID string) ([]*messagepkg.Message, []string, int64, error) {
 	if dao == nil || dao.Client == nil {
 		return nil, nil, 0, errors.New("conversation store is not initialized")
 	}
+	var messages []*messagepkg.Message
+	var messageIDs []string
+	lastReadSeq := int64(0)
 	for {
 		var records []*conversationRow
-		err := dao.Client.DB(ctx, true).Table(dao.tableName).Where("thread_id = ? AND seq > ?", threadID, sequence).Order("seq ASC").Limit(200).Find(&records).Error
+		err := dao.Client.DB(ctx, true).
+			Table(dao.tableName).
+			Where("thread_id = ? AND seq > ?", threadID, lastReadSeq).
+			Order("seq ASC").
+			Limit(200).
+			Find(&records).Error
 		if err != nil {
 			return nil, nil, 0, err
 		}
 		for _, record := range records {
-			if record == nil || record.Seq <= sequence {
-				return nil, nil, 0, fmt.Errorf("history sequence must advance past %d", sequence)
+			if record == nil || record.Seq <= lastReadSeq {
+				return nil, nil, 0, fmt.Errorf("history sequence must advance past %d", lastReadSeq)
 			}
-			sequence = record.Seq
+			lastReadSeq = record.Seq
 
 			messageID := record.MessageID
 			messageIDs = append(messageIDs, messageID)
 			switch record.Type {
 			case "message":
-				if record.Message == nil {
+				message := record.Message
+				if message == nil {
 					return nil, nil, 0, errors.New("stored conversation message is missing")
 				}
-				record.Message.MessageID, record.Message.ThreadID, record.Message.RunID, record.Message.Seq, record.Message.CreatedAt = messageID, record.ThreadID, record.RunID, record.Seq, record.CreatedAt
-				messages = append(messages, record.Message)
+				message.MessageID = messageID
+				message.ThreadID = record.ThreadID
+				message.RunID = record.RunID
+				message.Seq = record.Seq
+				message.CreatedAt = record.CreatedAt
+				messages = append(messages, message)
 			case "compact":
 				if len(record.CompactedMessages) == 0 || record.CompactedMessages[0] == nil || record.CompactedMessages[0].Role != schema.System {
 					return nil, nil, 0, errors.New("compact record requires a summary and rebuilt context")
 				}
 				summary := record.CompactedMessages[0]
-				summary.MessageID, summary.ThreadID, summary.RunID, summary.Seq, summary.CreatedAt = messageID, record.ThreadID, record.RunID, record.Seq, record.CreatedAt
-				messages = append([]*messagepkg.Message(nil), record.CompactedMessages...)
+				summary.MessageID = messageID
+				summary.ThreadID = record.ThreadID
+				summary.RunID = record.RunID
+				summary.Seq = record.Seq
+				summary.CreatedAt = record.CreatedAt
+				messages = slices.Clone(record.CompactedMessages)
 			default:
 				return nil, nil, 0, fmt.Errorf("unknown history record type %q", record.Type)
 			}
 		}
 		if len(records) < 200 {
-			return messages, messageIDs, sequence, nil
+			return messages, messageIDs, lastReadSeq, nil
 		}
 	}
 }

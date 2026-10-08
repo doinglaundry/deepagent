@@ -200,7 +200,7 @@ type failingConversationRepository struct{ err error }
 func (s failingConversationRepository) AppendMessage(context.Context, *messagepkg.Message) error {
 	return s.err
 }
-func (s failingConversationRepository) SaveContext(context.Context, *messagepkg.Message, []*messagepkg.Message) error {
+func (s failingConversationRepository) SaveContext(context.Context, []*messagepkg.Message) error {
 	return s.err
 }
 func (s failingConversationRepository) LoadContext(context.Context, string) ([]*messagepkg.Message, []string, int64, error) {

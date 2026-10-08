@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -349,7 +350,8 @@ func (store *historyMemory) AppendMessage(_ context.Context, message *messagepkg
 	store.records = append(store.records, &copy)
 	return nil
 }
-func (store *historyMemory) SaveContext(ctx context.Context, summary *messagepkg.Message, messages []*messagepkg.Message) error {
+func (store *historyMemory) SaveContext(ctx context.Context, messages []*messagepkg.Message) error {
+	summary := messages[0]
 	err := store.AppendMessage(ctx, summary)
 	if err != nil {
 		return err
@@ -359,7 +361,7 @@ func (store *historyMemory) SaveContext(ctx context.Context, summary *messagepkg
 	if store.contexts == nil {
 		store.contexts = make(map[*messagepkg.Message][]*messagepkg.Message)
 	}
-	store.contexts[store.records[len(store.records)-1]] = append([]*messagepkg.Message(nil), messages...)
+	store.contexts[store.records[len(store.records)-1]] = slices.Clone(messages)
 	return nil
 }
 func (store *historyMemory) LoadContext(_ context.Context, threadID string) (messages []*messagepkg.Message, ids []string, sequence int64, err error) {
@@ -374,7 +376,7 @@ func (store *historyMemory) LoadContext(_ context.Context, threadID string) (mes
 		ids = append(ids, record.MessageID)
 		context, compacted := store.contexts[record]
 		if compacted {
-			messages = append([]*messagepkg.Message(nil), context...)
+			messages = slices.Clone(context)
 		} else {
 			messages = append(messages, &copy)
 		}

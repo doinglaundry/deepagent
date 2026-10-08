@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -84,7 +85,7 @@ func (conversation *Conversation) AddHistory(ctx context.Context, runID string, 
 func (conversation *Conversation) GetHistory(context.Context) []*messagepkg.Message {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	return append([]*messagepkg.Message(nil), conversation.messages...)
+	return slices.Clone(conversation.messages)
 }
 func (conversation *Conversation) BuildRequest(ctx context.Context, prompts []*messagepkg.Message) ([]*messagepkg.Message, error) {
 	err := ctx.Err()
@@ -125,7 +126,7 @@ func (conversation *Conversation) ReloadHistory(ctx context.Context) error {
 	if conversation.conversationRepository == nil {
 		return nil
 	}
-	messages, messageIDs, sequence, err := conversation.conversationRepository.LoadContext(ctx, conversation.threadID)
+	messages, messageIDs, lastReadSeq, err := conversation.conversationRepository.LoadContext(ctx, conversation.threadID)
 	if err != nil {
 		return err
 	}
@@ -135,7 +136,7 @@ func (conversation *Conversation) ReloadHistory(ctx context.Context) error {
 	}
 	conversation.messages = messages
 	conversation.seenMessageIDs = seenMessageIDs
-	conversation.historySequence = sequence
+	conversation.historySequence = lastReadSeq
 	conversation.recomputeContextUsage()
 	return nil
 }

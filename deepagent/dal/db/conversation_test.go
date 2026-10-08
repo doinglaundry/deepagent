@@ -90,7 +90,7 @@ func TestConversationDAORoundTrip(t *testing.T) {
 		}
 	}
 	summary := &messagepkg.Message{ThreadID: "thread", RunID: "run", MessageID: "3", Role: schema.System, Content: "summary"}
-	err = store.SaveContext(ctx, summary, []*messagepkg.Message{summary, retained})
+	err = store.SaveContext(ctx, []*messagepkg.Message{summary, retained})
 	if err != nil {
 		t.Fatal(err)
 	}
