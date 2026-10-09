@@ -88,6 +88,8 @@ flowchart LR
 | Run | 一次执行的身份、取消与完成 |
 | Graph | 模型／工具流程、审批中断与 checkpoint 恢复 |
 
+公共接口和共享数据定义集中在 [`deepagent/model`](deepagent/model)，各模块保留实际实现。
+
 一个 Thread 可以先后执行多个 Run，同一时刻执行一个。审批暂停保存执行进度，恢复沿用原 RunID。模型与子代理复用同一套 Graph。
 
 ## 可选：浏览器与 Mac 操作

@@ -15,8 +15,9 @@ import (
 	"sync"
 	"time"
 
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/sandbox"
-	"eino-cli/deepagent/sandbox/paths"
+	sandboxpaths "eino-cli/deepagent/sandbox/paths"
 	"eino-cli/deepagent/sandbox/search"
 )
 
@@ -168,7 +169,7 @@ func (s *Sandbox) ListDir(ctx context.Context, path string, maxDepth int) ([]str
 	return out, nil
 }
 
-func (s *Sandbox) ListDirInfo(ctx context.Context, path string, maxDepth int) ([]sandbox.FileInfo, error) {
+func (s *Sandbox) ListDirInfo(ctx context.Context, path string, maxDepth int) ([]agentmodel.SandboxFileInfo, error) {
 	if maxDepth <= 0 {
 		maxDepth = 2
 	}
@@ -185,9 +186,9 @@ func (s *Sandbox) ListDirInfo(ctx context.Context, path string, maxDepth int) ([
 	if err != nil {
 		return nil, sandbox.NewFileError(err.Error(), path, "list")
 	}
-	out := make([]sandbox.FileInfo, 0, len(data.Files))
+	out := make([]agentmodel.SandboxFileInfo, 0, len(data.Files))
 	for _, f := range data.Files {
-		entry := sandbox.FileInfo{Path: sandbox.ReverseResolvePath(s.mounts, f.Path), IsDir: f.IsDirectory, IsSymlink: f.IsSymlink}
+		entry := agentmodel.SandboxFileInfo{Path: sandbox.ReverseResolvePath(s.mounts, f.Path), IsDir: f.IsDirectory, IsSymlink: f.IsSymlink}
 		if f.Size != nil {
 			entry.Size = *f.Size
 		}
@@ -204,7 +205,7 @@ type fileInfo struct {
 }
 
 // Glob matches pattern under path; falls back to /v1/file/list for dirs.
-func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.GlobOpts) ([]string, bool, error) {
+func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts agentmodel.SandboxGlobOptions) ([]string, bool, error) {
 	maxResults := opts.MaxResults
 	if maxResults <= 0 {
 		maxResults = 200
@@ -261,7 +262,7 @@ func (s *Sandbox) Glob(ctx context.Context, path, pattern string, opts sandbox.G
 }
 
 // Grep searches files for pattern via per-file POST /v1/file/search.
-func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
+func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts agentmodel.SandboxGrepOptions) ([]agentmodel.SandboxGrepMatch, bool, error) {
 	maxResults := opts.MaxResults
 	if maxResults <= 0 {
 		maxResults = 100
@@ -297,7 +298,7 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.G
 		}
 	}
 
-	var matches []sandbox.GrepMatch
+	var matches []agentmodel.SandboxGrepMatch
 	for _, file := range candidates {
 		if isIgnoredPath(file) {
 			continue
@@ -313,7 +314,7 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts sandbox.G
 		}
 		count := min(len(data.LineNumbers), len(data.Matches))
 		for i := range count {
-			matches = append(matches, sandbox.GrepMatch{
+			matches = append(matches, agentmodel.SandboxGrepMatch{
 				Path:       sandbox.ReverseResolvePath(s.mounts, file),
 				LineNumber: data.LineNumbers[i],
 				Line:       s.maskOutput(truncateLine(data.Matches[i], 200)),

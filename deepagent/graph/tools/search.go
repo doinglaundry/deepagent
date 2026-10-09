@@ -11,19 +11,19 @@ import (
 	"strings"
 	"unicode"
 
-	filesystempkg "eino-cli/deepagent/graph/filesystem"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
 type fileSearchTool struct {
-	filesystem filesystempkg.Filesystem
+	filesystem agentmodel.Filesystem
 	toolName   string
 }
 
-func newFileSearchTool(filesystem filesystempkg.Filesystem, toolName string) ToolDescriptor {
-	return ToolDescriptor{Tool: &fileSearchTool{filesystem: filesystem, toolName: toolName}, ReadOnly: true, ParallelSafe: true}
+func newFileSearchTool(filesystem agentmodel.Filesystem, toolName string) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &fileSearchTool{filesystem: filesystem, toolName: toolName}, ReadOnly: true, ParallelSafe: true}
 }
 
 func (fileSearchTool *fileSearchTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -98,14 +98,14 @@ type semanticMatch struct {
 
 // NewSemanticSearchTool provides a local, deterministic semantic-like search.
 // It ranks files and lines by query-term matches without requiring an index.
-func NewSemanticSearchTool(filesystem filesystempkg.Filesystem) (ToolDescriptor, error) {
+func NewSemanticSearchTool(filesystem agentmodel.Filesystem) (agentmodel.ToolDescriptor, error) {
 	if filesystem == nil {
-		return ToolDescriptor{}, fmt.Errorf("filesystem is required")
+		return agentmodel.ToolDescriptor{}, fmt.Errorf("filesystem is required")
 	}
-	return ToolDescriptor{Tool: &semanticSearchTool{filesystem: filesystem}, ReadOnly: true, ParallelSafe: true}, nil
+	return agentmodel.ToolDescriptor{Tool: &semanticSearchTool{filesystem: filesystem}, ReadOnly: true, ParallelSafe: true}, nil
 }
 
-type semanticSearchTool struct{ filesystem filesystempkg.Filesystem }
+type semanticSearchTool struct{ filesystem agentmodel.Filesystem }
 
 func (*semanticSearchTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return newToolInfo("semantic_search", "Rank code paths and lines by query-term matches.", map[string]*schema.ParameterInfo{"query": {Type: schema.String, Required: true}, "path": {Type: schema.String}})

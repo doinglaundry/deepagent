@@ -10,8 +10,7 @@ import (
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/middleware"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -36,8 +35,8 @@ type lifecycleResource struct {
 	after  int
 }
 
-func (m *lifecycleResource) PrepareRun(context.Context, *types.RunState) error { return nil }
-func (m *lifecycleResource) FinishRun(context.Context, *types.RunState, error) error {
+func (m *lifecycleResource) PrepareRun(context.Context, *agentmodel.RunState) error { return nil }
+func (m *lifecycleResource) FinishRun(context.Context, *agentmodel.RunState, error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.after++
@@ -56,8 +55,8 @@ func TestRun_WaitIncludesFinishAndResourceCleanup(t *testing.T) {
 	resource := &lifecycleResource{}
 	finishing, release := make(chan struct{}), make(chan struct{})
 	r, runCtx := New(ctx, "run", Config{
-		Graph:  execution.Config{Model: &lifecycleModel{}, Middlewares: []middleware.Middleware{resource}},
-		Events: make(chan Event, 32),
+		Graph:  execution.Config{Model: &lifecycleModel{}, Middlewares: []agentmodel.Middleware{resource}},
+		Events: make(chan agentmodel.RunEvent, 32),
 		OnFinish: func(context.Context, *Run, error) error {
 			resource.mu.Lock()
 			closed, after := resource.closed, resource.after
@@ -70,7 +69,7 @@ func TestRun_WaitIncludesFinishAndResourceCleanup(t *testing.T) {
 			return nil
 		},
 	})
-	r.AddInputs(types.Input{MessageID: "input", Message: messagepkg.NewUserMessage("go")})
+	r.AddInputs(agentmodel.RunInput{MessageID: "input", Message: agentmodel.NewUserMessage("go")})
 	go r.Execute(runCtx)
 	select {
 	case <-finishing:
@@ -99,8 +98,8 @@ func TestRun_WaitIncludesFinishAndResourceCleanup(t *testing.T) {
 func TestRun_PreStartCancelClosesConstructedMiddleware(t *testing.T) {
 	resource := &lifecycleResource{}
 	r, ctx := New(context.Background(), "run", Config{
-		Graph:  execution.Config{Model: &lifecycleModel{}, Middlewares: []middleware.Middleware{resource}},
-		Events: make(chan Event, 32),
+		Graph:  execution.Config{Model: &lifecycleModel{}, Middlewares: []agentmodel.Middleware{resource}},
+		Events: make(chan agentmodel.RunEvent, 32),
 	})
 	r.Cancel(context.Canceled)
 	_, err := r.Execute(ctx)
@@ -120,8 +119,8 @@ type pausedAfterRun struct {
 	release chan struct{}
 }
 
-func (m *pausedAfterRun) PrepareRun(context.Context, *types.RunState) error { return nil }
-func (m *pausedAfterRun) FinishRun(context.Context, *types.RunState, error) error {
+func (m *pausedAfterRun) PrepareRun(context.Context, *agentmodel.RunState) error { return nil }
+func (m *pausedAfterRun) FinishRun(context.Context, *agentmodel.RunState, error) error {
 	close(m.entered)
 	<-m.release
 	return nil
@@ -134,11 +133,11 @@ func TestRun_InterruptDeadlineCoversCompletionHook(t *testing.T) {
 	hookCause := make(chan error, 1)
 	r, runCtx := New(ctx, "run", Config{
 		Graph: execution.Config{
-			Model: &lifecycleModel{}, Middlewares: []middleware.Middleware{mw},
+			Model: &lifecycleModel{}, Middlewares: []agentmodel.Middleware{mw},
 			Conversation: conversation.New("thread", nil, nil, nil, 0, nil),
 		},
-		Events: make(chan Event, 32),
-		RunCompleted: func(ctx context.Context, _, _ string, _ model.ToolCallingChatModel, _ []*messagepkg.Message) {
+		Events: make(chan agentmodel.RunEvent, 32),
+		RunCompleted: func(ctx context.Context, _, _ string, _ model.ToolCallingChatModel, _ []*agentmodel.Message) {
 			<-ctx.Done()
 			hookCause <- context.Cause(ctx)
 		},
@@ -150,7 +149,7 @@ func TestRun_InterruptDeadlineCoversCompletionHook(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	timeout := 20 * time.Millisecond
-	r.RequestInterrupt(InterruptOptions{Timeout: &timeout})
+	r.RequestInterrupt(agentmodel.InterruptOptions{Timeout: &timeout})
 	close(mw.release)
 	waitCtx, waitCancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	defer waitCancel()

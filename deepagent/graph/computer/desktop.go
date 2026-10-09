@@ -15,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	agentmodel "eino-cli/deepagent/model"
 )
 
 // Desktop owns one native helper. The helper holds the machine-wide Run lock.
@@ -33,7 +35,7 @@ func NewDesktop(ctx context.Context) (*Desktop, error) {
 		return nil, err
 	}
 	desktop := &Desktop{helperPath: filepath.Join(filepath.Dir(executable), "deepagent-computer")}
-	_, err = desktop.PerformAction(ctx, "", "ping", Action{})
+	_, err = desktop.PerformAction(ctx, "", "ping", agentmodel.ComputerAction{})
 	if err != nil {
 		desktop.Close(context.Background())
 		return nil, err
@@ -41,7 +43,7 @@ func NewDesktop(ctx context.Context) (*Desktop, error) {
 	return desktop, nil
 }
 
-func (desktop *Desktop) PerformAction(ctx context.Context, ownerRunID, operation string, action Action) (*Observation, error) {
+func (desktop *Desktop) PerformAction(ctx context.Context, ownerRunID, operation string, action agentmodel.ComputerAction) (*agentmodel.ComputerObservation, error) {
 	desktop.mu.Lock()
 	defer desktop.mu.Unlock()
 	if desktop.closed {
@@ -81,12 +83,12 @@ func (desktop *Desktop) PerformAction(ctx context.Context, ownerRunID, operation
 	canceled := make(chan struct{})
 	stop := context.AfterFunc(requestCtx, func() { _ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL); close(canceled) })
 	request := struct {
-		Action
+		agentmodel.ComputerAction
 		Operation string `json:"operation"`
 		Owner     string `json:"owner"`
 	}{action, operation, ownerRunID}
 	var result struct {
-		Observation
+		agentmodel.ComputerObservation
 		Error          string `json:"error"`
 		OutcomeUnknown bool   `json:"outcome_unknown"`
 	}
@@ -124,7 +126,7 @@ func (desktop *Desktop) PerformAction(ctx context.Context, ownerRunID, operation
 		}
 		return nil, err
 	}
-	return &result.Observation, nil
+	return &result.ComputerObservation, nil
 }
 
 func (desktop *Desktop) stopHelper() {

@@ -6,23 +6,14 @@ import (
 	"errors"
 	"strings"
 
-	"eino-cli/deepagent/graph/types"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
-type FollowUpInfo struct {
-	Question, UserAnswer string
-	Questions            []string
-}
-
-func init() {
-	schema.RegisterName[*FollowUpInfo]("deepagent_follow_up_info")
-}
-
-func NewFollowUpTool() ToolDescriptor {
-	return ToolDescriptor{Tool: &followUpTool{}, ReadOnly: true}
+func NewFollowUpTool() agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &followUpTool{}, ReadOnly: true}
 }
 
 type followUpTool struct{}
@@ -39,7 +30,7 @@ func (*followUpTool) Info(context.Context) (*schema.ToolInfo, error) {
 }
 
 func (*followUpTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
-	isResumeTarget, hasFollowUpInfo, followUpInfo := tool.GetResumeContext[*FollowUpInfo](ctx)
+	isResumeTarget, hasFollowUpInfo, followUpInfo := tool.GetResumeContext[*agentmodel.FollowUpInfo](ctx)
 	// 当前工具未被指定续跑时，提出问题并暂停。
 	if !isResumeTarget {
 		questionInfo, err := normalizeFollowUpArgs(arguments)
@@ -56,7 +47,7 @@ func (*followUpTool) InvokableRun(ctx context.Context, arguments string, _ ...to
 	return followUpInfo.UserAnswer, nil
 }
 
-func normalizeFollowUpArgs(arguments string) (*FollowUpInfo, error) {
+func normalizeFollowUpArgs(arguments string) (*agentmodel.FollowUpInfo, error) {
 	var followUpArgs struct {
 		Question string          `json:"question"`
 		Prompt   string          `json:"prompt"`
@@ -68,7 +59,7 @@ func normalizeFollowUpArgs(arguments string) (*FollowUpInfo, error) {
 	if inputDecodeErr != nil {
 		return nil, inputDecodeErr
 	}
-	followUpInfo := &FollowUpInfo{}
+	followUpInfo := &agentmodel.FollowUpInfo{}
 	for _, question := range []string{followUpArgs.Question, followUpArgs.Prompt, followUpArgs.Message} {
 		question = strings.TrimSpace(question)
 		if question != "" {
@@ -107,21 +98,12 @@ func normalizeFollowUpArgs(arguments string) (*FollowUpInfo, error) {
 	return followUpInfo, nil
 }
 
-type PlanStep = types.PlanStep
-
 const ToolUpdatePlan = "update_plan"
 
-type PlanUpdate struct {
-	Plan        []PlanStep `json:"plan"`
-	Explanation string     `json:"explanation,omitempty"`
-}
+type updatePlanTool struct{ onUpdate agentmodel.PlanUpdateHandler }
 
-type PlanUpdateHandler func(context.Context, PlanUpdate) error
-
-type updatePlanTool struct{ onUpdate PlanUpdateHandler }
-
-func NewUpdatePlanTool(onUpdate PlanUpdateHandler) ToolDescriptor {
-	return ToolDescriptor{Tool: &updatePlanTool{onUpdate: onUpdate}, ReadOnly: true}
+func NewUpdatePlanTool(onUpdate agentmodel.PlanUpdateHandler) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &updatePlanTool{onUpdate: onUpdate}, ReadOnly: true}
 }
 
 func (*updatePlanTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -149,15 +131,15 @@ func (updatePlanTool *updatePlanTool) InvokableRun(ctx context.Context, argument
 			return "", err
 		}
 	}
-	runState := types.GetRunState(ctx)
+	runState := agentmodel.GetRunState(ctx)
 	if runState != nil {
-		runState.Plan = append([]types.PlanStep(nil), planUpdate.Plan...)
+		runState.Plan = append([]agentmodel.PlanStep(nil), planUpdate.Plan...)
 	}
 	encodedPlanUpdate, err := json.Marshal(planUpdate)
 	return string(encodedPlanUpdate), err
 }
 
-func normalizePlanArgs(arguments string) (PlanUpdate, error) {
+func normalizePlanArgs(arguments string) (agentmodel.PlanUpdate, error) {
 	var planArgs struct {
 		Plan  json.RawMessage `json:"plan"`
 		Todos []struct {
@@ -166,7 +148,7 @@ func normalizePlanArgs(arguments string) (PlanUpdate, error) {
 		} `json:"todos"`
 		Explanation string `json:"explanation"`
 	}
-	var planUpdate PlanUpdate
+	var planUpdate agentmodel.PlanUpdate
 	arguments = strings.TrimSpace(arguments)
 	if arguments == "" {
 		return planUpdate, errors.New("plan is required")
@@ -182,7 +164,7 @@ func normalizePlanArgs(arguments string) (PlanUpdate, error) {
 		if arguments[0] == '[' {
 			return planUpdate, errors.New("plan must be an object or plain text")
 		}
-		planUpdate.Plan = []PlanStep{{Step: planText, Status: "in_progress"}}
+		planUpdate.Plan = []agentmodel.PlanStep{{Step: planText, Status: "in_progress"}}
 	} else {
 		decodeErr := json.Unmarshal([]byte(arguments), &planArgs)
 		if decodeErr != nil {
@@ -192,7 +174,7 @@ func normalizePlanArgs(arguments string) (PlanUpdate, error) {
 		// Legacy todos takes precedence over a legacy plain-text plan.
 		if len(planArgs.Todos) > 0 {
 			for _, todo := range planArgs.Todos {
-				planUpdate.Plan = append(planUpdate.Plan, PlanStep{Step: todo.Content, Status: todo.Status})
+				planUpdate.Plan = append(planUpdate.Plan, agentmodel.PlanStep{Step: todo.Content, Status: todo.Status})
 			}
 		} else if len(planArgs.Plan) > 0 && planArgs.Plan[0] == '"' {
 			var planText string
@@ -200,7 +182,7 @@ func normalizePlanArgs(arguments string) (PlanUpdate, error) {
 			if err != nil {
 				return planUpdate, err
 			}
-			planUpdate.Plan = []PlanStep{{Step: planText, Status: "in_progress"}}
+			planUpdate.Plan = []agentmodel.PlanStep{{Step: planText, Status: "in_progress"}}
 		} else {
 			err := json.Unmarshal(planArgs.Plan, &planUpdate.Plan)
 			if err != nil {

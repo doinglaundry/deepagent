@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	filesystempkg "eino-cli/deepagent/graph/filesystem"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -25,11 +25,11 @@ type FilesystemToolOptions struct {
 }
 
 // NewFilesystemTools is the only filesystem tool factory for local and Docker.
-func NewFilesystemTools(filesystem filesystempkg.ToolFilesystem, options FilesystemToolOptions) ([]ToolDescriptor, error) {
+func NewFilesystemTools(filesystem agentmodel.ToolFilesystem, options FilesystemToolOptions) ([]agentmodel.ToolDescriptor, error) {
 	if filesystem == nil {
 		return nil, fmt.Errorf("filesystem is required")
 	}
-	toolDescriptors := []ToolDescriptor{
+	toolDescriptors := []agentmodel.ToolDescriptor{
 		NewListFilesTool(filesystem), NewReadFileTool(filesystem),
 		newFileSearchTool(filesystem, "glob"), newFileSearchTool(filesystem, "grep"),
 		newFileSearchTool(filesystem, "rg"),
@@ -58,11 +58,11 @@ func NewFilesystemTools(filesystem filesystempkg.ToolFilesystem, options Filesys
 }
 
 type ListFilesTool struct {
-	filesystem filesystempkg.Filesystem
+	filesystem agentmodel.Filesystem
 }
 
-func NewListFilesTool(filesystem filesystempkg.Filesystem) ToolDescriptor {
-	return ToolDescriptor{Tool: &ListFilesTool{filesystem: filesystem}, ReadOnly: true, ParallelSafe: true}
+func NewListFilesTool(filesystem agentmodel.Filesystem) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &ListFilesTool{filesystem: filesystem}, ReadOnly: true, ParallelSafe: true}
 }
 
 func (*ListFilesTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -86,8 +86,8 @@ func (listFilesTool *ListFilesTool) InvokableRun(ctx context.Context, arguments 
 
 func NewReadFileTool(fileReader interface {
 	Read(context.Context, string, *int, *int) (string, error)
-}) ToolDescriptor {
-	return ToolDescriptor{Tool: &readFileTool{fileReader: fileReader}, ReadOnly: true, ParallelSafe: true}
+}) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &readFileTool{fileReader: fileReader}, ReadOnly: true, ParallelSafe: true}
 }
 
 type readFileTool struct {
@@ -116,10 +116,10 @@ func (readFileTool *readFileTool) InvokableRun(ctx context.Context, arguments st
 	return readFileTool.fileReader.Read(ctx, readArgs.Path, readArgs.Offset, readArgs.Limit)
 }
 
-type WriteFileTool struct{ filesystem filesystempkg.Filesystem }
+type WriteFileTool struct{ filesystem agentmodel.Filesystem }
 
-func NewWriteFileTool(filesystem filesystempkg.Filesystem) ToolDescriptor {
-	return ToolDescriptor{Tool: &WriteFileTool{filesystem: filesystem}, RequiresApproval: true}
+func NewWriteFileTool(filesystem agentmodel.Filesystem) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &WriteFileTool{filesystem: filesystem}, RequiresApproval: true}
 }
 
 func (*WriteFileTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -151,10 +151,10 @@ func (writeFileTool *WriteFileTool) InvokableRun(ctx context.Context, arguments 
 	return "wrote " + writeArgs.Path, nil
 }
 
-type EditFileTool struct{ filesystem filesystempkg.Filesystem }
+type EditFileTool struct{ filesystem agentmodel.Filesystem }
 
-func NewEditFileTool(filesystem filesystempkg.Filesystem) ToolDescriptor {
-	return ToolDescriptor{Tool: &EditFileTool{filesystem: filesystem}, RequiresApproval: true}
+func NewEditFileTool(filesystem agentmodel.Filesystem) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &EditFileTool{filesystem: filesystem}, RequiresApproval: true}
 }
 
 func (*EditFileTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -188,10 +188,10 @@ func (editFileTool *EditFileTool) InvokableRun(ctx context.Context, arguments st
 	return "edited " + editArgs.Path, nil
 }
 
-type DeleteFileTool struct{ filesystem filesystempkg.Filesystem }
+type DeleteFileTool struct{ filesystem agentmodel.Filesystem }
 
-func NewDeleteFileTool(filesystem filesystempkg.Filesystem) ToolDescriptor {
-	return ToolDescriptor{Tool: &DeleteFileTool{filesystem: filesystem}, RequiresApproval: true}
+func NewDeleteFileTool(filesystem agentmodel.Filesystem) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &DeleteFileTool{filesystem: filesystem}, RequiresApproval: true}
 }
 
 func (*DeleteFileTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -209,11 +209,11 @@ func (deleteFileTool *DeleteFileTool) InvokableRun(ctx context.Context, argument
 	return deleteFileTool.filesystem.Delete(ctx, deleteArgs.Path)
 }
 
-func NewApplyPatchTool(filesystem filesystempkg.Filesystem) ToolDescriptor {
-	return ToolDescriptor{Tool: &applyPatchTool{filesystem: filesystem}, RequiresApproval: true}
+func NewApplyPatchTool(filesystem agentmodel.Filesystem) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &applyPatchTool{filesystem: filesystem}, RequiresApproval: true}
 }
 
-type applyPatchTool struct{ filesystem filesystempkg.Filesystem }
+type applyPatchTool struct{ filesystem agentmodel.Filesystem }
 
 func (*applyPatchTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{

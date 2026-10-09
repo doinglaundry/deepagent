@@ -6,10 +6,8 @@ import (
 	"sync"
 
 	"eino-cli/deepagent/graph/conversation"
-	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
@@ -26,11 +24,11 @@ type Graph struct {
 	chatModel         model.ToolCallingChatModel
 	enableEagerTools  bool
 	invoked           bool
-	middlewares       []middleware.Middleware
-	graphState        *types.GraphState
+	middlewares       []agentmodel.Middleware
+	graphState        *agentmodel.GraphState
 	config            Config
-	runnable          compose.Runnable[*types.RunState, *messagepkg.Message]
-	conversation      conversation.IConversation
+	runnable          compose.Runnable[*agentmodel.RunState, *agentmodel.Message]
+	conversation      agentmodel.Conversation
 	toolSet           *tools.ToolSet
 	toolExecutor      *toolExecutor
 	mu                sync.Mutex
@@ -40,7 +38,7 @@ type Graph struct {
 	cancel            context.CancelCauseFunc
 	interrupt         func(...compose.GraphInterruptOption)
 	done              chan struct{}
-	runState          *types.RunState
+	runState          *agentmodel.RunState
 }
 
 func New(ctx context.Context, opts ...Option) (*Graph, error) {
@@ -85,13 +83,13 @@ func New(ctx context.Context, opts ...Option) (*Graph, error) {
 }
 
 // Invoke executes the Eino Graph once. Resume restores its saved local state.
-func (graph *Graph) Invoke(ctx context.Context, input []*messagepkg.Message, opts ...RunOptionFunc) (result *messagepkg.Message, err error) {
+func (graph *Graph) Invoke(ctx context.Context, input []*agentmodel.Message, opts ...RunOptionFunc) (result *agentmodel.Message, err error) {
 	ctx, err = graph.beginInvoke(ctx)
 	if err != nil {
 		return nil, err
 	}
 	runOptions := RunOptions{}
-	var runState *types.RunState
+	var runState *agentmodel.RunState
 	initialCheckpointSaved := false
 	defer func() {
 		if runState != nil {
@@ -125,7 +123,7 @@ func (graph *Graph) Invoke(ctx context.Context, input []*messagepkg.Message, opt
 		ctx = compose.BatchResumeWithData(ctx, runOptions.ResumeData)
 	}
 	for _, data := range runOptions.ResumeData {
-		approval, ok := data.(*tools.ApprovalResult)
+		approval, ok := data.(*agentmodel.ApprovalResult)
 		if ok && approval != nil && approval.CancelRun {
 			ctx = context.WithValue(ctx, approvalCancelKey{}, true)
 			break

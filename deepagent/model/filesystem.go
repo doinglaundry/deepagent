@@ -1,5 +1,4 @@
-// Package filesystem provides file and command capabilities for one Agent thread.
-package filesystem
+package model
 
 import (
 	"context"
@@ -18,10 +17,6 @@ const (
 	ErrSandboxFsFailed  FileOperationError = "sandbox_fs_failed"
 )
 
-func (fileOperationError FileOperationError) Error() string {
-	return string(fileOperationError)
-}
-
 // FileInfo 文件信息
 type FileInfo struct {
 	Path       string    `json:"path"`
@@ -29,22 +24,6 @@ type FileInfo struct {
 	IsSymlink  bool      `json:"is_symlink,omitempty"`
 	Size       int64     `json:"size,omitempty"`
 	ModifiedAt time.Time `json:"modified_at,omitempty"`
-}
-
-// Name 返回文件名（不包含路径）
-func (fileInfo *FileInfo) GetName() string {
-	// 如果 Path 是空字符串，返回空
-	if fileInfo.Path == "" {
-		return ""
-	}
-	// 路径可能使用 / 或 \ 作为分隔符
-	// 从路径中提取最后一部分
-	for i := len(fileInfo.Path) - 1; i >= 0; i-- {
-		if fileInfo.Path[i] == '/' || fileInfo.Path[i] == '\\' {
-			return fileInfo.Path[i+1:]
-		}
-	}
-	return fileInfo.Path
 }
 
 // FileData 文件数据（用于状态存储）
@@ -114,14 +93,6 @@ type Filesystem interface {
 	ApplyPatch(context.Context, string) (string, error)
 }
 
-// patchFilesystem provides the operations required to validate and commit a
-// patch without treating a content read as an existence check.
-type patchFilesystem interface {
-	Filesystem
-	HasFile(context.Context, string) (bool, error)
-	CreateFileNoReplace(context.Context, string, string) (*WriteResult, error)
-}
-
 // CommandRequest describes a one-shot shell command execution.
 type CommandRequest struct {
 	Command        string
@@ -149,6 +120,7 @@ type CommandService interface {
 	Cancel(context.Context, string) error
 	Close(context.Context) error
 }
+
 type CommandSnapshot struct {
 	ID        string
 	ThreadID  string
@@ -165,4 +137,24 @@ type CommandSnapshot struct {
 type ToolFilesystem interface {
 	Filesystem
 	CommandService
+}
+
+func (fileOperationError FileOperationError) Error() string {
+	return string(fileOperationError)
+}
+
+// Name 返回文件名（不包含路径）
+func (fileInfo *FileInfo) GetName() string {
+	// 如果 Path 是空字符串，返回空
+	if fileInfo.Path == "" {
+		return ""
+	}
+	// 路径可能使用 / 或 \ 作为分隔符
+	// 从路径中提取最后一部分
+	for i := len(fileInfo.Path) - 1; i >= 0; i-- {
+		if fileInfo.Path[i] == '/' || fileInfo.Path[i] == '\\' {
+			return fileInfo.Path[i+1:]
+		}
+	}
+	return fileInfo.Path
 }

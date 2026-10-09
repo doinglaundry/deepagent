@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	agentmodel "eino-cli/deepagent/model"
 )
 
 func TestDesktop_TimeoutKillsHelperAndNextRequestRestarts(t *testing.T) {
@@ -20,15 +22,15 @@ func TestDesktop_TimeoutKillsHelperAndNextRequestRestarts(t *testing.T) {
 	defer desktop.Close(context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	_, err = desktop.PerformAction(ctx, "run-1", "hang", Action{})
+	_, err = desktop.PerformAction(ctx, "run-1", "hang", agentmodel.ComputerAction{})
 	if err == nil {
 		t.Fatal("hung helper was not canceled")
 	}
-	observation, err := desktop.PerformAction(context.Background(), "run-2", "observe", Action{})
+	observation, err := desktop.PerformAction(context.Background(), "run-2", "observe", agentmodel.ComputerAction{})
 	if err != nil || observation.ID != "fresh" {
 		t.Fatalf("restart: %+v %v", observation, err)
 	}
-	_, err = desktop.PerformAction(context.Background(), "run-2", "release", Action{})
+	_, err = desktop.PerformAction(context.Background(), "run-2", "release", agentmodel.ComputerAction{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +38,7 @@ func TestDesktop_TimeoutKillsHelperAndNextRequestRestarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = desktop.PerformAction(context.Background(), "run-3", "observe", Action{})
+	_, err = desktop.PerformAction(context.Background(), "run-3", "observe", agentmodel.ComputerAction{})
 	if err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("closed desktop: %v", err)
 	}
@@ -50,7 +52,7 @@ func TestDesktop_UnknownActionOutcomeIsNotAnOrdinaryToolError(t *testing.T) {
 	}
 	desktop := &Desktop{helperPath: helper}
 	defer desktop.Close(context.Background())
-	_, err = desktop.PerformAction(context.Background(), "run", "type_text", Action{Text: "once"})
+	_, err = desktop.PerformAction(context.Background(), "run", "type_text", agentmodel.ComputerAction{Text: "once"})
 	if !errors.Is(err, ErrOutcomeUnknown) {
 		t.Fatalf("unknown action can be retried: %v", err)
 	}
@@ -64,7 +66,7 @@ func TestDesktop_InvalidActionReplyHasUnknownOutcome(t *testing.T) {
 	}
 	desktop := &Desktop{helperPath: helper}
 	defer desktop.Close(context.Background())
-	_, err = desktop.PerformAction(context.Background(), "run", "click", Action{})
+	_, err = desktop.PerformAction(context.Background(), "run", "click", agentmodel.ComputerAction{})
 	if !errors.Is(err, ErrOutcomeUnknown) {
 		t.Fatalf("malformed action reply can be retried: %v", err)
 	}

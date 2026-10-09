@@ -6,17 +6,16 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/execution"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 	runpkg "eino-cli/deepagent/run"
 )
 
 func TestModelEventsShareResponseIdentity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	events := make(chan runpkg.Event, 32)
+	events := make(chan agentmodel.RunEvent, 32)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &threadModel{}}}, events, ThreadOptions{})
-	accepted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("hello"))
+	accepted, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,9 +27,9 @@ func TestModelEventsShareResponseIdentity(t *testing.T) {
 	for len(events) > 0 {
 		e := <-events
 		switch p := e.Payload.(type) {
-		case types.LLMTokenChunk:
+		case agentmodel.LLMTokenChunk:
 			tokenID = p.LLMResponseID
-		case types.LLMEnd:
+		case agentmodel.LLMEnd:
 			finalID = p.LLMResponseID
 		}
 	}

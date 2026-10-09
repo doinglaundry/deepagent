@@ -9,27 +9,23 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/execution"
-	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
-	eventpkg "eino-cli/deepagent/protocol/event"
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 	runpkg "eino-cli/deepagent/run"
 
 	"github.com/cloudwego/eino/schema"
 )
 
 func TestThreadAdapter_InputConsumedPreservesIndividualIdentityAndMedia(t *testing.T) {
-	first, second := messagepkg.NewUserMessage("first"), messagepkg.NewUserMessage("describe")
+	first, second := agentmodel.NewUserMessage("first"), agentmodel.NewUserMessage("describe")
 	first.MessageID = "one"
 	second.MessageID, second.SenderID, second.SenderType = "two", "person", "user"
 	url := "https://example.test/image.png"
 	second.UserInputMultiContent = []schema.MessageInputPart{{Type: schema.ChatMessagePartTypeText, Text: "describe"}, {Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{URL: &url, MIMEType: "image/png"}}}}
-	kind, payload, err := agentEventPayloadForOutput(runpkg.Event{Type: runpkg.EventInputConsumed, Payload: types.Input{Message: second}, ConsumedInputs: []*messagepkg.Message{first, second}}, nil)
-	if err != nil || kind != eventpkg.EventTypeInputConsumed {
+	kind, payload, err := agentEventPayloadForOutput(agentmodel.RunEvent{Type: agentmodel.EventInputConsumed, Payload: agentmodel.RunInput{Message: second}, ConsumedInputs: []*agentmodel.Message{first, second}}, nil)
+	if err != nil || kind != agentmodel.EventTypeInputConsumed {
 		t.Fatalf("kind=%s err=%v", kind, err)
 	}
-	message := payload.(*eventpkg.MessageEventPayload)
+	message := payload.(*agentmodel.MessageEventPayload)
 	if message.MessageID == nil || *message.MessageID != "two" || message.Sender == nil || message.Sender.SenderID != "person" {
 		t.Fatalf("identity=%+v", message)
 	}
@@ -42,7 +38,7 @@ func TestThreadAdapter_InputConsumedPreservesIndividualIdentityAndMedia(t *testi
 }
 
 func TestThreadAdapter_ContextUsagePreservesTokensAndRatio(t *testing.T) {
-	contextTokenUsage := types.ContextTokenUsage{
+	contextTokenUsage := agentmodel.ContextTokenUsage{
 		MaxContextTokens: 10000,
 		TotalTokens:      5500,
 		PromptTokens:     4000,
@@ -61,9 +57,9 @@ func TestThreadAdapter_ContextUsagePreservesTokensAndRatio(t *testing.T) {
 }
 
 func TestThreadAdapter_FollowUpIncludesQuestion(t *testing.T) {
-	payload := followUpRequiredPayload(runpkg.FollowUpRequestedPayload{
+	payload := followUpRequiredPayload(agentmodel.FollowUpRequestedPayload{
 		InterruptID: "interrupt-1", CheckpointID: "checkpoint-1",
-		Info: &tools.FollowUpInfo{Question: "选择哪个目录？", Questions: []string{"src", "docs"}},
+		Info: &agentmodel.FollowUpInfo{Question: "选择哪个目录？", Questions: []string{"src", "docs"}},
 	})
 	var info struct {
 		Question  string   `json:"question"`
@@ -82,7 +78,7 @@ func TestThreadAdapter_FollowUpIncludesQuestion(t *testing.T) {
 }
 
 func TestThreadAdapter_ApprovalPreservesCallIdentity(t *testing.T) {
-	payload := convertApprovalRequiredPayload(runpkg.ApprovalRequiredPayload{InterruptID: "interrupt", CheckpointID: "checkpoint", ApprovalInfo: &tools.ApprovalInfo{CallID: "call", ToolName: "execute", Arguments: `{"command":"pwd"}`}})
+	payload := convertApprovalRequiredPayload(agentmodel.ApprovalRequiredPayload{InterruptID: "interrupt", CheckpointID: "checkpoint", ApprovalInfo: &agentmodel.ApprovalInfo{CallID: "call", ToolName: "execute", Arguments: `{"command":"pwd"}`}})
 	if payload.ToolCallID != "call" || payload.InterruptID != "interrupt" || payload.CheckpointID != "checkpoint" || payload.ToolName != "execute" || payload.ArgumentsJSON == nil {
 		t.Fatalf("approval identity lost: %+v", payload)
 	}
@@ -91,18 +87,18 @@ func TestThreadAdapter_ApprovalPreservesCallIdentity(t *testing.T) {
 func TestThreadAdapter_RunEndPreservesOutcome(t *testing.T) {
 	for _, status := range []string{"finished", "blocked", "interrupted", "failed"} {
 		t.Run(status, func(t *testing.T) {
-			end := runpkg.RunEndPayload{Status: status}
+			end := agentmodel.RunEndPayload{Status: status}
 			if status == "blocked" {
 				end.CheckpointID = "checkpoint"
 				end.InterruptID = "interrupt"
 			}
-			kind, value, err := agentEventPayloadForOutput(runpkg.Event{
-				Type: runpkg.EventRunEnd, RunID: "run", Payload: end,
+			kind, value, err := agentEventPayloadForOutput(agentmodel.RunEvent{
+				Type: agentmodel.EventRunEnd, RunID: "run", Payload: end,
 			}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if kind != eventpkg.EventTypeRunStatus {
+			if kind != agentmodel.EventTypeRunStatus {
 				t.Fatalf("terminal outcome lost: kind=%q status=%q", kind, status)
 			}
 			raw, err := json.Marshal(value)
@@ -126,27 +122,27 @@ func TestThreadAdapter_RunEndPreservesOutcome(t *testing.T) {
 }
 
 func TestInterruptBatchPreservesEveryApproval(t *testing.T) {
-	batch := runpkg.InterruptBatchPayload{CheckpointID: "checkpoint", Items: []runpkg.InterruptBatchItem{
-		{InterruptID: "first", Kind: runpkg.InterruptItemApprove, ApprovalInfo: &tools.ApprovalInfo{CallID: "call-a", ToolName: "write_file"}},
-		{InterruptID: "second", Kind: runpkg.InterruptItemApprove, ApprovalInfo: &tools.ApprovalInfo{CallID: "call-b", ToolName: "execute"}},
+	batch := agentmodel.InterruptBatchPayload{CheckpointID: "checkpoint", Items: []agentmodel.InterruptBatchItem{
+		{InterruptID: "first", Kind: agentmodel.InterruptItemApprove, ApprovalInfo: &agentmodel.ApprovalInfo{CallID: "call-a", ToolName: "write_file"}},
+		{InterruptID: "second", Kind: agentmodel.InterruptItemApprove, ApprovalInfo: &agentmodel.ApprovalInfo{CallID: "call-b", ToolName: "execute"}},
 	}}
-	kind, payload, err := agentEventPayloadForOutput(runpkg.Event{Type: runpkg.EventInterruptBatchRequested, Payload: batch}, nil)
-	if err != nil || kind != eventpkg.EventTypeInputRequired {
+	kind, payload, err := agentEventPayloadForOutput(agentmodel.RunEvent{Type: agentmodel.EventInterruptBatchRequested, Payload: batch}, nil)
+	if err != nil || kind != agentmodel.EventTypeInputRequired {
 		t.Fatalf("kind=%s payload=%v err=%v", kind, payload, err)
 	}
-	out, ok := payload.(*eventpkg.InterruptBatchRequiredEventPayload)
+	out, ok := payload.(*agentmodel.InterruptBatchRequiredEventPayload)
 	if !ok || len(out.Items) != 2 || out.Items[0].InterruptID != "first" || out.Items[1].InterruptID != "second" {
 		t.Fatalf("payload=%+v", payload)
 	}
-	resume := inputpkg.ResumeRunPayload{InterruptID: "first", Answers: []inputpkg.ResumeAnswer{
-		{InterruptID: "first", Approval: &inputpkg.ApprovalDecision{Approved: true}},
-		{InterruptID: "second", Approval: &inputpkg.ApprovalDecision{Approved: false}},
+	resume := agentmodel.ResumeRunPayload{InterruptID: "first", Answers: []agentmodel.ResumeAnswer{
+		{InterruptID: "first", Approval: &agentmodel.ApprovalDecision{Approved: true}},
+		{InterruptID: "second", Approval: &agentmodel.ApprovalDecision{Approved: false}},
 	}}
 	answers, err := resumeData(context.Background(), resume, nil)
 	if err != nil || len(answers) != 2 {
 		t.Fatalf("answers=%v err=%v", answers, err)
 	}
-	if answers["first"].(*tools.ApprovalResult).Approved != true || answers["second"].(*tools.ApprovalResult).Approved != false {
+	if answers["first"].(*agentmodel.ApprovalResult).Approved != true || answers["second"].(*agentmodel.ApprovalResult).Approved != false {
 		t.Fatalf("answers=%v", answers)
 	}
 }
@@ -160,9 +156,9 @@ func TestThreadExternalInterruptTimeoutRetainsMetadata(t *testing.T) {
 		go func() { defer writer.Close(); close(started); <-ctx.Done() }()
 		return reader
 	}}
-	events := make(chan runpkg.Event, 32)
+	events := make(chan agentmodel.RunEvent, 32)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: &legacyParityMemoryCheckpoints{}}}, events, ThreadOptions{})
-	accepted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("wait"))
+	accepted, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("wait"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,8 +168,8 @@ func TestThreadExternalInterruptTimeoutRetainsMetadata(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	timeout := 10 * time.Millisecond
-	thread.InterruptRun(runpkg.InterruptOptions{Timeout: &timeout, Metadata: map[string]string{"reason": "handoff"}})
-	thread.InterruptRun(runpkg.InterruptOptions{Timeout: &timeout, Metadata: map[string]string{"reason": "handoff"}})
+	thread.InterruptRun(agentmodel.InterruptOptions{Timeout: &timeout, Metadata: map[string]string{"reason": "handoff"}})
+	thread.InterruptRun(agentmodel.InterruptOptions{Timeout: &timeout, Metadata: map[string]string{"reason": "handoff"}})
 	waitErr := accepted.RunHandle.Wait(ctx)
 	if waitErr != nil {
 		t.Fatal(waitErr)
@@ -181,11 +177,11 @@ func TestThreadExternalInterruptTimeoutRetainsMetadata(t *testing.T) {
 	found := false
 	for len(events) > 0 {
 		event := <-events
-		if event.Type == runpkg.EventError {
+		if event.Type == agentmodel.EventError {
 			t.Fatalf("external timeout became error: %+v", event)
 		}
-		if event.Type == runpkg.EventInterrupted {
-			p := event.Payload.(runpkg.InterruptedPayload)
+		if event.Type == agentmodel.EventInterrupted {
+			p := event.Payload.(agentmodel.InterruptedPayload)
 			if p.Source != "external" || p.Metadata["reason"] != "handoff" || p.TimeoutMS != 10 {
 				t.Fatalf("lost correlation: %+v", p)
 			}
@@ -200,14 +196,14 @@ func TestThreadExternalInterruptTimeoutRetainsMetadata(t *testing.T) {
 func TestThreadCloseDrainsFinalEventAndClosesOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	bus := make(chan runpkg.Event, 1)
+	bus := make(chan agentmodel.RunEvent, 1)
 	core := newTestThread("thread", &runpkg.Config{}, bus, ThreadOptions{})
 	adapter := core
 	output, err := adapter.Init(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	bus <- runpkg.Event{ThreadID: "thread", RunID: "run", Type: runpkg.EventRunEnd, Payload: runpkg.RunEndPayload{}}
+	bus <- agentmodel.RunEvent{ThreadID: "thread", RunID: "run", Type: agentmodel.EventRunEnd, Payload: agentmodel.RunEndPayload{}}
 	err = adapter.Close(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +229,7 @@ func TestThreadCloseDrainsFinalEventAndClosesOutput(t *testing.T) {
 
 func TestThreadCloseTimeoutCanRetryWhileOutputDrains(t *testing.T) {
 	count := threadOutputBridgeBufferSize + 5
-	bus := make(chan runpkg.Event, count)
+	bus := make(chan agentmodel.RunEvent, count)
 	core := newTestThread("thread", &runpkg.Config{}, bus, ThreadOptions{})
 	adapter := core
 	output, err := adapter.Init(context.Background())
@@ -241,7 +237,7 @@ func TestThreadCloseTimeoutCanRetryWhileOutputDrains(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < count; i++ {
-		bus <- runpkg.Event{ThreadID: "thread", RunID: "run", Type: runpkg.EventRunEnd, Payload: runpkg.RunEndPayload{}}
+		bus <- agentmodel.RunEvent{ThreadID: "thread", RunID: "run", Type: agentmodel.EventRunEnd, Payload: agentmodel.RunEndPayload{}}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	err = adapter.Close(ctx)
@@ -276,7 +272,7 @@ func TestThreadCloseTimeoutCanRetryWhileOutputDrains(t *testing.T) {
 func TestThreadBridgeDrainsAfterLeaseCancellation(t *testing.T) {
 	leaseCtx, cancelLease := context.WithCancel(context.Background())
 	cancelLease()
-	bus := make(chan runpkg.Event)
+	bus := make(chan agentmodel.RunEvent)
 	core := newTestThread("thread", &runpkg.Config{}, bus, ThreadOptions{})
 	adapter := core
 	// Start the bridge directly to isolate its lifecycle from history reload.
@@ -285,7 +281,7 @@ func TestThreadBridgeDrainsAfterLeaseCancellation(t *testing.T) {
 	defer cancel()
 	defer adapter.Close(ctx)
 	select {
-	case bus <- runpkg.Event{ThreadID: "thread", RunID: "run", Type: runpkg.EventRunEnd, Payload: runpkg.RunEndPayload{}}:
+	case bus <- agentmodel.RunEvent{ThreadID: "thread", RunID: "run", Type: agentmodel.EventRunEnd, Payload: agentmodel.RunEndPayload{}}:
 	case <-ctx.Done():
 		t.Fatal("canceled lease stopped the bridge before Core finished")
 	}
@@ -303,7 +299,7 @@ func TestThreadBridgeDrainsAfterLeaseCancellation(t *testing.T) {
 }
 
 func TestThreadOutputSurfacesConversionFailure(t *testing.T) {
-	bus := make(chan runpkg.Event, 1)
+	bus := make(chan agentmodel.RunEvent, 1)
 	core := newTestThread("thread", &runpkg.Config{}, bus, ThreadOptions{})
 	adapter := core
 	output, err := adapter.Init(context.Background())
@@ -313,7 +309,7 @@ func TestThreadOutputSurfacesConversionFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	defer adapter.Close(ctx)
-	bus <- runpkg.Event{RunID: "run", Type: runpkg.EventToolStart, Payload: "invalid payload"}
+	bus <- agentmodel.RunEvent{RunID: "run", Type: agentmodel.EventToolStart, Payload: "invalid payload"}
 	select {
 	case item := <-output.Items:
 		if item.Err == nil {
@@ -330,16 +326,16 @@ func TestThread_CancelDeliversFinalEventsBeforeInactive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	m := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
-	events := make(chan runpkg.Event)
+	events := make(chan agentmodel.RunEvent)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, events, ThreadOptions{})
-	accepted, err := thread.SubmitInput(runCtx, messagepkg.NewUserMessage("go"))
+	accepted, err := thread.SubmitInput(runCtx, agentmodel.NewUserMessage("go"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for {
 		select {
 		case e := <-events:
-			if e.Type == runpkg.EventLLMRequesting {
+			if e.Type == agentmodel.EventLLMRequesting {
 				goto modeling
 			}
 		case <-ctx.Done():
@@ -370,7 +366,7 @@ modeling:
 		t.Fatalf("Close bypassed terminal delivery: %v", threadCloseErr)
 	}
 	stopClose()
-	for _, expected := range []runpkg.EventType{runpkg.EventError, runpkg.EventRunEnd} {
+	for _, expected := range []agentmodel.RunEventType{agentmodel.EventError, agentmodel.EventRunEnd} {
 		select {
 		case e := <-events:
 			if e.Type != expected || e.RunID != accepted.RunID {
@@ -404,8 +400,8 @@ func TestThread_CancellationKeepsHistoryAndThreadUsable(t *testing.T) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
-	th := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, make(chan runpkg.Event, 100), ThreadOptions{})
-	first, err := th.SubmitInput(runCtx, messagepkg.NewUserMessage("original"))
+	th := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, make(chan agentmodel.RunEvent, 100), ThreadOptions{})
+	first, err := th.SubmitInput(runCtx, agentmodel.NewUserMessage("original"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +415,7 @@ func TestThread_CancellationKeepsHistoryAndThreadUsable(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel=%v", err)
 	}
-	second, err := th.SubmitInput(ctx, messagepkg.NewUserMessage("again"))
+	second, err := th.SubmitInput(ctx, agentmodel.NewUserMessage("again"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,8 +432,8 @@ func TestThread_CloseCancelsActiveRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	m := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, make(chan runpkg.Event, 16), ThreadOptions{})
-	accepted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("run"))
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, make(chan agentmodel.RunEvent, 16), ThreadOptions{})
+	accepted, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("run"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +445,7 @@ func TestThread_CloseCancelsActiveRun(t *testing.T) {
 	if thread.CurrentRun() != nil || accepted.RunHandle.IsActive() {
 		t.Fatal("close returned with active run")
 	}
-	_, submitInputErr := thread.SubmitInput(ctx, messagepkg.NewUserMessage("late"))
+	_, submitInputErr := thread.SubmitInput(ctx, agentmodel.NewUserMessage("late"))
 	if submitInputErr == nil {
 		t.Fatal("closed thread accepted input")
 	}
@@ -460,12 +456,12 @@ func TestThread_CloseCancelsActiveRun(t *testing.T) {
 }
 
 func TestThreadAdapter_ToolFailureRemainsVisibleInPersistedPayload(t *testing.T) {
-	var end types.ToolEndPayload
+	var end agentmodel.ToolEndPayload
 	err := json.Unmarshal([]byte(`{"Name":"write_file","CallID":"failed","Result":"permission denied","IsError":true}`), &end)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, payload, err := agentEventPayloadForOutput(runpkg.Event{Type: runpkg.EventToolEnd, Payload: end}, nil)
+	_, payload, err := agentEventPayloadForOutput(agentmodel.RunEvent{Type: agentmodel.EventToolEnd, Payload: end}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,9 +480,9 @@ func TestThreadAdapter_ToolFailureRemainsVisibleInPersistedPayload(t *testing.T)
 }
 
 func TestThreadOutput_ModelRequestPublishesOnlyThinkingPhase(t *testing.T) {
-	output, err := workerEvent("session", "thread", runpkg.Event{
-		ID: "event", RunID: "run", Type: runpkg.EventLLMRequesting,
-		Payload: types.LLMRequestingPayload{Messages: []*messagepkg.Message{messagepkg.NewUserMessage("private request")}},
+	output, err := workerEvent("session", "thread", agentmodel.RunEvent{
+		ID: "event", RunID: "run", Type: agentmodel.EventLLMRequesting,
+		Payload: agentmodel.LLMRequestingPayload{Messages: []*agentmodel.Message{agentmodel.NewUserMessage("private request")}},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -501,44 +497,44 @@ func TestThreadOutput_ModelRequestPublishesOnlyThinkingPhase(t *testing.T) {
 
 func TestThreadAdapter_ToolScreenshotPreserved(t *testing.T) {
 	image := "cG5n"
-	_, payload, err := agentEventPayloadForOutput(runpkg.Event{Type: runpkg.EventToolEnd, Payload: types.ToolEndPayload{CallID: "screen", Name: "browser_observe", MultiContent: []schema.MessageInputPart{{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{Base64Data: &image, MIMEType: "image/png"}}}}}}, nil)
+	_, payload, err := agentEventPayloadForOutput(agentmodel.RunEvent{Type: agentmodel.EventToolEnd, Payload: agentmodel.ToolEndPayload{CallID: "screen", Name: "browser_observe", MultiContent: []schema.MessageInputPart{{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{Base64Data: &image, MIMEType: "image/png"}}}}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tool := payload.(*eventpkg.ToolCallEventPayload)
+	tool := payload.(*agentmodel.ToolCallEventPayload)
 	if len(tool.Parts) != 1 || tool.Parts[0].Base64Data != image {
 		t.Fatalf("screenshot missing: %+v", tool)
 	}
 }
 
 func TestThreadAdapter_CompactionEventsPreserveCapturedUsage(t *testing.T) {
-	ctxUsage := types.ContextTokenUsage{MaxContextTokens: 10000, TotalTokens: 5500, PromptTokens: 4000, CompletionTokens: 500}
-	liveUsage := types.ContextTokenUsage{MaxContextTokens: 20000, TotalTokens: 300, PromptTokens: 250, CompletionTokens: 50}
-	input := messagepkg.NewUserMessage("input")
+	ctxUsage := agentmodel.ContextTokenUsage{MaxContextTokens: 10000, TotalTokens: 5500, PromptTokens: 4000, CompletionTokens: 500}
+	liveUsage := agentmodel.ContextTokenUsage{MaxContextTokens: 20000, TotalTokens: 300, PromptTokens: 250, CompletionTokens: 50}
+	input := agentmodel.NewUserMessage("input")
 	input.MessageID = "input-1"
 	for _, testCase := range []struct {
 		name   string
-		typeID runpkg.EventType
-		usage  types.ContextTokenUsage
-		want   types.ContextTokenUsage
+		typeID agentmodel.RunEventType
+		usage  agentmodel.ContextTokenUsage
+		want   agentmodel.ContextTokenUsage
 		status string
 	}{
-		{"started", runpkg.EventContextCompactStarted, ctxUsage, ctxUsage, eventpkg.RunStatusCompactStarted},
-		{"finished", runpkg.EventContextCompacted, ctxUsage, ctxUsage, eventpkg.RunStatusContextCompacted},
-		{"empty_started", runpkg.EventContextCompactStarted, types.ContextTokenUsage{}, liveUsage, eventpkg.RunStatusCompactStarted},
+		{"started", agentmodel.EventContextCompactStarted, ctxUsage, ctxUsage, agentmodel.RunStatusCompactStarted},
+		{"finished", agentmodel.EventContextCompacted, ctxUsage, ctxUsage, agentmodel.RunStatusContextCompacted},
+		{"empty_started", agentmodel.EventContextCompactStarted, agentmodel.ContextTokenUsage{}, liveUsage, agentmodel.RunStatusCompactStarted},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			kind, value, err := agentEventPayloadForOutput(runpkg.Event{
-				Type: testCase.typeID, Payload: testCase.usage, ConsumedInputs: []*messagepkg.Message{input},
+			kind, value, err := agentEventPayloadForOutput(agentmodel.RunEvent{
+				Type: testCase.typeID, Payload: testCase.usage, ConsumedInputs: []*agentmodel.Message{input},
 			}, &liveUsage)
-			if err != nil || kind != eventpkg.EventTypeRunStatus {
+			if err != nil || kind != agentmodel.EventTypeRunStatus {
 				t.Fatalf("kind=%s err=%v", kind, err)
 			}
 			raw, err := json.Marshal(value)
 			if err != nil {
 				t.Fatal(err)
 			}
-			var payload eventpkg.ContextCompactedEventPayload
+			var payload agentmodel.ContextCompactedEventPayload
 			err = json.Unmarshal(raw, &payload)
 			if err != nil {
 				t.Fatal(err)

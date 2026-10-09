@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/sandbox"
-	"eino-cli/deepagent/sandbox/paths"
+	sandboxpaths "eino-cli/deepagent/sandbox/paths"
 )
 
 func TestSandboxWriteReadRoundTrip(t *testing.T) {
@@ -108,11 +109,11 @@ func TestSandboxRejectsSymlinkEscapeForDirectOperations(t *testing.T) {
 		t.Fatal("expected listing through escaping symlink to fail")
 	}
 
-	_, _, err = sb.Glob(ctx, "/mnt/workspace/escape", "*", sandbox.GlobOpts{})
+	_, _, err = sb.Glob(ctx, "/mnt/workspace/escape", "*", agentmodel.SandboxGlobOptions{})
 	if err == nil {
 		t.Fatal("glob followed escaping root")
 	}
-	_, _, err = sb.Grep(ctx, "/mnt/workspace/escape", "outside", sandbox.GrepOpts{})
+	_, _, err = sb.Grep(ctx, "/mnt/workspace/escape", "outside", agentmodel.SandboxGrepOptions{})
 	if err == nil {
 		t.Fatal("grep followed escaping root")
 	}
@@ -255,7 +256,7 @@ func TestManagerGetDoesNotDeadlock(t *testing.T) {
 	}
 
 	done := make(chan struct{})
-	var got sandbox.Sandbox
+	var got agentmodel.Sandbox
 	var getErr error
 	go func() {
 		got, getErr = mgr.Get(context.Background(), sid)
@@ -312,7 +313,7 @@ func TestSandboxRejectsReplacedMount(t *testing.T) {
 	if err == nil {
 		t.Fatal("write accepted replaced mount")
 	}
-	_, _, err = sb.Glob(context.Background(), "/mnt/workspace", "*", sandbox.GlobOpts{})
+	_, _, err = sb.Glob(context.Background(), "/mnt/workspace", "*", agentmodel.SandboxGlobOptions{})
 	if err == nil {
 		t.Fatal("glob accepted replaced mount")
 	}

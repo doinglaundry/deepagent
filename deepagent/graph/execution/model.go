@@ -9,9 +9,7 @@ import (
 	"strings"
 	"unicode"
 
-	"eino-cli/deepagent/graph/middleware"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -19,7 +17,7 @@ import (
 
 var ErrExceedMaxModelCalls = errors.New("exceeds max model calls")
 
-func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*types.RunState, error) {
+func (graph *Graph) callModel(ctx context.Context, runState *agentmodel.RunState) (*agentmodel.RunState, error) {
 	if graph.config.MaxModelCalls > 0 && runState.ModelCalls >= graph.config.MaxModelCalls {
 		return nil, fmt.Errorf("%w: maximum model calls exceeded: %d", ErrExceedMaxModelCalls, graph.config.MaxModelCalls)
 	}
@@ -31,15 +29,15 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 	}
 	// prepare handles new user input; tool results can independently cross the
 	// context limit before the next sampling boundary in the same graph loop.
-	if runState.Phase == types.PhaseTools {
+	if runState.Phase == agentmodel.PhaseTools {
 		err := graph.compactContext(ctx, runState)
 		if err != nil {
 			return nil, err
 		}
 	}
-	runState.Phase = types.PhaseModeling
+	runState.Phase = agentmodel.PhaseModeling
 	runState.ModelCalls++
-	prompts := append([]*messagepkg.Message(nil), graph.config.Prompts...)
+	prompts := append([]*agentmodel.Message(nil), graph.config.Prompts...)
 	for _, currentMiddleware := range graph.middlewares {
 		promptMessages, err := currentMiddleware.BuildPrompt(ctx)
 		if err != nil {
@@ -57,22 +55,22 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 			return nil, err
 		}
 	}
-	err = graph.emitEvent(ctx, runState, "llm_requesting", "", types.LLMRequestingPayload{Messages: requestMessages})
+	err = graph.emitEvent(ctx, runState, "llm_requesting", "", agentmodel.LLMRequestingPayload{Messages: requestMessages})
 	if err != nil {
 		return nil, err
 	}
-	modelHandler := middleware.ModelHandler(func(ctx context.Context, input []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
-		stream, err := graph.chatModel.Stream(ctx, messagepkg.ToEinoMessages(input))
+	modelHandler := agentmodel.ModelHandler(func(ctx context.Context, input []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
+		stream, err := graph.chatModel.Stream(ctx, agentmodel.ToEinoMessages(input))
 		if stream == nil {
 			return nil, err
 		}
-		converted := schema.StreamReaderWithConvert(stream, func(chunk *schema.Message) (*messagepkg.Message, error) {
-			return messagepkg.FromEino(chunk), nil
+		converted := schema.StreamReaderWithConvert(stream, func(chunk *schema.Message) (*agentmodel.Message, error) {
+			return agentmodel.FromEino(chunk), nil
 		})
 		return converted, err
 	})
 	for i := len(graph.middlewares) - 1; i >= 0; i-- {
-		modelMiddleware, ok := graph.middlewares[i].(middleware.ModelMiddleware)
+		modelMiddleware, ok := graph.middlewares[i].(agentmodel.ModelMiddleware)
 		if ok {
 			modelHandler = modelMiddleware.WrapModel(modelHandler)
 		}
@@ -101,7 +99,7 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 		}
 		messageStream = modifiedStream
 	}
-	var messageChunks []*messagepkg.Message
+	var messageChunks []*agentmodel.Message
 	toolCallBuffer := toolCallBuffer{}
 	defer func() { graph.toolExecutor.snapshotToolExecutions(runState.Calls) }()
 	for {
@@ -128,8 +126,8 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 		messageChunks = append(messageChunks, &messagePart)
 		if graph.enableEagerTools {
 			for _, toolCall := range readyToolCalls {
-				hasStartedEagerTool, err := graph.toolExecutor.startEagerToolIfAllowed(ctx, toolCall, func(ctx context.Context, toolCall types.ToolCall, chunk string) error {
-					return graph.emitEvent(ctx, runState, "tool_call_output_chunk", toolCall.ID, types.ToolCallOutputChunkPayload{Name: toolCall.Name, CallID: toolCall.ID, Chunk: chunk})
+				hasStartedEagerTool, err := graph.toolExecutor.startEagerToolIfAllowed(ctx, toolCall, func(ctx context.Context, toolCall agentmodel.ToolCall, chunk string) error {
+					return graph.emitEvent(ctx, runState, "tool_call_output_chunk", toolCall.ID, agentmodel.ToolCallOutputChunkPayload{Name: toolCall.Name, CallID: toolCall.ID, Chunk: chunk})
 				})
 				if err != nil {
 					return nil, err
@@ -139,7 +137,7 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 				}
 			}
 		}
-		err = graph.emitEvent(ctx, runState, "llm_token", "", types.LLMTokenChunk{Message: chunk, Text: chunk.Content, ReasoningText: chunk.ReasoningContent})
+		err = graph.emitEvent(ctx, runState, "llm_token", "", agentmodel.LLMTokenChunk{Message: chunk, Text: chunk.Content, ReasoningText: chunk.ReasoningContent})
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +150,7 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 	if len(messageChunks) == 0 {
 		return nil, fmt.Errorf("empty model response")
 	}
-	response, err := messagepkg.ConcatMessages(messageChunks)
+	response, err := agentmodel.ConcatMessages(messageChunks)
 	if err != nil {
 		return nil, err
 	}
@@ -191,9 +189,9 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 			return nil, fmt.Errorf("missing or duplicate tool call ID %q", toolCall.ID)
 		}
 		seenCallIDs[toolCall.ID] = true
-		runState.Calls = append(runState.Calls, types.ToolCallState{Call: types.ToolCall{ID: toolCall.ID, Index: i, Name: toolCall.Function.Name, Arguments: toolCall.Function.Arguments}, Status: types.CallPending})
+		runState.Calls = append(runState.Calls, agentmodel.ToolCallState{Call: agentmodel.ToolCall{ID: toolCall.ID, Index: i, Name: toolCall.Function.Name, Arguments: toolCall.Function.Arguments}, Status: agentmodel.CallPending})
 	}
-	err = graph.emitEvent(ctx, runState, "llm_end", "", types.LLMEnd{Message: response})
+	err = graph.emitEvent(ctx, runState, "llm_end", "", agentmodel.LLMEnd{Message: response})
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +206,7 @@ func (graph *Graph) callModel(ctx context.Context, runState *types.RunState) (*t
 
 // getResponseUsage parses provider metadata only; Conversation owns accumulation.
 // Older adapters put usage in Extra. Explicit Eino metadata takes precedence.
-func getResponseUsage(message *messagepkg.Message) *model.TokenUsage {
+func getResponseUsage(message *agentmodel.Message) *model.TokenUsage {
 	if message.ResponseMeta != nil && message.ResponseMeta.Usage != nil {
 		providerUsage := message.ResponseMeta.Usage
 		return &model.TokenUsage{PromptTokens: providerUsage.PromptTokens, CompletionTokens: providerUsage.CompletionTokens, TotalTokens: providerUsage.TotalTokens}
@@ -242,19 +240,19 @@ func getResponseUsage(message *messagepkg.Message) *model.TokenUsage {
 // toolCallBuffer lives for exactly one model stream. Provider indexes are map
 // keys; the index used by the executor is always the contiguous arrival order.
 type toolCallBuffer struct {
-	toolCalls                  []types.ToolCall
+	toolCalls                  []agentmodel.ToolCall
 	callIndexesByProviderIndex map[int]int
 	callIndexesByCallID        map[string]int
 	eagerStartedByCallID       map[string]bool
 }
 
-func (toolCallBuffer *toolCallBuffer) appendToolCallFragments(deltas []schema.ToolCall) ([]types.ToolCall, error) {
+func (toolCallBuffer *toolCallBuffer) appendToolCallFragments(deltas []schema.ToolCall) ([]agentmodel.ToolCall, error) {
 	if toolCallBuffer.callIndexesByProviderIndex == nil {
 		toolCallBuffer.callIndexesByProviderIndex = map[int]int{}
 		toolCallBuffer.callIndexesByCallID = map[string]int{}
 		toolCallBuffer.eagerStartedByCallID = map[string]bool{}
 	}
-	var readyToolCalls []types.ToolCall
+	var readyToolCalls []agentmodel.ToolCall
 	for _, delta := range deltas {
 		index := -1
 		if delta.Index != nil {
@@ -280,7 +278,7 @@ func (toolCallBuffer *toolCallBuffer) appendToolCallFragments(deltas []schema.To
 				index = 0
 			} else {
 				index = len(toolCallBuffer.toolCalls)
-				toolCallBuffer.toolCalls = append(toolCallBuffer.toolCalls, types.ToolCall{Index: index})
+				toolCallBuffer.toolCalls = append(toolCallBuffer.toolCalls, agentmodel.ToolCall{Index: index})
 			}
 		}
 		call := &toolCallBuffer.toolCalls[index]

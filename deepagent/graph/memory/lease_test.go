@@ -7,8 +7,7 @@ import (
 	"testing"
 	"time"
 
-	messagepkg "eino-cli/deepagent/message"
-	memorypkg "eino-cli/deepagent/protocol/memory"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -16,8 +15,8 @@ import (
 
 type leaseLostStore struct{ *memoryStore }
 
-func (*leaseLostStore) RenewMemory(context.Context, memorypkg.Lease, time.Duration) (memorypkg.Lease, error) {
-	return memorypkg.Lease{}, memorypkg.ErrLeaseLost
+func (*leaseLostStore) RenewMemory(context.Context, agentmodel.MemoryLease, time.Duration) (agentmodel.MemoryLease, error) {
+	return agentmodel.MemoryLease{}, agentmodel.ErrMemoryLeaseLost
 }
 
 type waitingMemoryModel struct {
@@ -48,7 +47,7 @@ func TestMemory_ScopeLeaseAndDuplicateExtraction(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		input := []*messagepkg.Message{messagepkg.NewUserMessage("stable fact")}
+		input := []*agentmodel.Message{agentmodel.NewUserMessage("stable fact")}
 		for range 2 {
 			err := first.Observe(ctx, "user/one", "same-thread", input)
 			if err != nil {
@@ -87,7 +86,7 @@ func TestMemory_ScopeLeaseAndDuplicateExtraction(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		input := []*messagepkg.Message{messagepkg.NewUserMessage("fact")}
+		input := []*agentmodel.Message{agentmodel.NewUserMessage("fact")}
 		done := make(chan error, 1)
 		go func() { done <- memoryService.Observe(ctx, "user/one", "thread", input) }()
 		select {
@@ -96,12 +95,12 @@ func TestMemory_ScopeLeaseAndDuplicateExtraction(t *testing.T) {
 			t.Fatal("extraction never started")
 		}
 		observeErr := memoryService.Observe(ctx, "user/one", "thread", input)
-		if !errors.Is(observeErr, memorypkg.ErrConflict) {
+		if !errors.Is(observeErr, agentmodel.ErrMemoryConflict) {
 			t.Fatalf("second owner accepted: %v", observeErr)
 		}
 		select {
 		case err := <-done:
-			if !errors.Is(err, memorypkg.ErrLeaseLost) {
+			if !errors.Is(err, agentmodel.ErrMemoryLeaseLost) {
 				t.Fatalf("lost lease error discarded: %v", err)
 			}
 		case <-ctx.Done():

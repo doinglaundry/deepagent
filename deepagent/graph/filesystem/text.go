@@ -3,13 +3,15 @@ package filesystem
 import (
 	"fmt"
 	"strings"
+
+	agentmodel "eino-cli/deepagent/model"
 )
 
 // ReadFileLines applies the filesystem backend line window to file content.
 func ReadFileLines(content string, offset, limit *int) (window string) {
 	// 处理 nil 参数：nil 表示使用默认值
 	actualOffset := 0
-	actualLimit := DefaultReadLimit
+	actualLimit := agentmodel.DefaultReadLimit
 	if offset != nil {
 		actualOffset = *offset
 	}
@@ -20,7 +22,7 @@ func ReadFileLines(content string, offset, limit *int) (window string) {
 		actualLimit = *limit
 	}
 	if actualLimit <= 0 {
-		actualLimit = DefaultReadLimit
+		actualLimit = agentmodel.DefaultReadLimit
 	}
 	lines := strings.SplitAfter(content, "\n")
 	if len(lines) == 1 && lines[0] == "" {

@@ -9,14 +9,14 @@ import (
 
 	"eino-cli/deepagent/dal/cache"
 	"eino-cli/deepagent/dal/db"
-	"eino-cli/deepagent/dal/model"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 type Manager struct {
 	threads                 *db.ThreadDAO
 	messages                *db.MessageDAO
 	runs                    *db.RunDAO
-	redis                   cache.RedisClient
+	redis                   agentmodel.RedisClient
 	db                      *db.MySQLClient
 	stream                  *StreamStreamOut
 	subscribeSessionMaxIdle time.Duration
@@ -60,7 +60,7 @@ func Open(ctx context.Context, cfg Config) (*Manager, error) {
 	return New(client, redisClient)
 }
 
-func New(client *db.MySQLClient, redisClient cache.RedisClient) (*Manager, error) {
+func New(client *db.MySQLClient, redisClient agentmodel.RedisClient) (*Manager, error) {
 	if client == nil || redisClient == nil {
 		return nil, errors.New("MySQL and Redis are required")
 	}
@@ -77,17 +77,7 @@ func New(client *db.MySQLClient, redisClient cache.RedisClient) (*Manager, error
 
 func (c *Manager) DB() *db.MySQLClient { return c.db }
 
-func (c *Manager) Redis() cache.RedisClient { return c.redis }
-
-// Client is the boundary used by distributed workers. Manager satisfies it.
-type Client interface {
-	Acquire(context.Context, AcquireRequest) (AcquireResult, error)
-	Renew(context.Context, int64, string, int64) (*Lease, error)
-	ReleaseThread(context.Context, int64, string) (*model.Thread, error)
-	AckInput(context.Context, int64, string, string, []int64) ([]*model.Message, error)
-	ConfirmThreadClosed(context.Context, int64, string, int64) (*ThreadMessageResult, error)
-	SaveOutput(context.Context, int64, string, string, []OutputFrame) error
-}
+func (c *Manager) Redis() agentmodel.RedisClient { return c.redis }
 
 var (
 	ErrThreadNotFound       = errors.New("thread not found")

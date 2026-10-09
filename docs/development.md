@@ -242,6 +242,22 @@ Graph 另有文件 checkpoint 实现，但当前 Worker 没有通过 YAML 选择
 
 ## 阅读代码
 
+共享定义统一放在 `deepagent/model`，实现包直接引用，不再通过旧包别名转发。model 不依赖仓库内的实现包。
+
+| 文件 | 定义 |
+| --- | --- |
+| [model/message.go](../deepagent/model/message.go)、[model/mailbox.go](../deepagent/model/mailbox.go) | `Message` 是对话内容；`MailboxMessage` 是调度投递记录 |
+| [model/thread.go](../deepagent/model/thread.go)、[model/run.go](../deepagent/model/run.go) | `ThreadRecord` 是数据库记录；`RunRecord` 是执行结果；`RunState` 是 Graph 快照 |
+| [model/manager.go](../deepagent/model/manager.go) | Manager 接口、领取请求和结果 |
+| [model/conversation.go](../deepagent/model/conversation.go) | 历史、压缩、用量与存储接口 |
+| [model/tool.go](../deepagent/model/tool.go)、[model/middleware.go](../deepagent/model/middleware.go) | 工具属性、执行策略、中间件接口和状态 |
+| [model/interaction.go](../deepagent/model/interaction.go)、[model/event.go](../deepagent/model/event.go) | 审批、问答续跑和输出事件 |
+| [model/filesystem.go](../deepagent/model/filesystem.go)、[model/sandbox.go](../deepagent/model/sandbox.go) | 文件与命令能力、沙箱接口 |
+| [model/computer.go](../deepagent/model/computer.go) | 浏览器与桌面动作、观察结果 |
+| [model/memory.go](../deepagent/model/memory.go)、[model/skill.go](../deepagent/model/skill.go)、[model/cache.go](../deepagent/model/cache.go) | 记忆、技能、Redis 接口 |
+
+`Manager`、`Worker`、`Thread`、`Run`、`Graph`、`ToolSet` 和本地／Docker 文件系统仍在各自实现包中。配置也留在使用处。
+
 从外到内，建议按下面顺序读：
 
 | 顺序 | 文件 | 重点入口 |
@@ -298,10 +314,10 @@ deepagent/
 │   ├── conversation/       历史、压缩与 usage
 │   ├── memory/             长期记忆提取与整理
 │   ├── checkpoint/         存储、Eino snapshot 与恢复
-│   ├── modelhub/           模型客户端
-│   └── types/              共享状态与事件
+│   └── modelhub/           模型客户端
 ├── dal/                    MySQL / Redis 访问
-├── protocol/               输入、输出协议
+├── model/                  公共接口、共享数据及类型自身的方法
+├── protocol/               协议 ID 工具
 ├── sandbox/                执行环境支撑
 ├── skills/                 技能加载与内置资源
 ├── uploads/                上传文件管理

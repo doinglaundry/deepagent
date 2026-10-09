@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	agentmodel "eino-cli/deepagent/model"
+
 	"github.com/google/uuid"
 )
 
@@ -18,8 +20,8 @@ import (
 type Commands struct {
 	mu           sync.Mutex
 	threadID     string
-	filesystem   Filesystem
-	buildCommand func(context.Context, CommandRequest, string, string) (*exec.Cmd, error)
+	filesystem   agentmodel.Filesystem
+	buildCommand func(context.Context, agentmodel.CommandRequest, string, string) (*exec.Cmd, error)
 	killRemote   func(context.Context, string) error
 	jobsByID     map[string]*commandJob
 	closed       bool
@@ -43,15 +45,15 @@ type commandJob struct {
 	started        time.Time
 }
 
-func NewCommands(threadID string, filesystem Filesystem) *Commands {
+func NewCommands(threadID string, filesystem agentmodel.Filesystem) *Commands {
 	return &Commands{threadID: threadID, filesystem: filesystem, jobsByID: map[string]*commandJob{}}
 }
 
 // NewDockerCommands runs every job in the named container. The job ledger is
 // still thread scoped and shared by execute, shell and await_shell.
-func NewDockerCommands(threadID string, filesystem Filesystem, containerID string) *Commands {
+func NewDockerCommands(threadID string, filesystem agentmodel.Filesystem, containerID string) *Commands {
 	commands := NewCommands(threadID, filesystem)
-	commands.buildCommand = func(ctx context.Context, request CommandRequest, workDir, jobID string) (*exec.Cmd, error) {
+	commands.buildCommand = func(ctx context.Context, request agentmodel.CommandRequest, workDir, jobID string) (*exec.Cmd, error) {
 		if containerID == "" {
 			return nil, fmt.Errorf("docker container ID is required")
 		}
@@ -88,7 +90,7 @@ func (commands *Commands) stopRemoteJob(commandJobRecord *commandJob) error {
 	})
 	return commandJobRecord.stopRemoteErr
 }
-func (commands *Commands) Start(ctx context.Context, request CommandRequest) (string, error) {
+func (commands *Commands) Start(ctx context.Context, request agentmodel.CommandRequest) (string, error) {
 	if commands.filesystem == nil || commands.threadID == "" {
 		return "", fmt.Errorf("thread and workspace are required")
 	}
@@ -234,7 +236,7 @@ func (commands *Commands) findJob(jobID string) (*commandJob, error) {
 	}
 	return commandJobRecord, nil
 }
-func (commandJob *commandJob) buildSnapshot(offset int) (*CommandSnapshot, <-chan struct{}, error) {
+func (commandJob *commandJob) buildSnapshot(offset int) (*agentmodel.CommandSnapshot, <-chan struct{}, error) {
 	commandJob.mu.Lock()
 	defer commandJob.mu.Unlock()
 	if offset < 0 || offset > commandJob.total {
@@ -249,9 +251,9 @@ func (commandJob *commandJob) buildSnapshot(offset int) (*CommandSnapshot, <-cha
 	if outputStart < 0 {
 		outputStart = 0
 	}
-	return &CommandSnapshot{ID: commandJob.id, ThreadID: commandJob.threadID, Output: string(commandJob.output[outputStart:]), ExitCode: commandJob.exitCode, Done: commandJob.finished, Offset: commandJob.total, Truncated: truncated, TimedOut: commandJob.timedOut}, commandJob.changed, nil
+	return &agentmodel.CommandSnapshot{ID: commandJob.id, ThreadID: commandJob.threadID, Output: string(commandJob.output[outputStart:]), ExitCode: commandJob.exitCode, Done: commandJob.finished, Offset: commandJob.total, Truncated: truncated, TimedOut: commandJob.timedOut}, commandJob.changed, nil
 }
-func (commands *Commands) Wait(ctx context.Context, jobID, pattern string, offset int) (*CommandSnapshot, error) {
+func (commands *Commands) Wait(ctx context.Context, jobID, pattern string, offset int) (*agentmodel.CommandSnapshot, error) {
 	commandJobRecord, err := commands.findJob(jobID)
 	if err != nil {
 		return nil, err
@@ -326,7 +328,7 @@ func (commands *Commands) Close(ctx context.Context) error {
 	}
 	return stopErr
 }
-func (commands *Commands) Execute(ctx context.Context, request CommandRequest) (*CommandResult, error) {
+func (commands *Commands) Execute(ctx context.Context, request agentmodel.CommandRequest) (*agentmodel.CommandResult, error) {
 	jobID, err := commands.Start(ctx, request)
 	if err != nil {
 		return nil, err
@@ -336,7 +338,7 @@ func (commands *Commands) Execute(ctx context.Context, request CommandRequest) (
 		_ = commands.Cancel(context.Background(), jobID)
 		return nil, err
 	}
-	return &CommandResult{Output: commandSnapshot.Output, ExitCode: commandSnapshot.ExitCode, TimedOut: commandSnapshot.TimedOut, Truncated: commandSnapshot.Truncated, ShellSessionID: jobID}, nil
+	return &agentmodel.CommandResult{Output: commandSnapshot.Output, ExitCode: commandSnapshot.ExitCode, TimedOut: commandSnapshot.TimedOut, Truncated: commandSnapshot.Truncated, ShellSessionID: jobID}, nil
 }
 
 func buildEnvPairs(env map[string]string) []string {
@@ -347,4 +349,4 @@ func buildEnvPairs(env map[string]string) []string {
 	return pairs
 }
 
-var _ CommandService = (*Commands)(nil)
+var _ agentmodel.CommandService = (*Commands)(nil)

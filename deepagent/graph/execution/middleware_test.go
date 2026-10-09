@@ -13,10 +13,8 @@ import (
 
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/middleware"
-	"eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -31,11 +29,11 @@ func TestLoopGuardStopsRepeatedToolsAndIsRunLocal(t *testing.T) {
 			{schema.AssistantMessage("stopping loop", []schema.ToolCall{{ID: "second", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 		}}
 		tool := &countingTool{}
-		graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, EnableEagerTools: true, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ParallelSafe: true}}}))
+		graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, EnableEagerTools: true, Middlewares: []agentmodel.Middleware{guard}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, ParallelSafe: true}}}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+		result, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,13 +52,13 @@ func TestLoopGuardRestoresWindowFromCheckpoint(t *testing.T) {
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "first", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 		{schema.AssistantMessage("stopping loop", []schema.ToolCall{{ID: "second", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 	}}
-	config := Config{Model: chatModel, RunID: "run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
+	config := Config{Model: chatModel, RunID: "run", CheckpointStore: &checkpointMemory{}, Middlewares: []agentmodel.Middleware{guard}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close(ctx)
-	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
 		t.Fatalf("interrupt=%+v err=%v", info, err)
@@ -71,7 +69,7 @@ func TestLoopGuardRestoresWindowFromCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resumed.Close(ctx)
-	out, err := resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "first", Approved: true}}))
+	out, err := resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "first", Approved: true}}))
 	if err != nil || out == nil || out.Content != "stopping loop" || len(out.ToolCalls) != 0 || counter.count.Load() != 1 || chatModel.calls != 2 {
 		t.Fatalf("out=%v err=%v tools=%d model=%d", out, err, counter.count.Load(), chatModel.calls)
 	}
@@ -87,12 +85,12 @@ func TestLoopGuardDistinctCallsExpireFromWindow(t *testing.T) {
 	}
 	chatModel.responses = append(chatModel.responses, []*schema.Message{schema.AssistantMessage("done", nil)})
 	counter := &countingTool{}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, Middlewares: []middleware.Middleware{guard}, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter}}}))
+	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, Middlewares: []agentmodel.Middleware{guard}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	out, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+	out, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 	if err != nil || out == nil || out.Content != "done" || counter.count.Load() != 3 {
 		t.Fatalf("out=%v err=%v calls=%d", out, err, counter.count.Load())
 	}
@@ -102,11 +100,11 @@ func TestMiddleware_OrderAndAfterRunOnce(t *testing.T) {
 	ctx := context.Background()
 	var order []string
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, ReturnDirect: true}}, Middlewares: []middleware.Middleware{&orderedMiddleware{name: "outer", order: &order}, &orderedMiddleware{name: "inner", order: &order}}}))
+	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, ReturnDirect: true}}, Middlewares: []agentmodel.Middleware{&orderedMiddleware{name: "outer", order: &order}, &orderedMiddleware{name: "inner", order: &order}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, executeErr := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+	_, executeErr := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -119,7 +117,7 @@ func TestMiddleware_OrderAndAfterRunOnce(t *testing.T) {
 func TestRun_FinalEventFollowsAfterRun(t *testing.T) {
 	ctx := context.Background()
 	currentMiddleware := &endOrderMiddleware{}
-	graph, err := New(ctx, WithConfig(&Config{Model: &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}, Middlewares: []middleware.Middleware{currentMiddleware}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+	graph, err := New(ctx, WithConfig(&Config{Model: &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}, Middlewares: []agentmodel.Middleware{currentMiddleware}, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error {
 		if e.Kind == "turn_end" && !currentMiddleware.after {
 			t.Error("final event preceded AfterRun")
 		}
@@ -128,7 +126,7 @@ func TestRun_FinalEventFollowsAfterRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, executeErr := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("input")})
+	_, executeErr := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("input")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -143,7 +141,7 @@ func TestRun_ModelMiddlewareModifiesRequestAndStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	out, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("input")})
+	out, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("input")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +162,7 @@ func TestRun_ModelMiddlewareErrorStopsModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("input")})
+	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("input")})
 	if !errors.Is(err, want) || chatModel.calls != 0 {
 		t.Fatalf("err=%v calls=%d", err, chatModel.calls)
 	}
@@ -173,10 +171,10 @@ func TestRun_ModelMiddlewareErrorStopsModel(t *testing.T) {
 func TestDuplicateStatefulMiddlewareNamesRejectedBeforeModelCall(t *testing.T) {
 	tests := []struct {
 		name        string
-		middlewares []middleware.Middleware
+		middlewares []agentmodel.Middleware
 	}{
-		{name: "circuit breaker", middlewares: []middleware.Middleware{&middleware.CircuitBreaker{}, &middleware.CircuitBreaker{}}},
-		{name: "loop guard", middlewares: []middleware.Middleware{middleware.NewLoopGuard(), middleware.NewLoopGuard()}},
+		{name: "circuit breaker", middlewares: []agentmodel.Middleware{&middleware.CircuitBreaker{}, &middleware.CircuitBreaker{}}},
+		{name: "loop guard", middlewares: []agentmodel.Middleware{middleware.NewLoopGuard(), middleware.NewLoopGuard()}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,7 +196,7 @@ func TestDuplicateStatefulMiddlewareNamesRejectedBeforeModelCall(t *testing.T) {
 func TestDuplicateStatelessMiddlewareNamesRemainSupported(t *testing.T) {
 	ctx := context.Background()
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
-	middlewares := []middleware.Middleware{
+	middlewares := []agentmodel.Middleware{
 		&orderedMiddleware{name: "shared", order: new([]string)},
 		&orderedMiddleware{name: "shared", order: new([]string)},
 	}
@@ -207,7 +205,7 @@ func TestDuplicateStatelessMiddlewareNamesRemainSupported(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	result, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("input")})
+	result, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("input")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,16 +225,16 @@ func TestRun_TranscriptObservesCanonicalEvents(t *testing.T) {
 		return w, nil
 	}}
 	for range 2 {
-		var delivered []types.RuntimeEvent
+		var delivered []agentmodel.RuntimeEvent
 		chatModel := &sequenceModel{responses: [][]*schema.Message{
 			{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 			{schema.AssistantMessage("done", nil)},
 		}}
-		graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ThreadID: "thread", ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}}}, Middlewares: []middleware.Middleware{template}, Emit: func(_ context.Context, e types.RuntimeEvent) error { delivered = append(delivered, e); return nil }}))
+		graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ThreadID: "thread", ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}}}, Middlewares: []agentmodel.Middleware{template}, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error { delivered = append(delivered, e); return nil }}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, executeErr := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+		_, executeErr := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 		if executeErr != nil {
 			t.Fatal(executeErr)
 		}
@@ -257,7 +255,7 @@ func TestRun_TranscriptObservesCanonicalEvents(t *testing.T) {
 		for {
 			var record struct {
 				Role    string              `json:"role"`
-				Message *messagepkg.Message `json:"message"`
+				Message *agentmodel.Message `json:"message"`
 			}
 			err := decoder.Decode(&record)
 			if err == io.EOF {
@@ -286,11 +284,11 @@ func TestRun_TranscriptWriteFailureClosesWriterAndStopsModel(t *testing.T) {
 	want := errors.New("transcript disk failure")
 	w := &transcriptWriter{fail: want}
 	chatModel := &sequenceModel{}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, Middlewares: []middleware.Middleware{&middleware.Transcript{Open: func(context.Context, string, string) (io.WriteCloser, error) { return w, nil }}}}))
+	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, Middlewares: []agentmodel.Middleware{&middleware.Transcript{Open: func(context.Context, string, string) (io.WriteCloser, error) { return w, nil }}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 	if !errors.Is(err, want) || chatModel.calls != 0 || w.closes != 1 {
 		t.Fatalf("err=%v model=%d closes=%d", err, chatModel.calls, w.closes)
 	}
@@ -299,11 +297,11 @@ func TestRun_TranscriptWriteFailureClosesWriterAndStopsModel(t *testing.T) {
 func TestRun_PatchDanglingToolCallsOnlyInModelRequest(t *testing.T) {
 	ctx := context.Background()
 	history := conversation.New("thread", nil, nil, nil, 0, nil)
-	assistant := messagepkg.NewAssistantMessage("", []schema.ToolCall{
+	assistant := agentmodel.NewAssistantMessage("", []schema.ToolCall{
 		{ID: "done", Function: schema.FunctionCall{Name: "read_file", Arguments: "{}"}},
 		{ID: "interrupted", Function: schema.FunctionCall{Name: "write_file", Arguments: "{}"}},
 	})
-	addHistoryErr := history.AddHistory(ctx, "old", messagepkg.NewUserMessage("old input"), assistant, messagepkg.NewToolMessage("already done", "done"))
+	addHistoryErr := history.AddHistory(ctx, "old", agentmodel.NewUserMessage("old input"), assistant, agentmodel.NewToolMessage("already done", "done"))
 	if addHistoryErr != nil {
 		t.Fatal(addHistoryErr)
 	}
@@ -312,7 +310,7 @@ func TestRun_PatchDanglingToolCallsOnlyInModelRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, executeErr := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("continue")})
+	_, executeErr := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("continue")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -345,19 +343,19 @@ func TestRun_PlanRestoresFromCheckpointAfterContextCompaction(t *testing.T) {
 		{schema.AssistantMessage("done", nil)},
 	}}
 	published := 0
-	config := Config{Model: chatModel, RunID: "plan-run", CheckpointStore: &checkpointMemory{}, Middlewares: []middleware.Middleware{middleware.NewPlan()}, ToolDescriptors: []tools.ToolDescriptor{tools.NewUpdatePlanTool(func(context.Context, tools.PlanUpdate) error { published++; return nil })}}
+	config := Config{Model: chatModel, RunID: "plan-run", CheckpointStore: &checkpointMemory{}, Middlewares: []agentmodel.Middleware{middleware.NewPlan()}, ToolDescriptors: []agentmodel.ToolDescriptor{tools.NewUpdatePlanTool(func(context.Context, agentmodel.PlanUpdate) error { published++; return nil })}}
 	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
 	config.Emit = nil
-	first.config.Emit = func(_ context.Context, event types.RuntimeEvent) error {
+	first.config.Emit = func(_ context.Context, event agentmodel.RuntimeEvent) error {
 		if event.Kind == "tool_end" {
 			first.Interrupt()
 		}
 		return nil
 	}
-	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("inspect")}, WithCheckpointID("plan-checkpoint"))
+	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("inspect")}, WithCheckpointID("plan-checkpoint"))
 	_, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatalf("expected checkpoint: %v", err)
@@ -367,7 +365,7 @@ func TestRun_PlanRestoresFromCheckpointAfterContextCompaction(t *testing.T) {
 	}
 	// Model context no longer contains the tool exchange, as after compaction.
 	config.Conversation = conversation.New("thread", nil, nil, nil, 0, nil)
-	addHistoryErr := config.Conversation.AddHistory(ctx, "plan-run", messagepkg.NewUserMessage("compacted summary"))
+	addHistoryErr := config.Conversation.AddHistory(ctx, "plan-run", agentmodel.NewUserMessage("compacted summary"))
 	if addHistoryErr != nil {
 		t.Fatal(addHistoryErr)
 	}
@@ -410,9 +408,9 @@ func TestRun_PlanEventsUseGraphSequenceAndDeliveryErrorsAreFatal(t *testing.T) {
 			{schema.AssistantMessage("", []schema.ToolCall{{ID: "plan", Function: schema.FunctionCall{Name: "update_plan", Arguments: `{"plan":"inspect"}`}}})},
 			{schema.AssistantMessage("done", nil)},
 		}}
-		var events []types.RuntimeEvent
+		var events []agentmodel.RuntimeEvent
 		want := errors.New("event transport failed")
-		graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, Middlewares: []middleware.Middleware{middleware.NewPlan()}, ToolDescriptors: []tools.ToolDescriptor{tools.NewUpdatePlanTool(nil)}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+		graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, Middlewares: []agentmodel.Middleware{middleware.NewPlan()}, ToolDescriptors: []agentmodel.ToolDescriptor{tools.NewUpdatePlanTool(nil)}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
 			events = append(events, event)
 			if failDelivery && event.Kind == "plan_updated" {
 				return want
@@ -422,7 +420,7 @@ func TestRun_PlanEventsUseGraphSequenceAndDeliveryErrorsAreFatal(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+		_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 		if failDelivery {
 			if !errors.Is(err, want) || chatModel.calls != 1 {
 				t.Fatalf("delivery error swallowed: err=%v calls=%d", err, chatModel.calls)
@@ -455,7 +453,7 @@ func TestRun_PlanEventsUseGraphSequenceAndDeliveryErrorsAreFatal(t *testing.T) {
 func TestRun_PromptMiddlewareDoesNotRegisterTools(t *testing.T) {
 	for _, test := range []struct {
 		name       string
-		middleware middleware.Middleware
+		middleware agentmodel.Middleware
 		prompt     string
 	}{
 		{"plan", middleware.NewPlan(), "<plan_mode>"},
@@ -468,7 +466,7 @@ func TestRun_PromptMiddlewareDoesNotRegisterTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer graph.Close(context.Background())
-			_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("hello")})
+			_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("hello")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -488,6 +486,6 @@ func TestRun_PromptMiddlewareDoesNotRegisterTools(t *testing.T) {
 
 type emptySkillLoader struct{}
 
-func (emptySkillLoader) ListSkills(context.Context) ([]*skills.SkillMetadata, error) {
+func (emptySkillLoader) ListSkills(context.Context) ([]*agentmodel.SkillMetadata, error) {
 	return nil, nil
 }

@@ -8,11 +8,8 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/execution"
-	"eino-cli/deepagent/graph/middleware"
 	deeptools "eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 	runpkg "eino-cli/deepagent/run"
 
 	"github.com/cloudwego/eino/schema"
@@ -22,7 +19,7 @@ func TestThread_UsageResetsForEachRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	m := &usageThreadModel{}
-	events := make(chan runpkg.Event, 100)
+	events := make(chan agentmodel.RunEvent, 100)
 	th := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, events, ThreadOptions{})
 	defer th.Close(context.Background())
 	err := th.InitHistory(ctx)
@@ -30,7 +27,7 @@ func TestThread_UsageResetsForEachRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		result, err := th.SubmitInput(ctx, messagepkg.NewUserMessage("go"))
+		result, err := th.SubmitInput(ctx, agentmodel.NewUserMessage("go"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -45,11 +42,11 @@ func TestThread_UsageResetsForEachRun(t *testing.T) {
 	count := 0
 	for len(events) > 0 {
 		e := <-events
-		if e.Type != runpkg.EventTokens {
+		if e.Type != agentmodel.EventTokens {
 			continue
 		}
 		count++
-		if e.Payload.(types.Usage).TotalTokens != 5 {
+		if e.Payload.(agentmodel.RunUsage).TotalTokens != 5 {
 			t.Fatalf("counter leaked across runs: %+v", e.Payload)
 		}
 	}
@@ -78,16 +75,16 @@ func TestPendingInputStaysInOneRun(t *testing.T) {
 		return reader
 	}}
 
-	events := make(chan runpkg.Event, 64)
+	events := make(chan agentmodel.RunEvent, 64)
 	thread := newTestThread("thread-1", &runpkg.Config{Graph: execution.Config{
 		Model: chatModel, CheckpointStore: &legacyParityMemoryCheckpoints{},
 	}}, events, ThreadOptions{})
-	first, err := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("first"))
+	first, err := thread.SubmitInput(context.Background(), agentmodel.NewUserMessage("first"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	second, err := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("second"))
+	second, err := thread.SubmitInput(context.Background(), agentmodel.NewUserMessage("second"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,18 +120,18 @@ func TestInterruptedRunLeavesThreadReusable(t *testing.T) {
 		return reader
 	}}
 
-	events := make(chan runpkg.Event, 64)
+	events := make(chan agentmodel.RunEvent, 64)
 	thread := newTestThread("thread-1", &runpkg.Config{Graph: execution.Config{
 		Model: chatModel, CheckpointStore: &legacyParityMemoryCheckpoints{},
 	}}, events, ThreadOptions{})
-	_, err := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("original"))
+	_, err := thread.SubmitInput(context.Background(), agentmodel.NewUserMessage("original"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-started
 	handle := thread.CurrentRun()
 	timeout := 200 * time.Millisecond
-	if !thread.InterruptRun(runpkg.InterruptOptions{Timeout: &timeout}) {
+	if !thread.InterruptRun(agentmodel.InterruptOptions{Timeout: &timeout}) {
 		t.Fatal("active run did not accept interrupt")
 	}
 
@@ -149,7 +146,7 @@ func TestInterruptedRunLeavesThreadReusable(t *testing.T) {
 	for len(events) > 0 {
 		<-events
 	}
-	_, submitInputErr := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("again"))
+	_, submitInputErr := thread.SubmitInput(context.Background(), agentmodel.NewUserMessage("again"))
 	if submitInputErr != nil {
 		t.Fatal(submitInputErr)
 	}
@@ -180,26 +177,26 @@ func TestBlockedRunResumesFromCheckpointOnNewThread(t *testing.T) {
 	checkpoints := &legacyParityMemoryCheckpoints{}
 	config := &runpkg.Config{Graph: execution.Config{
 		Model: chatModel, CheckpointStore: checkpoints,
-		ToolDescriptors: []deeptools.ToolDescriptor{deeptools.NewFollowUpTool()},
+		ToolDescriptors: []agentmodel.ToolDescriptor{deeptools.NewFollowUpTool()},
 	}}
 
-	firstEvents := make(chan runpkg.Event, 64)
+	firstEvents := make(chan agentmodel.RunEvent, 64)
 	first := newTestThread("thread-1", config, firstEvents, ThreadOptions{})
-	started, err := first.SubmitInput(context.Background(), messagepkg.NewUserMessage("export"))
+	started, err := first.SubmitInput(context.Background(), agentmodel.NewUserMessage("export"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var blocked runpkg.FollowUpRequestedPayload
+	var blocked agentmodel.FollowUpRequestedPayload
 	deadline := time.After(5 * time.Second)
 waitBlocked:
 	for {
 		select {
 		case event := <-firstEvents:
 			switch event.Type {
-			case runpkg.EventFollowUpRequested:
-				blocked = event.Payload.(runpkg.FollowUpRequestedPayload)
+			case agentmodel.EventFollowUpRequested:
+				blocked = event.Payload.(agentmodel.FollowUpRequestedPayload)
 				break waitBlocked
-			case runpkg.EventError:
+			case agentmodel.EventError:
 				t.Fatalf("first run failed: %+v", event.Payload)
 			}
 		case <-deadline:
@@ -213,12 +210,12 @@ waitBlocked:
 		t.Fatalf("incomplete block: %+v", blocked)
 	}
 
-	secondEvents := make(chan runpkg.Event, 64)
+	secondEvents := make(chan agentmodel.RunEvent, 64)
 	second := newTestThread("thread-1", config, secondEvents, ThreadOptions{})
 	_, err = second.ResumeRun(context.Background(), started.RunID, ResumeRunOptions{
 		CheckpointID: blocked.CheckpointID,
 		ResumeData: map[string]any{
-			blocked.InterruptID: &deeptools.FollowUpInfo{UserAnswer: "YAML"},
+			blocked.InterruptID: &agentmodel.FollowUpInfo{UserAnswer: "YAML"},
 		},
 	})
 	if err != nil {
@@ -238,14 +235,14 @@ waitBlocked:
 }
 
 func TestReloadRepairsInterruptedToolCallBeforeNewInput(t *testing.T) {
-	store := &historyMemory{records: []*messagepkg.Message{
+	store := &historyMemory{records: []*agentmodel.Message{
 		{ThreadID: "thread-1", MessageID: "1", Seq: 1, Role: schema.User, Content: "previous"},
 		{ThreadID: "thread-1", MessageID: "2", Seq: 2, Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: "call-1", Type: "function", Function: schema.FunctionCall{Name: "write_file", Arguments: `{}`}}}},
 	}}
 	chatModel := &legacyParityScriptedModel{stream: func(context.Context, int, []*schema.Message) *schema.StreamReader[*schema.Message] {
 		return legacyParityMessageStream(schema.AssistantMessage("recovered", nil))
 	}}
-	events := make(chan runpkg.Event, 64)
+	events := make(chan agentmodel.RunEvent, 64)
 	thread := newTestThread("thread-1", &runpkg.Config{Graph: execution.Config{
 		Model: chatModel, CheckpointStore: &legacyParityMemoryCheckpoints{},
 	}}, events, ThreadOptions{ConversationDB: store})
@@ -253,7 +250,7 @@ func TestReloadRepairsInterruptedToolCallBeforeNewInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, submitInputErr := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("new task"))
+	_, submitInputErr := thread.SubmitInput(context.Background(), agentmodel.NewUserMessage("new task"))
 	if submitInputErr != nil {
 		t.Fatal(submitInputErr)
 	}
@@ -290,13 +287,13 @@ func TestRunBudgetsStopUnboundedToolLoop(t *testing.T) {
 					ID: "call", Type: "function", Function: schema.FunctionCall{Name: "echo", Arguments: `{}`},
 				}}})
 			}}
-			events := make(chan runpkg.Event, 64)
+			events := make(chan agentmodel.RunEvent, 64)
 			thread := newTestThread("thread-1", &runpkg.Config{Graph: execution.Config{
-				Model: chatModel, ToolDescriptors: []deeptools.ToolDescriptor{{Tool: legacyParityEchoTool{}}},
+				Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: legacyParityEchoTool{}}},
 				MaxSteps: test.maxSteps, MaxModelCalls: test.maxModelCalls,
 				CheckpointStore: &legacyParityMemoryCheckpoints{},
 			}}, events, ThreadOptions{})
-			_, err := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("loop"))
+			_, err := thread.SubmitInput(context.Background(), agentmodel.NewUserMessage("loop"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -304,7 +301,7 @@ func TestRunBudgetsStopUnboundedToolLoop(t *testing.T) {
 			for {
 				select {
 				case event := <-events:
-					if event.Type == runpkg.EventError {
+					if event.Type == agentmodel.EventError {
 						return
 					}
 				case <-deadline:
@@ -316,7 +313,7 @@ func TestRunBudgetsStopUnboundedToolLoop(t *testing.T) {
 }
 
 func TestManagerMessageIDSurvivesInputDecoding(t *testing.T) {
-	command, err := decodeUserInputCommand(&TransportMessage{
+	command, err := decodeUserInputCommand(&agentmodel.TransportMessage{
 		ID:      "2000000000000000042",
 		Type:    MessageTypeInput,
 		Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`),
@@ -328,13 +325,13 @@ func TestManagerMessageIDSurvivesInputDecoding(t *testing.T) {
 	if got != "2000000000000000042" {
 		t.Fatalf("message id = %q", got)
 	}
-	if command.input.Parts[0].Type != inputpkg.MessagePartTypeText {
+	if command.input.Parts[0].Type != agentmodel.InputMessagePartTypeText {
 		t.Fatalf("unexpected input: %+v", command.input)
 	}
 }
 
 func TestInputDecodingPreservesMultimediaParts(t *testing.T) {
-	command, err := decodeUserInputCommand(&TransportMessage{
+	command, err := decodeUserInputCommand(&agentmodel.TransportMessage{
 		ID:   "43",
 		Type: MessageTypeInput,
 		Payload: []byte(`{"parts":[
@@ -352,7 +349,7 @@ func TestInputDecodingPreservesMultimediaParts(t *testing.T) {
 }
 
 func TestThread_MultimodalRoundTrip(t *testing.T) {
-	command, err := decodeUserInputCommand(&TransportMessage{
+	command, err := decodeUserInputCommand(&agentmodel.TransportMessage{
 		ID:   "9007199254740993",
 		Type: MessageTypeInput,
 		Payload: []byte(`{"parts":[
@@ -366,7 +363,7 @@ func TestThread_MultimodalRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	copy := types.CopyMessage(command.inputMessage)
+	copy := agentmodel.CopyMessage(command.inputMessage)
 	got := copy.MessageID
 	if got != "9007199254740993" {
 		t.Fatalf("message ID changed: %q", got)
@@ -381,17 +378,17 @@ func TestThread_MultimodalRoundTrip(t *testing.T) {
 func TestThread_RedeliveryPreservesMessageIdentity(t *testing.T) {
 	ctx := context.Background()
 	store := &redeliveryConversationDB{}
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &redeliveryModel{}}}, make(chan runpkg.Event, 128), ThreadOptions{ConversationDB: store})
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &redeliveryModel{}}}, make(chan agentmodel.RunEvent, 128), ThreadOptions{ConversationDB: store})
 	initHistoryErr := thread.InitHistory(ctx)
 	if initHistoryErr != nil {
 		t.Fatal(initHistoryErr)
 	}
 	for range 2 {
-		command, err := decodeUserInputCommand(&TransportMessage{ID: "9007199254740993", Type: MessageTypeInput, Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`)})
+		command, err := decodeUserInputCommand(&agentmodel.TransportMessage{ID: "9007199254740993", Type: MessageTypeInput, Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`)})
 		if err != nil {
 			t.Fatal(err)
 		}
-		accepted, err := thread.SubmitInput(ctx, types.CopyMessage(command.inputMessage))
+		accepted, err := thread.SubmitInput(ctx, agentmodel.CopyMessage(command.inputMessage))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -423,7 +420,7 @@ func TestThreadOwnsSuccessiveRunsAndHistory(t *testing.T) {
 	thread, err := NewThread(ThreadConfig{
 		ThreadID:  "thread",
 		RunConfig: &runpkg.Config{Graph: execution.Config{Model: m}},
-		Events:    make(chan runpkg.Event, 128),
+		Events:    make(chan agentmodel.RunEvent, 128),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -433,7 +430,7 @@ func TestThreadOwnsSuccessiveRunsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithMessageID("1"))
+	first, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("first"), WithMessageID("1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +438,7 @@ func TestThreadOwnsSuccessiveRunsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("second"), WithMessageID("2"))
+	second, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("second"), WithMessageID("2"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +452,7 @@ func TestThreadOwnsSuccessiveRunsAndHistory(t *testing.T) {
 	if len(m.inputs) != 2 || len(m.inputs[1]) != 3 || m.inputs[1][0].Content != "first" || m.inputs[1][2].Content != "second" {
 		t.Fatalf("next Run lost Thread history: %+v", m.inputs)
 	}
-	repeated, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithMessageID("1"))
+	repeated, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("first"), WithMessageID("1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +475,7 @@ func TestThreadCloseWaitsBeforeClosingResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("wait"))
+	accepted, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("wait"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,9 +510,9 @@ func TestThreadCancellationBeforeGraphClosesMiddleware(t *testing.T) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	mw := &threadCloseMiddleware{ready: make(chan struct{})}
-	events := make(chan runpkg.Event)
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &publicModel{}, Middlewares: []middleware.Middleware{mw}}}, events, ThreadOptions{})
-	accepted, err := thread.SubmitInput(runCtx, messagepkg.NewUserMessage("go"))
+	events := make(chan agentmodel.RunEvent)
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &publicModel{}, Middlewares: []agentmodel.Middleware{mw}}}, events, ThreadOptions{})
+	accepted, err := thread.SubmitInput(runCtx, agentmodel.NewUserMessage("go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +527,7 @@ draining:
 	for {
 		select {
 		case event := <-events:
-			if event.Type == runpkg.EventRunEnd {
+			if event.Type == agentmodel.EventRunEnd {
 				break draining
 			}
 		case <-ctx.Done():
@@ -547,18 +544,18 @@ func TestThread_SubmitAndAppendUseSameRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	model := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
-	events := make(chan runpkg.Event, 100)
+	events := make(chan agentmodel.RunEvent, 100)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, events, ThreadOptions{})
 	initHistoryErr := thread.InitHistory(ctx)
 	if initHistoryErr != nil {
 		t.Fatal(initHistoryErr)
 	}
-	first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithInputMeta("id-1"))
+	first, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("first"), WithInputMeta("id-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-model.started
-	second, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("second"), WithInputMeta("id-2"))
+	second, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("second"), WithInputMeta("id-2"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,18 +582,18 @@ func TestThread_SubmitInputRejectsInvalidMessageWhileIdle(t *testing.T) {
 	defer cancel()
 	history := &historyMemory{}
 	model := &threadModel{}
-	events := make(chan runpkg.Event, 100)
+	events := make(chan agentmodel.RunEvent, 100)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, events, ThreadOptions{ConversationDB: history})
 
-	unsupported := messagepkg.NewUserMessage("unsupported")
+	unsupported := agentmodel.NewUserMessage("unsupported")
 	unsupported.Extra = map[string]any{"value": func() {}}
-	cyclic := messagepkg.NewUserMessage("cyclic")
+	cyclic := agentmodel.NewUserMessage("cyclic")
 	cyclicExtra := map[string]any{}
 	cyclicExtra["self"] = cyclicExtra
 	cyclic.Extra = cyclicExtra
 	inputs := []struct {
 		name    string
-		message *messagepkg.Message
+		message *agentmodel.Message
 	}{
 		{name: "unsupported extra", message: unsupported},
 		{name: "cyclic extra", message: cyclic},
@@ -631,8 +628,8 @@ func TestThread_SubmitInputRejectsInvalidMessageWhileActive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	model := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, make(chan runpkg.Event, 100), ThreadOptions{})
-	first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"))
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, make(chan agentmodel.RunEvent, 100), ThreadOptions{})
+	first, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("first"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,15 +639,15 @@ func TestThread_SubmitInputRejectsInvalidMessageWhileActive(t *testing.T) {
 		t.Fatalf("model did not start: %v", ctx.Err())
 	}
 
-	unsupported := messagepkg.NewUserMessage("unsupported")
+	unsupported := agentmodel.NewUserMessage("unsupported")
 	unsupported.Extra = map[string]any{"value": func() {}}
-	cyclic := messagepkg.NewUserMessage("cyclic")
+	cyclic := agentmodel.NewUserMessage("cyclic")
 	cyclicExtra := map[string]any{}
 	cyclicExtra["self"] = cyclicExtra
 	cyclic.Extra = cyclicExtra
 	inputs := []struct {
 		name    string
-		message *messagepkg.Message
+		message *agentmodel.Message
 	}{
 		{name: "unsupported extra", message: unsupported},
 		{name: "cyclic extra", message: cyclic},
@@ -690,16 +687,16 @@ func TestThread_SubmitInputRejectsInvalidMessageWhileActive(t *testing.T) {
 func TestRun_NoEventsAfterActiveRunBecomesNil(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	events := make(chan runpkg.Event) // Force producer to wait for each event publication.
+	events := make(chan agentmodel.RunEvent) // Force producer to wait for each event publication.
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &threadModel{}}}, events, ThreadOptions{})
-	result, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("input"))
+	result, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("input"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for {
 		select {
 		case event := <-events:
-			if event.Type == runpkg.EventRunEnd {
+			if event.Type == agentmodel.EventRunEnd {
 				err := result.RunHandle.Wait(ctx)
 				if err != nil {
 					t.Fatal(err)
@@ -726,13 +723,13 @@ func TestRun_NoEventsAfterActiveRunBecomesNil(t *testing.T) {
 func TestThread_InputAcceptedAtFinishBoundary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &threadModel{}}}, make(chan runpkg.Event, 10000), ThreadOptions{})
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: &threadModel{}}}, make(chan agentmodel.RunEvent, 10000), ThreadOptions{})
 	for i := 0; i < 50; i++ {
-		first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"))
+		first, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("first"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		second, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("boundary"))
+		second, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("boundary"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -762,14 +759,14 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	history := &historyMemory{}
 	checkpoints := &threadCheckpointMemory{}
 	m := &resumeModel{}
-	config := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []deeptools.ToolDescriptor{deeptools.NewFollowUpTool()}}}
-	events := make(chan runpkg.Event, 100)
+	config := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []agentmodel.ToolDescriptor{deeptools.NewFollowUpTool()}}}
+	events := make(chan agentmodel.RunEvent, 100)
 	first := newTestThread("thread", config, events, ThreadOptions{ConversationDB: history})
 	firstInitHistoryErr := first.InitHistory(ctx)
 	if firstInitHistoryErr != nil {
 		t.Fatal(firstInitHistoryErr)
 	}
-	started, err := first.SubmitInput(ctx, messagepkg.NewUserMessage("ask me"), WithInputMeta(map[string]string{"MessageID": "9007199254740993", "Sender": "user"}))
+	started, err := first.SubmitInput(ctx, agentmodel.NewUserMessage("ask me"), WithInputMeta(map[string]string{"MessageID": "9007199254740993", "Sender": "user"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -777,11 +774,11 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	if waitErr2 != nil {
 		t.Fatal(waitErr2)
 	}
-	var question runpkg.FollowUpRequestedPayload
+	var question agentmodel.FollowUpRequestedPayload
 	for len(events) > 0 {
 		event := <-events
-		if event.Type == runpkg.EventFollowUpRequested {
-			question = event.Payload.(runpkg.FollowUpRequestedPayload)
+		if event.Type == agentmodel.EventFollowUpRequested {
+			question = event.Payload.(agentmodel.FollowUpRequestedPayload)
 		}
 	}
 	if question.InterruptID == "" || question.Info.Question != "which one?" {
@@ -793,7 +790,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 		t.Fatal(restoredInitHistoryErr)
 	}
 	hookCalled := false
-	bad, badErr := restored.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{"wrong-interrupt": &deeptools.FollowUpInfo{UserAnswer: "a"}}, OnRunStart: func(ctx context.Context, _ RunStartRequest) context.Context { hookCalled = true; return ctx }})
+	bad, badErr := restored.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{"wrong-interrupt": &agentmodel.FollowUpInfo{UserAnswer: "a"}}, OnRunStart: func(ctx context.Context, _ RunStartRequest) context.Context { hookCalled = true; return ctx }})
 	if badErr == nil {
 		_ = bad.Wait(ctx)
 		t.Fatal("uncorrelated resume accepted")
@@ -801,7 +798,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	if bad != nil || hookCalled || restored.CurrentRun() != nil || m.calls != 1 {
 		t.Fatal("rejected resume performed work")
 	}
-	handle, err := restored.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &deeptools.FollowUpInfo{UserAnswer: "a"}}})
+	handle, err := restored.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &agentmodel.FollowUpInfo{UserAnswer: "a"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -825,7 +822,7 @@ func TestRun_InterruptAndResumeOnNewThread(t *testing.T) {
 	if initHistoryErr != nil {
 		t.Fatal(initHistoryErr)
 	}
-	handle, err = replay.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &deeptools.FollowUpInfo{UserAnswer: "a"}}})
+	handle, err = replay.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &agentmodel.FollowUpInfo{UserAnswer: "a"}}})
 	if err == nil {
 		_ = handle.Wait(ctx)
 		t.Fatal("completed checkpoint accepted as a new active run")
@@ -839,17 +836,17 @@ func TestThread_RedeliveryWithSameMessageIDDoesNotCallModelAgain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	m := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
-	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, make(chan runpkg.Event, 100), ThreadOptions{})
+	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: m}}, make(chan agentmodel.RunEvent, 100), ThreadOptions{})
 	err := thread.InitHistory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithMessageID("same"))
+	first, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("first"), WithMessageID("same"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-m.started
-	_, err = thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithMessageID("same"))
+	_, err = thread.SubmitInput(ctx, agentmodel.NewUserMessage("first"), WithMessageID("same"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -861,7 +858,7 @@ func TestThread_RedeliveryWithSameMessageIDDoesNotCallModelAgain(t *testing.T) {
 	if m.calls != 1 || len(first.RunHandle.ConsumedInputs()) != 1 {
 		t.Fatalf("redelivery repeated model work: calls=%d inputs=%v", m.calls, first.RunHandle.ConsumedInputs())
 	}
-	late, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("first"), WithMessageID("same"))
+	late, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("first"), WithMessageID("same"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -880,14 +877,14 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 	m := &resumedInputModel{started: make(chan struct{}), release: make(chan struct{})}
 	checkpoints := &threadCheckpointMemory{}
 	history := &historyMemory{}
-	cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []deeptools.ToolDescriptor{deeptools.NewFollowUpTool()}}}
-	events := make(chan runpkg.Event, 100)
+	cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: checkpoints, ToolDescriptors: []agentmodel.ToolDescriptor{deeptools.NewFollowUpTool()}}}
+	events := make(chan agentmodel.RunEvent, 100)
 	first := newTestThread("thread", cfg, events, ThreadOptions{ConversationDB: history})
 	err := first.InitHistory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := first.SubmitInput(ctx, messagepkg.NewUserMessage("ask me"), WithMessageID("original"))
+	started, err := first.SubmitInput(ctx, agentmodel.NewUserMessage("ask me"), WithMessageID("original"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -895,11 +892,11 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var question runpkg.FollowUpRequestedPayload
+	var question agentmodel.FollowUpRequestedPayload
 	for len(events) > 0 {
 		event := <-events
-		if event.Type == runpkg.EventFollowUpRequested {
-			question = event.Payload.(runpkg.FollowUpRequestedPayload)
+		if event.Type == agentmodel.EventFollowUpRequested {
+			question = event.Payload.(agentmodel.FollowUpRequestedPayload)
 		}
 	}
 	restored := newTestThread("thread", cfg, events, ThreadOptions{ConversationDB: history})
@@ -907,16 +904,16 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handle, err := restored.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &deeptools.FollowUpInfo{UserAnswer: "a"}}})
+	handle, err := restored.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &agentmodel.FollowUpInfo{UserAnswer: "a"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-m.started
-	_, err = restored.SubmitInput(ctx, messagepkg.NewUserMessage("ask me"), WithMessageID("original"))
+	_, err = restored.SubmitInput(ctx, agentmodel.NewUserMessage("ask me"), WithMessageID("original"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = restored.SubmitInput(ctx, messagepkg.NewUserMessage("follow-up"), WithMessageID("follow-up"))
+	_, err = restored.SubmitInput(ctx, agentmodel.NewUserMessage("follow-up"), WithMessageID("follow-up"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -938,7 +935,7 @@ func TestRun_ResumeDeduplicatesCheckpointInputAndKeepsFollowUp(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("restored input repeated in model history: %v", m.inputs[2])
 	}
-	late, err := restored.SubmitInput(ctx, messagepkg.NewUserMessage("ask me"), WithMessageID("original"))
+	late, err := restored.SubmitInput(ctx, agentmodel.NewUserMessage("ask me"), WithMessageID("original"))
 	if err != nil {
 		t.Fatal(err)
 	}

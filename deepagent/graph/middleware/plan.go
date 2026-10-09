@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/schema"
 )
 
 type Plan struct{ BaseMiddleware }
 
-func NewPlan() Middleware { return &Plan{} }
+func NewPlan() agentmodel.Middleware { return &Plan{} }
 
 func (*Plan) GetName() string { return "plan" }
 
@@ -21,8 +20,8 @@ const reminderTag = `<system_reminder type="plan">`
 
 // The plan belongs to RunState. This middleware retains no copy, so compaction
 // and checkpoint restore cannot leave a stale middleware-owned plan behind.
-func (*Plan) ModifyModelRequest(ctx context.Context, _ []*messagepkg.Message, messages []*messagepkg.Message, _ *types.GraphState) ([]*messagepkg.Message, error) {
-	runState := types.GetRunState(ctx)
+func (*Plan) ModifyModelRequest(ctx context.Context, _ []*agentmodel.Message, messages []*agentmodel.Message, _ *agentmodel.GraphState) ([]*agentmodel.Message, error) {
+	runState := agentmodel.GetRunState(ctx)
 	if runState == nil || len(runState.Plan) == 0 {
 		return messages, nil
 	}
@@ -48,12 +47,12 @@ func (*Plan) ModifyModelRequest(ctx context.Context, _ []*messagepkg.Message, me
 		fmt.Fprintf(&reminderPrompt, "- [%s] %s\n", planStep.Status, planStep.Step)
 	}
 	reminderPrompt.WriteString("Update this plan with update_plan as work progresses.\n</system_reminder>")
-	return append([]*messagepkg.Message{messagepkg.NewSystemMessage(reminderPrompt.String())}, messages...), nil
+	return append([]*agentmodel.Message{agentmodel.NewSystemMessage(reminderPrompt.String())}, messages...), nil
 }
 
 // Planning guidance is request context; the plan itself remains in RunState.
-func (*Plan) BuildPrompt(context.Context) ([]*messagepkg.Message, error) {
-	return []*messagepkg.Message{messagepkg.NewSystemMessage(`<plan_mode>
+func (*Plan) BuildPrompt(context.Context) ([]*agentmodel.Message, error) {
+	return []*agentmodel.Message{agentmodel.NewSystemMessage(`<plan_mode>
 Use update_plan to maintain the task plan for work with multiple steps.
 Mark a step in_progress before starting and completed when finished.
 Keep at most one step in_progress unless work actually runs in parallel.

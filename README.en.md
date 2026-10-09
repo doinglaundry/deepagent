@@ -88,6 +88,8 @@ flowchart LR
 | Run | Identity, cancellation, and completion of one execution |
 | Graph | Model/tool flow, approval interrupts, and checkpoint recovery |
 
+Shared interfaces and data types live in [`deepagent/model`](deepagent/model); each module keeps its implementation.
+
 A Thread can execute multiple Runs in sequence, with one active at a time. Approval pauses save progress; resuming preserves the original RunID. Parent and child agents use the same Graph implementation.
 
 ## Optional: browser and Mac operations

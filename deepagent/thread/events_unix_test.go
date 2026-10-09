@@ -5,20 +5,17 @@ package thread
 import (
 	"testing"
 
-	"eino-cli/deepagent/graph/types"
-	eventpkg "eino-cli/deepagent/protocol/event"
-	inputpkg "eino-cli/deepagent/protocol/input"
-	runpkg "eino-cli/deepagent/run"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 func TestThreadPlanInputPreservesQuestionsAndResumeIdentity(t *testing.T) {
-	info := &types.RequestUserInputInfo{Questions: []types.RequestUserInputQuestion{{ID: "q1", Header: "scope", Question: "Which directory?", Options: []types.RequestUserInputOption{{Label: "src", Description: "Source files"}}}, {ID: "q2", Question: "Additional constraints?"}}}
-	kind, raw, err := agentEventPayloadForOutput(runpkg.Event{Type: runpkg.EventInterrupted, Payload: runpkg.InterruptedPayload{InterruptID: "interrupt", CheckpointID: "checkpoint", Info: info}}, nil)
+	info := &agentmodel.RequestUserInputInfo{Questions: []agentmodel.RequestUserInputQuestion{{ID: "q1", Header: "scope", Question: "Which directory?", Options: []agentmodel.RequestUserInputOption{{Label: "src", Description: "Source files"}}}, {ID: "q2", Question: "Additional constraints?"}}}
+	kind, raw, err := agentEventPayloadForOutput(agentmodel.RunEvent{Type: agentmodel.EventInterrupted, Payload: agentmodel.InterruptedPayload{InterruptID: "interrupt", CheckpointID: "checkpoint", Info: info}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, ok := raw.(*eventpkg.PlanInputRequiredEventPayload)
-	if kind != eventpkg.EventTypeInputRequired || !ok {
+	payload, ok := raw.(*agentmodel.PlanInputRequiredEventPayload)
+	if kind != agentmodel.EventTypeInputRequired || !ok {
 		t.Fatalf("kind=%v payload=%T", kind, raw)
 	}
 	if payload.InterruptID != "interrupt" || payload.CheckpointID != "checkpoint" || len(payload.Questions) != 2 {
@@ -41,7 +38,7 @@ func TestThreadPlanInputAnswerOwnsItsData(t *testing.T) {
 	if planInputResponse(nil) != nil {
 		t.Fatal("nil response changed")
 	}
-	source := &inputpkg.RequestUserInputResponse{Answers: map[string]inputpkg.RequestUserInputAnswer{"q1": {Answers: []string{"src", "tests"}}, "q2": {Answers: []string{"preserve API"}}}}
+	source := &agentmodel.InputRequestUserInputResponse{Answers: map[string]agentmodel.InputRequestUserInputAnswer{"q1": {Answers: []string{"src", "tests"}}, "q2": {Answers: []string{"preserve API"}}}}
 	answer := planInputResponse(source)
 	source.Answers["q1"].Answers[0] = "changed"
 	delete(source.Answers, "q2")

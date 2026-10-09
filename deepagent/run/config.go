@@ -4,8 +4,7 @@ import (
 	"context"
 
 	"eino-cli/deepagent/graph/execution"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 )
@@ -14,10 +13,10 @@ type Config struct {
 	Graph            execution.Config
 	EnablePlan       bool
 	EventIDProvider  func(context.Context, string, string) string
-	RunCompleted     func(context.Context, string, string, model.ToolCallingChatModel, []*messagepkg.Message)
-	Events           chan Event
+	RunCompleted     func(context.Context, string, string, model.ToolCallingChatModel, []*agentmodel.Message)
+	Events           chan agentmodel.RunEvent
 	Resume           *execution.RunOptions
-	OnRestoredInputs func(*Run, []types.Input)
+	OnRestoredInputs func(*Run, []agentmodel.RunInput)
 	OnFinish         func(context.Context, *Run, error) error
 }
 

@@ -1,43 +1,41 @@
 package thread
 
 import (
-	json "encoding/json"
-	fmt "fmt"
-	strings "strings"
+	"encoding/json"
+	"fmt"
+	"strings"
 
-	messagepkg "eino-cli/deepagent/message"
-	eventpkg "eino-cli/deepagent/protocol/event"
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 
-	schema "github.com/cloudwego/eino/schema"
+	"github.com/cloudwego/eino/schema"
 )
 
-func parseUserMessage(message *TransportMessage) (inputpkg.UserMessage, error) {
+func parseUserMessage(message *agentmodel.TransportMessage) (agentmodel.UserMessage, error) {
 	if message == nil {
-		return inputpkg.UserMessage{}, fmt.Errorf("message is required")
+		return agentmodel.UserMessage{}, fmt.Errorf("message is required")
 	}
-	var input inputpkg.UserMessage
+	var input agentmodel.UserMessage
 	err := json.Unmarshal(message.Payload, &input)
 	if err != nil {
-		return inputpkg.UserMessage{}, fmt.Errorf("unmarshal user message: %w", err)
+		return agentmodel.UserMessage{}, fmt.Errorf("unmarshal user message: %w", err)
 	}
 	validationErr := input.Validate()
 	if validationErr != nil {
-		return inputpkg.UserMessage{}, validationErr
+		return agentmodel.UserMessage{}, validationErr
 	}
 	return input, nil
 }
 
 const (
-	MessageTypeInput     TransportMessageType = TransportMessageType(inputpkg.MessageTypeInput)
-	MessageTypeResumeRun TransportMessageType = TransportMessageType(inputpkg.MessageTypeResume)
-	MessageTypeCompact   TransportMessageType = TransportMessageType(inputpkg.MessageTypeCompact)
+	MessageTypeInput     agentmodel.TransportMessageType = agentmodel.TransportMessageType(agentmodel.MessageTypeInput)
+	MessageTypeResumeRun agentmodel.TransportMessageType = agentmodel.TransportMessageType(agentmodel.MessageTypeResume)
+	MessageTypeCompact   agentmodel.TransportMessageType = agentmodel.TransportMessageType(agentmodel.MessageTypeCompact)
 
-	MetadataRunMode = inputpkg.MetadataRunMode
-	RunModePlan     = inputpkg.RunModePlan
+	MetadataRunMode = agentmodel.MetadataRunMode
+	RunModePlan     = agentmodel.RunModePlan
 )
 
-func ConsumedMessageIDs(inputs []*messagepkg.Message) []string {
+func ConsumedMessageIDs(inputs []*agentmodel.Message) []string {
 	var ids []string
 	for _, input := range inputs {
 		if input != nil && input.MessageID != "" {
@@ -47,7 +45,7 @@ func ConsumedMessageIDs(inputs []*messagepkg.Message) []string {
 	return ids
 }
 
-func decodeDialogueMessage(input inputpkg.UserMessage) (*messagepkg.Message, error) {
+func decodeDialogueMessage(input agentmodel.UserMessage) (*agentmodel.Message, error) {
 	originalParts := normalizeProtocolInputParts(input.Parts)
 	parts := make([]schema.MessageInputPart, 0, len(originalParts))
 	text := make([]string, 0, len(originalParts))
@@ -58,14 +56,14 @@ func decodeDialogueMessage(input inputpkg.UserMessage) (*messagepkg.Message, err
 			return nil, fmt.Errorf("parts[%d]: %w", i, err)
 		}
 		parts = append(parts, einoPart)
-		if part.Type == inputpkg.MessagePartTypeText {
+		if part.Type == agentmodel.InputMessagePartTypeText {
 			text = append(text, part.Text)
 		} else {
 			hasNonTextPart = true
 		}
 	}
 
-	msg := &messagepkg.Message{Role: schema.User, Extra: protocolExtraToSchemaExtra(input.Extra)}
+	msg := &agentmodel.Message{Role: schema.User, Extra: protocolExtraToSchemaExtra(input.Extra)}
 	if hasNonTextPart {
 		msg.UserInputMultiContent = parts
 	} else {
@@ -75,33 +73,33 @@ func decodeDialogueMessage(input inputpkg.UserMessage) (*messagepkg.Message, err
 	return msg, nil
 }
 
-func protocolPartToSchemaInputPart(part inputpkg.MessagePart) (schema.MessageInputPart, error) {
+func protocolPartToSchemaInputPart(part agentmodel.InputMessagePart) (schema.MessageInputPart, error) {
 	switch part.Type {
-	case inputpkg.MessagePartTypeText:
+	case agentmodel.InputMessagePartTypeText:
 		return schema.MessageInputPart{
 			Type:  schema.ChatMessagePartTypeText,
 			Text:  strings.TrimSpace(part.Text),
 			Extra: protocolExtraToSchemaExtra(part.Extra),
 		}, nil
-	case inputpkg.MessagePartTypeImage:
+	case agentmodel.InputMessagePartTypeImage:
 		return schema.MessageInputPart{
 			Type:  schema.ChatMessagePartTypeImageURL,
 			Image: &schema.MessageInputImage{MessagePartCommon: schemaMessagePartCommon(part), Detail: schema.ImageURLDetail(strings.TrimSpace(part.Detail))},
 			Extra: protocolExtraToSchemaExtra(part.Extra),
 		}, nil
-	case inputpkg.MessagePartTypeAudio:
+	case agentmodel.InputMessagePartTypeAudio:
 		return schema.MessageInputPart{
 			Type:  schema.ChatMessagePartTypeAudioURL,
 			Audio: &schema.MessageInputAudio{MessagePartCommon: schemaMessagePartCommon(part)},
 			Extra: protocolExtraToSchemaExtra(part.Extra),
 		}, nil
-	case inputpkg.MessagePartTypeVideo:
+	case agentmodel.InputMessagePartTypeVideo:
 		return schema.MessageInputPart{
 			Type:  schema.ChatMessagePartTypeVideoURL,
 			Video: &schema.MessageInputVideo{MessagePartCommon: schemaMessagePartCommon(part)},
 			Extra: protocolExtraToSchemaExtra(part.Extra),
 		}, nil
-	case inputpkg.MessagePartTypeFile:
+	case agentmodel.InputMessagePartTypeFile:
 		return schema.MessageInputPart{
 			Type:  schema.ChatMessagePartTypeFileURL,
 			File:  &schema.MessageInputFile{MessagePartCommon: schemaMessagePartCommon(part), Name: strings.TrimSpace(part.Name)},
@@ -112,7 +110,7 @@ func protocolPartToSchemaInputPart(part inputpkg.MessagePart) (schema.MessageInp
 	}
 }
 
-func getUserMessageParts(message *messagepkg.Message) []eventpkg.MessagePart {
+func getUserMessageParts(message *agentmodel.Message) []agentmodel.OutputMessagePart {
 	if message == nil {
 		return nil
 	}
@@ -122,13 +120,13 @@ func getUserMessageParts(message *messagepkg.Message) []eventpkg.MessagePart {
 	if len(message.UserInputMultiContent) == 0 {
 		return textParts(message.Content)
 	}
-	parts := make([]eventpkg.MessagePart, 0, len(message.UserInputMultiContent))
+	parts := make([]agentmodel.OutputMessagePart, 0, len(message.UserInputMultiContent))
 	hasText := false
 	for _, part := range message.UserInputMultiContent {
 		converted, ok := schemaInputPartToProtocolPart(part)
 		if ok {
 			parts = append(parts, converted)
-			hasText = hasText || converted.Type == eventpkg.MessagePartTypeText
+			hasText = hasText || converted.Type == agentmodel.OutputMessagePartTypeText
 		}
 	}
 	if !hasText && message.Content != "" {
@@ -137,47 +135,47 @@ func getUserMessageParts(message *messagepkg.Message) []eventpkg.MessagePart {
 	return parts
 }
 
-func schemaInputPartToProtocolPart(part schema.MessageInputPart) (eventpkg.MessagePart, bool) {
+func schemaInputPartToProtocolPart(part schema.MessageInputPart) (agentmodel.OutputMessagePart, bool) {
 	switch part.Type {
 	case schema.ChatMessagePartTypeText:
 		text := strings.TrimSpace(part.Text)
 		if text == "" {
-			return eventpkg.MessagePart{}, false
+			return agentmodel.OutputMessagePart{}, false
 		}
-		return eventpkg.MessagePart{Type: eventpkg.MessagePartTypeText, Text: text, Extra: schemaExtraToProtocolExtra(part.Extra)}, true
+		return agentmodel.OutputMessagePart{Type: agentmodel.OutputMessagePartTypeText, Text: text, Extra: schemaExtraToProtocolExtra(part.Extra)}, true
 	case schema.ChatMessagePartTypeImageURL:
-		out := protocolPartFromCommon(eventpkg.MessagePartTypeImage, messageInputImageCommon(part.Image))
+		out := protocolPartFromCommon(agentmodel.OutputMessagePartTypeImage, messageInputImageCommon(part.Image))
 		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
 		if part.Image != nil {
 			out.Detail = string(part.Image.Detail)
 		}
 		return out, true
 	case schema.ChatMessagePartTypeAudioURL:
-		out := protocolPartFromCommon(eventpkg.MessagePartTypeAudio, messageInputAudioCommon(part.Audio))
+		out := protocolPartFromCommon(agentmodel.OutputMessagePartTypeAudio, messageInputAudioCommon(part.Audio))
 		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
 		return out, true
 	case schema.ChatMessagePartTypeVideoURL:
-		out := protocolPartFromCommon(eventpkg.MessagePartTypeVideo, messageInputVideoCommon(part.Video))
+		out := protocolPartFromCommon(agentmodel.OutputMessagePartTypeVideo, messageInputVideoCommon(part.Video))
 		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
 		return out, true
 	case schema.ChatMessagePartTypeFileURL:
-		out := protocolPartFromCommon(eventpkg.MessagePartTypeFile, messageInputFileCommon(part.File))
+		out := protocolPartFromCommon(agentmodel.OutputMessagePartTypeFile, messageInputFileCommon(part.File))
 		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
 		if part.File != nil {
 			out.Name = part.File.Name
 		}
 		return out, true
 	default:
-		return eventpkg.MessagePart{}, false
+		return agentmodel.OutputMessagePart{}, false
 	}
 }
 
-func getAssistantMessageParts(message *messagepkg.Message) []eventpkg.MessagePart {
+func getAssistantMessageParts(message *agentmodel.Message) []agentmodel.OutputMessagePart {
 	if message == nil {
 		return nil
 	}
 	if len(message.AssistantGenMultiContent) > 0 {
-		parts := make([]eventpkg.MessagePart, 0, len(message.AssistantGenMultiContent))
+		parts := make([]agentmodel.OutputMessagePart, 0, len(message.AssistantGenMultiContent))
 		for _, part := range message.AssistantGenMultiContent {
 			converted, ok := schemaOutputPartToProtocolPart(part)
 			if ok {
@@ -191,36 +189,36 @@ func getAssistantMessageParts(message *messagepkg.Message) []eventpkg.MessagePar
 	return textParts(message.Content)
 }
 
-func schemaOutputPartToProtocolPart(part schema.MessageOutputPart) (eventpkg.MessagePart, bool) {
+func schemaOutputPartToProtocolPart(part schema.MessageOutputPart) (agentmodel.OutputMessagePart, bool) {
 	switch part.Type {
 	case schema.ChatMessagePartTypeText:
-		return eventpkg.MessagePart{Type: eventpkg.MessagePartTypeText, Text: part.Text, Extra: schemaExtraToProtocolExtra(part.Extra)}, true
+		return agentmodel.OutputMessagePart{Type: agentmodel.OutputMessagePartTypeText, Text: part.Text, Extra: schemaExtraToProtocolExtra(part.Extra)}, true
 	case schema.ChatMessagePartTypeImageURL:
-		out := protocolPartFromCommon(eventpkg.MessagePartTypeImage, messageOutputImageCommon(part.Image))
+		out := protocolPartFromCommon(agentmodel.OutputMessagePartTypeImage, messageOutputImageCommon(part.Image))
 		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
 		return out, true
 	case schema.ChatMessagePartTypeAudioURL:
-		out := protocolPartFromCommon(eventpkg.MessagePartTypeAudio, messageOutputAudioCommon(part.Audio))
+		out := protocolPartFromCommon(agentmodel.OutputMessagePartTypeAudio, messageOutputAudioCommon(part.Audio))
 		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
 		return out, true
 	case schema.ChatMessagePartTypeVideoURL:
-		out := protocolPartFromCommon(eventpkg.MessagePartTypeVideo, messageOutputVideoCommon(part.Video))
+		out := protocolPartFromCommon(agentmodel.OutputMessagePartTypeVideo, messageOutputVideoCommon(part.Video))
 		out.Extra = mergeProtocolExtra(schemaExtraToProtocolExtra(part.Extra), out.Extra)
 		return out, true
 	default:
-		return eventpkg.MessagePart{Type: eventpkg.MessagePartType(strings.TrimSuffix(string(part.Type), "_url")), Extra: schemaExtraToProtocolExtra(part.Extra)}, true
+		return agentmodel.OutputMessagePart{Type: agentmodel.OutputMessagePartType(strings.TrimSuffix(string(part.Type), "_url")), Extra: schemaExtraToProtocolExtra(part.Extra)}, true
 	}
 }
 
-func inputPartsForEvent(parts []inputpkg.MessagePart) []eventpkg.MessagePart {
+func inputPartsForEvent(parts []agentmodel.InputMessagePart) []agentmodel.OutputMessagePart {
 	if len(parts) == 0 {
 		return nil
 	}
-	out := make([]eventpkg.MessagePart, 0, len(parts))
+	out := make([]agentmodel.OutputMessagePart, 0, len(parts))
 	for _, part := range parts {
 		cloned := cloneProtocolInputPart(part)
-		out = append(out, eventpkg.MessagePart{
-			Type: eventpkg.MessagePartType(cloned.Type), Text: cloned.Text,
+		out = append(out, agentmodel.OutputMessagePart{
+			Type: agentmodel.OutputMessagePartType(cloned.Type), Text: cloned.Text,
 			URL: cloned.URL, MIMEType: cloned.MIMEType, Base64Data: cloned.Base64Data,
 			Detail: cloned.Detail, Name: cloned.Name, Extra: cloned.Extra,
 		})
@@ -228,13 +226,13 @@ func inputPartsForEvent(parts []inputpkg.MessagePart) []eventpkg.MessagePart {
 	return out
 }
 
-func normalizeProtocolInputParts(parts []inputpkg.MessagePart) []inputpkg.MessagePart {
+func normalizeProtocolInputParts(parts []agentmodel.InputMessagePart) []agentmodel.InputMessagePart {
 	if len(parts) == 0 {
 		return nil
 	}
-	out := make([]inputpkg.MessagePart, len(parts))
+	out := make([]agentmodel.InputMessagePart, len(parts))
 	for i, part := range parts {
-		out[i] = inputpkg.MessagePart{
+		out[i] = agentmodel.InputMessagePart{
 			Type:       part.Type,
 			Text:       strings.TrimSpace(part.Text),
 			URL:        strings.TrimSpace(part.URL),
@@ -248,18 +246,18 @@ func normalizeProtocolInputParts(parts []inputpkg.MessagePart) []inputpkg.Messag
 	return out
 }
 
-func cloneProtocolInputParts(parts []inputpkg.MessagePart) []inputpkg.MessagePart {
+func cloneProtocolInputParts(parts []agentmodel.InputMessagePart) []agentmodel.InputMessagePart {
 	if len(parts) == 0 {
 		return nil
 	}
-	out := make([]inputpkg.MessagePart, len(parts))
+	out := make([]agentmodel.InputMessagePart, len(parts))
 	for i, part := range parts {
 		out[i] = cloneProtocolInputPart(part)
 	}
 	return out
 }
 
-func schemaMessagePartCommon(part inputpkg.MessagePart) schema.MessagePartCommon {
+func schemaMessagePartCommon(part agentmodel.InputMessagePart) schema.MessagePartCommon {
 	common := schema.MessagePartCommon{
 		MIMEType: strings.TrimSpace(part.MIMEType),
 		Extra:    protocolExtraToSchemaExtra(part.Extra),
@@ -275,8 +273,8 @@ func schemaMessagePartCommon(part inputpkg.MessagePart) schema.MessagePartCommon
 	return common
 }
 
-func protocolPartFromCommon(partType eventpkg.MessagePartType, common schema.MessagePartCommon) eventpkg.MessagePart {
-	out := eventpkg.MessagePart{Type: partType, MIMEType: common.MIMEType, Extra: schemaExtraToProtocolExtra(common.Extra)}
+func protocolPartFromCommon(partType agentmodel.OutputMessagePartType, common schema.MessagePartCommon) agentmodel.OutputMessagePart {
+	out := agentmodel.OutputMessagePart{Type: partType, MIMEType: common.MIMEType, Extra: schemaExtraToProtocolExtra(common.Extra)}
 	if common.URL != nil {
 		out.URL = *common.URL
 	}
@@ -286,8 +284,8 @@ func protocolPartFromCommon(partType eventpkg.MessagePartType, common schema.Mes
 	return out
 }
 
-func cloneProtocolInputPart(part inputpkg.MessagePart) inputpkg.MessagePart {
-	return inputpkg.MessagePart{
+func cloneProtocolInputPart(part agentmodel.InputMessagePart) agentmodel.InputMessagePart {
+	return agentmodel.InputMessagePart{
 		Type:       part.Type,
 		Text:       part.Text,
 		URL:        part.URL,
@@ -427,20 +425,20 @@ func messageOutputVideoCommon(part *schema.MessageOutputVideo) schema.MessagePar
 	return part.MessagePartCommon
 }
 
-func userInputMode(message *TransportMessage, mode inputpkg.UserMessageMode) inputpkg.UserMessageMode {
+func userInputMode(message *agentmodel.TransportMessage, mode agentmodel.UserMessageMode) agentmodel.UserMessageMode {
 	if mode != "" {
 		return mode
 	}
 	return messageMetadataMode(message)
 }
 
-func messageMetadataMode(message *TransportMessage) inputpkg.UserMessageMode {
+func messageMetadataMode(message *agentmodel.TransportMessage) agentmodel.UserMessageMode {
 	if message == nil || message.Metadata == nil {
 		return ""
 	}
 	switch message.Metadata[MetadataRunMode] {
 	case RunModePlan:
-		return inputpkg.UserMessageModeImplPlan
+		return agentmodel.UserMessageModeImplPlan
 	default:
 		return ""
 	}

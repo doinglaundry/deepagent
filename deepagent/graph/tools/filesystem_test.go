@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
-	"eino-cli/deepagent/sandbox"
+	agentmodel "eino-cli/deepagent/model"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 )
@@ -23,7 +23,7 @@ func TestTools_AllRegisteredNamesSchemasAndArgumentAliases(t *testing.T) {
 	}
 	defer filesystem.Close(ctx)
 	toolsByName := map[string]einotool.InvokableTool{}
-	descriptorsByName := map[string]ToolDescriptor{}
+	descriptorsByName := map[string]agentmodel.ToolDescriptor{}
 	toolDescriptors, err := NewFilesystemTools(filesystem, FilesystemToolOptions{EnableCommands: true, EnablePatch: true})
 	if err != nil {
 		t.Fatal(err)
@@ -241,23 +241,23 @@ func TestFilesystemToolArgumentPresenceAndReplaceAll(t *testing.T) {
 }
 
 type pathValidationFilesystem struct {
-	filesystempkg.Filesystem
+	agentmodel.Filesystem
 	calls int
 }
 
-func (filesystem *pathValidationFilesystem) Write(context.Context, string, string) (*filesystempkg.WriteResult, error) {
+func (filesystem *pathValidationFilesystem) Write(context.Context, string, string) (*agentmodel.WriteResult, error) {
 	filesystem.calls++
-	return &filesystempkg.WriteResult{}, nil
+	return &agentmodel.WriteResult{}, nil
 }
 
-func (filesystem *pathValidationFilesystem) Edit(context.Context, string, string, string, bool) (*filesystempkg.EditResult, error) {
+func (filesystem *pathValidationFilesystem) Edit(context.Context, string, string, string, bool) (*agentmodel.EditResult, error) {
 	filesystem.calls++
-	return &filesystempkg.EditResult{}, nil
+	return &agentmodel.EditResult{}, nil
 }
 
 func TestFileMutationRequiresPathBeforeBackendInvocation(t *testing.T) {
 	filesystem := &pathValidationFilesystem{}
-	for _, toolDescriptor := range []ToolDescriptor{NewWriteFileTool(filesystem), NewEditFileTool(filesystem)} {
+	for _, toolDescriptor := range []agentmodel.ToolDescriptor{NewWriteFileTool(filesystem), NewEditFileTool(filesystem)} {
 		toolInfo, err := toolDescriptor.Tool.Info(context.Background())
 		if err != nil {
 			t.Fatal(err)
@@ -277,7 +277,7 @@ func TestFileMutationRequiresPathBeforeBackendInvocation(t *testing.T) {
 	}
 }
 
-type dockerToolProvider struct{ sandbox.Sandbox }
+type dockerToolProvider struct{ agentmodel.Sandbox }
 
 func (*dockerToolProvider) GetDockerExecTarget() (string, bool) { return "test-container", true }
 
@@ -299,7 +299,7 @@ func TestWorkspaceToolSchemasMatchLocalAndDocker(t *testing.T) {
 	defer dockerFilesystem.Close(ctx)
 	for _, options := range []FilesystemToolOptions{{ReadOnly: true}, {EnableCommands: true, EnablePatch: true}} {
 		toolSchemas := make([]map[string]any, 0, 2)
-		for _, filesystem := range []filesystempkg.ToolFilesystem{localFilesystem, dockerFilesystem} {
+		for _, filesystem := range []agentmodel.ToolFilesystem{localFilesystem, dockerFilesystem} {
 			toolDescriptors, err := NewFilesystemTools(filesystem, options)
 			if err != nil {
 				t.Fatal(err)

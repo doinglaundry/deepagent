@@ -4,18 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 )
 
-func (conversation *Conversation) GetContextUsage() types.ContextTokenUsage {
+func (conversation *Conversation) GetContextUsage() agentmodel.ContextTokenUsage {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
 	return conversation.contextTokenUsage
 }
-func (conversation *Conversation) GetRunUsage() types.Usage {
+func (conversation *Conversation) GetRunUsage() agentmodel.RunUsage {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
 	return conversation.runUsage
@@ -26,7 +25,7 @@ func (conversation *Conversation) RecordModelUsage(_ context.Context, modelUsage
 	}
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	contextTokenUsage := types.ContextTokenUsage{
+	contextTokenUsage := agentmodel.ContextTokenUsage{
 		MaxContextTokens: conversation.contextTokenUsage.MaxContextTokens,
 		TotalTokens:      int64(modelUsage.TotalTokens),
 		PromptTokens:     int64(modelUsage.PromptTokens),
@@ -40,7 +39,7 @@ func (conversation *Conversation) RecordModelUsage(_ context.Context, modelUsage
 	conversation.runUsage.TotalTokens += contextTokenUsage.TotalTokens
 	conversation.contextTokenUsage = contextTokenUsage
 }
-func (conversation *Conversation) RestoreRunUsage(ctx context.Context, usage types.Usage) error {
+func (conversation *Conversation) RestoreRunUsage(ctx context.Context, usage agentmodel.RunUsage) error {
 	err := ctx.Err()
 	if err != nil {
 		return err
@@ -55,12 +54,12 @@ func (conversation *Conversation) RestoreRunUsage(ctx context.Context, usage typ
 }
 
 // SnapshotContext 在同一把锁下读取历史序号和对应的用量。
-func (conversation *Conversation) SnapshotContext() (int64, types.ContextTokenUsage) {
+func (conversation *Conversation) SnapshotContext() (int64, agentmodel.ContextTokenUsage) {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
 	return conversation.historySequence, conversation.contextTokenUsage
 }
-func (conversation *Conversation) RestoreContext(ctx context.Context, historySeq int64, contextTokenUsage types.ContextTokenUsage) error {
+func (conversation *Conversation) RestoreContext(ctx context.Context, historySeq int64, contextTokenUsage agentmodel.ContextTokenUsage) error {
 	err := ctx.Err()
 	if err != nil {
 		return err
@@ -82,12 +81,12 @@ func (conversation *Conversation) RestoreContext(ctx context.Context, historySeq
 	return nil
 }
 func (conversation *Conversation) recomputeContextUsage() {
-	conversation.contextTokenUsage = types.ContextTokenUsage{
+	conversation.contextTokenUsage = agentmodel.ContextTokenUsage{
 		MaxContextTokens: conversation.contextTokenUsage.MaxContextTokens,
 		TotalTokens:      int64(conversation.countTokenFunc(conversation.messages)),
 	}
 }
-func (conversation *Conversation) addMessageUsage(message *messagepkg.Message) {
-	messageTokens := conversation.countTokenFunc([]*messagepkg.Message{message})
+func (conversation *Conversation) addMessageUsage(message *agentmodel.Message) {
+	messageTokens := conversation.countTokenFunc([]*agentmodel.Message{message})
 	conversation.contextTokenUsage.TotalTokens += int64(messageTokens)
 }

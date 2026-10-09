@@ -10,8 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -31,7 +30,7 @@ func NewLoopGuard() *LoopGuard {
 
 func (*LoopGuard) GetName() string { return "loop_guard" }
 
-func (loopGuard *LoopGuard) NewRun() Middleware {
+func (loopGuard *LoopGuard) NewRun() agentmodel.Middleware {
 	runLoopGuard := NewLoopGuard()
 	if loopGuard.WarnThreshold > 0 {
 		runLoopGuard.WarnThreshold = loopGuard.WarnThreshold
@@ -51,9 +50,9 @@ func (loopGuard *LoopGuard) NewRun() Middleware {
 // A decision hashes the complete batch, so eager execution must wait for it.
 func (*LoopGuard) RequiresCompleteModelResponse() bool { return true }
 
-func (loopGuard *LoopGuard) GetStateHandler() types.RunTimeStateful { return loopGuard }
+func (loopGuard *LoopGuard) GetStateHandler() agentmodel.RunTimeStateful { return loopGuard }
 
-func (loopGuard *LoopGuard) ModifyModelResponse(ctx context.Context, message *messagepkg.Message, _ *types.GraphState) (*messagepkg.Message, error) {
+func (loopGuard *LoopGuard) ModifyModelResponse(ctx context.Context, message *agentmodel.Message, _ *agentmodel.GraphState) (*agentmodel.Message, error) {
 	if message == nil || len(message.ToolCalls) == 0 {
 		return message, nil
 	}
@@ -133,8 +132,8 @@ type ModelRetry struct {
 
 func (*ModelRetry) GetName() string { return "model_retry" }
 
-func (modelRetry *ModelRetry) WrapModel(nextModel ModelHandler) ModelHandler {
-	return func(ctx context.Context, messages []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+func (modelRetry *ModelRetry) WrapModel(nextModel agentmodel.ModelHandler) agentmodel.ModelHandler {
+	return func(ctx context.Context, messages []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		maxAttempts := modelRetry.MaxAttempts
 		if maxAttempts < 1 {
 			maxAttempts = 1
@@ -190,11 +189,11 @@ type CircuitBreaker struct {
 
 func (*CircuitBreaker) GetName() string { return "circuit_breaker" }
 
-func (circuitBreaker *CircuitBreaker) NewRun() Middleware {
+func (circuitBreaker *CircuitBreaker) NewRun() agentmodel.Middleware {
 	return &CircuitBreaker{Threshold: circuitBreaker.Threshold, Recovery: circuitBreaker.Recovery}
 }
 
-func (circuitBreaker *CircuitBreaker) GetStateHandler() types.RunTimeStateful {
+func (circuitBreaker *CircuitBreaker) GetStateHandler() agentmodel.RunTimeStateful {
 	return circuitBreaker
 }
 
@@ -223,8 +222,8 @@ func (circuitBreaker *CircuitBreaker) UnmarshalRuntimeState(encodedState string)
 	return nil
 }
 
-func (circuitBreaker *CircuitBreaker) WrapModel(nextModel ModelHandler) ModelHandler {
-	return func(ctx context.Context, messages []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+func (circuitBreaker *CircuitBreaker) WrapModel(nextModel agentmodel.ModelHandler) agentmodel.ModelHandler {
+	return func(ctx context.Context, messages []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr

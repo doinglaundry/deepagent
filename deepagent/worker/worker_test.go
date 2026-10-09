@@ -8,10 +8,8 @@ import (
 	"testing"
 	"time"
 
-	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/graph/execution"
-	"eino-cli/deepagent/manager"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/run"
 	threadpkg "eino-cli/deepagent/thread"
 
@@ -23,7 +21,7 @@ type managerProbe struct {
 	mu          sync.Mutex
 	renewErr    error
 	saveErr     error
-	saved       []manager.OutputFrame
+	saved       []agentmodel.OutputFrame
 	order       []string
 	released    bool
 	closed      bool
@@ -31,21 +29,21 @@ type managerProbe struct {
 	releaseDone chan struct{}
 }
 
-func (*managerProbe) Acquire(context.Context, manager.AcquireRequest) (manager.AcquireResult, error) {
-	return manager.AcquireResult{}, nil
+func (*managerProbe) Acquire(context.Context, agentmodel.AcquireRequest) (agentmodel.AcquireResult, error) {
+	return agentmodel.AcquireResult{}, nil
 }
 
-func (m *managerProbe) Renew(_ context.Context, threadID int64, token string, _ int64) (*manager.Lease, error) {
+func (m *managerProbe) Renew(_ context.Context, threadID int64, token string, _ int64) (*agentmodel.Lease, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.renews++
 	if m.renewErr != nil {
 		return nil, m.renewErr
 	}
-	return &manager.Lease{ThreadID: threadID, LeaseToken: token, LeaseUntil: time.Now().Add(time.Second)}, nil
+	return &agentmodel.Lease{ThreadID: threadID, LeaseToken: token, LeaseUntil: time.Now().Add(time.Second)}, nil
 }
 
-func (m *managerProbe) ReleaseThread(_ context.Context, _ int64, _ string) (*dalmodel.Thread, error) {
+func (m *managerProbe) ReleaseThread(_ context.Context, _ int64, _ string) (*agentmodel.ThreadRecord, error) {
 	m.mu.Lock()
 	m.released = true
 	m.order = append(m.order, "release")
@@ -53,21 +51,21 @@ func (m *managerProbe) ReleaseThread(_ context.Context, _ int64, _ string) (*dal
 		close(m.releaseDone)
 	}
 	m.mu.Unlock()
-	return &dalmodel.Thread{}, nil
+	return &agentmodel.ThreadRecord{}, nil
 }
 
-func (*managerProbe) AckInput(context.Context, int64, string, string, []int64) ([]*dalmodel.Message, error) {
+func (*managerProbe) AckInput(context.Context, int64, string, string, []int64) ([]*agentmodel.MailboxMessage, error) {
 	return nil, nil
 }
 
-func (m *managerProbe) ConfirmThreadClosed(context.Context, int64, string, int64) (*manager.ThreadMessageResult, error) {
+func (m *managerProbe) ConfirmThreadClosed(context.Context, int64, string, int64) (*agentmodel.ThreadMessageResult, error) {
 	m.mu.Lock()
 	m.closed = true
 	m.mu.Unlock()
 	return nil, nil
 }
 
-func (m *managerProbe) SaveOutput(_ context.Context, _ int64, _ string, _ string, frames []manager.OutputFrame) error {
+func (m *managerProbe) SaveOutput(_ context.Context, _ int64, _ string, _ string, frames []agentmodel.OutputFrame) error {
 	m.mu.Lock()
 	if m.saveErr != nil {
 		err := m.saveErr
@@ -127,7 +125,7 @@ func (m *pausedHostModel) Stream(ctx context.Context, _ []*schema.Message, _ ...
 
 func startPausedRun(t *testing.T, thread *threadpkg.Thread, chatModel *pausedHostModel) *run.Handle {
 	t.Helper()
-	posted, err := thread.SubmitInput(context.Background(), messagepkg.NewUserMessage("hello"))
+	posted, err := thread.SubmitInput(context.Background(), agentmodel.NewUserMessage("hello"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,16 +137,16 @@ func startPausedRun(t *testing.T, thread *threadpkg.Thread, chatModel *pausedHos
 	return posted.RunHandle
 }
 
-func testClaim() *manager.AcquireResult {
-	return &manager.AcquireResult{
-		Thread: &dalmodel.Thread{ThreadID: 1},
-		Lease:  &manager.Lease{ThreadID: 1, LeaseToken: "lease", LeaseUntil: time.Now().Add(time.Second)},
+func testClaim() *agentmodel.AcquireResult {
+	return &agentmodel.AcquireResult{
+		Thread: &agentmodel.ThreadRecord{ThreadID: 1},
+		Lease:  &agentmodel.Lease{ThreadID: 1, LeaseToken: "lease", LeaseUntil: time.Now().Add(time.Second)},
 	}
 }
 
 // Feed the Host output boundary directly for malformed and precisely ordered
 // output cases. Thread initialization, active Run and resource cleanup are real.
-func runTestThread(host *Worker, thread *threadpkg.Thread, ctx, acceptCtx context.Context, claim *manager.AcquireResult, items <-chan threadpkg.TransportThreadOutputItem) error {
+func runTestThread(host *Worker, thread *threadpkg.Thread, ctx, acceptCtx context.Context, claim *agentmodel.AcquireResult, items <-chan agentmodel.TransportThreadOutputItem) error {
 	host.normalize()
 	runCtx, stopLease, waitLease := host.startLease(ctx, claim.Lease)
 	defer stopLease()
@@ -170,9 +168,9 @@ func testHost(client *managerProbe) *Worker {
 func TestWorker_PersistsEventBeforeYield(t *testing.T) {
 	client := &managerProbe{}
 	thread := newHostThread(t, nil, nil)
-	output := make(chan threadpkg.TransportThreadOutputItem, 2)
-	output <- threadpkg.TransportThreadOutputItem{Event: &threadpkg.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("answer")}}
-	output <- threadpkg.TransportThreadOutputItem{Yield: &threadpkg.TransportThreadYield{Reason: "done"}}
+	output := make(chan agentmodel.TransportThreadOutputItem, 2)
+	output <- agentmodel.TransportThreadOutputItem{Event: &agentmodel.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("answer")}}
+	output <- agentmodel.TransportThreadOutputItem{Yield: &agentmodel.TransportThreadYield{Reason: "done"}}
 	close(output)
 	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), testClaim(), output)
 	if err != nil {
@@ -200,7 +198,7 @@ func TestWorker_FinishedRunKeepsThreadUntilIdleTimeout(t *testing.T) {
 	go func() { done <- runTestThread(host, thread, ctx, ctx, testClaim(), output.Items) }()
 
 	for _, text := range []string{"first", "second"} {
-		posted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage(text))
+		posted, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage(text))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -261,7 +259,7 @@ func TestWorker_FailedRunReleasesThreadWithoutWaitingForIdle(t *testing.T) {
 	host := testHost(client)
 	done := make(chan error, 1)
 	go func() { done <- runTestThread(host, thread, ctx, ctx, testClaim(), output.Items) }()
-	_, err = thread.SubmitInput(ctx, messagepkg.NewUserMessage("fail"))
+	_, err = thread.SubmitInput(ctx, agentmodel.NewUserMessage("fail"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +291,7 @@ func TestWorker_ShutdownWaitsForDelayedFinalOutput(t *testing.T) {
 		return nil
 	})
 	handle := startPausedRun(t, thread, chatModel)
-	output := make(chan threadpkg.TransportThreadOutputItem)
+	output := make(chan agentmodel.TransportThreadOutputItem)
 	host := testHost(client)
 	host.ShutdownDrainTimeout = time.Second
 	acceptCtx, cancel := context.WithCancel(context.Background())
@@ -313,9 +311,9 @@ func TestWorker_ShutdownWaitsForDelayedFinalOutput(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("Thread resource cleanup never started")
 	}
-	output <- threadpkg.TransportThreadOutputItem{
-		Event: &threadpkg.TransportEvent{RunID: handle.RunID(), Type: "text", Payload: []byte("final")},
-		Yield: &threadpkg.TransportThreadYield{Reason: "finished"},
+	output <- agentmodel.TransportThreadOutputItem{
+		Event: &agentmodel.TransportEvent{RunID: handle.RunID(), Type: "text", Payload: []byte("final")},
+		Yield: &agentmodel.TransportThreadYield{Reason: "finished"},
 	}
 	release()
 	select {
@@ -338,8 +336,8 @@ func TestWorker_CloseFailureDoesNotConfirmOrRelease(t *testing.T) {
 	failure := errors.New("close failed")
 	thread := newHostThread(t, nil, func(context.Context) error { return failure })
 	claim := testClaim()
-	claim.PendingMessages = []*dalmodel.Message{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread}}
-	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), claim, make(chan threadpkg.TransportThreadOutputItem))
+	claim.PendingMessages = []*agentmodel.MailboxMessage{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread}}
+	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), claim, make(chan agentmodel.TransportThreadOutputItem))
 	if !errors.Is(err, failure) {
 		t.Fatalf("close error=%v", err)
 	}
@@ -363,7 +361,7 @@ func TestLeaseLossPreventsRelease(t *testing.T) {
 	host.LeaseMS = int64(time.Hour / time.Millisecond)
 	claim := testClaim()
 	claim.Lease.LeaseUntil = time.Now().Add(500 * time.Millisecond)
-	err := runTestThread(host, thread, context.Background(), context.Background(), claim, make(chan threadpkg.TransportThreadOutputItem))
+	err := runTestThread(host, thread, context.Background(), context.Background(), claim, make(chan agentmodel.TransportThreadOutputItem))
 	if !errors.Is(err, client.renewErr) {
 		t.Fatalf("lease error=%v", err)
 	}
@@ -385,10 +383,10 @@ func TestLeaseLossPreventsRelease(t *testing.T) {
 func TestBlockedRunEndIsSavedBeforeRelease(t *testing.T) {
 	client := &managerProbe{}
 	thread := newHostThread(t, nil, nil)
-	output := make(chan threadpkg.TransportThreadOutputItem, 1)
-	output <- threadpkg.TransportThreadOutputItem{
-		Event: &threadpkg.TransportEvent{RunID: "run-1", Type: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint-1","interrupt_id":"interrupt-1"}`)},
-		Yield: &threadpkg.TransportThreadYield{Reason: "blocked"},
+	output := make(chan agentmodel.TransportThreadOutputItem, 1)
+	output <- agentmodel.TransportThreadOutputItem{
+		Event: &agentmodel.TransportEvent{RunID: "run-1", Type: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint-1","interrupt_id":"interrupt-1"}`)},
+		Yield: &agentmodel.TransportThreadYield{Reason: "blocked"},
 	}
 	close(output)
 	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), testClaim(), output)
@@ -406,8 +404,8 @@ func TestCloseControlConfirmsThreadClosed(t *testing.T) {
 	client := &managerProbe{}
 	thread := newHostThread(t, nil, nil)
 	claim := testClaim()
-	claim.PendingMessages = []*dalmodel.Message{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread, Payload: []byte(`{"reason":"done"}`)}}
-	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), claim, make(chan threadpkg.TransportThreadOutputItem))
+	claim.PendingMessages = []*agentmodel.MailboxMessage{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread, Payload: []byte(`{"reason":"done"}`)}}
+	err := runTestThread(testHost(client), thread, context.Background(), context.Background(), claim, make(chan agentmodel.TransportThreadOutputItem))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,14 +423,14 @@ func TestWorker_DrainsOutputProducedDuringClose(t *testing.T) {
 			if failSave {
 				client.saveErr = errors.New("storage unavailable")
 			}
-			output := make(chan threadpkg.TransportThreadOutputItem)
+			output := make(chan agentmodel.TransportThreadOutputItem)
 			thread := newHostThread(t, nil, func(context.Context) error {
-				output <- threadpkg.TransportThreadOutputItem{Event: &threadpkg.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("final during close")}}
+				output <- agentmodel.TransportThreadOutputItem{Event: &agentmodel.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("final during close")}}
 				close(output)
 				return nil
 			})
 			claim := testClaim()
-			claim.PendingMessages = []*dalmodel.Message{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread}}
+			claim.PendingMessages = []*agentmodel.MailboxMessage{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread}}
 			host := testHost(client)
 			host.ShutdownInterruptDrainTimeout = 500 * time.Millisecond
 			err := runTestThread(host, thread, context.Background(), context.Background(), claim, output)
@@ -453,20 +451,20 @@ func TestWorker_DrainsOutputProducedDuringClose(t *testing.T) {
 
 func TestWorker_CloseTimeoutKeepsDrainingUntilThreadStops(t *testing.T) {
 	client := &managerProbe{}
-	output := make(chan threadpkg.TransportThreadOutputItem)
+	output := make(chan agentmodel.TransportThreadOutputItem)
 	gate := make(chan struct{})
 	release := sync.OnceFunc(func() { close(gate) })
 	defer release()
 	closed := make(chan struct{})
 	thread := newHostThread(t, nil, func(context.Context) error {
 		<-gate
-		output <- threadpkg.TransportThreadOutputItem{Event: &threadpkg.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("final during close")}}
+		output <- agentmodel.TransportThreadOutputItem{Event: &agentmodel.TransportEvent{RunID: "run-1", Type: "text", Payload: []byte("final during close")}}
 		close(output)
 		close(closed)
 		return nil
 	})
 	claim := testClaim()
-	claim.PendingMessages = []*dalmodel.Message{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread}}
+	claim.PendingMessages = []*agentmodel.MailboxMessage{{MessageID: 7, ThreadID: 1, MessageType: MessageTypeControlCloseThread}}
 	host := testHost(client)
 	host.ShutdownInterruptDrainTimeout = 10 * time.Millisecond
 	err := runTestThread(host, thread, context.Background(), context.Background(), claim, output)
@@ -488,8 +486,8 @@ func TestWorker_CloseTimeoutKeepsDrainingUntilThreadStops(t *testing.T) {
 
 func TestWorker_OutputConversionFailurePreventsRelease(t *testing.T) {
 	expected := errors.New("event conversion failed")
-	output := make(chan threadpkg.TransportThreadOutputItem, 1)
-	output <- threadpkg.TransportThreadOutputItem{Err: expected}
+	output := make(chan agentmodel.TransportThreadOutputItem, 1)
+	output <- agentmodel.TransportThreadOutputItem{Err: expected}
 	close(output)
 	client := &managerProbe{}
 	thread := newHostThread(t, nil, nil)
@@ -522,7 +520,7 @@ func TestWorker_InterruptTimeoutPersistsBeforeRelease(t *testing.T) {
 			acceptCtx, stopAccept := context.WithCancel(ctx)
 			defer stopAccept()
 			if scenario == "cancel" {
-				claim.PendingMessages = []*dalmodel.Message{{
+				claim.PendingMessages = []*agentmodel.MailboxMessage{{
 					ThreadID: 1, MessageID: 7, MessageType: MessageTypeControlCancelInput,
 					Payload: []byte(`{"cutoff_message_id":101}`),
 				}}

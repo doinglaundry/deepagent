@@ -4,7 +4,17 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	agentmodel "eino-cli/deepagent/model"
 )
+
+// patchFilesystem provides the operations required to validate and commit a
+// patch without treating a content read as an existence check.
+type patchFilesystem interface {
+	agentmodel.Filesystem
+	HasFile(context.Context, string) (bool, error)
+	CreateFileNoReplace(context.Context, string, string) (*agentmodel.WriteResult, error)
+}
 
 type patchFile struct {
 	operation string
@@ -15,7 +25,7 @@ type patchFile struct {
 
 // ApplyWorkspacePatch applies the file-oriented patch format to either workspace.
 // Parse and validate every edit before performing the first write.
-func ApplyWorkspacePatch(ctx context.Context, filesystem Filesystem, rawPatch string) (string, error) {
+func ApplyWorkspacePatch(ctx context.Context, filesystem agentmodel.Filesystem, rawPatch string) (string, error) {
 	patchFiles, err := parseWorkspacePatch(rawPatch)
 	if err != nil {
 		return "", err
@@ -72,7 +82,7 @@ func ApplyWorkspacePatch(ctx context.Context, filesystem Filesystem, rawPatch st
 				if patchFile.moveTo != "" {
 					destinationName = patchFile.moveTo
 				}
-				return "", fmt.Errorf("%w: patch destination already exists: %s", ErrAlreadyExists, destinationName)
+				return "", fmt.Errorf("%w: patch destination already exists: %s", agentmodel.ErrAlreadyExists, destinationName)
 			}
 		}
 		content := ""
@@ -124,7 +134,7 @@ func ApplyWorkspacePatch(ctx context.Context, filesystem Filesystem, rawPatch st
 		if fileChange.moveTo != "" {
 			targetPath = fileChange.moveTo
 		}
-		var writeResult *WriteResult
+		var writeResult *agentmodel.WriteResult
 		if fileChange.op == "add" || fileChange.moveTo != "" {
 			writeResult, err = patchFilesystem.CreateFileNoReplace(ctx, targetPath, fileChange.content)
 		} else {

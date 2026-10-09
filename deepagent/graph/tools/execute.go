@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	filesystempkg "eino-cli/deepagent/graph/filesystem"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -61,7 +61,7 @@ func (executeTool *executeTool) StreamableRun(ctx context.Context, arguments str
 		timeout = 5 * time.Minute
 	}
 	commandCtx, cancelCommand := context.WithCancel(ctx)
-	taskID, err := executeTool.commandService.Start(commandCtx, filesystempkg.CommandRequest{Command: commandArgs.Command, WorkDir: commandArgs.WorkDir, Timeout: timeout, MaxOutputBytes: 1 << 20, KeepOutputPrefix: true})
+	taskID, err := executeTool.commandService.Start(commandCtx, agentmodel.CommandRequest{Command: commandArgs.Command, WorkDir: commandArgs.WorkDir, Timeout: timeout, MaxOutputBytes: 1 << 20, KeepOutputPrefix: true})
 	if err != nil {
 		cancelCommand()
 		return nil, err

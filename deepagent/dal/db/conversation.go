@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"eino-cli/deepagent/dal/cache"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/schema"
 	"gorm.io/gorm/clause"
@@ -21,19 +21,19 @@ type conversationRow struct {
 	Seq               int64                 `gorm:"column:seq"`
 	RunID             string                `gorm:"column:turn_id;size:128"`
 	Type              string                `gorm:"column:type;size:32"`
-	Message           *messagepkg.Message   `gorm:"column:message;type:longtext;serializer:coordinator_json"`
-	CompactedMessages []*messagepkg.Message `gorm:"column:ext;type:longtext;serializer:coordinator_json"`
+	Message           *agentmodel.Message   `gorm:"column:message;type:longtext;serializer:coordinator_json"`
+	CompactedMessages []*agentmodel.Message `gorm:"column:ext;type:longtext;serializer:coordinator_json"`
 	CreatedAt         int64                 `gorm:"column:created_at;autoCreateTime:false"`
 }
 
 // ConversationDAO uses the same MySQL connection and transaction context as other DAOs.
 type ConversationDAO struct {
 	Client    *MySQLClient
-	Redis     cache.RedisClient
+	Redis     agentmodel.RedisClient
 	tableName string
 }
 
-func NewConversationDAO(client *MySQLClient, tableName string, redis cache.RedisClient) *ConversationDAO {
+func NewConversationDAO(client *MySQLClient, tableName string, redis agentmodel.RedisClient) *ConversationDAO {
 	if tableName == "" {
 		tableName = "agentthread_history"
 	}
@@ -41,10 +41,10 @@ func NewConversationDAO(client *MySQLClient, tableName string, redis cache.Redis
 }
 
 // AppendMessage 保存业务消息，使用 Manager 的 MySQL 连接和事务。
-func (dao *ConversationDAO) AppendMessage(ctx context.Context, message *messagepkg.Message) error {
+func (dao *ConversationDAO) AppendMessage(ctx context.Context, message *agentmodel.Message) error {
 	return dao.saveMessage(ctx, message, nil)
 }
-func (dao *ConversationDAO) SaveContext(ctx context.Context, messages []*messagepkg.Message) error {
+func (dao *ConversationDAO) SaveContext(ctx context.Context, messages []*agentmodel.Message) error {
 	if len(messages) == 0 || messages[0] == nil || messages[0].Role != schema.System {
 		return errors.New("compacted context must start with its system summary")
 	}
@@ -53,7 +53,7 @@ func (dao *ConversationDAO) SaveContext(ctx context.Context, messages []*message
 }
 
 // 普通消息和压缩上下文的差异只留在存储层。
-func (dao *ConversationDAO) saveMessage(ctx context.Context, message *messagepkg.Message, messages []*messagepkg.Message) error {
+func (dao *ConversationDAO) saveMessage(ctx context.Context, message *agentmodel.Message, messages []*agentmodel.Message) error {
 	if message == nil {
 		return errors.New("conversation message is required")
 	}
@@ -102,11 +102,11 @@ func (dao *ConversationDAO) saveMessage(ctx context.Context, message *messagepkg
 }
 
 // LoadContext 重放数据库记录。压缩替换上下文，但保留被摘要覆盖的消息身份，防止重投。
-func (dao *ConversationDAO) LoadContext(ctx context.Context, threadID string) ([]*messagepkg.Message, []string, int64, error) {
+func (dao *ConversationDAO) LoadContext(ctx context.Context, threadID string) ([]*agentmodel.Message, []string, int64, error) {
 	if dao == nil || dao.Client == nil {
 		return nil, nil, 0, errors.New("conversation store is not initialized")
 	}
-	var messages []*messagepkg.Message
+	var messages []*agentmodel.Message
 	var recordedMessageIDs []string
 	lastReadSeq := int64(0)
 	for {

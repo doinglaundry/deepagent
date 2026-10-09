@@ -2,19 +2,20 @@ package execution
 
 import (
 	"context"
-	checkpointer "eino-cli/deepagent/graph/checkpoint"
-	"eino-cli/deepagent/graph/middleware"
-	"eino-cli/deepagent/graph/types"
 	"errors"
 	"fmt"
-	"github.com/cloudwego/eino/compose"
 	"time"
+
+	checkpointer "eino-cli/deepagent/graph/checkpoint"
+	agentmodel "eino-cli/deepagent/model"
+
+	"github.com/cloudwego/eino/compose"
 )
 
-func closeMiddlewareResources(ctx context.Context, middlewares []middleware.Middleware) error {
+func closeMiddlewareResources(ctx context.Context, middlewares []agentmodel.Middleware) error {
 	var err error
 	for i := len(middlewares) - 1; i >= 0; i-- {
-		closer, ok := middlewares[i].(middleware.ResourceCloser)
+		closer, ok := middlewares[i].(agentmodel.ResourceCloser)
 		if ok {
 			err = errors.Join(err, closer.Close(ctx))
 		}
@@ -55,13 +56,13 @@ func (graph *Graph) closeResources(ctx context.Context) error {
 	return err
 }
 
-func (graph *Graph) emitEvent(ctx context.Context, runState *types.RunState, kind, callID string, data any) error {
+func (graph *Graph) emitEvent(ctx context.Context, runState *agentmodel.RunState, kind, callID string, data any) error {
 	graph.eventMu.Lock()
 	defer graph.eventMu.Unlock()
 	runState.EventSeq++
-	event := types.RuntimeEvent{Sequence: runState.EventSeq, Kind: kind, CallID: callID, Data: data}
+	event := agentmodel.RuntimeEvent{Sequence: runState.EventSeq, Kind: kind, CallID: callID, Data: data}
 	for _, currentMiddleware := range graph.middlewares {
-		observer, ok := currentMiddleware.(middleware.EventObserver)
+		observer, ok := currentMiddleware.(agentmodel.EventObserver)
 		if ok {
 			err := observer.Observe(ctx, event)
 			if err != nil {
@@ -94,13 +95,13 @@ func (graph *Graph) beginInvoke(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
 
-func (graph *Graph) prepareRun(ctx context.Context, runState *types.RunState) error {
+func (graph *Graph) prepareRun(ctx context.Context, runState *agentmodel.RunState) error {
 	for _, currentMiddleware := range graph.middlewares {
 		err := currentMiddleware.PrepareAgent(ctx)
 		if err != nil {
 			return err
 		}
-		runMiddleware, ok := currentMiddleware.(middleware.RunMiddleware)
+		runMiddleware, ok := currentMiddleware.(agentmodel.RunMiddleware)
 		if ok {
 			err = runMiddleware.PrepareRun(ctx, runState)
 			if err != nil {
@@ -113,13 +114,13 @@ func (graph *Graph) prepareRun(ctx context.Context, runState *types.RunState) er
 }
 
 // FinishRun precedes resource cleanup, persistence, and the final event.
-func (graph *Graph) finishInvoke(ctx context.Context, runState *types.RunState, runOptions RunOptions, initialCheckpointSaved bool, err error) error {
+func (graph *Graph) finishInvoke(ctx context.Context, runState *agentmodel.RunState, runOptions RunOptions, initialCheckpointSaved bool, err error) error {
 	currentRunState := graph.runState
 	if currentRunState == nil {
 		currentRunState = runState
 	}
 	for i := len(graph.middlewares) - 1; i >= 0; i-- {
-		currentMiddleware, ok := graph.middlewares[i].(middleware.RunMiddleware)
+		currentMiddleware, ok := graph.middlewares[i].(agentmodel.RunMiddleware)
 		if ok {
 			err = errors.Join(err, currentMiddleware.FinishRun(ctx, currentRunState, err))
 		}
@@ -165,7 +166,7 @@ func (graph *Graph) GetName() string { return graph.config.Name }
 
 func (graph *Graph) GetDepth() int { return graph.config.Depth }
 
-func (graph *Graph) GetGraphState() *types.GraphState { return graph.graphState }
+func (graph *Graph) GetGraphState() *agentmodel.GraphState { return graph.graphState }
 
 func (graph *Graph) Close(ctx context.Context) error {
 	graph.mu.Lock()
@@ -222,7 +223,7 @@ func GetGraph(ctx context.Context) *Graph {
 }
 
 // GetWholeGraphState 获取当前 Agent 的完整图状态。
-func GetWholeGraphState(ctx context.Context) *types.GraphState {
+func GetWholeGraphState(ctx context.Context) *agentmodel.GraphState {
 	graph := GetGraph(ctx)
 	if graph == nil {
 		return nil

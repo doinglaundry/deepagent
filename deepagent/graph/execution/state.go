@@ -6,19 +6,18 @@ import (
 	"errors"
 	"fmt"
 
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/compose"
 )
 
-func (graph *Graph) newRunState(inputMessages []*messagepkg.Message, runOptions RunOptions) *types.RunState {
-	runState := &types.RunState{Version: 1, ThreadID: graph.config.ThreadID, RunID: graph.runID, Depth: graph.config.Depth, Phase: types.PhasePreparing}
+func (graph *Graph) newRunState(inputMessages []*agentmodel.Message, runOptions RunOptions) *agentmodel.RunState {
+	runState := &agentmodel.RunState{Version: 1, ThreadID: graph.config.ThreadID, RunID: graph.runID, Depth: graph.config.Depth, Phase: agentmodel.PhasePreparing}
 	for i, message := range inputMessages {
 		if message != nil {
 			copy := *message
 			copy.ThreadID, copy.RunID = graph.config.ThreadID, graph.runID
-			consumedInput := types.Input{MessageID: copy.MessageID, Message: &copy}
+			consumedInput := agentmodel.RunInput{MessageID: copy.MessageID, Message: &copy}
 			if i < len(runOptions.InputIDs) {
 				consumedInput.MessageID = runOptions.InputIDs[i]
 				consumedInput.Message.MessageID = consumedInput.MessageID
@@ -35,9 +34,9 @@ func (graph *Graph) newRunState(inputMessages []*messagepkg.Message, runOptions 
 
 // getLocalState reads the authoritative RunState from Eino, then restores runtime
 // collaborators once for each state object seen by this agent.
-func (graph *Graph) getLocalState(ctx context.Context) (*types.RunState, error) {
-	var runState *types.RunState
-	err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, localRunState *types.RunState) error {
+func (graph *Graph) getLocalState(ctx context.Context) (*agentmodel.RunState, error) {
+	var runState *agentmodel.RunState
+	err := compose.ProcessState[*agentmodel.RunState](ctx, func(_ context.Context, localRunState *agentmodel.RunState) error {
 		if localRunState.PreparedInputs < 0 || localRunState.PreparedInputs > len(localRunState.Consumed) {
 			return fmt.Errorf("invalid prepared input cursor")
 		}
@@ -63,7 +62,7 @@ func (graph *Graph) getLocalState(ctx context.Context) (*types.RunState, error) 
 	return runState, nil
 }
 
-func (graph *Graph) restoreLocalState(ctx context.Context, runState *types.RunState) error {
+func (graph *Graph) restoreLocalState(ctx context.Context, runState *agentmodel.RunState) error {
 	err := graph.restoreChildConversation(ctx, runState)
 	if err != nil {
 		return err
@@ -84,13 +83,13 @@ func (graph *Graph) restoreLocalState(ctx context.Context, runState *types.RunSt
 	}
 	graph.toolExecutor.restoreToolExecutions(runState.Calls)
 	graph.toolExecutor.restoreChildCheckpoints(runState)
-	graph.toolExecutor.onToolStart = func(ctx context.Context, toolCallState types.ToolCallState) error {
-		return graph.emitEvent(ctx, runState, "tool_start", toolCallState.Call.ID, types.ToolStartPayload{Name: toolCallState.Call.Name, CallID: toolCallState.Call.ID, Args: toolCallState.Call.Arguments, ToolStartTime: toolCallState.StartedAt})
+	graph.toolExecutor.onToolStart = func(ctx context.Context, toolCallState agentmodel.ToolCallState) error {
+		return graph.emitEvent(ctx, runState, "tool_start", toolCallState.Call.ID, agentmodel.ToolStartPayload{Name: toolCallState.Call.Name, CallID: toolCallState.Call.ID, Args: toolCallState.Call.Arguments, ToolStartTime: toolCallState.StartedAt})
 	}
 	return graph.emitEvent(ctx, runState, "run_state_restored", "", runState.Consumed)
 }
 
-func (graph *Graph) restoreChildConversation(ctx context.Context, runState *types.RunState) error {
+func (graph *Graph) restoreChildConversation(ctx context.Context, runState *agentmodel.RunState) error {
 	if graph.config.Depth <= 0 {
 		return nil
 	}
@@ -98,7 +97,7 @@ func (graph *Graph) restoreChildConversation(ctx context.Context, runState *type
 	if !ok {
 		return nil
 	}
-	var historyMessages []*messagepkg.Message
+	var historyMessages []*agentmodel.Message
 	err := json.Unmarshal(historyJSON, &historyMessages)
 	if err != nil {
 		return err
@@ -112,17 +111,17 @@ func (graph *Graph) restoreChildConversation(ctx context.Context, runState *type
 
 // Node errors set checkpoint-visible state. The final execution error is
 // applied again after checkpoint saving and resource cleanup have completed.
-func markRunError(ctx context.Context, runState *types.RunState, err error) {
+func markRunError(ctx context.Context, runState *agentmodel.RunState, err error) {
 	if runState == nil || err == nil {
 		return
 	}
 	_, interrupt := compose.IsInterruptRerunError(err)
 	_, nested := compose.ExtractInterruptInfo(err)
 	if interrupt || nested {
-		runState.Phase = types.PhaseBlocked
+		runState.Phase = agentmodel.PhaseBlocked
 	} else if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		runState.Phase = types.PhaseInterrupted
+		runState.Phase = agentmodel.PhaseInterrupted
 	} else {
-		runState.Phase = types.PhaseFailed
+		runState.Phase = agentmodel.PhaseFailed
 	}
 }

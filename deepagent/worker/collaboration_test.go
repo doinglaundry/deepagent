@@ -5,50 +5,48 @@ import (
 	"encoding/json"
 	"testing"
 
-	"eino-cli/deepagent/dal/db"
-	"eino-cli/deepagent/dal/model"
-	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/manager"
+	agentmodel "eino-cli/deepagent/model"
+
 	"github.com/cloudwego/eino/components/tool"
 )
 
 type collaborationBackendFake struct {
-	submits  []manager.SubmitRequest
+	submits  []agentmodel.SubmitRequest
 	closed   int64
-	threads  manager.ListThreadsResult
-	messages manager.ListMessagesResult
+	threads  agentmodel.ListThreadsResult
+	messages agentmodel.ListMessagesResult
 }
 
-func (f *collaborationBackendFake) Submit(_ context.Context, req manager.SubmitRequest) (manager.ThreadMessageResult, error) {
+func (f *collaborationBackendFake) Submit(_ context.Context, req agentmodel.SubmitRequest) (agentmodel.ThreadMessageResult, error) {
 	f.submits = append(f.submits, req)
 	id := req.ThreadID
 	if id == 0 {
 		id = 42
 	}
-	return manager.ThreadMessageResult{
-		Thread:  &model.Thread{ThreadID: id, SessionID: req.SessionID, UserID: req.UserID, Status: model.ThreadStatusOpen},
-		Message: &db.Message{MessageID: 99, ThreadID: id},
+	return agentmodel.ThreadMessageResult{
+		Thread:  &agentmodel.ThreadRecord{ThreadID: id, SessionID: req.SessionID, UserID: req.UserID, Status: agentmodel.ThreadStatusOpen},
+		Message: &agentmodel.MailboxMessage{MessageID: 99, ThreadID: id},
 	}, nil
 }
 
-func (f *collaborationBackendFake) ListThreads(context.Context, manager.ListThreadsRequest) (manager.ListThreadsResult, error) {
+func (f *collaborationBackendFake) ListThreads(context.Context, agentmodel.ListThreadsRequest) (agentmodel.ListThreadsResult, error) {
 	return f.threads, nil
 }
 
-func (f *collaborationBackendFake) ListMessages(context.Context, manager.ListMessagesRequest) (manager.ListMessagesResult, error) {
+func (f *collaborationBackendFake) ListMessages(context.Context, agentmodel.ListMessagesRequest) (agentmodel.ListMessagesResult, error) {
 	return f.messages, nil
 }
 
 func TestCollaborationWaitReadsCanonicalMessageState(t *testing.T) {
 	payload, _ := json.Marshal(map[string]any{"parts": []map[string]string{{"type": "text", "text": "review complete"}}})
 	backend := &collaborationBackendFake{
-		threads: manager.ListThreadsResult{Thread: &model.Thread{ThreadID: 42, Status: model.ThreadStatusOpen}},
-		messages: manager.ListMessagesResult{Runs: map[string]*model.RunRecord{"run-1": {RunID: "run-1", Status: "finished"}}, Messages: []*model.Message{
-			{MessageID: 99, ThreadID: 42, Status: model.MessageStatusAccepted, TriggerRunID: "run-1"},
+		threads: agentmodel.ListThreadsResult{Thread: &agentmodel.ThreadRecord{ThreadID: 42, Status: agentmodel.ThreadStatusOpen}},
+		messages: agentmodel.ListMessagesResult{Runs: map[string]*agentmodel.RunRecord{"run-1": {RunID: "run-1", Status: "finished"}}, Messages: []*agentmodel.MailboxMessage{
+			{MessageID: 99, ThreadID: 42, Status: agentmodel.MessageStatusAccepted, TriggerRunID: "run-1"},
 			{MessageID: 100, ThreadID: 42, MessageType: "assistant", TriggerRunID: "run-1", Payload: payload},
 		}},
 	}
-	items, err := newCollaborationTools(backend, &model.Thread{ThreadID: 7})
+	items, err := newCollaborationTools(backend, &agentmodel.ThreadRecord{ThreadID: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,12 +56,12 @@ func TestCollaborationWaitReadsCanonicalMessageState(t *testing.T) {
 	}
 }
 
-func (f *collaborationBackendFake) Close(_ context.Context, threadID int64, _ string) (*manager.ThreadMessageResult, error) {
+func (f *collaborationBackendFake) Close(_ context.Context, threadID int64, _ string) (*agentmodel.ThreadMessageResult, error) {
 	f.closed = threadID
-	return &manager.ThreadMessageResult{}, nil
+	return &agentmodel.ThreadMessageResult{}, nil
 }
 
-func runCollaborationTool(t *testing.T, items []tools.ToolDescriptor, name, input string) map[string]any {
+func runCollaborationTool(t *testing.T, items []agentmodel.ToolDescriptor, name, input string) map[string]any {
 	t.Helper()
 	for _, item := range items {
 		info, _ := item.Tool.Info(context.Background())
@@ -87,8 +85,8 @@ func runCollaborationTool(t *testing.T, items []tools.ToolDescriptor, name, inpu
 
 func TestCollaborationToolsUseCanonicalManagerBoundary(t *testing.T) {
 	backend := &collaborationBackendFake{}
-	items, err := newCollaborationTools(backend, &model.Thread{
-		ThreadID: 7, UserID: 3, SessionID: "session", Profile: &model.Profile{Cwd: "/repo"},
+	items, err := newCollaborationTools(backend, &agentmodel.ThreadRecord{
+		ThreadID: 7, UserID: 3, SessionID: "session", Profile: &agentmodel.ThreadProfile{Cwd: "/repo"},
 	})
 
 	if err != nil {

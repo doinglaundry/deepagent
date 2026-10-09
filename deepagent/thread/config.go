@@ -4,31 +4,16 @@ import (
 	"context"
 
 	"eino-cli/deepagent/graph/conversation"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/run"
-
-	"github.com/cloudwego/eino/components/model"
 )
 
-// ContextManager preserves the Thread context contract.
-type ContextManager interface {
-	ReloadHistory(context.Context) error
-	AddHistory(context.Context, string, ...*messagepkg.Message) error
-	GetHistory(context.Context) []*messagepkg.Message
-	GetContextUsage() types.ContextTokenUsage
-	RecordModelUsage(context.Context, *model.TokenUsage)
-	Compact(context.Context, string) (*types.ContextTokenUsage, error)
-	NeedsCompaction(context.Context) bool
-}
-
 type ThreadOptions struct {
-	ConversationDB    conversation.ConversationDB
+	ConversationDB    agentmodel.ConversationDB
 	Compactor         *conversation.SummaryCompaction
-	CountTokenFunc    conversation.CountTokenFunc
+	CountTokenFunc    agentmodel.CountTokenFunc
 	ContextWindow     int64
-	GenerateMessageID conversation.GetMessageIDFunc
+	GenerateMessageID agentmodel.GetMessageIDFunc
 }
 
 type SubmitInputResult struct {
@@ -71,7 +56,7 @@ func WithRunStartHook(hook OnRunStartFunc) SubmitInputOption {
 type RunStartRequest struct {
 	ThreadID  string
 	RunID     string `json:"TurnID" yaml:"turnid"`
-	Input     *messagepkg.Message
+	Input     *agentmodel.Message
 	InputMeta any
 	Resume    *ResumeRunOptions
 }
@@ -91,38 +76,6 @@ type ResumeRunOptions struct {
 	OnRunStart          OnRunStartFunc
 }
 
-// ApprovalRememberer records a session-scoped approval reuse decision.
-type ApprovalRememberer interface {
-	RememberApproval(ctx context.Context, payload inputpkg.ResumeRunPayload)
-}
-
-type ApprovalRemembererFunc func(ctx context.Context, payload inputpkg.ResumeRunPayload)
-
-func (f ApprovalRemembererFunc) RememberApproval(ctx context.Context, payload inputpkg.ResumeRunPayload) {
-	f(ctx, payload)
-}
-
-// RunFinishedObserver is called after a Run run-end event is converted
-// to worker output. Implementations should return quickly.
-type RunFinishedObserver func(ctx context.Context, ev run.Event)
-
-// ThreadOutputObservation is a read-only snapshot of one worker output item
-// emitted by the Thread runtime.
-type ThreadOutputObservation struct {
-	SessionID string
-	ThreadID  string
-	Item      TransportThreadOutputItem
-}
-
-// ThreadOutputObserver is called after the Thread runtime has
-// successfully offered one output item to the worker host. Implementations
-// should return quickly and must not rely on mutating the observed item.
-type ThreadOutputObserver func(ctx context.Context, obs ThreadOutputObservation)
-
-// InterruptResumeDecoder converts a generic Run interrupt resume payload
-// into the typed data expected by a custom Eino interrupt handler.
-type InterruptResumeDecoder func(ctx context.Context, payload inputpkg.ResumeRunPayload) (any, error)
-
 // ThreadConfig builds one Thread; there is no separate protocol adapter object.
 type ThreadConfig struct {
 	// CloseResources runs once after execution and output forwarding stop.
@@ -131,10 +84,10 @@ type ThreadConfig struct {
 	ThreadID             string
 	UserID               int64
 	RunConfig            *run.Config
-	Events               chan run.Event
+	Events               chan agentmodel.RunEvent
 	Options              ThreadOptions
-	ApprovalRemember     ApprovalRememberer
-	RunFinishedObserver  RunFinishedObserver
-	ThreadOutputObserver ThreadOutputObserver
-	InterruptResume      InterruptResumeDecoder
+	ApprovalRemember     agentmodel.ApprovalRememberer
+	RunFinishedObserver  agentmodel.RunFinishedObserver
+	ThreadOutputObserver agentmodel.ThreadOutputObserver
+	InterruptResume      agentmodel.InterruptResumeDecoder
 }

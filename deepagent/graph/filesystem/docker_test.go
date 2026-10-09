@@ -13,19 +13,19 @@ import (
 
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/sandbox"
+	agentmodel "eino-cli/deepagent/model"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 )
 
 type fileSandbox struct {
-	sandbox.Sandbox
+	agentmodel.Sandbox
 	containerID string
 	files       map[string]string
 	writes      int
 	err         error
 	lastPath    string
-	grepOpts    sandbox.GrepOpts
+	grepOpts    agentmodel.SandboxGrepOptions
 	resolved    map[string]string
 }
 
@@ -79,15 +79,15 @@ func (fileSandbox *fileSandbox) ListDir(_ context.Context, path string, depth in
 	return []string{path + "/dir/", path + "/a.txt"}, fileSandbox.err
 }
 
-func (fileSandbox *fileSandbox) Glob(_ context.Context, path, pattern string, _ sandbox.GlobOpts) ([]string, bool, error) {
+func (fileSandbox *fileSandbox) Glob(_ context.Context, path, pattern string, _ agentmodel.SandboxGlobOptions) ([]string, bool, error) {
 	fileSandbox.lastPath = path
 	return []string{path + "/a.txt"}, false, fileSandbox.err
 }
 
-func (fileSandbox *fileSandbox) Grep(_ context.Context, path, pattern string, grepOptions sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
+func (fileSandbox *fileSandbox) Grep(_ context.Context, path, pattern string, grepOptions agentmodel.SandboxGrepOptions) ([]agentmodel.SandboxGrepMatch, bool, error) {
 	fileSandbox.lastPath = path
 	fileSandbox.grepOpts = grepOptions
-	return []sandbox.GrepMatch{{Path: path + "/a.txt", LineNumber: 2, Line: "second"}}, false, fileSandbox.err
+	return []agentmodel.SandboxGrepMatch{{Path: path + "/a.txt", LineNumber: 2, Line: "second"}}, false, fileSandbox.err
 }
 
 func TestDockerFilesystemToolsUseProvider(t *testing.T) {
@@ -279,11 +279,11 @@ func TestDockerFilesystemRejectsSymlinkOutsideWorkspace(t *testing.T) {
 	}
 	defer dockerFilesystem.Close(ctx)
 	_, writeErr := dockerFilesystem.Write(ctx, "escape/file", "outside")
-	if !errors.Is(writeErr, filesystempkg.ErrInvalidPath) {
+	if !errors.Is(writeErr, agentmodel.ErrInvalidPath) {
 		t.Fatalf("write through escaping symlink = %v", writeErr)
 	}
 	_, readErr := dockerFilesystem.Read(ctx, "escape/file", nil, nil)
-	if !errors.Is(readErr, filesystempkg.ErrInvalidPath) {
+	if !errors.Is(readErr, agentmodel.ErrInvalidPath) {
 		t.Fatalf("read through escaping symlink = %v", readErr)
 	}
 	if provider.writes != 0 || provider.lastPath != "" {

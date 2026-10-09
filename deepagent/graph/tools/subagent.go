@@ -8,30 +8,19 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
-type ChildRequest struct {
-	Name          string
-	Prompt        string
-	MaxModelCalls int
-}
-
-type ChildRunner interface {
-	Run(context.Context, ChildRequest, types.ModelChunkSink) (*messagepkg.Message, error)
-}
-
 type taskTool struct {
-	runner ChildRunner
+	runner agentmodel.ChildRunner
 	names  []string
 }
 
-func NewTaskTool(childRunner ChildRunner, subagentNames ...string) ToolDescriptor {
-	return ToolDescriptor{Tool: &taskTool{runner: childRunner, names: append([]string(nil), subagentNames...)}}
+func NewTaskTool(childRunner agentmodel.ChildRunner, subagentNames ...string) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &taskTool{runner: childRunner, names: append([]string(nil), subagentNames...)}}
 }
 
 func (taskTool *taskTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -62,7 +51,7 @@ func (taskTool *taskTool) InvokableRun(ctx context.Context, arguments string, _ 
 	return childMessage.Content, nil
 }
 
-func (taskTool *taskTool) parseChildRequest(arguments string) (ChildRequest, error) {
+func (taskTool *taskTool) parseChildRequest(arguments string) (agentmodel.ChildRequest, error) {
 	var taskArgs struct {
 		SubagentType string `json:"subagent_type"`
 		Description  string `json:"description"`
@@ -71,7 +60,7 @@ func (taskTool *taskTool) parseChildRequest(arguments string) (ChildRequest, err
 	}
 	err := json.Unmarshal([]byte(arguments), &taskArgs)
 	if err != nil {
-		return ChildRequest{}, err
+		return agentmodel.ChildRequest{}, err
 	}
 	prompt := taskArgs.Description
 	if prompt == "" {
@@ -81,22 +70,22 @@ func (taskTool *taskTool) parseChildRequest(arguments string) (ChildRequest, err
 		prompt = taskArgs.Task
 	}
 	if strings.TrimSpace(prompt) == "" {
-		return ChildRequest{}, fmt.Errorf("description is required")
+		return agentmodel.ChildRequest{}, fmt.Errorf("description is required")
 	}
 	subagentName := taskArgs.SubagentType
 	if subagentName == "" {
 		if len(taskTool.names) > 0 && !slices.Contains(taskTool.names, "general-purpose") {
-			return ChildRequest{}, fmt.Errorf("subagent_type is required; configured subagents: %s", strings.Join(taskTool.names, ", "))
+			return agentmodel.ChildRequest{}, fmt.Errorf("subagent_type is required; configured subagents: %s", strings.Join(taskTool.names, ", "))
 		}
 		subagentName = "general-purpose"
 	}
-	return ChildRequest{Name: subagentName, Prompt: prompt}, nil
+	return agentmodel.ChildRequest{Name: subagentName, Prompt: prompt}, nil
 }
 
 type streamingTaskTool struct{ *taskTool }
 
-func NewStreamingTaskTool(childRunner ChildRunner, readOnly bool, subagentNames ...string) ToolDescriptor {
-	return ToolDescriptor{
+func NewStreamingTaskTool(childRunner agentmodel.ChildRunner, readOnly bool, subagentNames ...string) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{
 		Tool:     &streamingTaskTool{&taskTool{runner: childRunner, names: append([]string(nil), subagentNames...)}},
 		ReadOnly: readOnly, ParallelSafe: true,
 	}
@@ -119,11 +108,11 @@ func (streamingTaskTool *streamingTaskTool) StreamableRun(ctx context.Context, a
 		defer func() {
 			panicValue := recover()
 			if panicValue != nil {
-				childDone <- &types.InternalError{Err: fmt.Errorf("child runner panicked: %v", panicValue)}
+				childDone <- &agentmodel.InternalError{Err: fmt.Errorf("child runner panicked: %v", panicValue)}
 			}
 		}()
 		emittedContent := false
-		childMessage, err := streamingTaskTool.runner.Run(ctx, childRequest, func(ctx context.Context, chunk *messagepkg.Message) error {
+		childMessage, err := streamingTaskTool.runner.Run(ctx, childRequest, func(ctx context.Context, chunk *agentmodel.Message) error {
 			if chunk == nil || chunk.Content == "" {
 				return nil
 			}

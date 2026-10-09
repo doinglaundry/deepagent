@@ -11,10 +11,8 @@ import (
 	"testing"
 
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
-	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -28,22 +26,22 @@ func TestCheckpoint_PartialBatchPreservesBlockedAndPendingStates(t *testing.T) {
 		{ID: "approval", Function: schema.FunctionCall{Name: "approval", Arguments: "{}"}},
 		{ID: "last", Function: schema.FunctionCall{Name: "last", Arguments: "{}"}},
 	})}, {schema.AssistantMessage("done", nil)}}}
-	config := Config{Model: chatModel, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: first}, {Tool: approval, RequiresApproval: true}, {Tool: last}}}
+	config := Config{Model: chatModel, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: first}, {Tool: approval, RequiresApproval: true}, {Tool: last}}}
 	graph, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
 	}
-	check := func(s *types.RunState) {
+	check := func(s *agentmodel.RunState) {
 		t.Helper()
-		if s.Phase != types.PhaseBlocked {
+		if s.Phase != agentmodel.PhaseBlocked {
 			t.Errorf("phase=%s", s.Phase)
 		}
-		want := []types.CallStatus{types.CallCompleted, types.CallBlocked, types.CallPending}
+		want := []agentmodel.CallStatus{agentmodel.CallCompleted, agentmodel.CallBlocked, agentmodel.CallPending}
 		if len(s.Calls) != len(want) {
 			t.Fatalf("calls=%+v", s.Calls)
 		}
@@ -60,7 +58,7 @@ func TestCheckpoint_PartialBatchPreservesBlockedAndPendingStates(t *testing.T) {
 	config.Conversation = graph.conversation
 	var restored *Graph
 	observed := false
-	config.Emit = func(_ context.Context, event types.RuntimeEvent) error {
+	config.Emit = func(_ context.Context, event agentmodel.RuntimeEvent) error {
 		if event.Kind == "run_state_restored" {
 			observed = true
 			check(restored.runState)
@@ -71,11 +69,11 @@ func TestCheckpoint_PartialBatchPreservesBlockedAndPendingStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "approval", Approved: true}}))
+	_, err = restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "approval", Approved: true}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !observed || first.count != 1 || approval.count != 1 || last.count != 1 || restored.runState.Phase != types.PhaseCompleted {
+	if !observed || first.count != 1 || approval.count != 1 || last.count != 1 || restored.runState.Phase != agentmodel.PhaseCompleted {
 		t.Fatalf("observed=%v counts=%d/%d/%d phase=%s", observed, first.count, approval.count, last.count, restored.runState.Phase)
 	}
 }
@@ -97,12 +95,12 @@ func TestRun_ResumeContinuesGraphAndModelBudgets(t *testing.T) {
 			ctx := context.Background()
 			tool := &countingTool{}
 			model := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "approved", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}, {schema.AssistantMessage("done", nil)}}}
-			config := Config{ThreadID: "thread", RunID: "run", Model: model, CheckpointStore: &checkpointMemory{}, MaxSteps: tc.steps, MaxModelCalls: tc.models, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
+			config := Config{ThreadID: "thread", RunID: "run", Model: model, CheckpointStore: &checkpointMemory{}, MaxSteps: tc.steps, MaxModelCalls: tc.models, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
 			first, err := New(ctx, WithConfig(&config))
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+			_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 			info, ok := compose.ExtractInterruptInfo(err)
 			if !ok {
 				t.Fatalf("initial run did not interrupt: %v", err)
@@ -120,7 +118,7 @@ func TestRun_ResumeContinuesGraphAndModelBudgets(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer next.Close(ctx)
-			out, err := next.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "approved", Approved: true}}))
+			out, err := next.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "approved", Approved: true}}))
 			if tc.wantError == "" {
 				if err != nil || out.Content != "done" {
 					t.Fatalf("out=%v err=%v", out, err)
@@ -146,7 +144,7 @@ func TestRun_NewAgentsGenerateDistinctRunIDs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+		_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,12 +164,12 @@ func TestCheckpoint_AutomaticRunIdentityRestoresOnNewAgent(t *testing.T) {
 		{schema.AssistantMessage("done", nil)},
 	}}
 	resource := &resourceMiddleware{name: "resource"}
-	config := Config{Model: chatModel, Middlewares: []middleware.Middleware{resource}, ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
+	config := Config{Model: chatModel, Middlewares: []agentmodel.Middleware{resource}, ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
 	graph, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -189,7 +187,7 @@ func TestCheckpoint_AutomaticRunIdentityRestoresOnNewAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{Approved: true}}))
+	out, err := restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,11 +218,11 @@ func TestCheckpoint_ForceNewRunDoesNotReuseSuspendedIdentity(t *testing.T) {
 		{schema.AssistantMessage("fresh", nil)},
 	}}
 	tool := &countingTool{}
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ThreadID: "thread", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}))
+	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ThreadID: "thread", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("old")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("old")}, WithCheckpointID("checkpoint"))
 	_, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -236,7 +234,7 @@ func TestCheckpoint_ForceNewRunDoesNotReuseSuspendedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("new")}, WithCheckpointID("checkpoint"), WithForceNewRun())
+	out, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("new")}, WithCheckpointID("checkpoint"), WithForceNewRun())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +253,7 @@ func TestCheckpoint_ForceInitialSaveFailureDoesNotExecuteOrOverwriteOldSnapshot(
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("new")}, WithCheckpointID("checkpoint"), WithForceNewRun())
+	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("new")}, WithCheckpointID("checkpoint"), WithForceNewRun())
 	if err == nil || chatModel.calls != 0 || !bytes.Equal(store.values["checkpoint"], old) {
 		t.Fatalf("failed force initialization changed state: err=%v models=%d snapshot=%q", err, chatModel.calls, store.values["checkpoint"])
 	}
@@ -286,7 +284,7 @@ func TestCheckpoint_FreshRunCreatesCursorAndFencesBeforeSideEffect(t *testing.T)
 				{schema.AssistantMessage("done", nil)},
 			}}
 			before, after, ended := 0, 0, 0
-			config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter}}, Middlewares: []middleware.Middleware{&checkpointLifecycle{before: &before, after: &after}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+			config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter}}, Middlewares: []agentmodel.Middleware{&checkpointLifecycle{before: &before, after: &after}}, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error {
 				if e.Kind == "turn_end" {
 					ended++
 				}
@@ -297,7 +295,7 @@ func TestCheckpoint_FreshRunCreatesCursorAndFencesBeforeSideEffect(t *testing.T)
 				t.Fatal(err)
 			}
 			defer graph.Close(ctx)
-			_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, opts...)
+			_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, opts...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -338,13 +336,13 @@ func TestCheckpoint_TerminalStorageFailureDoesNotPublishSuccess(t *testing.T) {
 				{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 				{schema.AssistantMessage("done", nil)},
 			}}
-			config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
+			config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 			first, err := New(ctx, WithConfig(&config))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer first.Close(ctx)
-			_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+			_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 			info, ok := compose.ExtractInterruptInfo(err)
 			if !ok {
 				t.Fatal(err)
@@ -352,7 +350,7 @@ func TestCheckpoint_TerminalStorageFailureDoesNotPublishSuccess(t *testing.T) {
 			config.Conversation = first.conversation
 			failure := errors.New("terminal write rejected")
 			turnEnds := 0
-			config.Emit = func(_ context.Context, event types.RuntimeEvent) error {
+			config.Emit = func(_ context.Context, event agentmodel.RuntimeEvent) error {
 				if event.Kind == "tool_end" {
 					if missing {
 						delete(store.values, "checkpoint")
@@ -370,8 +368,8 @@ func TestCheckpoint_TerminalStorageFailureDoesNotPublishSuccess(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer resumed.Close(ctx)
-			_, err = resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "call", Approved: true}}))
-			if err == nil || turnEnds != 0 || counter.count.Load() != 1 || resumed.runState.Phase != types.PhaseFailed {
+			_, err = resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "call", Approved: true}}))
+			if err == nil || turnEnds != 0 || counter.count.Load() != 1 || resumed.runState.Phase != agentmodel.PhaseFailed {
 				t.Fatalf("false success: err=%v ends=%d tools=%d phase=%s", err, turnEnds, counter.count.Load(), resumed.runState.Phase)
 			}
 			if missing {
@@ -401,13 +399,13 @@ func TestCheckpoint_FailedOrCanceledResumeCannotReplayApprovedTool(t *testing.T)
 			ctx := context.Background()
 			counter := &countingTool{}
 			chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-			config := Config{Model: chatModel, RunID: "run", MaxModelCalls: 1, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
+			config := Config{Model: chatModel, RunID: "run", MaxModelCalls: 1, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 			first, err := New(ctx, WithConfig(&config))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer first.Close(ctx)
-			_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+			_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 			info, ok := compose.ExtractInterruptInfo(err)
 			if !ok {
 				t.Fatal(err)
@@ -416,7 +414,7 @@ func TestCheckpoint_FailedOrCanceledResumeCannotReplayApprovedTool(t *testing.T)
 			resumeCtx, cancel := context.WithCancel(ctx)
 			defer cancel()
 			if canceled {
-				config.Emit = func(_ context.Context, event types.RuntimeEvent) error {
+				config.Emit = func(_ context.Context, event agentmodel.RuntimeEvent) error {
 					if event.Kind == "tool_end" {
 						cancel()
 					}
@@ -428,7 +426,7 @@ func TestCheckpoint_FailedOrCanceledResumeCannotReplayApprovedTool(t *testing.T)
 				t.Fatal(err)
 			}
 			defer resume.Close(ctx)
-			answer := map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "call", Approved: true}}
+			answer := map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "call", Approved: true}}
 			_, err = resume.Invoke(resumeCtx, nil, WithCheckpointID("checkpoint"), WithResumeData(answer))
 			if err == nil || counter.count.Load() != 1 {
 				t.Fatalf("failure=%v calls=%d", err, counter.count.Load())
@@ -457,13 +455,13 @@ func TestCheckpoint_PendingApprovalSurvivesPolicyChange(t *testing.T) {
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	config := Config{Model: chatModel, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
+	config := Config{Model: chatModel, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
 	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close(ctx)
-	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
 		t.Fatalf("interrupt=%+v err=%v", info, err)
@@ -488,7 +486,7 @@ func TestCheckpoint_PendingApprovalSurvivesPolicyChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer third.Close(ctx)
-	_, err = third.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{again.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "call", Approved: true}}))
+	_, err = third.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{again.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "call", Approved: true}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,13 +500,13 @@ func TestCheckpoint_PendingWriteFailureCannotLoseApprovalObligation(t *testing.T
 	tool := &countingTool{}
 	store := &pendingWriteFailure{failure: errors.New("pending metadata write failed")}
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
+	config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
 	graph, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	if !errors.Is(err, store.failure) {
 		t.Fatalf("failure lost: %v", err)
 	}
@@ -556,13 +554,13 @@ func TestCheckpoint_CompletedApprovalRemovedBeforeNextInterruptSnapshot(t *testi
 					})},
 					{schema.AssistantMessage("done", nil)},
 				}}
-				config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
+				config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 				graph, err := New(ctx, WithConfig(&config))
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer graph.Close(ctx)
-				_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+				_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 				info, ok := compose.ExtractInterruptInfo(err)
 				if !ok || len(info.InterruptContexts) != 1 {
 					t.Fatalf("first interrupt: %v", err)
@@ -575,7 +573,7 @@ func TestCheckpoint_CompletedApprovalRemovedBeforeNextInterruptSnapshot(t *testi
 				defer resumed.Close(ctx)
 				before := len(store.writes)
 				_, err = resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{
-					info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: answerCallID, Approved: approved},
+					info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: answerCallID, Approved: approved},
 				}))
 				expectedCalls := int32(0)
 				if approved {
@@ -596,7 +594,7 @@ func TestCheckpoint_CompletedApprovalRemovedBeforeNextInterruptSnapshot(t *testi
 					t.Fatal("no interrupt snapshot after execution fence")
 				}
 				var snapshot struct {
-					MapValues map[string]struct{ JSONValue types.RunState }
+					MapValues map[string]struct{ JSONValue agentmodel.RunState }
 				}
 				decodeErr := json.Unmarshal(store.writes[before], &snapshot)
 				if decodeErr != nil {
@@ -606,7 +604,7 @@ func TestCheckpoint_CompletedApprovalRemovedBeforeNextInterruptSnapshot(t *testi
 				if len(state.Pending) != 1 || state.Pending[0].CallID != "second" {
 					t.Fatalf("original Eino snapshot retained resolved approval: %+v", state.Pending)
 				}
-				if state.Calls[0].Status != types.CallCompleted || state.Calls[1].Status != types.CallBlocked {
+				if state.Calls[0].Status != agentmodel.CallCompleted || state.Calls[1].Status != agentmodel.CallBlocked {
 					t.Fatalf("calls=%+v", state.Calls)
 				}
 				config.Conversation = resumed.conversation
@@ -616,7 +614,7 @@ func TestCheckpoint_CompletedApprovalRemovedBeforeNextInterruptSnapshot(t *testi
 				}
 				defer last.Close(ctx)
 				_, err = last.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{
-					second.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "second", Approved: true},
+					second.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "second", Approved: true},
 				}))
 				if err != nil || counter.count.Load() != expectedCalls+1 || len(last.runState.Pending) != 0 {
 					t.Fatalf("final err=%v calls=%d pending=%+v", err, counter.count.Load(), last.runState.Pending)
@@ -639,21 +637,21 @@ func TestRun_FollowUpArgumentAliasesPreserveQuestionAndResume(t *testing.T) {
 				{schema.AssistantMessage("", []schema.ToolCall{{ID: "question", Function: schema.FunctionCall{Name: "ask_user", Arguments: raw}}})},
 				{schema.AssistantMessage("done", nil)},
 			}}
-			var observed *messagepkg.Message
-			emit := func(_ context.Context, e types.RuntimeEvent) error {
+			var observed *agentmodel.Message
+			emit := func(_ context.Context, e agentmodel.RuntimeEvent) error {
 				if e.Kind == "llm_end" {
-					payload := e.Data.(types.LLMEnd)
+					payload := e.Data.(agentmodel.LLMEnd)
 					observed = payload.Message
 				}
 				return nil
 			}
-			config := Config{Emit: emit, Model: chatModel, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{tools.NewFollowUpTool()}}
+			config := Config{Emit: emit, Model: chatModel, RunID: "run", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{tools.NewFollowUpTool()}}
 			graph, err := New(ctx, WithConfig(&config))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer graph.Close(ctx)
-			_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+			_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 			info, ok := compose.ExtractInterruptInfo(err)
 			if !ok || len(info.InterruptContexts) != 1 {
 				t.Fatalf("interrupt=%+v err=%v", info, err)
@@ -661,7 +659,7 @@ func TestRun_FollowUpArgumentAliasesPreserveQuestionAndResume(t *testing.T) {
 			if observed == nil || len(observed.ToolCalls) != 1 || observed.ToolCalls[0].Function.Arguments != raw {
 				t.Fatalf("event lost original clarification call: %+v", observed)
 			}
-			question, ok := info.InterruptContexts[0].Info.(*tools.FollowUpInfo)
+			question, ok := info.InterruptContexts[0].Info.(*agentmodel.FollowUpInfo)
 			if !ok || question.Question != "Detail\n\nChoose" || !reflect.DeepEqual(question.Questions, []string{"yes", "no"}) {
 				t.Fatalf("question=%+v", question)
 			}
@@ -671,7 +669,7 @@ func TestRun_FollowUpArgumentAliasesPreserveQuestionAndResume(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer resumed.Close(ctx)
-			result, err := resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.FollowUpInfo{UserAnswer: "yes"}}))
+			result, err := resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.FollowUpInfo{UserAnswer: "yes"}}))
 			if err != nil || result == nil || result.Content != "done" {
 				t.Fatalf("result=%v err=%v", result, err)
 			}
@@ -698,13 +696,13 @@ func TestCheckpoint_ExecutionFencePreventsCrashReplayAndGatesTool(t *testing.T) 
 				{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 				{schema.AssistantMessage("done", nil)},
 			}}
-			config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
+			config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 			first, err := New(ctx, WithConfig(&config))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer first.Close(ctx)
-			_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+			_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 			info, ok := compose.ExtractInterruptInfo(err)
 			if !ok {
 				t.Fatal(err)
@@ -719,7 +717,7 @@ func TestCheckpoint_ExecutionFencePreventsCrashReplayAndGatesTool(t *testing.T) 
 				t.Fatal(err)
 			}
 			defer resumed.Close(ctx)
-			answer := map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "call", Approved: true}}
+			answer := map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "call", Approved: true}}
 			_, err = resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(answer), func(o *RunOptions) { o.WriteToCheckpointID = "checkpoint" })
 			if failWrite {
 				if !errors.Is(err, failure) || counter.count.Load() != 0 {
@@ -757,19 +755,19 @@ func TestCheckpoint_ParallelFencesRetainEveryCall(t *testing.T) {
 		})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, Parallelism: 2, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, ParallelSafe: true}}}
+	config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, Parallelism: 2, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter, ParallelSafe: true}}}
 	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close(ctx)
-	first.config.Emit = func(_ context.Context, event types.RuntimeEvent) error {
+	first.config.Emit = func(_ context.Context, event agentmodel.RuntimeEvent) error {
 		if event.Kind == "llm_end" {
 			first.Interrupt()
 		}
 		return nil
 	}
-	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	_, ok := compose.ExtractInterruptInfo(err)
 	if !ok || counter.count.Load() != 0 {
 		t.Fatalf("initial interrupt: %v", err)
@@ -786,7 +784,7 @@ func TestCheckpoint_ParallelFencesRetainEveryCall(t *testing.T) {
 		t.Fatalf("parallel resume: %v calls=%d", err, counter.count.Load())
 	}
 	var snapshot struct {
-		MapValues map[string]struct{ JSONValue types.RunState }
+		MapValues map[string]struct{ JSONValue agentmodel.RunState }
 	}
 	decodeErr := json.Unmarshal(store.fenced, &snapshot)
 	if decodeErr != nil {
@@ -797,7 +795,7 @@ func TestCheckpoint_ParallelFencesRetainEveryCall(t *testing.T) {
 		t.Fatalf("lost parallel call: %+v", calls)
 	}
 	for _, call := range calls {
-		if call.Status != types.CallOutcomeUnknown {
+		if call.Status != agentmodel.CallOutcomeUnknown {
 			t.Fatalf("lost execution fence: %+v", call)
 		}
 	}
@@ -818,20 +816,20 @@ func TestCheckpoint_DisappearingRestoredSnapshotPreventsToolExecution(t *testing
 	store := &checkpointMemory{}
 	counter := &countingTool{}
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
+	config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}
 	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close(ctx)
-	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
 	}
 	config.Conversation = first.conversation
 	removed := false
-	config.Emit = func(_ context.Context, event types.RuntimeEvent) error {
+	config.Emit = func(_ context.Context, event agentmodel.RuntimeEvent) error {
 		if event.Kind == "run_state_restored" {
 			// Eino has decoded the saved execution cursor; storage now loses it.
 			delete(store.values, "checkpoint")
@@ -844,7 +842,7 @@ func TestCheckpoint_DisappearingRestoredSnapshotPreventsToolExecution(t *testing
 		t.Fatal(err)
 	}
 	defer resumed.Close(ctx)
-	_, err = resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "call", Approved: true}}))
+	_, err = resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "call", Approved: true}}))
 	if !removed || err == nil || !strings.Contains(err.Error(), "disappeared") || counter.count.Load() != 0 || chatModel.calls != 1 {
 		t.Fatalf("lost checkpoint bypassed fence: removed=%v err=%v tools=%d models=%d", removed, err, counter.count.Load(), chatModel.calls)
 	}

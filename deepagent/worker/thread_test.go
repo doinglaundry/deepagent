@@ -13,9 +13,7 @@ import (
 	"time"
 
 	"eino-cli/deepagent/config"
-	"eino-cli/deepagent/dal/model"
-	messagepkg "eino-cli/deepagent/message"
-	eventpkg "eino-cli/deepagent/protocol/event"
+	agentmodel "eino-cli/deepagent/model"
 	threadpkg "eino-cli/deepagent/thread"
 
 	modelpkg "github.com/cloudwego/eino/components/model"
@@ -32,7 +30,7 @@ func TestWorkerCanonicalRuntimeSubmitToYield(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	host := &Worker{Runtime: RuntimeConfig{Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default"}}
-	runtime, err := host.createThread(ctx, &model.Thread{ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()}})
+	runtime, err := host.createThread(ctx, &agentmodel.ThreadRecord{ThreadID: 42, SessionID: "session", Profile: &agentmodel.ThreadProfile{Cwd: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +39,7 @@ func TestWorkerCanonicalRuntimeSubmitToYield(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	posted, err := runtime.PostMessage(ctx, &threadpkg.TransportMessage{ID: "101", Type: threadpkg.MessageTypeInput, Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`), Metadata: map[string]string{"source": "test"}})
+	posted, err := runtime.PostMessage(ctx, &agentmodel.TransportMessage{ID: "101", Type: threadpkg.MessageTypeInput, Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`), Metadata: map[string]string{"source": "test"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,11 +57,11 @@ func TestWorkerCanonicalRuntimeSubmitToYield(t *testing.T) {
 				if item.Event.RunID != posted.RunID {
 					t.Fatalf("run identity changed: %+v", item.Event)
 				}
-				if string(item.Event.Type) == eventpkg.EventTypeError.String() {
+				if string(item.Event.Type) == agentmodel.EventTypeError.String() {
 					t.Fatalf("agent error: %s", item.Event.Payload)
 				}
-				if string(item.Event.Type) == eventpkg.EventTypeAssistantMessage.String() {
-					var payload eventpkg.MessageEventPayload
+				if string(item.Event.Type) == agentmodel.EventTypeAssistantMessage.String() {
+					var payload agentmodel.MessageEventPayload
 					err := json.Unmarshal(item.Event.Payload, &payload)
 					if err != nil {
 						t.Fatal(err)
@@ -98,7 +96,7 @@ func TestWorkerCreatesCanonicalRuntime(t *testing.T) {
 	host := &Worker{Runtime: RuntimeConfig{
 		Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default",
 	}}
-	runtime, err := host.createThread(context.Background(), &model.Thread{ThreadID: 42, SessionID: "session"})
+	runtime, err := host.createThread(context.Background(), &agentmodel.ThreadRecord{ThreadID: 42, SessionID: "session"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +139,8 @@ func TestWorkerBuildsPromptsAndToolsForEachRun(t *testing.T) {
 		Models:       map[string]modelpkg.ToolCallingChatModel{"default": chatModel},
 		DefaultModel: "default", SystemPrompt: "host system prompt",
 	}}
-	thread, err := host.createThread(ctx, &model.Thread{
-		ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: dir},
+	thread, err := host.createThread(ctx, &agentmodel.ThreadRecord{
+		ThreadID: 42, SessionID: "session", Profile: &agentmodel.ThreadProfile{Cwd: dir},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +151,7 @@ func TestWorkerBuildsPromptsAndToolsForEachRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		posted, err := thread.SubmitInput(ctx, messagepkg.NewUserMessage("hello"))
+		posted, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage("hello"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,8 +185,8 @@ func TestCreateThreadDockerAllocationFailure(t *testing.T) {
 		Models:         map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}},
 		DefaultModel:   "default",
 	}}
-	thread, err := host.createThread(context.Background(), &model.Thread{
-		ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()},
+	thread, err := host.createThread(context.Background(), &agentmodel.ThreadRecord{
+		ThreadID: 42, SessionID: "session", Profile: &agentmodel.ThreadProfile{Cwd: t.TempDir()},
 	})
 	if err == nil || thread != nil {
 		t.Fatalf("expected allocation error without a Thread: thread=%v err=%v", thread, err)
@@ -197,13 +195,13 @@ func TestCreateThreadDockerAllocationFailure(t *testing.T) {
 
 type failingConversationDB struct{ err error }
 
-func (s failingConversationDB) AppendMessage(context.Context, *messagepkg.Message) error {
+func (s failingConversationDB) AppendMessage(context.Context, *agentmodel.Message) error {
 	return s.err
 }
-func (s failingConversationDB) SaveContext(context.Context, []*messagepkg.Message) error {
+func (s failingConversationDB) SaveContext(context.Context, []*agentmodel.Message) error {
 	return s.err
 }
-func (s failingConversationDB) LoadContext(context.Context, string) ([]*messagepkg.Message, []string, int64, error) {
+func (s failingConversationDB) LoadContext(context.Context, string) ([]*agentmodel.Message, []string, int64, error) {
 	return nil, nil, 0, s.err
 }
 
@@ -252,8 +250,8 @@ esac
 			case "init_failure":
 				host.Deps.ConversationDB = failingConversationDB{err: historyErr}
 			}
-			thread, err := host.createThread(context.Background(), &model.Thread{
-				ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: dir},
+			thread, err := host.createThread(context.Background(), &agentmodel.ThreadRecord{
+				ThreadID: 42, SessionID: "session", Profile: &agentmodel.ThreadProfile{Cwd: dir},
 			})
 			if scenario == "config_failure" {
 				if err == nil || thread != nil {

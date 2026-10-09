@@ -2,19 +2,21 @@ package execution
 
 import (
 	"context"
-	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
 	"fmt"
-	"github.com/cloudwego/eino/compose"
 	"sort"
 	"sync"
 	"time"
+
+	"eino-cli/deepagent/graph/tools"
+	agentmodel "eino-cli/deepagent/model"
+
+	"github.com/cloudwego/eino/compose"
 )
 
 // toolExecution owns one attempt and its durable call state.
 // A resumed blocked call gets a new execution record so previous waiters keep their result.
 type toolExecution struct {
-	toolCallState types.ToolCallState
+	toolCallState agentmodel.ToolCallState
 	done          chan struct{}
 	cancel        context.CancelFunc
 	err           error
@@ -23,19 +25,19 @@ type toolExecution struct {
 type toolExecutor struct {
 	approvalAnswerConsumed         bool // A node-scoped Eino answer authorizes only one tool call per resume.
 	childCheckpointStoresByCallID  map[string]*childCheckpointStore
-	onToolStart                    func(context.Context, types.ToolCallState) error
-	persistToolExecutionFence      func(context.Context, types.ToolCall) error
+	onToolStart                    func(context.Context, agentmodel.ToolCallState) error
+	persistToolExecutionFence      func(context.Context, agentmodel.ToolCall) error
 	eagerToolWaitGroup             sync.WaitGroup
 	toolSet                        *tools.ToolSet
 	maxParallelTools               int
-	toolPolicy                     tools.Policy
+	toolPolicy                     agentmodel.Policy
 	toolExecutionsByCallID         map[string]*toolExecution
 	mu                             sync.Mutex
 	approvedEagerArgumentsByCallID map[string]string
 	isClosed                       bool
 }
 
-func newToolExecutor(toolSet *tools.ToolSet, maxParallelTools int, toolPolicy tools.Policy) *toolExecutor {
+func newToolExecutor(toolSet *tools.ToolSet, maxParallelTools int, toolPolicy agentmodel.Policy) *toolExecutor {
 	if maxParallelTools < 1 {
 		maxParallelTools = 1
 	}
@@ -46,7 +48,7 @@ func newToolExecutor(toolSet *tools.ToolSet, maxParallelTools int, toolPolicy to
 	}
 }
 
-func (toolExecutor *toolExecutor) executeToolCall(ctx context.Context, toolCall types.ToolCall, emitToolChunk types.ToolChunkSink) (*types.ToolResult, error) {
+func (toolExecutor *toolExecutor) executeToolCall(ctx context.Context, toolCall agentmodel.ToolCall, emitToolChunk agentmodel.ToolChunkSink) (*agentmodel.ToolResult, error) {
 	if toolCall.ID == "" {
 		return nil, fmt.Errorf("tool call ID is required")
 	}
@@ -60,11 +62,11 @@ func (toolExecutor *toolExecutor) executeToolCall(ctx context.Context, toolCall 
 			return nil, fmt.Errorf("tool call %s changed after execution started", toolCall.ID)
 		}
 		switch toolExecutionRecord.toolCallState.Status {
-		case types.CallCompleted:
+		case agentmodel.CallCompleted:
 			toolResult := copyToolResult(toolExecutionRecord.toolCallState.Result)
 			toolExecutor.mu.Unlock()
 			return toolResult, nil
-		case types.CallRunning:
+		case agentmodel.CallRunning:
 			toolExecutor.mu.Unlock()
 			select {
 			case <-toolExecutionRecord.done:
@@ -78,12 +80,12 @@ func (toolExecutor *toolExecutor) executeToolCall(ctx context.Context, toolCall 
 		toolExecutor.mu.Unlock()
 		return nil, context.Canceled
 	}
-	if toolExecutionRecord != nil && toolExecutionRecord.toolCallState.Status == types.CallOutcomeUnknown {
+	if toolExecutionRecord != nil && toolExecutionRecord.toolCallState.Status == agentmodel.CallOutcomeUnknown {
 		toolExecutor.mu.Unlock()
 		return nil, fmt.Errorf("tool call %s has unknown outcome; explicit reconciliation required", toolCall.ID)
 	}
 	toolCtx, cancel := context.WithCancel(ctx)
-	toolCallState := types.ToolCallState{Call: toolCall, Status: types.CallRunning, StartedAt: time.Now()}
+	toolCallState := agentmodel.ToolCallState{Call: toolCall, Status: agentmodel.CallRunning, StartedAt: time.Now()}
 	toolExecutionRecord = &toolExecution{toolCallState: toolCallState, done: make(chan struct{}), cancel: cancel}
 	toolExecutor.toolExecutionsByCallID[callID] = toolExecutionRecord
 	toolExecutor.mu.Unlock()
@@ -93,13 +95,13 @@ func (toolExecutor *toolExecutor) executeToolCall(ctx context.Context, toolCall 
 	toolExecutor.mu.Lock()
 	toolExecutionRecord.toolCallState.Result = copyToolResult(toolResult)
 	toolExecutionRecord.err = err
-	toolExecutionRecord.toolCallState.Status = types.CallCompleted
+	toolExecutionRecord.toolCallState.Status = agentmodel.CallCompleted
 	if err != nil {
 		_, isToolInterrupted := compose.IsInterruptRerunError(err)
 		_, hasNestedInterrupt := compose.ExtractInterruptInfo(err)
-		toolExecutionRecord.toolCallState.Status = types.CallOutcomeUnknown
+		toolExecutionRecord.toolCallState.Status = agentmodel.CallOutcomeUnknown
 		if isToolInterrupted || hasNestedInterrupt {
-			toolExecutionRecord.toolCallState.Status = types.CallBlocked
+			toolExecutionRecord.toolCallState.Status = agentmodel.CallBlocked
 		}
 	}
 	close(toolExecutionRecord.done)
@@ -107,7 +109,7 @@ func (toolExecutor *toolExecutor) executeToolCall(ctx context.Context, toolCall 
 	return toolResult, err
 }
 
-func copyToolResult(toolResult *types.ToolResult) *types.ToolResult {
+func copyToolResult(toolResult *agentmodel.ToolResult) *agentmodel.ToolResult {
 	if toolResult == nil {
 		return nil
 	}
@@ -115,8 +117,8 @@ func copyToolResult(toolResult *types.ToolResult) *types.ToolResult {
 	return &resultCopy
 }
 
-func (toolExecutor *toolExecutor) executeToolBatch(ctx context.Context, toolCalls []types.ToolCall, emitToolChunk types.ToolChunkSink) error {
-	orderedToolCalls := append([]types.ToolCall(nil), toolCalls...)
+func (toolExecutor *toolExecutor) executeToolBatch(ctx context.Context, toolCalls []agentmodel.ToolCall, emitToolChunk agentmodel.ToolChunkSink) error {
+	orderedToolCalls := append([]agentmodel.ToolCall(nil), toolCalls...)
 	sort.SliceStable(orderedToolCalls, func(i, j int) bool { return orderedToolCalls[i].Index < orderedToolCalls[j].Index })
 	executionErrors := make([]error, len(orderedToolCalls))
 	executeCall := func(i int) {
@@ -169,18 +171,18 @@ func (toolExecutor *toolExecutor) executeToolBatch(ctx context.Context, toolCall
 	return nil
 }
 
-func (toolExecutor *toolExecutor) restoreToolExecutions(toolCalls []types.ToolCallState) {
+func (toolExecutor *toolExecutor) restoreToolExecutions(toolCalls []agentmodel.ToolCallState) {
 	toolExecutor.mu.Lock()
 	defer toolExecutor.mu.Unlock()
 	for _, toolCallState := range toolCalls {
 		toolCallState.Result = copyToolResult(toolCallState.Result)
 		switch toolCallState.Status {
-		case types.CallRunning:
+		case agentmodel.CallRunning:
 			// The process that owned this invocation is gone; do not replay it.
-			toolCallState.Status = types.CallOutcomeUnknown
-		case types.CallCompleted:
+			toolCallState.Status = agentmodel.CallOutcomeUnknown
+		case agentmodel.CallCompleted:
 			if toolCallState.Result == nil {
-				toolCallState.Status = types.CallPending
+				toolCallState.Status = agentmodel.CallPending
 			}
 		}
 		toolExecutor.toolExecutionsByCallID[toolCallState.Call.ID] = &toolExecution{toolCallState: toolCallState}
@@ -192,7 +194,7 @@ func (toolExecutor *toolExecutor) cancelToolExecutions(ctx context.Context) erro
 	toolExecutor.isClosed = true
 	var activeToolExecutions []*toolExecution
 	for _, toolExecutionRecord := range toolExecutor.toolExecutionsByCallID {
-		if toolExecutionRecord.toolCallState.Status == types.CallRunning {
+		if toolExecutionRecord.toolCallState.Status == agentmodel.CallRunning {
 			toolExecutionRecord.cancel()
 			activeToolExecutions = append(activeToolExecutions, toolExecutionRecord)
 		}
@@ -210,13 +212,13 @@ func (toolExecutor *toolExecutor) cancelToolExecutions(ctx context.Context) erro
 }
 
 // snapshotToolExecutions copies the ledger into the existing graph call order.
-func (toolExecutor *toolExecutor) snapshotToolExecutions(toolCalls []types.ToolCallState) {
+func (toolExecutor *toolExecutor) snapshotToolExecutions(toolCalls []agentmodel.ToolCallState) {
 	toolExecutor.mu.Lock()
 	defer toolExecutor.mu.Unlock()
 	for i := range toolCalls {
 		toolExecutionRecord := toolExecutor.toolExecutionsByCallID[toolCalls[i].Call.ID]
 		if toolExecutionRecord == nil {
-			toolCalls[i].Status = types.CallPending
+			toolCalls[i].Status = agentmodel.CallPending
 			continue
 		}
 		toolCalls[i].Status = toolExecutionRecord.toolCallState.Status
@@ -225,7 +227,7 @@ func (toolExecutor *toolExecutor) snapshotToolExecutions(toolCalls []types.ToolC
 	}
 }
 
-func (toolExecutor *toolExecutor) startEagerToolIfAllowed(ctx context.Context, toolCall types.ToolCall, emitToolChunk types.ToolChunkSink) (bool, error) {
+func (toolExecutor *toolExecutor) startEagerToolIfAllowed(ctx context.Context, toolCall agentmodel.ToolCall, emitToolChunk agentmodel.ToolChunkSink) (bool, error) {
 	toolDescriptor, ok := toolExecutor.toolSet.GetToolDescriptor(toolCall.Name)
 	if !ok || !toolDescriptor.ParallelSafe || toolDescriptor.RequiresApproval {
 		return false, nil
@@ -235,7 +237,7 @@ func (toolExecutor *toolExecutor) startEagerToolIfAllowed(ctx context.Context, t
 		if err != nil {
 			return false, err
 		}
-		if policyDecision.Action != tools.Allow {
+		if policyDecision.Action != agentmodel.Allow {
 			return false, nil
 		}
 		toolExecutor.mu.Lock()

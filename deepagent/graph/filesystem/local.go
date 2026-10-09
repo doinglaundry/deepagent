@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	agentmodel "eino-cli/deepagent/model"
 )
 
 type LocalFilesystem struct {
@@ -54,7 +56,7 @@ func NewLocalFilesystem(filesystemConfig *LocalFilesystemConfig, threadID string
 	}
 	maxFileSize := filesystemConfig.MaxFileSizeMB
 	if maxFileSize <= 0 {
-		maxFileSize = MaxFileSizeMB
+		maxFileSize = agentmodel.MaxFileSizeMB
 	}
 	localFilesystem := &LocalFilesystem{rootDir: rootDir, virtualMode: filesystemConfig.VirtualMode, maxFileSizeMB: maxFileSize}
 	rootInfo, err := os.Stat(localFilesystem.GetRoot())
@@ -68,13 +70,13 @@ func NewLocalFilesystem(filesystemConfig *LocalFilesystemConfig, threadID string
 	return localFilesystem, nil
 }
 
-func (localFilesystem *LocalFilesystem) Execute(ctx context.Context, request CommandRequest) (*CommandResult, error) {
+func (localFilesystem *LocalFilesystem) Execute(ctx context.Context, request agentmodel.CommandRequest) (*agentmodel.CommandResult, error) {
 	return localFilesystem.commands.Execute(ctx, request)
 }
-func (localFilesystem *LocalFilesystem) Start(ctx context.Context, request CommandRequest) (string, error) {
+func (localFilesystem *LocalFilesystem) Start(ctx context.Context, request agentmodel.CommandRequest) (string, error) {
 	return localFilesystem.commands.Start(ctx, request)
 }
-func (localFilesystem *LocalFilesystem) Wait(ctx context.Context, id, pattern string, offset int) (*CommandSnapshot, error) {
+func (localFilesystem *LocalFilesystem) Wait(ctx context.Context, id, pattern string, offset int) (*agentmodel.CommandSnapshot, error) {
 	return localFilesystem.commands.Wait(ctx, id, pattern, offset)
 }
 func (localFilesystem *LocalFilesystem) Cancel(ctx context.Context, id string) error {
@@ -84,16 +86,16 @@ func (localFilesystem *LocalFilesystem) Close(ctx context.Context) error {
 	return localFilesystem.commands.Close(ctx)
 }
 
-var _ Filesystem = (*LocalFilesystem)(nil)
-var _ CommandService = (*LocalFilesystem)(nil)
-var _ ToolFilesystem = (*LocalFilesystem)(nil)
+var _ agentmodel.Filesystem = (*LocalFilesystem)(nil)
+var _ agentmodel.CommandService = (*LocalFilesystem)(nil)
+var _ agentmodel.ToolFilesystem = (*LocalFilesystem)(nil)
 var _ patchFilesystem = (*LocalFilesystem)(nil)
 
 func (localFilesystem *LocalFilesystem) resolvePath(path string) (string, error) {
 	// 安全检查：禁止路径遍历
 	cleanPath := filepath.Clean(path)
 	if cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
-		return "", ErrInvalidPath
+		return "", agentmodel.ErrInvalidPath
 	}
 
 	// 处理相对路径
@@ -122,7 +124,7 @@ func (localFilesystem *LocalFilesystem) resolvePath(path string) (string, error)
 	// 虚拟模式下，确保路径在 rootDir 下
 	if localFilesystem.virtualMode {
 		if !isPathWithinRoot(absolutePath, localFilesystem.rootDir) {
-			return "", ErrInvalidPath
+			return "", agentmodel.ErrInvalidPath
 		}
 	}
 
@@ -218,7 +220,7 @@ func (localFilesystem *LocalFilesystem) openRoot(ctx context.Context, path strin
 	}
 	relativePath, err := filepath.Rel(localFilesystem.rootDir, absolutePath)
 	if err != nil || !filepath.IsLocal(relativePath) {
-		return nil, "", ErrInvalidPath
+		return nil, "", agentmodel.ErrInvalidPath
 	}
 	workspaceRoot, err := os.OpenRoot(localFilesystem.rootDir)
 	if err != nil {
@@ -299,7 +301,7 @@ func (localFilesystem *LocalFilesystem) Read(ctx context.Context, path string, o
 	}
 	return ReadFileLines(string(contentBytes), offset, limit), nil
 }
-func (localFilesystem *LocalFilesystem) Write(ctx context.Context, path, content string) (*WriteResult, error) {
+func (localFilesystem *LocalFilesystem) Write(ctx context.Context, path, content string) (*agentmodel.WriteResult, error) {
 	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
@@ -313,9 +315,9 @@ func (localFilesystem *LocalFilesystem) Write(ctx context.Context, path, content
 	if err != nil {
 		return nil, err
 	}
-	return &WriteResult{Path: path}, nil
+	return &agentmodel.WriteResult{Path: path}, nil
 }
-func (localFilesystem *LocalFilesystem) CreateFileNoReplace(ctx context.Context, path, content string) (*WriteResult, error) {
+func (localFilesystem *LocalFilesystem) CreateFileNoReplace(ctx context.Context, path, content string) (*agentmodel.WriteResult, error) {
 	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
@@ -347,14 +349,14 @@ func (localFilesystem *LocalFilesystem) CreateFileNoReplace(ctx context.Context,
 	err = workspaceRoot.Link(temporaryPath, relativePath)
 	if err != nil {
 		if os.IsExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, path)
+			return nil, fmt.Errorf("%w: %s", agentmodel.ErrAlreadyExists, path)
 		}
 		return nil, err
 	}
-	return &WriteResult{Path: path}, nil
+	return &agentmodel.WriteResult{Path: path}, nil
 }
 
-func (localFilesystem *LocalFilesystem) Edit(ctx context.Context, path, oldText, newText string, replaceAll bool) (*EditResult, error) {
+func (localFilesystem *LocalFilesystem) Edit(ctx context.Context, path, oldText, newText string, replaceAll bool) (*agentmodel.EditResult, error) {
 	if oldText == "" {
 		return nil, fmt.Errorf("old text is required")
 	}
@@ -364,13 +366,13 @@ func (localFilesystem *LocalFilesystem) Edit(ctx context.Context, path, oldText,
 	}
 	updatedContent, occurrences, err := ReplaceFileText(string(contentBytes), oldText, newText, replaceAll)
 	if err != nil {
-		return &EditResult{Path: path, Occurrences: occurrences}, err
+		return &agentmodel.EditResult{Path: path, Occurrences: occurrences}, err
 	}
 	_, err = localFilesystem.Write(ctx, path, updatedContent)
 	if err != nil {
 		return nil, err
 	}
-	return &EditResult{Path: path, Occurrences: occurrences}, nil
+	return &agentmodel.EditResult{Path: path, Occurrences: occurrences}, nil
 }
 func (localFilesystem *LocalFilesystem) Delete(ctx context.Context, path string) (string, error) {
 	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
@@ -394,7 +396,7 @@ func (localFilesystem *LocalFilesystem) Delete(ctx context.Context, path string)
 	}
 	return "Deleted file " + path, nil
 }
-func (localFilesystem *LocalFilesystem) List(ctx context.Context, path string) ([]FileInfo, error) {
+func (localFilesystem *LocalFilesystem) List(ctx context.Context, path string) ([]agentmodel.FileInfo, error) {
 	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
@@ -409,7 +411,7 @@ func (localFilesystem *LocalFilesystem) List(ctx context.Context, path string) (
 	if err != nil {
 		return nil, err
 	}
-	fileInfos := make([]FileInfo, 0, len(entries))
+	fileInfos := make([]agentmodel.FileInfo, 0, len(entries))
 	for _, entry := range entries {
 		contextErr := ctx.Err()
 		if contextErr != nil {
@@ -419,7 +421,7 @@ func (localFilesystem *LocalFilesystem) List(ctx context.Context, path string) (
 		if err != nil {
 			return nil, err
 		}
-		fileInfos = append(fileInfos, FileInfo{Path: filepath.Join(path, entry.Name()), IsDir: entry.IsDir(), IsSymlink: entry.Type()&os.ModeSymlink != 0, Size: fileInfo.Size(), ModifiedAt: fileInfo.ModTime()})
+		fileInfos = append(fileInfos, agentmodel.FileInfo{Path: filepath.Join(path, entry.Name()), IsDir: entry.IsDir(), IsSymlink: entry.Type()&os.ModeSymlink != 0, Size: fileInfo.Size(), ModifiedAt: fileInfo.ModTime()})
 	}
 	sort.Slice(fileInfos, func(i, j int) bool {
 		if fileInfos[i].IsDir != fileInfos[j].IsDir {
@@ -429,13 +431,13 @@ func (localFilesystem *LocalFilesystem) List(ctx context.Context, path string) (
 	})
 	return fileInfos, nil
 }
-func (localFilesystem *LocalFilesystem) Glob(ctx context.Context, pattern, path string) ([]FileInfo, error) {
+func (localFilesystem *LocalFilesystem) Glob(ctx context.Context, pattern, path string) ([]agentmodel.FileInfo, error) {
 	workspaceRoot, relativePath, err := localFilesystem.openRoot(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	defer workspaceRoot.Close()
-	var fileInfos []FileInfo
+	var fileInfos []agentmodel.FileInfo
 	err = fs.WalkDir(workspaceRoot.FS(), filepath.ToSlash(relativePath), func(entryPath string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -458,7 +460,7 @@ func (localFilesystem *LocalFilesystem) Glob(ctx context.Context, pattern, path 
 		if err != nil {
 			return err
 		}
-		fileInfos = append(fileInfos, FileInfo{Path: entryPath, IsDir: entry.IsDir(), IsSymlink: entry.Type()&os.ModeSymlink != 0, Size: fileInfo.Size(), ModifiedAt: fileInfo.ModTime()})
+		fileInfos = append(fileInfos, agentmodel.FileInfo{Path: entryPath, IsDir: entry.IsDir(), IsSymlink: entry.Type()&os.ModeSymlink != 0, Size: fileInfo.Size(), ModifiedAt: fileInfo.ModTime()})
 		if len(fileInfos) >= globMaxResults {
 			return fs.SkipAll
 		}
@@ -470,7 +472,7 @@ func (localFilesystem *LocalFilesystem) Glob(ctx context.Context, pattern, path 
 	sort.Slice(fileInfos, func(i, j int) bool { return fileInfos[i].Path < fileInfos[j].Path })
 	return fileInfos, nil
 }
-func (localFilesystem *LocalFilesystem) Grep(ctx context.Context, pattern, path, glob string) ([]GrepMatch, error) {
+func (localFilesystem *LocalFilesystem) Grep(ctx context.Context, pattern, path, glob string) ([]agentmodel.GrepMatch, error) {
 	patternRegexp, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, err
@@ -480,7 +482,7 @@ func (localFilesystem *LocalFilesystem) Grep(ctx context.Context, pattern, path,
 		return nil, err
 	}
 	defer workspaceRoot.Close()
-	var grepMatches []GrepMatch
+	var grepMatches []agentmodel.GrepMatch
 	err = fs.WalkDir(workspaceRoot.FS(), filepath.ToSlash(relativePath), func(entryPath string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -527,7 +529,7 @@ func (localFilesystem *LocalFilesystem) Grep(ctx context.Context, pattern, path,
 				return nil
 			}
 			if patternRegexp.MatchString(text) {
-				grepMatches = append(grepMatches, GrepMatch{Path: entryPath, Line: lineNumber, Text: text})
+				grepMatches = append(grepMatches, agentmodel.GrepMatch{Path: entryPath, Line: lineNumber, Text: text})
 				if len(grepMatches) >= 100 {
 					return fs.SkipAll
 				}
@@ -540,17 +542,17 @@ func (localFilesystem *LocalFilesystem) Grep(ctx context.Context, pattern, path,
 func (localFilesystem *LocalFilesystem) UploadFiles(ctx context.Context, files []struct {
 	Path    string
 	Content []byte
-}) ([]FileUploadResponse, error) {
-	uploadResponses := make([]FileUploadResponse, 0, len(files))
+}) ([]agentmodel.FileUploadResponse, error) {
+	uploadResponses := make([]agentmodel.FileUploadResponse, 0, len(files))
 	for _, file := range files {
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr
 		}
 		writeResult, err := localFilesystem.Write(ctx, file.Path, string(file.Content))
-		response := FileUploadResponse{Path: file.Path}
+		response := agentmodel.FileUploadResponse{Path: file.Path}
 		if err != nil {
-			response.Error = ErrInvalidPath
+			response.Error = agentmodel.ErrInvalidPath
 		} else if writeResult != nil {
 			response.Error = writeResult.Error
 		}
@@ -558,17 +560,17 @@ func (localFilesystem *LocalFilesystem) UploadFiles(ctx context.Context, files [
 	}
 	return uploadResponses, nil
 }
-func (localFilesystem *LocalFilesystem) DownloadFiles(ctx context.Context, paths []string) ([]FileDownloadResponse, error) {
-	downloadResponses := make([]FileDownloadResponse, 0, len(paths))
+func (localFilesystem *LocalFilesystem) DownloadFiles(ctx context.Context, paths []string) ([]agentmodel.FileDownloadResponse, error) {
+	downloadResponses := make([]agentmodel.FileDownloadResponse, 0, len(paths))
 	for _, path := range paths {
 		contextErr := ctx.Err()
 		if contextErr != nil {
 			return nil, contextErr
 		}
 		contentBytes, err := localFilesystem.readBytes(ctx, path)
-		response := FileDownloadResponse{Path: path, Content: contentBytes}
+		response := agentmodel.FileDownloadResponse{Path: path, Content: contentBytes}
 		if err != nil {
-			response.Error = ErrInvalidPath
+			response.Error = agentmodel.ErrInvalidPath
 		}
 		downloadResponses = append(downloadResponses, response)
 	}

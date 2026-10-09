@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 func TestService_OneInstanceKeepsScopesSeparate(t *testing.T) {
@@ -13,13 +13,13 @@ func TestService_OneInstanceKeepsScopesSeparate(t *testing.T) {
 		if shared {
 			config.Store = newMemoryStore()
 		}
-		var service Service
+		var service agentmodel.MemoryService
 		service, err := New(config)
 		if err != nil {
 			t.Fatal(err)
 		}
 		ctx := context.Background()
-		observeErr := service.Observe(ctx, "user/one", "same-thread", []*messagepkg.Message{messagepkg.NewUserMessage("fact")})
+		observeErr := service.Observe(ctx, "user/one", "same-thread", []*agentmodel.Message{agentmodel.NewUserMessage("fact")})
 		if observeErr != nil {
 			t.Fatal(observeErr)
 		}

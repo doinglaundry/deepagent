@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"github.com/chromedp/chromedp"
 	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	agentmodel "eino-cli/deepagent/model"
+
+	"github.com/chromedp/chromedp"
 )
 
 func TestBrowser_RealActionsAndStaleObservation(t *testing.T) {
@@ -27,7 +30,7 @@ func TestBrowser_RealActionsAndStaleObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer browser.Close(context.Background())
-	observation, err := browser.PerformAction(ctx, "open", Action{URL: page.URL})
+	observation, err := browser.PerformAction(ctx, "open", agentmodel.ComputerAction{URL: page.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,19 +55,19 @@ func TestBrowser_RealActionsAndStaleObservation(t *testing.T) {
 		t.Fatalf("missing page elements: url=%s dimensions=%dx%d text=%q elements=%+v", observation.URL, observation.Width, observation.Height, observation.Text, observation.Elements)
 	}
 	oldID := observation.ID
-	observation, err = browser.PerformAction(ctx, "type_text", Action{ObservationID: observation.ID, ElementID: inputID, Text: "DeepAgent"})
+	observation, err = browser.PerformAction(ctx, "type_text", agentmodel.ComputerAction{ObservationID: observation.ID, ElementID: inputID, Text: "DeepAgent"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = browser.PerformAction(ctx, "click", Action{ObservationID: oldID, ElementID: buttonID})
+	_, err = browser.PerformAction(ctx, "click", agentmodel.ComputerAction{ObservationID: oldID, ElementID: buttonID})
 	if err == nil {
 		t.Fatal("stale observation executed")
 	}
-	observation, err = browser.PerformAction(ctx, "click", Action{ObservationID: observation.ID, ElementID: buttonID})
+	observation, err = browser.PerformAction(ctx, "click", agentmodel.ComputerAction{ObservationID: observation.ID, ElementID: buttonID})
 	if err != nil || !strings.Contains(observation.Text, "DeepAgent") {
 		t.Fatalf("click did not update page: %+v %v", observation, err)
 	}
-	observation, err = browser.PerformAction(ctx, "scroll", Action{ObservationID: observation.ID, DeltaY: 600})
+	observation, err = browser.PerformAction(ctx, "scroll", agentmodel.ComputerAction{ObservationID: observation.ID, DeltaY: 600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,11 +76,11 @@ func TestBrowser_RealActionsAndStaleObservation(t *testing.T) {
 	}
 	canceledCtx, stop := context.WithCancel(ctx)
 	stop()
-	_, err = browser.PerformAction(canceledCtx, "observe", Action{})
+	_, err = browser.PerformAction(canceledCtx, "observe", agentmodel.ComputerAction{})
 	if err == nil {
 		t.Fatal("canceled request succeeded")
 	}
-	_, err = browser.PerformAction(ctx, "observe", Action{})
+	_, err = browser.PerformAction(ctx, "observe", agentmodel.ComputerAction{})
 	if err != nil {
 		t.Fatalf("request cancellation closed browser: %v", err)
 	}
@@ -90,7 +93,7 @@ func TestBrowser_OpenRejectsInvalidURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer browser.Close(context.Background())
-	_, err = browser.PerformAction(context.Background(), "open", Action{URL: "file:///etc/passwd"})
+	_, err = browser.PerformAction(context.Background(), "open", agentmodel.ComputerAction{URL: "file:///etc/passwd"})
 	if err == nil {
 		t.Fatal("non-web URL accepted")
 	}
@@ -108,7 +111,7 @@ func TestBrowser_OverlayCannotReceiveApprovedElementClick(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer browser.Close(context.Background())
-	observation, err := browser.PerformAction(context.Background(), "open", Action{URL: page.URL})
+	observation, err := browser.PerformAction(context.Background(), "open", agentmodel.ComputerAction{URL: page.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +119,7 @@ func TestBrowser_OverlayCannotReceiveApprovedElementClick(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = browser.PerformAction(context.Background(), "click", Action{URL: observation.URL, ObservationID: observation.ID, ElementID: 1})
+	_, err = browser.PerformAction(context.Background(), "click", agentmodel.ComputerAction{URL: observation.URL, ObservationID: observation.ID, ElementID: 1})
 	if err == nil || !strings.Contains(err.Error(), "stale_observation") {
 		t.Fatalf("overlay was clicked: %v", err)
 	}

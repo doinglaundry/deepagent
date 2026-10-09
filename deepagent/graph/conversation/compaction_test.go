@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -19,21 +18,21 @@ import (
 func TestBuildRequestPreservesHistoricalMessages(t *testing.T) {
 	ctx := context.Background()
 	conversation := New("thread", nil, nil, nil, 0, nil)
-	original := messagepkg.NewSystemMessage("historical instruction")
-	err := conversation.AddHistory(ctx, "old", original, messagepkg.NewUserMessage("prior"))
+	original := agentmodel.NewSystemMessage("historical instruction")
+	err := conversation.AddHistory(ctx, "old", original, agentmodel.NewUserMessage("prior"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := conversation.BuildRequest(ctx, []*messagepkg.Message{messagepkg.NewSystemMessage("fresh prompt")})
+	request, err := conversation.BuildRequest(ctx, []*agentmodel.Message{agentmodel.NewSystemMessage("fresh prompt")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(request) != 3 || request[0].Content != "fresh prompt" || !reflect.DeepEqual(messagepkg.ToEino(request[1]), messagepkg.ToEino(original)) {
+	if len(request) != 3 || request[0].Content != "fresh prompt" || !reflect.DeepEqual(agentmodel.ToEino(request[1]), agentmodel.ToEino(original)) {
 		t.Fatalf("request lost prompt or history: %v", request)
 	}
-	request[1] = messagepkg.NewSystemMessage("replacement")
+	request[1] = agentmodel.NewSystemMessage("replacement")
 	history := conversation.GetHistory(ctx)
-	if len(history) != 2 || !reflect.DeepEqual(messagepkg.ToEino(history[0]), messagepkg.ToEino(original)) || original.Content != "historical instruction" {
+	if len(history) != 2 || !reflect.DeepEqual(agentmodel.ToEino(history[0]), agentmodel.ToEino(original)) || original.Content != "historical instruction" {
 		t.Fatal("request projection mutated source history")
 	}
 }
@@ -54,11 +53,11 @@ func (summaryModel) Stream(context.Context, []*schema.Message, ...model.Option) 
 
 func TestSummaryCompactionPreservesRecentToolExchange(t *testing.T) {
 	strategy := &SummaryCompaction{Model: summaryModel{}, KeepRecent: 3, TokenLimit: 100}
-	current := []*messagepkg.Message{
-		messagepkg.NewUserMessage("old"), messagepkg.NewAssistantMessage("old answer", nil),
-		messagepkg.NewUserMessage("new"),
+	current := []*agentmodel.Message{
+		agentmodel.NewUserMessage("old"), agentmodel.NewAssistantMessage("old answer", nil),
+		agentmodel.NewUserMessage("new"),
 		{Role: schema.Assistant, ToolCalls: []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "read"}}}},
-		messagepkg.NewToolMessage("result", "call"), messagepkg.NewAssistantMessage("done", nil),
+		agentmodel.NewToolMessage("result", "call"), agentmodel.NewAssistantMessage("done", nil),
 	}
 	summary, compactedmsgcnt, err := strategy.Summarize(context.Background(), current)
 	if err != nil {
@@ -77,7 +76,7 @@ func TestSummaryCompactionPreservesRecentToolExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = liveConversation.AddHistory(context.Background(), "run", messagepkg.NewUserMessage("later"))
+	err = liveConversation.AddHistory(context.Background(), "run", agentmodel.NewUserMessage("later"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,18 +92,18 @@ func TestSummaryCompactionPreservesRecentToolExchange(t *testing.T) {
 }
 
 func TestCompactionPreservesConcurrentHistory(t *testing.T) {
-	oldSummary := messagepkg.NewSystemMessage("Earlier conversation summary:\nold goal")
-	newSummary := messagepkg.NewSystemMessage("Earlier conversation summary:\nreplacement")
-	original := []*messagepkg.Message{messagepkg.NewUserMessage("old"), messagepkg.NewAssistantMessage("old answer", nil), messagepkg.NewUserMessage("retain"), messagepkg.NewUserMessage("new input")}
+	oldSummary := agentmodel.NewSystemMessage("Earlier conversation summary:\nold goal")
+	newSummary := agentmodel.NewSystemMessage("Earlier conversation summary:\nreplacement")
+	original := []*agentmodel.Message{agentmodel.NewUserMessage("old"), agentmodel.NewAssistantMessage("old answer", nil), agentmodel.NewUserMessage("retain"), agentmodel.NewUserMessage("new input")}
 	for _, testCase := range []struct {
 		name        string
-		want        []*messagepkg.Message
+		want        []*agentmodel.Message
 		wantCompact bool
 		wantError   bool
 	}{
-		{"append", []*messagepkg.Message{oldSummary, original[2], original[3]}, true, false},
-		{"another_compaction", []*messagepkg.Message{newSummary, original[3]}, false, false},
-		{"reload", []*messagepkg.Message{newSummary, original[3]}, false, false},
+		{"append", []*agentmodel.Message{oldSummary, original[2], original[3]}, true, false},
+		{"another_compaction", []*agentmodel.Message{newSummary, original[3]}, false, false},
+		{"reload", []*agentmodel.Message{newSummary, original[3]}, false, false},
 		{"store_failure", original, false, true},
 		{"cancel", original, false, true},
 	} {
@@ -135,7 +134,7 @@ func TestCompactionPreservesConcurrentHistory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			compacted := make(chan *types.ContextTokenUsage, 1)
+			compacted := make(chan *agentmodel.ContextTokenUsage, 1)
 			failed := make(chan error, 1)
 			go func() {
 				payload, err := liveConversation.Compact(ctx, "run")
@@ -173,7 +172,7 @@ func TestCompactionPreservesConcurrentHistory(t *testing.T) {
 			}
 			beforeUsage := liveConversation.GetContextUsage()
 			finishSummary()
-			var payload *types.ContextTokenUsage
+			var payload *agentmodel.ContextTokenUsage
 			select {
 			case payload = <-compacted:
 			case <-time.After(5 * time.Second):
@@ -187,7 +186,7 @@ func TestCompactionPreservesConcurrentHistory(t *testing.T) {
 				t.Fatal("compaction swallowed cancellation:", err)
 			}
 			history := liveConversation.GetHistory(context.Background())
-			if !reflect.DeepEqual(messagepkg.ToEinoMessages(history), messagepkg.ToEinoMessages(testCase.want)) {
+			if !reflect.DeepEqual(agentmodel.ToEinoMessages(history), agentmodel.ToEinoMessages(testCase.want)) {
 				t.Fatalf("compaction overwrote current history: %+v", history)
 			}
 			if payload == nil && liveConversation.GetContextUsage() != beforeUsage {
@@ -198,7 +197,7 @@ func TestCompactionPreservesConcurrentHistory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(messagepkg.ToEinoMessages(restoredConversation.GetHistory(context.Background())), messagepkg.ToEinoMessages(testCase.want)) {
+			if !reflect.DeepEqual(agentmodel.ToEinoMessages(restoredConversation.GetHistory(context.Background())), agentmodel.ToEinoMessages(testCase.want)) {
 				t.Fatal("durable context does not match merged history")
 			}
 			if restoredConversation.GetContextUsage() != liveConversation.GetContextUsage() {

@@ -9,13 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/helper/serialiser"
-	"eino-cli/deepagent/manager"
-	threadpkg "eino-cli/deepagent/thread"
+	agentmodel "eino-cli/deepagent/model"
 )
 
-func (c *threadRun) runOutput(stop <-chan struct{}, items <-chan threadpkg.TransportThreadOutputItem, signal chan<- struct{}, done chan<- runResult) {
+func (c *threadRun) runOutput(stop <-chan struct{}, items <-chan agentmodel.TransportThreadOutputItem, signal chan<- struct{}, done chan<- runResult) {
 	result := runResult{}
 	defer func() { done <- result }()
 	for {
@@ -37,7 +35,7 @@ func (c *threadRun) runOutput(stop <-chan struct{}, items <-chan threadpkg.Trans
 }
 
 // handleOutput persists an event before recording the first runtime yield.
-func (c *threadRun) handleOutput(item threadpkg.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
+func (c *threadRun) handleOutput(item agentmodel.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
 	if result.outputFailed {
 		return
 	}
@@ -85,7 +83,7 @@ func (c *threadRun) handleOutput(item threadpkg.TransportThreadOutputItem, signa
 	}
 }
 
-func (c *threadRun) drainOutput(items <-chan threadpkg.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
+func (c *threadRun) drainOutput(items <-chan agentmodel.TransportThreadOutputItem, signal chan<- struct{}, result *runResult) {
 	for {
 		select {
 		case item, ok := <-items:
@@ -99,7 +97,7 @@ func (c *threadRun) drainOutput(items <-chan threadpkg.TransportThreadOutputItem
 	}
 }
 
-func (w *Worker) saveThreadOutput(ctx context.Context, threadID int64, event *threadpkg.TransportEvent, leaseToken string) (resultErr error) {
+func (w *Worker) saveThreadOutput(ctx context.Context, threadID int64, event *agentmodel.TransportEvent, leaseToken string) (resultErr error) {
 	if event.ThreadID == "" {
 		event.ThreadID = fmt.Sprint(threadID)
 	}
@@ -118,7 +116,7 @@ func (w *Worker) saveThreadOutput(ctx context.Context, threadID int64, event *th
 
 		return err
 	}
-	outputs := []manager.OutputFrame{*ProtocolToOutputFrame(threadID, event)}
+	outputs := []agentmodel.OutputFrame{*ProtocolToOutputFrame(threadID, event)}
 	for attempt := 1; attempt <= defaultAppendEventAttempts; attempt++ {
 		err = ctx.Err()
 		if err != nil {
@@ -144,34 +142,34 @@ func (w *Worker) saveThreadOutput(ctx context.Context, threadID int64, event *th
 	return err
 }
 
-func ProtocolToWorkerMessage(message *dalmodel.Message) (result *threadpkg.TransportMessage) {
+func ProtocolToWorkerMessage(message *agentmodel.MailboxMessage) (result *agentmodel.TransportMessage) {
 	if message == nil {
 		return nil
 	}
-	return &threadpkg.TransportMessage{
+	return &agentmodel.TransportMessage{
 		ID:       fmt.Sprint(message.MessageID),
 		Sender:   protocolSenderFromManager(message.Sender),
-		Type:     threadpkg.TransportMessageType(message.MessageType),
+		Type:     agentmodel.TransportMessageType(message.MessageType),
 		Payload:  append([]byte(nil), message.Payload...),
 		Metadata: maps.Clone(message.Metadata),
 	}
 }
 
-func protocolSenderFromManager(sender *dalmodel.Sender) (result *threadpkg.TransportSender) {
+func protocolSenderFromManager(sender *agentmodel.MailboxSender) (result *agentmodel.TransportSender) {
 	if sender == nil {
 		return nil
 	}
-	return &threadpkg.TransportSender{
-		Type: threadpkg.TransportSenderType(strings.ToUpper(string(sender.Type))),
+	return &agentmodel.TransportSender{
+		Type: agentmodel.TransportSenderType(strings.ToUpper(string(sender.Type))),
 		ID:   sender.ID,
 	}
 }
 
-func ProtocolToOutputFrame(threadID int64, event *threadpkg.TransportEvent) (result *manager.OutputFrame) {
+func ProtocolToOutputFrame(threadID int64, event *agentmodel.TransportEvent) (result *agentmodel.OutputFrame) {
 	if event == nil {
 		return nil
 	}
-	managerEvent := &manager.OutputFrame{
+	managerEvent := &agentmodel.OutputFrame{
 		ThreadID:  threadID,
 		RunID:     event.RunID,
 		EventType: string(event.Type),

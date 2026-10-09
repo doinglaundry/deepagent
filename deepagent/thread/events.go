@@ -9,11 +9,7 @@ import (
 	"strings"
 	"time"
 
-	deeptools "eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
-	eventpkg "eino-cli/deepagent/protocol/event"
-	"eino-cli/deepagent/run"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 var (
@@ -28,7 +24,7 @@ func (t *Thread) eventID(runID string) string {
 	return fmt.Sprintf("evt_%s_%s_%d", t.ThreadID, runID, time.Now().UnixNano())
 }
 
-func agentEventPayloadForOutput(ev run.Event, usage *types.ContextTokenUsage) (eventType eventpkg.EventType, payload any, err error) {
+func agentEventPayloadForOutput(ev agentmodel.RunEvent, usage *agentmodel.ContextTokenUsage) (eventType agentmodel.OutputEventType, payload any, err error) {
 	defer func() {
 		if err == nil && payload != nil {
 			err = attachConsumedInputs(payload, ev.ConsumedInputs, ev.ConsumedInputsMeta)
@@ -36,46 +32,46 @@ func agentEventPayloadForOutput(ev run.Event, usage *types.ContextTokenUsage) (e
 	}()
 	contextUsage := convertContextUsagePayload(usage)
 	switch ev.Type {
-	case run.EventRunStart:
-		payload, err := agentEventPayload[run.RunStartPayload](ev)
+	case agentmodel.EventRunStart:
+		payload, err := agentEventPayload[agentmodel.RunStartPayload](ev)
 		if err != nil {
 			return "", nil, err
 		}
 		out := messageEventPayloadFromRunStart(payload, ev.ConsumedInputs)
 		if out == nil {
-			out = &eventpkg.MessageEventPayload{}
+			out = &agentmodel.MessageEventPayload{}
 		}
-		out.Status = eventpkg.RunStatusStarted
+		out.Status = agentmodel.RunStatusStarted
 		out.ContextUsage = contextUsage
-		return eventpkg.EventTypeRunStatus, out, nil
-	case run.EventLLMRequesting:
-		return eventpkg.EventTypeAgentActivity, &eventpkg.AgentActivityEventPayload{Phase: "thinking"}, nil
-	case run.EventInputConsumed:
-		input, err := agentEventPayload[types.Input](ev)
+		return agentmodel.EventTypeRunStatus, out, nil
+	case agentmodel.EventLLMRequesting:
+		return agentmodel.EventTypeAgentActivity, &agentmodel.AgentActivityEventPayload{Phase: "thinking"}, nil
+	case agentmodel.EventInputConsumed:
+		input, err := agentEventPayload[agentmodel.RunInput](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		out := messageEventPayloadFromRunStart(run.RunStartPayload{Input: input.Message}, []*messagepkg.Message{input.Message})
+		out := messageEventPayloadFromRunStart(agentmodel.RunStartPayload{Input: input.Message}, []*agentmodel.Message{input.Message})
 		if out == nil {
-			out = &eventpkg.MessageEventPayload{}
+			out = &agentmodel.MessageEventPayload{}
 		}
-		return eventpkg.EventTypeInputConsumed, out, nil
-	case run.EventLLMToken:
-		payload, err := agentEventPayload[types.LLMTokenChunk](ev)
+		return agentmodel.EventTypeInputConsumed, out, nil
+	case agentmodel.EventLLMToken:
+		payload, err := agentEventPayload[agentmodel.LLMTokenChunk](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		return eventpkg.EventTypeAssistantDelta, &eventpkg.AssistantDeltaEventPayload{
+		return agentmodel.EventTypeAssistantDelta, &agentmodel.AssistantDeltaEventPayload{
 			Delta:                payload.Text,
 			ThinkingContentDelta: payload.ReasoningText,
 			LLMResponseID:        payload.LLMResponseID,
 		}, nil
-	case run.EventLLMEnd:
-		payload, err := agentEventPayload[types.LLMEnd](ev)
+	case agentmodel.EventLLMEnd:
+		payload, err := agentEventPayload[agentmodel.LLMEnd](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		out := &eventpkg.MessageEventPayload{
+		out := &agentmodel.MessageEventPayload{
 			LLMResponseID: payload.LLMResponseID,
 			ContextUsage:  contextUsage,
 		}
@@ -83,112 +79,112 @@ func agentEventPayloadForOutput(ev run.Event, usage *types.ContextTokenUsage) (e
 			out.Parts = getAssistantMessageParts(payload.Message)
 			out.ThinkingContent = payload.Message.ReasoningContent
 		}
-		return eventpkg.EventTypeAssistantMessage, out, nil
-	case run.EventTokens:
-		payload, err := agentEventPayload[types.Usage](ev)
+		return agentmodel.EventTypeAssistantMessage, out, nil
+	case agentmodel.EventTokens:
+		payload, err := agentEventPayload[agentmodel.RunUsage](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		return eventpkg.EventTypeTokens, &eventpkg.TokenUsageEventPayload{PromptTokens: payload.PromptTokens, CompletionTokens: payload.CompletionTokens, TotalTokens: payload.TotalTokens}, nil
-	case run.EventToolStart:
-		payload, err := agentEventPayload[types.ToolStartPayload](ev)
+		return agentmodel.EventTypeTokens, &agentmodel.TokenUsageEventPayload{PromptTokens: payload.PromptTokens, CompletionTokens: payload.CompletionTokens, TotalTokens: payload.TotalTokens}, nil
+	case agentmodel.EventToolStart:
+		payload, err := agentEventPayload[agentmodel.ToolStartPayload](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		return eventpkg.EventTypeToolCall, &eventpkg.ToolCallEventPayload{
+		return agentmodel.EventTypeToolCall, &agentmodel.ToolCallEventPayload{
 			ToolCallID:    payload.CallID,
 			ToolName:      payload.Name,
 			ArgumentsJSON: stringPtrIfNotEmpty(payload.Args),
-			Status:        eventpkg.ToolCallStatusStarted,
+			Status:        agentmodel.ToolCallStatusStarted,
 			ContextUsage:  contextUsage,
 		}, nil
-	case run.EventToolCallOutputChunk:
-		payload, err := agentEventPayload[types.ToolCallOutputChunkPayload](ev)
+	case agentmodel.EventToolCallOutputChunk:
+		payload, err := agentEventPayload[agentmodel.ToolCallOutputChunkPayload](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		return eventpkg.EventTypeToolCall, &eventpkg.ToolCallEventPayload{
+		return agentmodel.EventTypeToolCall, &agentmodel.ToolCallEventPayload{
 			ToolCallID:  payload.CallID,
 			ToolName:    payload.Name,
-			Status:      eventpkg.ToolCallStatusStarted,
+			Status:      agentmodel.ToolCallStatusStarted,
 			OutputDelta: stringPtrIfNotEmpty(payload.Chunk),
 		}, nil
-	case run.EventToolEnd:
-		payload, err := agentEventPayload[types.ToolEndPayload](ev)
+	case agentmodel.EventToolEnd:
+		payload, err := agentEventPayload[agentmodel.ToolEndPayload](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		out := &eventpkg.ToolCallEventPayload{
+		out := &agentmodel.ToolCallEventPayload{
 			ToolCallID:    payload.CallID,
 			ToolName:      payload.Name,
 			ArgumentsJSON: stringPtrIfNotEmpty(payload.ArgumentsInJSON),
 			ResultJSON:    stringPtrIfNotEmpty(payload.Result),
-			Parts:         getUserMessageParts(&messagepkg.Message{UserInputMultiContent: payload.MultiContent}),
+			Parts:         getUserMessageParts(&agentmodel.Message{UserInputMultiContent: payload.MultiContent}),
 			IsError:       payload.IsError,
-			Status:        eventpkg.ToolCallStatusFinished,
+			Status:        agentmodel.ToolCallStatusFinished,
 			ContextUsage:  contextUsage,
 		}
 		if !payload.ToolStartTime.IsZero() && !ev.TS.IsZero() && ev.TS.After(payload.ToolStartTime) {
 			elapsed := ev.TS.Sub(payload.ToolStartTime).Milliseconds()
 			out.ElapsedMs = &elapsed
 		}
-		return eventpkg.EventTypeToolCall, out, nil
-	case run.EventPlanUpdated:
-		payload, err := agentEventPayload[deeptools.PlanUpdate](ev)
+		return agentmodel.EventTypeToolCall, out, nil
+	case agentmodel.EventPlanUpdated:
+		payload, err := agentEventPayload[agentmodel.PlanUpdate](ev)
 		if err != nil {
 			return "", nil, err
 		}
 		out := planUpdatedPayload(payload)
 		out.ContextUsage = contextUsage
-		return eventpkg.EventTypePlanUpdated, out, nil
-	case run.EventContextCompactStarted:
-		usage, err := agentEventPayload[types.ContextTokenUsage](ev)
+		return agentmodel.EventTypePlanUpdated, out, nil
+	case agentmodel.EventContextCompactStarted:
+		usage, err := agentEventPayload[agentmodel.ContextTokenUsage](ev)
 		if err != nil {
 			return "", nil, err
 		}
 		compactUsage := convertContextUsagePayload(&usage)
-		if usage == (types.ContextTokenUsage{}) {
+		if usage == (agentmodel.ContextTokenUsage{}) {
 			compactUsage = contextUsage
 		}
-		return eventpkg.EventTypeRunStatus, &eventpkg.CompactStartedEventPayload{Status: eventpkg.RunStatusCompactStarted, ContextUsage: compactUsage}, nil
-	case run.EventContextCompacted:
-		usage, err := agentEventPayload[types.ContextTokenUsage](ev)
+		return agentmodel.EventTypeRunStatus, &agentmodel.CompactStartedEventPayload{Status: agentmodel.RunStatusCompactStarted, ContextUsage: compactUsage}, nil
+	case agentmodel.EventContextCompacted:
+		usage, err := agentEventPayload[agentmodel.ContextTokenUsage](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		return eventpkg.EventTypeRunStatus, &eventpkg.ContextCompactedEventPayload{Status: eventpkg.RunStatusContextCompacted, ContextUsage: convertContextUsagePayload(&usage)}, nil
+		return agentmodel.EventTypeRunStatus, &agentmodel.ContextCompactedEventPayload{Status: agentmodel.RunStatusContextCompacted, ContextUsage: convertContextUsagePayload(&usage)}, nil
 	case agentEventContextCompactInterrupted:
 		payload, err := agentEventPayload[contextCompactInterruptedPayload](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		return eventpkg.EventTypeRunStatus, &eventpkg.CompactInterruptedEventPayload{
-			Status:           eventpkg.RunStatusCompactInterrupted,
+		return agentmodel.EventTypeRunStatus, &agentmodel.CompactInterruptedEventPayload{
+			Status:           agentmodel.RunStatusCompactInterrupted,
 			Kind:             payload.Kind,
 			Reason:           payload.Reason,
 			ControlMessageID: payload.ControlMessageID,
 			CutoffMessageID:  payload.CutoffMessageID,
 		}, nil
-	case run.EventApproveRequested:
-		payload, err := agentEventPayload[run.ApprovalRequiredPayload](ev)
+	case agentmodel.EventApproveRequested:
+		payload, err := agentEventPayload[agentmodel.ApprovalRequiredPayload](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		return eventpkg.EventTypeInputRequired, convertApprovalRequiredPayload(payload), nil
-	case run.EventInterruptBatchRequested:
-		batch, err := agentEventPayload[run.InterruptBatchPayload](ev)
+		return agentmodel.EventTypeInputRequired, convertApprovalRequiredPayload(payload), nil
+	case agentmodel.EventInterruptBatchRequested:
+		batch, err := agentEventPayload[agentmodel.InterruptBatchPayload](ev)
 		if err != nil {
 			return "", nil, err
 		}
 		if len(batch.Items) == 0 || batch.CheckpointID == "" {
 			return "", nil, fmt.Errorf("interrupt batch lacks items or checkpoint ID")
 		}
-		out := &eventpkg.InterruptBatchRequiredEventPayload{Kind: eventpkg.InputRequiredKindBatch, InterruptID: batch.Items[0].InterruptID, CheckpointID: batch.CheckpointID}
+		out := &agentmodel.InterruptBatchRequiredEventPayload{Kind: agentmodel.InputRequiredKindBatch, InterruptID: batch.Items[0].InterruptID, CheckpointID: batch.CheckpointID}
 		for _, item := range batch.Items {
 			if item.InterruptID == "" {
 				return "", nil, fmt.Errorf("interrupt batch contains an item without ID")
 			}
-			entry := eventpkg.InterruptBatchItem{Kind: string(item.Kind), InterruptID: item.InterruptID, InfoType: item.InfoType}
+			entry := agentmodel.OutputInterruptBatchItem{Kind: string(item.Kind), InterruptID: item.InterruptID, InfoType: item.InfoType}
 			switch {
 			case item.ApprovalInfo != nil:
 				entry.ToolCallID = item.ApprovalInfo.CallID
@@ -210,98 +206,98 @@ func agentEventPayloadForOutput(ev run.Event, usage *types.ContextTokenUsage) (e
 			}
 			out.Items = append(out.Items, entry)
 		}
-		return eventpkg.EventTypeInputRequired, out, nil
-	case run.EventFollowUpRequested:
-		payload, err := agentEventPayload[run.FollowUpRequestedPayload](ev)
+		return agentmodel.EventTypeInputRequired, out, nil
+	case agentmodel.EventFollowUpRequested:
+		payload, err := agentEventPayload[agentmodel.FollowUpRequestedPayload](ev)
 		if err != nil {
 			return "", nil, err
 		}
-		return eventpkg.EventTypeInputRequired, followUpRequiredPayload(payload), nil
-	case run.EventInterrupted:
-		payload, err := agentEventPayload[run.InterruptedPayload](ev)
+		return agentmodel.EventTypeInputRequired, followUpRequiredPayload(payload), nil
+	case agentmodel.EventInterrupted:
+		payload, err := agentEventPayload[agentmodel.InterruptedPayload](ev)
 		if err != nil {
 			return "", nil, err
 		}
 		if isExternalInterrupt(payload) {
-			return eventpkg.EventTypeRunStatus, &eventpkg.ErrorEventPayload{Status: eventpkg.RunStatusInterrupted, Message: interruptedMessage(payload), ContextUsage: contextUsage}, nil
+			return agentmodel.EventTypeRunStatus, &agentmodel.ErrorEventPayload{Status: agentmodel.RunStatusInterrupted, Message: interruptedMessage(payload), ContextUsage: contextUsage}, nil
 		}
-		info, ok := payload.Info.(*types.RequestUserInputInfo)
+		info, ok := payload.Info.(*agentmodel.RequestUserInputInfo)
 		if ok {
-			return eventpkg.EventTypeInputRequired, planInputRequiredPayload(payload, info), nil
+			return agentmodel.EventTypeInputRequired, planInputRequiredPayload(payload, info), nil
 		}
 		if isRecoverableRuntimeInterrupt(payload) {
 			out, err := interruptRequiredPayload(payload)
 			if err != nil {
 				return "", nil, err
 			}
-			return eventpkg.EventTypeInputRequired, out, nil
+			return agentmodel.EventTypeInputRequired, out, nil
 		}
-		return eventpkg.EventTypeRunStatus, &eventpkg.ErrorEventPayload{Status: eventpkg.RunStatusInterrupted, Message: interruptedMessage(payload), ContextUsage: contextUsage}, nil
-	case run.EventRunEnd:
-		end, err := agentEventPayload[run.RunEndPayload](ev)
+		return agentmodel.EventTypeRunStatus, &agentmodel.ErrorEventPayload{Status: agentmodel.RunStatusInterrupted, Message: interruptedMessage(payload), ContextUsage: contextUsage}, nil
+	case agentmodel.EventRunEnd:
+		end, err := agentEventPayload[agentmodel.RunEndPayload](ev)
 		if err != nil {
 			return "", nil, err
 		}
 		status := end.Status
 		if status == "" {
-			status = eventpkg.RunStatusFinished
+			status = agentmodel.RunStatusFinished
 		}
 		switch status {
-		case eventpkg.RunStatusBlocked:
+		case agentmodel.RunStatusBlocked:
 			if end.CheckpointID == "" || end.InterruptID == "" {
 				return "", nil, errors.New("blocked run lacks checkpoint or interrupt ID")
 			}
-		case eventpkg.RunStatusFinished, eventpkg.RunStatusInterrupted, eventpkg.RunStatusFailed:
+		case agentmodel.RunStatusFinished, agentmodel.RunStatusInterrupted, agentmodel.RunStatusFailed:
 		default:
 			return "", nil, fmt.Errorf("unknown run end status %q", status)
 		}
-		return eventpkg.EventTypeRunStatus, &eventpkg.RunFinishedEventPayload{
+		return agentmodel.EventTypeRunStatus, &agentmodel.RunFinishedEventPayload{
 			Status: status, CheckpointID: end.CheckpointID, InterruptID: end.InterruptID,
 			ContextUsage: contextUsage,
 		}, nil
-	case run.EventError:
+	case agentmodel.EventError:
 		out := convertErrorPayload(ev.Payload)
 		out.ContextUsage = contextUsage
-		return eventpkg.EventTypeError, out, nil
+		return agentmodel.EventTypeError, out, nil
 	default:
 		return "", nil, nil
 	}
 }
 
-func attachConsumedInputs(payload any, inputs []*messagepkg.Message, meta []any) (err error) {
+func attachConsumedInputs(payload any, inputs []*agentmodel.Message, meta []any) (err error) {
 	consumed := ConsumedMessageIDs(inputs)
 	copied, err := copyConsumedInputMetadata(meta)
 	if len(consumed) == 0 && len(copied) == 0 {
 		return err
 	}
 	switch p := payload.(type) {
-	case *eventpkg.MessageEventPayload:
+	case *agentmodel.MessageEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.TokenUsageEventPayload:
+	case *agentmodel.TokenUsageEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.AssistantDeltaEventPayload:
+	case *agentmodel.AssistantDeltaEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.ToolCallEventPayload:
+	case *agentmodel.ToolCallEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.ApprovalRequiredEventPayload:
+	case *agentmodel.ApprovalRequiredEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.InterruptBatchRequiredEventPayload:
+	case *agentmodel.InterruptBatchRequiredEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.InterruptRequiredEventPayload:
+	case *agentmodel.InterruptRequiredEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.PlanUpdatedEventPayload:
+	case *agentmodel.PlanUpdatedEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.PlanInputRequiredEventPayload:
+	case *agentmodel.PlanInputRequiredEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.CompactStartedEventPayload:
+	case *agentmodel.CompactStartedEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.ContextCompactedEventPayload:
+	case *agentmodel.ContextCompactedEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.ErrorEventPayload:
+	case *agentmodel.ErrorEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.CompactInterruptedEventPayload:
+	case *agentmodel.CompactInterruptedEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
-	case *eventpkg.RunFinishedEventPayload:
+	case *agentmodel.RunFinishedEventPayload:
 		p.ConsumedMessageIDs, p.ConsumedInputsMeta = consumed, copied
 	}
 	return err
@@ -330,7 +326,7 @@ func copyConsumedInputMetadata(meta []any) ([]map[string]string, error) {
 	return out, nil
 }
 
-func agentEventPayload[T any](ev run.Event) (T, error) {
+func agentEventPayload[T any](ev agentmodel.RunEvent) (T, error) {
 	payload, ok := ev.Payload.(T)
 	if ok {
 		return payload, nil
@@ -339,51 +335,51 @@ func agentEventPayload[T any](ev run.Event) (T, error) {
 	return zero, fmt.Errorf("%s payload type mismatch: %T", ev.Type, ev.Payload)
 }
 
-func planUpdatedPayload(payload deeptools.PlanUpdate) *eventpkg.PlanUpdatedEventPayload {
-	items := make([]*eventpkg.PlanItem, len(payload.Plan))
+func planUpdatedPayload(payload agentmodel.PlanUpdate) *agentmodel.PlanUpdatedEventPayload {
+	items := make([]*agentmodel.PlanItem, len(payload.Plan))
 	for i, step := range payload.Plan {
 		id := strconv.Itoa(i + 1)
-		items[i] = &eventpkg.PlanItem{
+		items[i] = &agentmodel.PlanItem{
 			ID:      id,
 			Content: step.Step,
 			Status:  string(step.Status),
 		}
 	}
-	return &eventpkg.PlanUpdatedEventPayload{
+	return &agentmodel.PlanUpdatedEventPayload{
 		Explanation: stringPtrIfNotEmpty(payload.Explanation),
 		Items:       items,
 	}
 }
 
-func planInputRequiredPayload(payload run.InterruptedPayload, info *types.RequestUserInputInfo) *eventpkg.PlanInputRequiredEventPayload {
+func planInputRequiredPayload(payload agentmodel.InterruptedPayload, info *agentmodel.RequestUserInputInfo) *agentmodel.PlanInputRequiredEventPayload {
 	if info == nil {
 		return nil
 	}
-	questions := make([]*eventpkg.PlanInputQuestion, len(info.Questions))
+	questions := make([]*agentmodel.PlanInputQuestion, len(info.Questions))
 	for i, question := range info.Questions {
-		options := make([]*eventpkg.PlanInputQuestionOption, len(question.Options))
+		options := make([]*agentmodel.PlanInputQuestionOption, len(question.Options))
 		for j, option := range question.Options {
-			options[j] = &eventpkg.PlanInputQuestionOption{
+			options[j] = &agentmodel.PlanInputQuestionOption{
 				Label:       option.Label,
 				Description: option.Description,
 			}
 		}
-		questions[i] = &eventpkg.PlanInputQuestion{
+		questions[i] = &agentmodel.PlanInputQuestion{
 			ID:       question.ID,
 			Header:   question.Header,
 			Question: question.Question,
 			Options:  options,
 		}
 	}
-	return &eventpkg.PlanInputRequiredEventPayload{
-		Kind:         eventpkg.InputRequiredKindPlanInput,
+	return &agentmodel.PlanInputRequiredEventPayload{
+		Kind:         agentmodel.InputRequiredKindPlanInput,
 		InterruptID:  payload.InterruptID,
 		CheckpointID: payload.CheckpointID,
 		Questions:    questions,
 	}
 }
 
-func convertContextUsagePayload(contextTokenUsage *types.ContextTokenUsage) *eventpkg.ContextUsage {
+func convertContextUsagePayload(contextTokenUsage *agentmodel.ContextTokenUsage) *agentmodel.ContextUsage {
 	if contextTokenUsage == nil {
 		return nil
 	}
@@ -392,7 +388,7 @@ func convertContextUsagePayload(contextTokenUsage *types.ContextTokenUsage) *eve
 		value := float64(contextTokenUsage.TotalTokens) / float64(contextTokenUsage.MaxContextTokens)
 		ratio = &value
 	}
-	return &eventpkg.ContextUsage{
+	return &agentmodel.ContextUsage{
 		UsedTokens:       contextTokenUsage.TotalTokens,
 		MaxTokens:        int64PtrIfPositive(contextTokenUsage.MaxContextTokens),
 		Ratio:            ratio,
@@ -401,9 +397,9 @@ func convertContextUsagePayload(contextTokenUsage *types.ContextTokenUsage) *eve
 	}
 }
 
-func convertApprovalRequiredPayload(payload run.ApprovalRequiredPayload) *eventpkg.ApprovalRequiredEventPayload {
-	out := &eventpkg.ApprovalRequiredEventPayload{
-		Kind:         eventpkg.InputRequiredKindApproval,
+func convertApprovalRequiredPayload(payload agentmodel.ApprovalRequiredPayload) *agentmodel.ApprovalRequiredEventPayload {
+	out := &agentmodel.ApprovalRequiredEventPayload{
+		Kind:         agentmodel.InputRequiredKindApproval,
 		InterruptID:  payload.InterruptID,
 		CheckpointID: payload.CheckpointID,
 	}
@@ -417,7 +413,7 @@ func convertApprovalRequiredPayload(payload run.ApprovalRequiredPayload) *eventp
 	return out
 }
 
-func followUpRequiredPayload(payload run.FollowUpRequestedPayload) *eventpkg.InterruptRequiredEventPayload {
+func followUpRequiredPayload(payload agentmodel.FollowUpRequestedPayload) *agentmodel.InterruptRequiredEventPayload {
 	info := struct {
 		Question  string   `json:"question,omitempty"`
 		Questions []string `json:"questions,omitempty"`
@@ -427,21 +423,21 @@ func followUpRequiredPayload(payload run.FollowUpRequestedPayload) *eventpkg.Int
 		info.Questions = append([]string(nil), payload.Info.Questions...)
 	}
 	raw, _ := json.Marshal(info)
-	return &eventpkg.InterruptRequiredEventPayload{
+	return &agentmodel.InterruptRequiredEventPayload{
 		InterruptID:  payload.InterruptID,
 		CheckpointID: payload.CheckpointID,
-		Kind:         eventpkg.InputRequiredKindFollowUp,
+		Kind:         agentmodel.InputRequiredKindFollowUp,
 		InfoType:     fmt.Sprintf("%T", payload.Info),
 		Info:         raw,
 	}
 }
 
-func interruptRequiredPayload(payload run.InterruptedPayload) (*eventpkg.InterruptRequiredEventPayload, error) {
+func interruptRequiredPayload(payload agentmodel.InterruptedPayload) (*agentmodel.InterruptRequiredEventPayload, error) {
 	raw, err := json.Marshal(payload.Info)
 	if err != nil {
 		return nil, fmt.Errorf("marshal interrupt info: info_type=%s: %w", payload.InfoType, err)
 	}
-	return &eventpkg.InterruptRequiredEventPayload{
+	return &agentmodel.InterruptRequiredEventPayload{
 		InterruptID:  payload.InterruptID,
 		CheckpointID: payload.CheckpointID,
 		Kind:         interruptKind(payload),
@@ -450,22 +446,22 @@ func interruptRequiredPayload(payload run.InterruptedPayload) (*eventpkg.Interru
 	}, nil
 }
 
-func convertErrorPayload(payload any) *eventpkg.ErrorEventPayload {
+func convertErrorPayload(payload any) *agentmodel.ErrorEventPayload {
 	switch p := payload.(type) {
-	case run.ErrorPayload:
-		return &eventpkg.ErrorEventPayload{Message: p.Message, Cancelled: p.Cancelled}
-	case *run.ErrorPayload:
+	case agentmodel.ErrorPayload:
+		return &agentmodel.ErrorEventPayload{Message: p.Message, Cancelled: p.Cancelled}
+	case *agentmodel.ErrorPayload:
 		if p == nil {
-			return &eventpkg.ErrorEventPayload{}
+			return &agentmodel.ErrorEventPayload{}
 		}
-		return &eventpkg.ErrorEventPayload{Message: p.Message, Cancelled: p.Cancelled}
+		return &agentmodel.ErrorEventPayload{Message: p.Message, Cancelled: p.Cancelled}
 	default:
-		return &eventpkg.ErrorEventPayload{Message: fmt.Sprint(payload)}
+		return &agentmodel.ErrorEventPayload{Message: fmt.Sprint(payload)}
 	}
 }
 
-func interruptedMessage(payload run.InterruptedPayload) string {
-	if payload.Source == "external" && payload.Metadata["kind"] == string(TransportThreadInterruptKindWorkerShutdownTimeout) {
+func interruptedMessage(payload agentmodel.InterruptedPayload) string {
+	if payload.Source == "external" && payload.Metadata["kind"] == string(agentmodel.TransportThreadInterruptKindWorkerShutdownTimeout) {
 		reason := strings.TrimSpace(payload.Metadata["reason"])
 		if reason != "" {
 			return reason
@@ -478,15 +474,15 @@ func interruptedMessage(payload run.InterruptedPayload) string {
 	return "interrupted"
 }
 
-func isExternalInterrupt(payload run.InterruptedPayload) bool {
+func isExternalInterrupt(payload agentmodel.InterruptedPayload) bool {
 	return payload.Source == "external"
 }
 
-func isRecoverableRuntimeInterrupt(payload run.InterruptedPayload) bool {
+func isRecoverableRuntimeInterrupt(payload agentmodel.InterruptedPayload) bool {
 	return payload.Source != "external" && payload.InterruptID != "" && payload.CheckpointID != ""
 }
 
-func interruptKind(payload run.InterruptedPayload) string {
+func interruptKind(payload agentmodel.InterruptedPayload) string {
 	if payload.InfoType != "" {
 		return "custom"
 	}
@@ -510,7 +506,7 @@ func int64PtrIfPositive(value int64) *int64 {
 	return &value
 }
 
-func messageEventPayloadFromRunStart(payload run.RunStartPayload, consumedInputs []*messagepkg.Message) *eventpkg.MessageEventPayload {
+func messageEventPayloadFromRunStart(payload agentmodel.RunStartPayload, consumedInputs []*agentmodel.Message) *agentmodel.MessageEventPayload {
 	input := payload.Input
 	if input == nil && len(consumedInputs) > 0 {
 		input = consumedInputs[0]
@@ -518,17 +514,17 @@ func messageEventPayloadFromRunStart(payload run.RunStartPayload, consumedInputs
 	parts := getUserMessageParts(input)
 	source := firstIdentifiedInput(consumedInputs)
 	if source == nil {
-		source = &messagepkg.Message{}
+		source = &agentmodel.Message{}
 	}
 	if len(parts) == 0 && source.MessageID == "" && source.SenderID == "" && source.SenderType == "" {
 		return nil
 	}
-	event := &eventpkg.MessageEventPayload{
+	event := &agentmodel.MessageEventPayload{
 		Parts:     parts,
 		MessageID: stringPtrIfNotEmpty(source.MessageID),
 	}
 	if source.SenderID != "" || source.SenderType != "" {
-		event.Sender = &eventpkg.Sender{
+		event.Sender = &agentmodel.OutputSender{
 			SenderType: senderTypeFromString(source.SenderType),
 			SenderID:   source.SenderID,
 		}
@@ -536,14 +532,14 @@ func messageEventPayloadFromRunStart(payload run.RunStartPayload, consumedInputs
 	return event
 }
 
-func textParts(content string) []eventpkg.MessagePart {
+func textParts(content string) []agentmodel.OutputMessagePart {
 	if content == "" {
 		return nil
 	}
-	return []eventpkg.MessagePart{{Type: "text", Text: content}}
+	return []agentmodel.OutputMessagePart{{Type: "text", Text: content}}
 }
 
-func firstIdentifiedInput(inputs []*messagepkg.Message) *messagepkg.Message {
+func firstIdentifiedInput(inputs []*agentmodel.Message) *agentmodel.Message {
 	for _, input := range inputs {
 		if input != nil && (input.MessageID != "" || input.SenderID != "" || input.SenderType != "") {
 			return input
@@ -552,13 +548,13 @@ func firstIdentifiedInput(inputs []*messagepkg.Message) *messagepkg.Message {
 	return nil
 }
 
-func senderTypeFromString(senderType string) eventpkg.SenderType {
+func senderTypeFromString(senderType string) agentmodel.OutputSenderType {
 	switch strings.ToUpper(strings.TrimSpace(senderType)) {
 	case "SYSTEM":
-		return eventpkg.SenderTypeSystem
+		return agentmodel.OutputSenderTypeSystem
 	case "AGENT":
-		return eventpkg.SenderTypeAgent
+		return agentmodel.OutputSenderTypeAgent
 	default:
-		return eventpkg.SenderTypeUser
+		return agentmodel.OutputSenderTypeUser
 	}
 }

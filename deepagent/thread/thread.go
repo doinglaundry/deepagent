@@ -11,9 +11,7 @@ import (
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/execution"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/run"
 
 	"github.com/cloudwego/eino/compose"
@@ -25,12 +23,12 @@ type Thread struct {
 	closeResources       func(context.Context) error
 	resourcesClosed      bool
 	sessionID            string
-	threadInfo           ContextThreadIdentity
-	approvalRemember     ApprovalRememberer
-	runFinishedObserver  RunFinishedObserver
-	threadOutputObserver ThreadOutputObserver
-	interruptResume      InterruptResumeDecoder
-	observerQueue        chan ThreadOutputObservation
+	threadInfo           agentmodel.ContextThreadIdentity
+	approvalRemember     agentmodel.ApprovalRememberer
+	runFinishedObserver  agentmodel.RunFinishedObserver
+	threadOutputObserver agentmodel.ThreadOutputObserver
+	interruptResume      agentmodel.InterruptResumeDecoder
+	observerQueue        chan agentmodel.ThreadOutputObservation
 	observerOnce         sync.Once
 	observerCancel       context.CancelFunc
 	outputBridge         *threadOutputBridge
@@ -40,10 +38,10 @@ type Thread struct {
 	mu                sync.Mutex
 	current           *run.Run
 	inputRuns         map[string]*run.Run // MessageID -> original Run, guarded by mu.
-	pending           []types.Input
-	conversation      conversation.IConversation
-	generateMessageID conversation.GetMessageIDFunc
-	events            chan run.Event
+	pending           []agentmodel.RunInput
+	conversation      agentmodel.Conversation
+	generateMessageID agentmodel.GetMessageIDFunc
+	events            chan agentmodel.RunEvent
 	config            *run.Config
 	closed            bool
 	accepting         bool
@@ -56,7 +54,7 @@ func NewThread(cfg ThreadConfig) (*Thread, error) {
 	}
 	events := cfg.Events
 	if events == nil {
-		events = make(chan run.Event, 256)
+		events = make(chan agentmodel.RunEvent, 256)
 	}
 	historyOptions := cfg.Options
 	history := conversation.New(
@@ -70,7 +68,7 @@ func NewThread(cfg ThreadConfig) (*Thread, error) {
 	return &Thread{
 		ThreadID:             cfg.ThreadID,
 		sessionID:            cfg.SessionID,
-		threadInfo:           ContextThreadIdentity{ThreadID: cfg.ThreadID, SessionID: cfg.SessionID, UserID: cfg.UserID},
+		threadInfo:           agentmodel.ContextThreadIdentity{ThreadID: cfg.ThreadID, SessionID: cfg.SessionID, UserID: cfg.UserID},
 		conversation:         history,
 		generateMessageID:    historyOptions.GenerateMessageID,
 		events:               events,
@@ -85,7 +83,7 @@ func NewThread(cfg ThreadConfig) (*Thread, error) {
 	}, nil
 }
 
-func (t *Thread) Init(ctx context.Context) (*TransportThreadOutput, error) {
+func (t *Thread) Init(ctx context.Context) (*agentmodel.TransportThreadOutput, error) {
 	ctx = t.withThreadInfo(ctx)
 	err := t.ensureOpen()
 	if err != nil {
@@ -99,7 +97,7 @@ func (t *Thread) Init(ctx context.Context) (*TransportThreadOutput, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closed {
-		return nil, TransportErrThreadClosed
+		return nil, agentmodel.TransportErrThreadClosed
 	}
 	if t.outputBridge.output != nil {
 		return t.outputBridge.output, nil
@@ -119,7 +117,7 @@ func (t *Thread) InitHistory(ctx context.Context) error {
 }
 
 // PostMessage 将 Worker 消息按类型分派到输入、恢复或压缩入口。
-func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (posted *TransportPostMessageResult, err error) {
+func (t *Thread) PostMessage(ctx context.Context, message *agentmodel.TransportMessage) (posted *agentmodel.TransportPostMessageResult, err error) {
 	ctx = t.withThreadInfo(ctx)
 	if message == nil {
 		return nil, fmt.Errorf("worker message is required")
@@ -136,12 +134,12 @@ func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (po
 		if err != nil {
 			return nil, err
 		}
-		opts := []SubmitInputOption{WithMessageID(workerMessageID(cmd.message)), WithPlan(cmd.mode == inputpkg.UserMessageModeImplPlan)}
+		opts := []SubmitInputOption{WithMessageID(workerMessageID(cmd.message)), WithPlan(cmd.mode == agentmodel.UserMessageModeImplPlan)}
 		if cmd.message != nil && len(cmd.message.Metadata) > 0 {
 			opts = append(opts, WithInputMeta(maps.Clone(cmd.message.Metadata)))
 		}
 		opts = append(opts, WithRunStartHook(func(runCtx context.Context, req RunStartRequest) context.Context {
-			return ContextContextWithRunIdentity(runCtx, ContextRunIdentity{
+			return agentmodel.ContextContextWithRunIdentity(runCtx, agentmodel.ContextRunIdentity{
 				ThreadID:  t.threadInfo.ThreadID,
 				RunID:     req.RunID,
 				MessageID: workerMessageID(cmd.message),
@@ -154,7 +152,7 @@ func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (po
 		if result == nil {
 			return nil, fmt.Errorf("submit input returned nil result")
 		}
-		return &TransportPostMessageResult{RunID: result.RunID}, nil
+		return &agentmodel.TransportPostMessageResult{RunID: result.RunID}, nil
 	case MessageTypeResumeRun:
 		cmd, err := decodeResumeRunCommand(message)
 		if err != nil {
@@ -167,13 +165,13 @@ func (t *Thread) PostMessage(ctx context.Context, message *TransportMessage) (po
 		if err != nil {
 			return nil, err
 		}
-		return &TransportPostMessageResult{RunID: cmd.runID}, nil
+		return &agentmodel.TransportPostMessageResult{RunID: cmd.runID}, nil
 	default:
 		return nil, unsupportedRuntimeCommand(message)
 	}
 }
 
-func (t *Thread) SubmitInput(ctx context.Context, message *messagepkg.Message, opts ...SubmitInputOption) (*SubmitInputResult, error) {
+func (t *Thread) SubmitInput(ctx context.Context, message *agentmodel.Message, opts ...SubmitInputOption) (*SubmitInputResult, error) {
 	if message == nil {
 		return nil, ErrInvalidOp
 	}
@@ -183,7 +181,7 @@ func (t *Thread) SubmitInput(ctx context.Context, message *messagepkg.Message, o
 			opt(&options)
 		}
 	}
-	clonedMessage := types.CopyMessage(message)
+	clonedMessage := agentmodel.CopyMessage(message)
 	if clonedMessage == nil {
 		return nil, fmt.Errorf("failed to copy input message")
 	}
@@ -207,7 +205,7 @@ func (t *Thread) SubmitInput(ctx context.Context, message *messagepkg.Message, o
 	if clonedMessage.CreatedAt == 0 {
 		clonedMessage.CreatedAt = time.Now().Unix()
 	}
-	input := types.Input{MessageID: clonedMessage.MessageID, Message: clonedMessage, Meta: options.InputMeta}
+	input := agentmodel.RunInput{MessageID: clonedMessage.MessageID, Message: clonedMessage, Meta: options.InputMeta}
 	for {
 		err := ctx.Err()
 		if err != nil {
@@ -382,7 +380,7 @@ func (t *Thread) finishRun(ctx context.Context, r *run.Run, err error) error {
 					err = errors.Join(err, saveErr)
 					break
 				}
-				emitErr := r.PublishEvent(saveCtx, run.EventInputConsumed, input)
+				emitErr := r.PublishEvent(saveCtx, agentmodel.EventInputConsumed, input)
 				if emitErr != nil {
 					err = errors.Join(err, emitErr)
 					break
@@ -391,7 +389,7 @@ func (t *Thread) finishRun(ctx context.Context, r *run.Run, err error) error {
 			cancel()
 		}
 	}
-	end := run.RunEndPayload{Status: "finished"}
+	end := agentmodel.RunEndPayload{Status: "finished"}
 	if interrupted {
 		end.Status = "blocked"
 		end.CheckpointID = r.CheckpointID()
@@ -408,11 +406,11 @@ func (t *Thread) finishRun(ctx context.Context, r *run.Run, err error) error {
 	}
 	if timedOut && err == nil {
 		end.Status = "interrupted"
-		payload := run.InterruptedPayload{Source: "external", Metadata: maps.Clone(request.Metadata)}
+		payload := agentmodel.InterruptedPayload{Source: "external", Metadata: maps.Clone(request.Metadata)}
 		if request.Timeout != nil {
 			payload.TimeoutMS = request.Timeout.Milliseconds()
 		}
-		err = r.PublishEvent(terminalCtx, run.EventInterrupted, payload)
+		err = r.PublishEvent(terminalCtx, agentmodel.EventInterrupted, payload)
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -420,9 +418,9 @@ func (t *Thread) finishRun(ctx context.Context, r *run.Run, err error) error {
 		} else {
 			end.Status = "failed"
 		}
-		_ = r.PublishEvent(terminalCtx, run.EventError, run.ErrorPayload{Message: err.Error(), Cancelled: errors.Is(err, context.Canceled)})
+		_ = r.PublishEvent(terminalCtx, agentmodel.EventError, agentmodel.ErrorPayload{Message: err.Error(), Cancelled: errors.Is(err, context.Canceled)})
 	}
-	finalErr := r.PublishEvent(terminalCtx, run.EventRunEnd, end)
+	finalErr := r.PublishEvent(terminalCtx, agentmodel.EventRunEnd, end)
 	if err == nil {
 		err = finalErr
 	}
@@ -434,7 +432,7 @@ func (t *Thread) finishRun(ctx context.Context, r *run.Run, err error) error {
 	return err
 }
 
-func (t *Thread) drainInput(_ context.Context, runID string) ([]types.Input, bool, error) {
+func (t *Thread) drainInput(_ context.Context, runID string) ([]agentmodel.RunInput, bool, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.current == nil || t.current.ID() != runID {
@@ -453,15 +451,15 @@ func (t *Thread) drainInput(_ context.Context, runID string) ([]types.Input, boo
 	return inputs, len(inputs) > 0, nil
 }
 
-func (t *Thread) DrainInput(ctx context.Context) []*messagepkg.Message {
+func (t *Thread) DrainInput(ctx context.Context) []*agentmodel.Message {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	var out []*messagepkg.Message
+	var out []*agentmodel.Message
 	if t.current == nil {
 		return nil
 	}
 	for _, input := range t.pending {
-		out = append(out, types.CopyMessage(input.Message))
+		out = append(out, agentmodel.CopyMessage(input.Message))
 	}
 	t.current.AddInputs(t.pending...)
 	t.pending = nil
@@ -477,13 +475,13 @@ func (t *Thread) CurrentRun() *run.Handle {
 	return t.current.Handle()
 }
 
-func (t *Thread) ActiveRun() *TransportActiveRun {
+func (t *Thread) ActiveRun() *agentmodel.TransportActiveRun {
 	if t == nil {
 		return nil
 	}
 	compact := t.activeCompact()
 	if compact != nil {
-		return &TransportActiveRun{
+		return &agentmodel.TransportActiveRun{
 			RunID:              compact.runID,
 			ConsumedMessageIDs: append([]string(nil), compact.consumedMessageIDs...),
 		}
@@ -492,13 +490,13 @@ func (t *Thread) ActiveRun() *TransportActiveRun {
 	if curRun == nil {
 		return nil
 	}
-	return &TransportActiveRun{
+	return &agentmodel.TransportActiveRun{
 		RunID:              curRun.RunID(),
 		ConsumedMessageIDs: ConsumedMessageIDs(curRun.ConsumedInputs()),
 	}
 }
 
-func (t *Thread) ContextManager() ContextManager { return t.conversation }
+func (t *Thread) ContextManager() agentmodel.ContextManager { return t.conversation }
 
 func (t *Thread) Close(ctx context.Context) error {
 	t.closeMu.Lock()
@@ -515,7 +513,7 @@ func (t *Thread) Close(ctx context.Context) error {
 	compact := t.compact
 	t.mu.Unlock()
 	if compact != nil {
-		t.interruptCompact(ctx, TransportThreadInterruptRequest{Kind: TransportThreadInterruptKindCloseThread})
+		t.interruptCompact(ctx, agentmodel.TransportThreadInterruptRequest{Kind: agentmodel.TransportThreadInterruptKindCloseThread})
 		select {
 		case <-compact.done:
 		case <-ctx.Done():
@@ -552,19 +550,19 @@ func (t *Thread) Close(ctx context.Context) error {
 }
 
 func (t *Thread) withThreadInfo(ctx context.Context) context.Context {
-	return ContextContextWithThreadIdentity(ctx, t.threadInfo)
+	return agentmodel.ContextContextWithThreadIdentity(ctx, t.threadInfo)
 }
 
 func (t *Thread) ensureOpen() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closed {
-		return TransportErrThreadClosed
+		return agentmodel.TransportErrThreadClosed
 	}
 	return nil
 }
 
-func (t *Thread) restoreInputOwnership(r *run.Run, inputs []types.Input) {
+func (t *Thread) restoreInputOwnership(r *run.Run, inputs []agentmodel.RunInput) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	r.RestoreInputs(inputs)

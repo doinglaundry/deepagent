@@ -8,24 +8,24 @@ import (
 	"strings"
 	"time"
 
-	filesystempkg "eino-cli/deepagent/graph/filesystem"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
 type commandTool struct {
-	commandService filesystempkg.CommandService
+	commandService agentmodel.CommandService
 	toolName       string
 	defaultTimeout time.Duration
 }
 
-func NewCommandTools(commandService filesystempkg.CommandService, defaultTimeouts ...time.Duration) []ToolDescriptor {
+func NewCommandTools(commandService agentmodel.CommandService, defaultTimeouts ...time.Duration) []agentmodel.ToolDescriptor {
 	timeout := 30 * time.Second
 	if len(defaultTimeouts) > 0 && defaultTimeouts[0] > 0 {
 		timeout = defaultTimeouts[0]
 	}
-	return []ToolDescriptor{
+	return []agentmodel.ToolDescriptor{
 		{Tool: &executeTool{commandTool{commandService: commandService, toolName: "execute", defaultTimeout: timeout}}, RequiresApproval: true},
 		{Tool: &commandTool{commandService: commandService, toolName: "shell", defaultTimeout: timeout}, RequiresApproval: true},
 		{Tool: &commandTool{commandService: commandService, toolName: "await_shell", defaultTimeout: timeout}, ReadOnly: true},
@@ -76,7 +76,7 @@ func (commandTool *commandTool) InvokableRun(ctx context.Context, arguments stri
 	taskID := commandArgs.TaskID
 	if commandTool.toolName == "shell" {
 		var err error
-		taskID, err = commandTool.commandService.Start(context.WithoutCancel(ctx), filesystempkg.CommandRequest{Command: commandArgs.Command, WorkDir: commandArgs.WorkDir, MaxOutputBytes: 64 << 10})
+		taskID, err = commandTool.commandService.Start(context.WithoutCancel(ctx), agentmodel.CommandRequest{Command: commandArgs.Command, WorkDir: commandArgs.WorkDir, MaxOutputBytes: 64 << 10})
 		if err != nil {
 			return "", err
 		}

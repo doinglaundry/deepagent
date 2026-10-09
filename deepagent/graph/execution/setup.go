@@ -7,8 +7,7 @@ import (
 
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 // configure 将配置装配为当前 Graph 使用的工具、模型和中间件，不构图、不调用模型。
@@ -52,7 +51,7 @@ func (graph *Graph) configure(ctx context.Context) (err error) {
 	}
 	// 固定说明属于配置；动态提示仍由中间件在每次模型请求前生成。
 	if config.FilesystemConfig != nil && config.Filesystem != nil {
-		config.Prompts = append(config.Prompts, messagepkg.NewSystemMessage(tools.FilesystemPrompt))
+		config.Prompts = append(config.Prompts, agentmodel.NewSystemMessage(tools.FilesystemPrompt))
 	}
 	graph.config.Prompts = config.Prompts
 	graph.middlewares, graph.toolSet, graph.graphState = middlewares, toolSet, graphState
@@ -63,7 +62,7 @@ func (graph *Graph) configure(ctx context.Context) (err error) {
 
 // newToolSet 只装配工具，不访问中间件。
 func newToolSet(ctx context.Context, config Config) (*tools.ToolSet, error) {
-	toolDescriptors := append([]tools.ToolDescriptor(nil), config.ToolDescriptors...)
+	toolDescriptors := append([]agentmodel.ToolDescriptor(nil), config.ToolDescriptors...)
 	if config.SkillLoader != nil {
 		toolDescriptors = append(toolDescriptors, tools.NewActivateSkillTool(config.SkillLoader))
 	}
@@ -102,7 +101,7 @@ func newToolSet(ctx context.Context, config Config) (*tools.ToolSet, error) {
 }
 
 // newRunMiddlewares creates dynamic prompts and fresh mutable instances for this Run.
-func (graph *Graph) newRunMiddlewares(ctx context.Context) (middlewares []middleware.Middleware, err error) {
+func (graph *Graph) newRunMiddlewares(ctx context.Context) (middlewares []agentmodel.Middleware, err error) {
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, closeMiddlewareResources(context.WithoutCancel(ctx), middlewares))
@@ -116,7 +115,7 @@ func (graph *Graph) newRunMiddlewares(ctx context.Context) (middlewares []middle
 			continue
 		}
 		runMiddleware := configuredMiddleware
-		runFactory, ok := configuredMiddleware.(middleware.RunFactory)
+		runFactory, ok := configuredMiddleware.(agentmodel.RunFactory)
 		if ok {
 			runMiddleware = runFactory.NewRun()
 		}
@@ -129,7 +128,7 @@ func (graph *Graph) newRunMiddlewares(ctx context.Context) (middlewares []middle
 	return middlewares, nil
 }
 
-func (graph *Graph) canExecuteToolsEagerly(middlewares []middleware.Middleware) bool {
+func (graph *Graph) canExecuteToolsEagerly(middlewares []agentmodel.Middleware) bool {
 	if !graph.config.EnableEagerTools {
 		return false
 	}
@@ -142,8 +141,8 @@ func (graph *Graph) canExecuteToolsEagerly(middlewares []middleware.Middleware) 
 	return true
 }
 
-func (graph *Graph) buildRuntimeState(middlewares []middleware.Middleware) (*types.GraphState, error) {
-	graphState := types.NewGraphState()
+func (graph *Graph) buildRuntimeState(middlewares []agentmodel.Middleware) (*agentmodel.GraphState, error) {
+	graphState := agentmodel.NewGraphState()
 	for _, currentMiddleware := range middlewares {
 		stateHandler := currentMiddleware.GetStateHandler()
 		if stateHandler != nil {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"eino-cli/deepagent/sandbox"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 // DockerFilesystem keeps file and command operations in the same container.
@@ -18,17 +18,17 @@ import (
 type DockerFilesystem struct {
 	releaseContainer func()
 	releaseOnce      sync.Once
-	sandbox          sandbox.Sandbox
+	sandbox          agentmodel.Sandbox
 	mu               sync.RWMutex
 	dir              string
 	root             string
 	containerID      string
-	pathResolver     sandbox.ContainerPathResolver
+	pathResolver     agentmodel.ContainerPathResolver
 	canonicalRoot    string
 	commands         *Commands
 }
 
-func NewDockerFilesystem(provider sandbox.Sandbox, workDir, threadID string, releaseContainer func()) (filesystem *DockerFilesystem, err error) {
+func NewDockerFilesystem(provider agentmodel.Sandbox, workDir, threadID string, releaseContainer func()) (filesystem *DockerFilesystem, err error) {
 	defer func() {
 		if filesystem == nil && releaseContainer != nil {
 			releaseContainer()
@@ -48,7 +48,7 @@ func NewDockerFilesystem(provider sandbox.Sandbox, workDir, threadID string, rel
 	if !ok || containerID == "" || threadID == "" {
 		return nil, fmt.Errorf("Docker container and thread ID are required")
 	}
-	pathResolver, ok := provider.(sandbox.ContainerPathResolver)
+	pathResolver, ok := provider.(agentmodel.ContainerPathResolver)
 	if !ok {
 		return nil, fmt.Errorf("Docker sandbox must resolve container paths")
 	}
@@ -63,7 +63,7 @@ func (dockerFilesystem *DockerFilesystem) resolve(ctx context.Context, filePath 
 		return "", normalizeDockerFileError(ctx, err)
 	}
 	if strings.ContainsRune(filePath, 0) {
-		return "", ErrInvalidPath
+		return "", agentmodel.ErrInvalidPath
 	}
 	dockerFilesystem.mu.RLock()
 	workDir := dockerFilesystem.dir
@@ -76,7 +76,7 @@ func (dockerFilesystem *DockerFilesystem) resolve(ctx context.Context, filePath 
 		resolvedPath = path.Join(workDir, resolvedPath)
 	}
 	if resolvedPath != dockerFilesystem.root && dockerFilesystem.root != "/" && !strings.HasPrefix(resolvedPath, dockerFilesystem.root+"/") {
-		return "", ErrInvalidPath
+		return "", agentmodel.ErrInvalidPath
 	}
 	dockerFilesystem.mu.RLock()
 	canonicalRoot := dockerFilesystem.canonicalRoot
@@ -88,7 +88,7 @@ func (dockerFilesystem *DockerFilesystem) resolve(ctx context.Context, filePath 
 			return "", err
 		}
 		if !path.IsAbs(canonicalRoot) || path.Clean(canonicalRoot) != canonicalRoot {
-			return "", ErrInvalidPath
+			return "", agentmodel.ErrInvalidPath
 		}
 		dockerFilesystem.mu.Lock()
 		if dockerFilesystem.canonicalRoot == "" {
@@ -103,10 +103,10 @@ func (dockerFilesystem *DockerFilesystem) resolve(ctx context.Context, filePath 
 		return "", err
 	}
 	if !path.IsAbs(canonicalPath) || path.Clean(canonicalPath) != canonicalPath {
-		return "", ErrInvalidPath
+		return "", agentmodel.ErrInvalidPath
 	}
 	if canonicalPath != canonicalRoot && canonicalRoot != "/" && !strings.HasPrefix(canonicalPath, canonicalRoot+"/") {
-		return "", ErrInvalidPath
+		return "", agentmodel.ErrInvalidPath
 	}
 	return resolvedPath, nil
 }
@@ -115,13 +115,13 @@ func (dockerFilesystem *DockerFilesystem) GetRoot() string { return dockerFilesy
 func (dockerFilesystem *DockerFilesystem) Resolve(ctx context.Context, filePath string, _ bool) (string, error) {
 	return dockerFilesystem.resolve(ctx, filePath)
 }
-func (dockerFilesystem *DockerFilesystem) Execute(ctx context.Context, request CommandRequest) (*CommandResult, error) {
+func (dockerFilesystem *DockerFilesystem) Execute(ctx context.Context, request agentmodel.CommandRequest) (*agentmodel.CommandResult, error) {
 	return dockerFilesystem.commands.Execute(ctx, request)
 }
-func (dockerFilesystem *DockerFilesystem) Start(ctx context.Context, request CommandRequest) (string, error) {
+func (dockerFilesystem *DockerFilesystem) Start(ctx context.Context, request agentmodel.CommandRequest) (string, error) {
 	return dockerFilesystem.commands.Start(ctx, request)
 }
-func (dockerFilesystem *DockerFilesystem) Wait(ctx context.Context, jobID, pattern string, offset int) (*CommandSnapshot, error) {
+func (dockerFilesystem *DockerFilesystem) Wait(ctx context.Context, jobID, pattern string, offset int) (*agentmodel.CommandSnapshot, error) {
 	return dockerFilesystem.commands.Wait(ctx, jobID, pattern, offset)
 }
 func (dockerFilesystem *DockerFilesystem) Cancel(ctx context.Context, jobID string) error {
@@ -138,27 +138,27 @@ func (dockerFilesystem *DockerFilesystem) Close(ctx context.Context) error {
 	return nil
 }
 
-func buildDockerFileInfos(paths []string) []FileInfo {
-	fileInfos := make([]FileInfo, 0, len(paths))
+func buildDockerFileInfos(paths []string) []agentmodel.FileInfo {
+	fileInfos := make([]agentmodel.FileInfo, 0, len(paths))
 	for _, filePath := range paths {
-		fileInfos = append(fileInfos, FileInfo{Path: filePath, IsDir: strings.HasSuffix(filePath, "/")})
+		fileInfos = append(fileInfos, agentmodel.FileInfo{Path: filePath, IsDir: strings.HasSuffix(filePath, "/")})
 	}
 	return fileInfos
 }
-func (dockerFilesystem *DockerFilesystem) List(ctx context.Context, directoryPath string) ([]FileInfo, error) {
+func (dockerFilesystem *DockerFilesystem) List(ctx context.Context, directoryPath string) ([]agentmodel.FileInfo, error) {
 	directoryPath, err := dockerFilesystem.resolve(ctx, directoryPath)
 	if err != nil {
 		return nil, normalizeDockerFileError(ctx, err)
 	}
-	fileInfoProvider, ok := dockerFilesystem.sandbox.(sandbox.FileInfoProvider)
+	fileInfoProvider, ok := dockerFilesystem.sandbox.(agentmodel.FileInfoProvider)
 	if ok {
 		entries, err := fileInfoProvider.ListDirInfo(ctx, directoryPath, 1)
 		if err != nil {
 			return nil, normalizeDockerFileError(ctx, err)
 		}
-		fileInfos := make([]FileInfo, 0, len(entries))
+		fileInfos := make([]agentmodel.FileInfo, 0, len(entries))
 		for _, entry := range entries {
-			fileInfos = append(fileInfos, FileInfo{Path: entry.Path, IsDir: entry.IsDir, IsSymlink: entry.IsSymlink, Size: entry.Size})
+			fileInfos = append(fileInfos, agentmodel.FileInfo{Path: entry.Path, IsDir: entry.IsDir, IsSymlink: entry.IsSymlink, Size: entry.Size})
 		}
 		return fileInfos, nil
 	}
@@ -177,8 +177,8 @@ func (dockerFilesystem *DockerFilesystem) readContent(ctx context.Context, fileP
 	if err != nil {
 		return "", "", normalizeDockerFileError(ctx, err)
 	}
-	if len(content) > MaxFileSizeMB<<20 {
-		return "", "", fmt.Errorf("file exceeds %d MiB", MaxFileSizeMB)
+	if len(content) > agentmodel.MaxFileSizeMB<<20 {
+		return "", "", fmt.Errorf("file exceeds %d MiB", agentmodel.MaxFileSizeMB)
 	}
 	return resolvedPath, content, nil
 }
@@ -189,7 +189,7 @@ func (dockerFilesystem *DockerFilesystem) Read(ctx context.Context, filePath str
 	}
 	return ReadFileLines(content, offset, limit), nil
 }
-func (dockerFilesystem *DockerFilesystem) Write(ctx context.Context, filePath, content string) (*WriteResult, error) {
+func (dockerFilesystem *DockerFilesystem) Write(ctx context.Context, filePath, content string) (*agentmodel.WriteResult, error) {
 	resolvedPath, err := dockerFilesystem.resolve(ctx, filePath)
 	if err != nil {
 		return nil, normalizeDockerFileError(ctx, err)
@@ -198,9 +198,9 @@ func (dockerFilesystem *DockerFilesystem) Write(ctx context.Context, filePath, c
 	if err != nil {
 		return nil, normalizeDockerFileError(ctx, err)
 	}
-	return &WriteResult{Path: filePath}, nil
+	return &agentmodel.WriteResult{Path: filePath}, nil
 }
-func (dockerFilesystem *DockerFilesystem) Edit(ctx context.Context, filePath, oldText, newText string, replaceAll bool) (*EditResult, error) {
+func (dockerFilesystem *DockerFilesystem) Edit(ctx context.Context, filePath, oldText, newText string, replaceAll bool) (*agentmodel.EditResult, error) {
 	if oldText == "" {
 		return nil, fmt.Errorf("old text is required")
 	}
@@ -216,7 +216,7 @@ func (dockerFilesystem *DockerFilesystem) Edit(ctx context.Context, filePath, ol
 	}
 	updatedContent, occurrences, err := ReplaceFileText(content, oldText, newText, replaceAll)
 	if err != nil {
-		return &EditResult{Path: filePath, Occurrences: occurrences}, err
+		return &agentmodel.EditResult{Path: filePath, Occurrences: occurrences}, err
 	}
 	contextErr = ctx.Err()
 	if contextErr != nil {
@@ -226,29 +226,29 @@ func (dockerFilesystem *DockerFilesystem) Edit(ctx context.Context, filePath, ol
 	if err != nil {
 		return nil, normalizeDockerFileError(ctx, err)
 	}
-	return &EditResult{Path: filePath, Occurrences: occurrences}, nil
+	return &agentmodel.EditResult{Path: filePath, Occurrences: occurrences}, nil
 }
-func (dockerFilesystem *DockerFilesystem) Grep(ctx context.Context, pattern, directoryPath, glob string) ([]GrepMatch, error) {
+func (dockerFilesystem *DockerFilesystem) Grep(ctx context.Context, pattern, directoryPath, glob string) ([]agentmodel.GrepMatch, error) {
 	directoryPath, err := dockerFilesystem.resolve(ctx, directoryPath)
 	if err != nil {
 		return nil, normalizeDockerFileError(ctx, err)
 	}
-	matches, _, err := dockerFilesystem.sandbox.Grep(ctx, directoryPath, pattern, sandbox.GrepOpts{Glob: glob, CaseSensitive: true, MaxResults: 100})
+	matches, _, err := dockerFilesystem.sandbox.Grep(ctx, directoryPath, pattern, agentmodel.SandboxGrepOptions{Glob: glob, CaseSensitive: true, MaxResults: 100})
 	if err != nil {
 		return nil, normalizeDockerFileError(ctx, err)
 	}
-	grepMatches := make([]GrepMatch, 0, len(matches))
+	grepMatches := make([]agentmodel.GrepMatch, 0, len(matches))
 	for _, match := range matches {
-		grepMatches = append(grepMatches, GrepMatch{Path: match.Path, Line: match.LineNumber, Text: match.Line})
+		grepMatches = append(grepMatches, agentmodel.GrepMatch{Path: match.Path, Line: match.LineNumber, Text: match.Line})
 	}
 	return grepMatches, nil
 }
-func (dockerFilesystem *DockerFilesystem) Glob(ctx context.Context, pattern, directoryPath string) ([]FileInfo, error) {
+func (dockerFilesystem *DockerFilesystem) Glob(ctx context.Context, pattern, directoryPath string) ([]agentmodel.FileInfo, error) {
 	directoryPath, err := dockerFilesystem.resolve(ctx, directoryPath)
 	if err != nil {
 		return nil, normalizeDockerFileError(ctx, err)
 	}
-	entries, _, err := dockerFilesystem.sandbox.Glob(ctx, directoryPath, pattern, sandbox.GlobOpts{MaxResults: globMaxResults})
+	entries, _, err := dockerFilesystem.sandbox.Glob(ctx, directoryPath, pattern, agentmodel.SandboxGlobOptions{MaxResults: globMaxResults})
 	if err != nil {
 		return nil, normalizeDockerFileError(ctx, err)
 	}
@@ -257,8 +257,8 @@ func (dockerFilesystem *DockerFilesystem) Glob(ctx context.Context, pattern, dir
 func (dockerFilesystem *DockerFilesystem) UploadFiles(ctx context.Context, files []struct {
 	Path    string
 	Content []byte
-}) ([]FileUploadResponse, error) {
-	uploadResponses := make([]FileUploadResponse, 0, len(files))
+}) ([]agentmodel.FileUploadResponse, error) {
+	uploadResponses := make([]agentmodel.FileUploadResponse, 0, len(files))
 	for _, file := range files {
 		resolvedPath, err := dockerFilesystem.resolve(ctx, file.Path)
 		if err != nil {
@@ -268,7 +268,7 @@ func (dockerFilesystem *DockerFilesystem) UploadFiles(ctx context.Context, files
 		if err != nil {
 			return uploadResponses, normalizeDockerFileError(ctx, err)
 		}
-		uploadResponses = append(uploadResponses, FileUploadResponse{Path: file.Path})
+		uploadResponses = append(uploadResponses, agentmodel.FileUploadResponse{Path: file.Path})
 	}
 	return uploadResponses, nil
 }
@@ -293,7 +293,7 @@ func (dockerFilesystem *DockerFilesystem) Delete(ctx context.Context, filePath s
 		return "", normalizeDockerFileError(ctx, err)
 	}
 	if resolvedPath == dockerFilesystem.root {
-		return "", ErrInvalidPath
+		return "", agentmodel.ErrInvalidPath
 	}
 	dockerCommand := exec.CommandContext(ctx, "docker", "exec", dockerFilesystem.containerID, "rm", "-f", "--", resolvedPath)
 	output, err := dockerCommand.CombinedOutput()
@@ -308,9 +308,9 @@ func (dockerFilesystem *DockerFilesystem) ApplyPatch(ctx context.Context, patch 
 	return ApplyWorkspacePatch(ctx, dockerFilesystem, patch)
 }
 
-var _ Filesystem = (*DockerFilesystem)(nil)
-var _ CommandService = (*DockerFilesystem)(nil)
-var _ ToolFilesystem = (*DockerFilesystem)(nil)
+var _ agentmodel.Filesystem = (*DockerFilesystem)(nil)
+var _ agentmodel.CommandService = (*DockerFilesystem)(nil)
+var _ agentmodel.ToolFilesystem = (*DockerFilesystem)(nil)
 var _ patchFilesystem = (*DockerFilesystem)(nil)
 
 const (
@@ -354,7 +354,7 @@ func (dockerFilesystem *DockerFilesystem) HasFile(ctx context.Context, filePath 
 	return false, normalizeDockerFileError(ctx, existenceErr)
 }
 
-func (dockerFilesystem *DockerFilesystem) CreateFileNoReplace(ctx context.Context, filePath, content string) (*WriteResult, error) {
+func (dockerFilesystem *DockerFilesystem) CreateFileNoReplace(ctx context.Context, filePath, content string) (*agentmodel.WriteResult, error) {
 	resolvedPath, err := dockerFilesystem.resolve(ctx, filePath)
 	if err != nil {
 		return nil, normalizeDockerFileError(ctx, err)
@@ -371,7 +371,7 @@ func (dockerFilesystem *DockerFilesystem) CreateFileNoReplace(ctx context.Contex
 		if contextErr != nil {
 			return nil, contextErr
 		}
-		return &WriteResult{Path: filePath}, nil
+		return &agentmodel.WriteResult{Path: filePath}, nil
 	}
 	dockerCommand := exec.CommandContext(ctx, "docker", "exec", "-i", dockerFilesystem.containerID, "python3", "-c", dockerPatchScript, "create", dockerFilesystem.root, resolvedPath)
 	dockerCommand.Stdin = strings.NewReader(content)
@@ -381,7 +381,7 @@ func (dockerFilesystem *DockerFilesystem) CreateFileNoReplace(ctx context.Contex
 		if contextErr != nil {
 			return nil, contextErr
 		}
-		return &WriteResult{Path: filePath}, nil
+		return &agentmodel.WriteResult{Path: filePath}, nil
 	}
 	contextErr := ctx.Err()
 	if contextErr != nil {
@@ -392,7 +392,7 @@ func (dockerFilesystem *DockerFilesystem) CreateFileNoReplace(ctx context.Contex
 	if isExitError {
 		exitCode := exitErr.ExitCode()
 		if exitCode == dockerPatchAlreadyExistsExitCode {
-			return nil, fmt.Errorf("%w: %s", ErrAlreadyExists, filePath)
+			return nil, fmt.Errorf("%w: %s", agentmodel.ErrAlreadyExists, filePath)
 		}
 	}
 	createErr := fmt.Errorf("docker create %s: %s: %w", filePath, strings.TrimSpace(string(output)), err)

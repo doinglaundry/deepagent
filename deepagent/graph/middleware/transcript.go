@@ -9,8 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 // Transcript opens an independently owned writer per run. The caller chooses
@@ -25,9 +24,11 @@ type Transcript struct {
 
 func (*Transcript) GetName() string { return "transcript" }
 
-func (transcript *Transcript) NewRun() Middleware { return &Transcript{Open: transcript.Open} }
+func (transcript *Transcript) NewRun() agentmodel.Middleware {
+	return &Transcript{Open: transcript.Open}
+}
 
-func (transcript *Transcript) PrepareRun(ctx context.Context, runState *types.RunState) error {
+func (transcript *Transcript) PrepareRun(ctx context.Context, runState *agentmodel.RunState) error {
 	transcript.mu.Lock()
 	defer transcript.mu.Unlock()
 	if transcript.writer != nil {
@@ -51,7 +52,7 @@ func (transcript *Transcript) PrepareRun(ctx context.Context, runState *types.Ru
 	return nil
 }
 
-func (transcript *Transcript) FinishRun(context.Context, *types.RunState, error) error {
+func (transcript *Transcript) FinishRun(context.Context, *agentmodel.RunState, error) error {
 	return transcript.Close(context.Background())
 }
 
@@ -76,29 +77,29 @@ type transcriptMessage struct {
 	Sequence   uint64              `json:"sequence"`
 	ToolCallID string              `json:"tool_call_id,omitempty"`
 	Reasoning  string              `json:"reasoning,omitempty"`
-	Message    *messagepkg.Message `json:"message"`
+	Message    *agentmodel.Message `json:"message"`
 }
 
-func (transcript *Transcript) Observe(_ context.Context, runtimeEvent types.RuntimeEvent) error {
+func (transcript *Transcript) Observe(_ context.Context, runtimeEvent agentmodel.RuntimeEvent) error {
 	transcript.mu.Lock()
 	defer transcript.mu.Unlock()
 	if transcript.writer == nil {
 		return nil
 	}
-	var messages []*messagepkg.Message
+	var messages []*agentmodel.Message
 	var isSnapshot bool
 	switch runtimeEvent.Kind {
 	case "llm_requesting":
-		eventPayload, _ := runtimeEvent.Data.(types.LLMRequestingPayload)
+		eventPayload, _ := runtimeEvent.Data.(agentmodel.LLMRequestingPayload)
 		messages = eventPayload.Messages
 		isSnapshot = true
 	case "llm_end":
-		eventPayload, _ := runtimeEvent.Data.(types.LLMEnd)
-		messages = []*messagepkg.Message{eventPayload.Message}
+		eventPayload, _ := runtimeEvent.Data.(agentmodel.LLMEnd)
+		messages = []*agentmodel.Message{eventPayload.Message}
 	case "tool_end":
-		eventPayload, ok := runtimeEvent.Data.(types.ToolEndPayload)
+		eventPayload, ok := runtimeEvent.Data.(agentmodel.ToolEndPayload)
 		if ok {
-			messages = []*messagepkg.Message{messagepkg.NewToolMessage(eventPayload.Result, eventPayload.CallID)}
+			messages = []*agentmodel.Message{agentmodel.NewToolMessage(eventPayload.Result, eventPayload.CallID)}
 			messages[0].ToolName = eventPayload.Name
 			if len(eventPayload.MultiContent) > 0 {
 				messages[0].Content = ""
@@ -111,7 +112,7 @@ func (transcript *Transcript) Observe(_ context.Context, runtimeEvent types.Runt
 	messageHashes := make([][32]byte, len(messages))
 	for i, message := range messages {
 		// 事件与历史中的同一内容可能有不同业务元数据；元数据不参与重复判断。
-		encodedMessage, err := json.Marshal(messagepkg.ToEino(message))
+		encodedMessage, err := json.Marshal(agentmodel.ToEino(message))
 		if err != nil {
 			return err
 		}

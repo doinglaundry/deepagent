@@ -6,53 +6,34 @@ import (
 	"sync"
 	"time"
 
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/utils"
-
-	"github.com/cloudwego/eino/components/model"
 )
 
-// IConversation 定义 Graph 使用的历史、压缩和用量能力。
-type IConversation interface {
-	ReloadHistory(context.Context) error
-	AddHistory(context.Context, string, ...*messagepkg.Message) error
-	GetHistory(context.Context) []*messagepkg.Message
-	BuildRequest(context.Context, []*messagepkg.Message) ([]*messagepkg.Message, error)
-	GetContextUsage() types.ContextTokenUsage
-	SnapshotContext() (int64, types.ContextTokenUsage)
-	RestoreContext(context.Context, int64, types.ContextTokenUsage) error
-	RecordModelUsage(context.Context, *model.TokenUsage)
-	GetRunUsage() types.Usage
-	RestoreRunUsage(context.Context, types.Usage) error
-	NeedsCompaction(context.Context) bool
-	Compact(context.Context, string) (*types.ContextTokenUsage, error)
-}
-
-var _ IConversation = (*Conversation)(nil)
+var _ agentmodel.Conversation = (*Conversation)(nil)
 
 // Conversation publishes changes only after durable writes succeed.
 type Conversation struct {
 	mu                sync.Mutex
 	threadID          string
-	messages          []*messagepkg.Message
+	messages          []*agentmodel.Message
 	seenMessageIDs    map[string]struct{}
 	historySequence   int64
-	conversationDB    ConversationDB
+	conversationDB    agentmodel.ConversationDB
 	compactor         *SummaryCompaction
-	generateMessageID GetMessageIDFunc
-	countTokenFunc    CountTokenFunc
-	contextTokenUsage types.ContextTokenUsage
-	runUsage          types.Usage
+	generateMessageID agentmodel.GetMessageIDFunc
+	countTokenFunc    agentmodel.CountTokenFunc
+	contextTokenUsage agentmodel.ContextTokenUsage
+	runUsage          agentmodel.RunUsage
 }
 
 func New(
 	threadID string,
-	conversationDB ConversationDB,
+	conversationDB agentmodel.ConversationDB,
 	compactor *SummaryCompaction,
-	countTokenFunc CountTokenFunc,
+	countTokenFunc agentmodel.CountTokenFunc,
 	maxContextTokens int64,
-	generateMessageID GetMessageIDFunc,
+	generateMessageID agentmodel.GetMessageIDFunc,
 ) *Conversation {
 	if countTokenFunc == nil {
 		countTokenFunc = utils.SimpleTokenCounter
@@ -64,12 +45,12 @@ func New(
 		countTokenFunc:    countTokenFunc,
 		generateMessageID: generateMessageID,
 		seenMessageIDs:    make(map[string]struct{}),
-		contextTokenUsage: types.ContextTokenUsage{MaxContextTokens: maxContextTokens},
+		contextTokenUsage: agentmodel.ContextTokenUsage{MaxContextTokens: maxContextTokens},
 	}
 	conversation.recomputeContextUsage()
 	return conversation
 }
-func (conversation *Conversation) AddHistory(ctx context.Context, runID string, messages ...*messagepkg.Message) error {
+func (conversation *Conversation) AddHistory(ctx context.Context, runID string, messages ...*agentmodel.Message) error {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
 	for _, message := range messages {
@@ -103,25 +84,25 @@ func (conversation *Conversation) AddHistory(ctx context.Context, runID string, 
 	}
 	return nil
 }
-func (conversation *Conversation) GetHistory(context.Context) []*messagepkg.Message {
+func (conversation *Conversation) GetHistory(context.Context) []*agentmodel.Message {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
 	return slices.Clone(conversation.messages)
 }
-func (conversation *Conversation) BuildRequest(ctx context.Context, prompts []*messagepkg.Message) ([]*messagepkg.Message, error) {
+func (conversation *Conversation) BuildRequest(ctx context.Context, prompts []*agentmodel.Message) ([]*agentmodel.Message, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, err
 	}
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	request := make([]*messagepkg.Message, 0, len(prompts)+len(conversation.messages))
+	request := make([]*agentmodel.Message, 0, len(prompts)+len(conversation.messages))
 	request = append(request, prompts...)
 	return append(request, conversation.messages...), nil
 }
 
 // 消息身份只分配一次；重投、checkpoint 和数据库使用同一个 MessageID。
-func (conversation *Conversation) initializeMessage(ctx context.Context, runID string, message *messagepkg.Message) error {
+func (conversation *Conversation) initializeMessage(ctx context.Context, runID string, message *agentmodel.Message) error {
 	err := ctx.Err()
 	if err != nil {
 		return err

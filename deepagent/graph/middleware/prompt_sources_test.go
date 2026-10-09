@@ -8,17 +8,17 @@ import (
 	"testing"
 
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
-	skillspkg "eino-cli/deepagent/graph/skills"
+	agentmodel "eino-cli/deepagent/model"
 )
 
-type testLoader struct{ items []*skillspkg.SkillMetadata }
+type testLoader struct{ items []*agentmodel.SkillMetadata }
 
-func (skillLoader testLoader) ListSkills(context.Context) ([]*skillspkg.SkillMetadata, error) {
+func (skillLoader testLoader) ListSkills(context.Context) ([]*agentmodel.SkillMetadata, error) {
 	return skillLoader.items, nil
 }
 
 func TestBuildPromptIgnoresInvalidSkillMetadata(t *testing.T) {
-	availableSkills := []*skillspkg.SkillMetadata{
+	availableSkills := []*agentmodel.SkillMetadata{
 		nil,
 		{Name: " ", Description: "invalid skill"},
 		{Name: "review", Description: "Review code", Path: "/skills/review/SKILL.md"},

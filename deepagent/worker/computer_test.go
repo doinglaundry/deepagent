@@ -4,10 +4,11 @@ package worker
 
 import (
 	"context"
-	"eino-cli/deepagent/graph/computer"
-	"eino-cli/deepagent/graph/types"
 	"testing"
 	"time"
+
+	"eino-cli/deepagent/graph/computer"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 func TestComputerTarget_ExactOriginAndApp(t *testing.T) {
@@ -26,7 +27,7 @@ func TestComputerTarget_ExactOriginAndApp(t *testing.T) {
 		{"browser_observe", `{}`, false},
 	}
 	for _, tc := range cases {
-		err := validateComputerTarget(runtime, types.ToolCall{Name: tc.name, Arguments: tc.args})
+		err := validateComputerTarget(runtime, agentmodel.ToolCall{Name: tc.name, Arguments: tc.args})
 		if (err == nil) != tc.allowed {
 			t.Fatalf("%s %s: %v", tc.name, tc.args, err)
 		}

@@ -5,8 +5,7 @@ import (
 	"strings"
 
 	"eino-cli/deepagent/graph/computer"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -19,27 +18,27 @@ type Computer struct {
 	ownerRunID string
 }
 
-func NewComputer(desktop *computer.Desktop) Middleware { return &Computer{desktop: desktop} }
-func (*Computer) GetName() string                      { return "computer" }
-func (middleware *Computer) NewRun() Middleware        { return NewComputer(middleware.desktop) }
-func (middleware *Computer) PrepareRun(_ context.Context, runState *types.RunState) error {
+func NewComputer(desktop *computer.Desktop) agentmodel.Middleware { return &Computer{desktop: desktop} }
+func (*Computer) GetName() string                                 { return "computer" }
+func (middleware *Computer) NewRun() agentmodel.Middleware        { return NewComputer(middleware.desktop) }
+func (middleware *Computer) PrepareRun(_ context.Context, runState *agentmodel.RunState) error {
 	if runState.Depth == 0 {
 		middleware.ownerRunID = runState.RunID
 	}
 	return nil
 }
-func (*Computer) FinishRun(context.Context, *types.RunState, error) error { return nil }
+func (*Computer) FinishRun(context.Context, *agentmodel.RunState, error) error { return nil }
 func (middleware *Computer) Close(ctx context.Context) error {
 	if middleware.desktop == nil || middleware.ownerRunID == "" {
 		return nil
 	}
 	ownerRunID := middleware.ownerRunID
 	middleware.ownerRunID = ""
-	_, err := middleware.desktop.PerformAction(ctx, ownerRunID, "release", computer.Action{})
+	_, err := middleware.desktop.PerformAction(ctx, ownerRunID, "release", agentmodel.ComputerAction{})
 	return err
 }
-func (*Computer) ModifyModelRequest(_ context.Context, _ []*messagepkg.Message, messages []*messagepkg.Message, _ *types.GraphState) ([]*messagepkg.Message, error) {
-	request := append([]*messagepkg.Message(nil), messages...)
+func (*Computer) ModifyModelRequest(_ context.Context, _ []*agentmodel.Message, messages []*agentmodel.Message, _ *agentmodel.GraphState) ([]*agentmodel.Message, error) {
+	request := append([]*agentmodel.Message(nil), messages...)
 	keepLatestScreenshot := true
 	for index := len(messages) - 1; index >= 0; index-- {
 		message := messages[index]

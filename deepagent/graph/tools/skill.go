@@ -7,12 +7,13 @@ import (
 	"strings"
 
 	skillspkg "eino-cli/deepagent/graph/skills"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
 
-type ActivateSkillTool struct{ skillLoader skillspkg.SkillLoader }
+type ActivateSkillTool struct{ skillLoader agentmodel.SkillLoader }
 
 func (activateSkillTool *ActivateSkillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	skillMetadata, err := activateSkillTool.skillLoader.ListSkills(ctx)
@@ -31,8 +32,8 @@ func (activateSkillTool *ActivateSkillTool) Info(ctx context.Context) (*schema.T
 	})}, nil
 }
 
-func NewActivateSkillTool(skillLoader skillspkg.SkillLoader) ToolDescriptor {
-	return ToolDescriptor{Tool: &ActivateSkillTool{skillLoader: skillLoader}, ReadOnly: true}
+func NewActivateSkillTool(skillLoader agentmodel.SkillLoader) agentmodel.ToolDescriptor {
+	return agentmodel.ToolDescriptor{Tool: &ActivateSkillTool{skillLoader: skillLoader}, ReadOnly: true}
 }
 
 func (activateSkillTool *ActivateSkillTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {

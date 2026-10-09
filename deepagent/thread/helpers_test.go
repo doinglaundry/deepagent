@@ -12,8 +12,7 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/middleware"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 	runpkg "eino-cli/deepagent/run"
 
 	"github.com/cloudwego/eino/components/model"
@@ -104,15 +103,15 @@ func legacyParityMessageStream(messages ...*schema.Message) *schema.StreamReader
 	return schema.StreamReaderFromArray(messages)
 }
 
-func legacyParityWaitRunEnd(t *testing.T, events <-chan runpkg.Event) runpkg.Event {
+func legacyParityWaitRunEnd(t *testing.T, events <-chan agentmodel.RunEvent) agentmodel.RunEvent {
 	t.Helper()
 	for {
 		select {
 		case event := <-events:
-			if event.Type == runpkg.EventError {
+			if event.Type == agentmodel.EventError {
 				t.Fatalf("run failed: %+v", event.Payload)
 			}
-			if event.Type == runpkg.EventRunEnd {
+			if event.Type == agentmodel.EventRunEnd {
 				return event
 			}
 		case <-time.After(5 * time.Second):
@@ -171,7 +170,7 @@ type pendingCheckpointStore struct {
 
 func (s *pendingCheckpointStore) Set(ctx context.Context, id string, raw []byte) error {
 	var snapshot struct {
-		MapValues map[string]struct{ JSONValue types.RunState }
+		MapValues map[string]struct{ JSONValue agentmodel.RunState }
 	}
 	decodeErr := json.Unmarshal(raw, &snapshot)
 	if decodeErr != nil {
@@ -180,7 +179,7 @@ func (s *pendingCheckpointStore) Set(ctx context.Context, id string, raw []byte)
 	state := snapshot.MapValues["State"].JSONValue
 	hold := len(state.Consumed) > 1 && state.PreparedInputs < len(state.Consumed)
 	if s.holdOnCompleted {
-		hold = state.Phase == types.PhaseCompleted
+		hold = state.Phase == agentmodel.PhaseCompleted
 	}
 	if hold {
 		s.gateOnce.Do(func() {
@@ -203,7 +202,7 @@ func (s *pendingCheckpointStore) Set(ctx context.Context, id string, raw []byte)
 
 type pendingConversationDB struct{ historyMemory }
 
-func (s *pendingConversationDB) AppendMessage(ctx context.Context, record *messagepkg.Message) error {
+func (s *pendingConversationDB) AppendMessage(ctx context.Context, record *agentmodel.Message) error {
 	err := ctx.Err()
 	if err != nil {
 		return err
@@ -218,7 +217,7 @@ type pendingSaveStore struct {
 	failure error
 }
 
-func (s *pendingSaveStore) AppendMessage(ctx context.Context, r *messagepkg.Message) error {
+func (s *pendingSaveStore) AppendMessage(ctx context.Context, r *agentmodel.Message) error {
 	if r.Content == "accepted pending" {
 		close(s.started)
 		select {
@@ -281,7 +280,7 @@ type threadCloseMiddleware struct {
 
 func (*threadCloseMiddleware) GetName() string { return "thread_close" }
 
-func (m *threadCloseMiddleware) GetStateHandler() types.RunTimeStateful {
+func (m *threadCloseMiddleware) GetStateHandler() agentmodel.RunTimeStateful {
 	close(m.ready)
 	return nil
 }
@@ -323,11 +322,11 @@ func (m *threadModel) Stream(ctx context.Context, input []*schema.Message, _ ...
 
 type historyMemory struct {
 	mu       sync.Mutex
-	records  []*messagepkg.Message
-	contexts map[*messagepkg.Message][]*messagepkg.Message
+	records  []*agentmodel.Message
+	contexts map[*agentmodel.Message][]*agentmodel.Message
 }
 
-func (store *historyMemory) AppendMessage(_ context.Context, message *messagepkg.Message) error {
+func (store *historyMemory) AppendMessage(_ context.Context, message *agentmodel.Message) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	for _, record := range store.records {
@@ -344,7 +343,7 @@ func (store *historyMemory) AppendMessage(_ context.Context, message *messagepkg
 	store.records = append(store.records, &copy)
 	return nil
 }
-func (store *historyMemory) SaveContext(ctx context.Context, messages []*messagepkg.Message) error {
+func (store *historyMemory) SaveContext(ctx context.Context, messages []*agentmodel.Message) error {
 	summary := messages[0]
 	err := store.AppendMessage(ctx, summary)
 	if err != nil {
@@ -353,12 +352,12 @@ func (store *historyMemory) SaveContext(ctx context.Context, messages []*message
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if store.contexts == nil {
-		store.contexts = make(map[*messagepkg.Message][]*messagepkg.Message)
+		store.contexts = make(map[*agentmodel.Message][]*agentmodel.Message)
 	}
 	store.contexts[store.records[len(store.records)-1]] = slices.Clone(messages)
 	return nil
 }
-func (store *historyMemory) LoadContext(_ context.Context, threadID string) (messages []*messagepkg.Message, ids []string, sequence int64, err error) {
+func (store *historyMemory) LoadContext(_ context.Context, threadID string) (messages []*agentmodel.Message, ids []string, sequence int64, err error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	for _, record := range store.records {
@@ -439,7 +438,7 @@ func (m *resumedInputModel) Stream(ctx context.Context, input []*schema.Message,
 	return stream, err
 }
 
-func newTestThread(threadID string, cfg *runpkg.Config, events chan runpkg.Event, options ThreadOptions) *Thread {
+func newTestThread(threadID string, cfg *runpkg.Config, events chan agentmodel.RunEvent, options ThreadOptions) *Thread {
 	thread, err := NewThread(ThreadConfig{ThreadID: threadID, RunConfig: cfg, Events: events, Options: options})
 	if err != nil {
 		panic(err)

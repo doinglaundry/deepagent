@@ -13,9 +13,8 @@ import (
 	"strings"
 	"time"
 
-	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/manager"
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 //go:embed index.html app.js i18n.js app.css assets
@@ -62,7 +61,7 @@ type threadView struct {
 	RunStatus      string `json:"run_status,omitempty"`
 }
 
-func viewThread(thread *dalmodel.Thread) threadView {
+func viewThread(thread *agentmodel.ThreadRecord) threadView {
 	if thread == nil {
 		return threadView{}
 	}
@@ -85,7 +84,7 @@ func viewThread(thread *dalmodel.Thread) threadView {
 }
 
 // Resolve missing titles in one read; do not rewrite stored metadata or history.
-func (s *Server) getThreadViews(ctx context.Context, threads ...*dalmodel.Thread) ([]threadView, error) {
+func (s *Server) getThreadViews(ctx context.Context, threads ...*agentmodel.ThreadRecord) ([]threadView, error) {
 	views := make([]threadView, len(threads))
 	var untitledIDs []int64
 	for index, thread := range threads {
@@ -98,9 +97,9 @@ func (s *Server) getThreadViews(ctx context.Context, threads ...*dalmodel.Thread
 		return views, nil
 	}
 	database := s.Manager.DB().DB(ctx, true)
-	firstInputIDs := database.Model(&dalmodel.Message{}).Select("MIN(message_id)").
-		Where("thread_id IN ? AND message_type = ?", untitledIDs, inputpkg.MessageTypeInput).Group("thread_id")
-	var messages []*dalmodel.Message
+	firstInputIDs := database.Model(&agentmodel.MailboxMessage{}).Select("MIN(message_id)").
+		Where("thread_id IN ? AND message_type = ?", untitledIDs, agentmodel.MessageTypeInput).Group("thread_id")
+	var messages []*agentmodel.MailboxMessage
 	err := database.Select("thread_id", "message_type", "payload").Where("message_id IN (?)", firstInputIDs).Find(&messages).Error
 	if err != nil {
 		return nil, err
@@ -138,7 +137,7 @@ type createRequest struct {
 func (s *Server) threads(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		result, err := s.Manager.ListThreads(r.Context(), manager.ListThreadsRequest{SessionID: r.URL.Query().Get("session_id"), Limit: 100})
+		result, err := s.Manager.ListThreads(r.Context(), agentmodel.ListThreadsRequest{SessionID: r.URL.Query().Get("session_id"), Limit: 100})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -163,8 +162,8 @@ func (s *Server) threads(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(req.WorkDir) == "" {
 			req.WorkDir = s.Root
 		}
-		result, err := s.Manager.Submit(r.Context(), manager.SubmitRequest{
-			SessionID: req.SessionID, Title: req.Name, Profile: &dalmodel.Profile{Cwd: req.WorkDir},
+		result, err := s.Manager.Submit(r.Context(), agentmodel.SubmitRequest{
+			SessionID: req.SessionID, Title: req.Name, Profile: &agentmodel.ThreadProfile{Cwd: req.WorkDir},
 		})
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -190,7 +189,7 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		result, err := s.Manager.ListThreads(r.Context(), manager.ListThreadsRequest{ThreadID: threadID})
+		result, err := s.Manager.ListThreads(r.Context(), agentmodel.ListThreadsRequest{ThreadID: threadID})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -235,8 +234,8 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 
 type submitRequest struct {
 	Text   string
-	Mode   inputpkg.UserMessageMode
-	Resume *inputpkg.ResumeRunPayload
+	Mode   agentmodel.UserMessageMode
+	Resume *agentmodel.ResumeRunPayload
 }
 
 func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID int64) {
@@ -251,7 +250,7 @@ func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID 
 		return
 	}
 	var (
-		result manager.ThreadMessageResult
+		result agentmodel.ThreadMessageResult
 		err    error
 	)
 	if req.Resume != nil {
@@ -266,28 +265,28 @@ func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID 
 			return
 		}
 		var metadata map[string]string
-		if req.Mode == inputpkg.UserMessageModeImplPlan {
-			metadata = map[string]string{inputpkg.MetadataRunMode: inputpkg.RunModePlan}
+		if req.Mode == agentmodel.UserMessageModeImplPlan {
+			metadata = map[string]string{agentmodel.MetadataRunMode: agentmodel.RunModePlan}
 		}
-		result, err = s.Manager.Resume(r.Context(), threadID, &manager.InputMessage{
+		result, err = s.Manager.Resume(r.Context(), threadID, &agentmodel.InputMessage{
 			Metadata:   metadata,
-			SenderType: "user", MessageType: inputpkg.MessageTypeResume, Payload: payload,
+			SenderType: "user", MessageType: agentmodel.MessageTypeResume, Payload: payload,
 		})
 	} else {
 		if strings.TrimSpace(req.Text) == "" {
 			writeError(w, http.StatusBadRequest, errors.New("text is required"))
 			return
 		}
-		payload, marshalErr := json.Marshal(inputpkg.UserMessage{
+		payload, marshalErr := json.Marshal(agentmodel.UserMessage{
 			Mode:  req.Mode,
-			Parts: []inputpkg.MessagePart{{Type: inputpkg.MessagePartTypeText, Text: req.Text}},
+			Parts: []agentmodel.InputMessagePart{{Type: agentmodel.InputMessagePartTypeText, Text: req.Text}},
 		})
 		if marshalErr != nil {
 			writeError(w, http.StatusBadRequest, marshalErr)
 			return
 		}
-		result, err = s.Manager.Submit(r.Context(), manager.SubmitRequest{ThreadID: threadID, Input: &manager.InputMessage{
-			SenderType: "user", MessageType: inputpkg.MessageTypeInput, Payload: payload,
+		result, err = s.Manager.Submit(r.Context(), agentmodel.SubmitRequest{ThreadID: threadID, Input: &agentmodel.InputMessage{
+			SenderType: "user", MessageType: agentmodel.MessageTypeInput, Payload: payload,
 		}})
 	}
 	if err != nil {
@@ -309,7 +308,7 @@ type eventView struct {
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request, threadID int64) {
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	result, err := s.Manager.ListMessages(r.Context(), manager.ListMessagesRequest{ThreadID: threadID, AfterID: after, Limit: 200})
+	result, err := s.Manager.ListMessages(r.Context(), agentmodel.ListMessagesRequest{ThreadID: threadID, AfterID: after, Limit: 200})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -325,11 +324,11 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, threadID int64) 
 	writeJSON(w, http.StatusOK, rows)
 }
 
-func messageDisplayStatus(message *dalmodel.Message, run *dalmodel.RunRecord) string {
+func messageDisplayStatus(message *agentmodel.MailboxMessage, run *agentmodel.RunRecord) string {
 	if message.OutputKey != nil {
 		return ""
 	}
-	if message.Status == dalmodel.MessageStatusCanceled {
+	if message.Status == agentmodel.MessageStatusCanceled {
 		return "canceled"
 	}
 	if run != nil {
@@ -343,12 +342,12 @@ func messageDisplayStatus(message *dalmodel.Message, run *dalmodel.RunRecord) st
 	return message.Status
 }
 
-func messageText(message *dalmodel.Message) string {
+func messageText(message *agentmodel.MailboxMessage) string {
 	if message == nil {
 		return ""
 	}
-	if message.MessageType == inputpkg.MessageTypeInput {
-		var input inputpkg.UserMessage
+	if message.MessageType == agentmodel.MessageTypeInput {
+		var input agentmodel.UserMessage
 		if json.Unmarshal(message.Payload, &input) == nil {
 			var parts []string
 			for _, part := range input.Parts {
@@ -383,7 +382,7 @@ func messageText(message *dalmodel.Message) string {
 }
 
 func (s *Server) openFile(w http.ResponseWriter, r *http.Request, threadID int64) {
-	result, err := s.Manager.ListThreads(r.Context(), manager.ListThreadsRequest{ThreadID: threadID})
+	result, err := s.Manager.ListThreads(r.Context(), agentmodel.ListThreadsRequest{ThreadID: threadID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -433,7 +432,7 @@ func (s *Server) Shutdown(context.Context) error { return nil }
 
 // stream forwards existing Manager events; persisted messages remain the history source.
 func (s *Server) stream(w http.ResponseWriter, r *http.Request, threadID int64) {
-	result, err := s.Manager.ListThreads(r.Context(), manager.ListThreadsRequest{ThreadID: threadID})
+	result, err := s.Manager.ListThreads(r.Context(), agentmodel.ListThreadsRequest{ThreadID: threadID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

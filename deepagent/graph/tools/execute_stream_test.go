@@ -11,19 +11,20 @@ import (
 	"time"
 
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
+	agentmodel "eino-cli/deepagent/model"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 )
 
 type joinedCommands struct {
-	filesystempkg.CommandService
+	agentmodel.CommandService
 	joined chan error
 }
 
 // completedOutputCommands makes the first observation happen after process exit.
-type completedOutputCommands struct{ filesystempkg.CommandService }
+type completedOutputCommands struct{ agentmodel.CommandService }
 
-func (completedCommands completedOutputCommands) Wait(ctx context.Context, taskID, _ string, offset int) (*filesystempkg.CommandSnapshot, error) {
+func (completedCommands completedOutputCommands) Wait(ctx context.Context, taskID, _ string, offset int) (*agentmodel.CommandSnapshot, error) {
 	return completedCommands.CommandService.Wait(ctx, taskID, "", offset)
 }
 

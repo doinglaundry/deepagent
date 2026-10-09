@@ -8,11 +8,13 @@ import (
 	"sync"
 	"testing"
 
+	agentmodel "eino-cli/deepagent/model"
+
 	"github.com/google/uuid"
 )
 
 type sequenceRedis struct {
-	RedisClient
+	agentmodel.RedisClient
 	mu       sync.Mutex
 	counters map[string]int64
 	failure  error

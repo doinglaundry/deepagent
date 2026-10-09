@@ -2,11 +2,13 @@ package tools
 
 import (
 	"context"
+	"testing"
+
 	"eino-cli/deepagent/graph/computer"
-	"eino-cli/deepagent/graph/types"
+	agentmodel "eino-cli/deepagent/model"
+
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"testing"
 )
 
 func TestComputerTools_ContractAndChildIsolation(t *testing.T) {
@@ -35,7 +37,7 @@ func TestComputerTools_ContractAndChildIsolation(t *testing.T) {
 		if !ok {
 			t.Fatal("missing image tool interface")
 		}
-		ctx := types.WithRunState(context.Background(), &types.RunState{Depth: 1, RunID: "child"})
+		ctx := agentmodel.WithRunState(context.Background(), &agentmodel.RunState{Depth: 1, RunID: "child"})
 		_, err = enhanced.InvokableRun(ctx, &schema.ToolArgument{Text: `{}`})
 		if err == nil {
 			t.Fatal("child was allowed desktop access")

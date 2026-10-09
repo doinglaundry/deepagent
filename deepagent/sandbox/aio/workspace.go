@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 
 	"eino-cli/deepagent/config"
-	"eino-cli/deepagent/sandbox"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 // AcquireDockerWorkspace starts one container for a thread, mounting its root
 // at the same absolute path inside the container. The caller owns release.
-func AcquireDockerWorkspace(ctx context.Context, source config.SandboxConfig, sessionID, workDir string) (sandbox.Sandbox, func(), error) {
+func AcquireDockerWorkspace(ctx context.Context, source config.SandboxConfig, sessionID, workDir string) (agentmodel.Sandbox, func(), error) {
 	if source.Image == "" {
 		return nil, nil, fmt.Errorf("docker workspace image is required")
 	}
@@ -37,7 +37,7 @@ func AcquireDockerWorkspace(ctx context.Context, source config.SandboxConfig, se
 		return nil, nil, err
 	}
 	cleanup := func() {
-		shutdown, ok := m.(sandbox.Shutdowner)
+		shutdown, ok := m.(agentmodel.Shutdowner)
 		if ok {
 			shutdown.Shutdown()
 		}

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"eino-cli/deepagent/graph/types"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 // snapshotState edits only Eino's canonical JSON local state. The surrounding
@@ -26,7 +26,7 @@ type interruptTree struct {
 // for the failed Run's terminal event and delayed message redelivery.
 type ToolOutcomeUnknownError struct {
 	CallID string
-	Inputs []types.Input
+	Inputs []agentmodel.RunInput
 }
 
 func (outcomeError *ToolOutcomeUnknownError) Error() string {
@@ -60,7 +60,7 @@ func decodeSnapshot(snapshot []byte) (*snapshotState, error) {
 }
 
 // 业务更新需要本项目的 RunState，同时保留 Eino 的执行位置和未知字段。
-func decodeActiveSnapshot(snapshot []byte, threadID, runID string) (*snapshotState, *types.RunState, error) {
+func decodeActiveSnapshot(snapshot []byte, threadID, runID string) (*snapshotState, *agentmodel.RunState, error) {
 	snapshotState, err := decodeSnapshot(snapshot)
 	if err != nil {
 		return nil, nil, err
@@ -76,8 +76,8 @@ func decodeActiveSnapshot(snapshot []byte, threadID, runID string) (*snapshotSta
 }
 
 // 直接解析 Eino 保存的 RunState，校验输入游标和终止状态。
-func (snapshotState *snapshotState) decodeActiveRunState() (*types.RunState, error) {
-	var runState types.RunState
+func (snapshotState *snapshotState) decodeActiveRunState() (*agentmodel.RunState, error) {
+	var runState agentmodel.RunState
 	err := json.Unmarshal(snapshotState.localStateFields["JSONValue"], &runState)
 	if err != nil {
 		return nil, err
@@ -89,7 +89,7 @@ func (snapshotState *snapshotState) decodeActiveRunState() (*types.RunState, err
 		return nil, fmt.Errorf("invalid prepared input cursor %d", runState.PreparedInputs)
 	}
 	switch runState.Phase {
-	case types.PhaseCompleted, types.PhaseFailed, types.PhaseInterrupted:
+	case agentmodel.PhaseCompleted, agentmodel.PhaseFailed, agentmodel.PhaseInterrupted:
 		return nil, fmt.Errorf("checkpoint run is terminal: %s", runState.Phase)
 	}
 	return &runState, nil
@@ -175,9 +175,9 @@ func ValidateResume(snapshot []byte, interruptIDs []string, resumeData map[strin
 }
 
 // 结果未知的工具调用不能重放，但仍允许在原快照中保存已接受的输入。
-func rejectUnknownToolOutcome(runState *types.RunState) error {
+func rejectUnknownToolOutcome(runState *agentmodel.RunState) error {
 	for _, call := range runState.Calls {
-		if call.Status == types.CallOutcomeUnknown || call.Status == types.CallRunning {
+		if call.Status == agentmodel.CallOutcomeUnknown || call.Status == agentmodel.CallRunning {
 			return &ToolOutcomeUnknownError{CallID: call.Call.ID, Inputs: runState.Consumed}
 		}
 	}
@@ -193,14 +193,14 @@ func preserveCallFields(old, current json.RawMessage) json.RawMessage {
 	}
 	callsByID := map[string]json.RawMessage{}
 	for _, raw := range previous {
-		var toolCallState types.ToolCallState
+		var toolCallState agentmodel.ToolCallState
 		err := json.Unmarshal(raw, &toolCallState)
 		if err == nil {
 			callsByID[toolCallState.Call.ID] = raw
 		}
 	}
 	for i, raw := range next {
-		var toolCallState types.ToolCallState
+		var toolCallState agentmodel.ToolCallState
 		err := json.Unmarshal(raw, &toolCallState)
 		if err == nil {
 			next[i] = mergeObject(callsByID[toolCallState.Call.ID], raw, "")

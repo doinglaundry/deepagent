@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	agentmodel "eino-cli/deepagent/model"
 )
 
 // LoadSkillContent delegates to custom content loaders, or reads an exact
 // catalog entry for older metadata-only loaders. File access stays in the skills package.
-func LoadSkillContent(ctx context.Context, loader SkillLoader, name string) (string, error) {
+func LoadSkillContent(ctx context.Context, loader agentmodel.SkillLoader, name string) (string, error) {
 	contextErr := ctx.Err()
 	if contextErr != nil {
 		return "", contextErr

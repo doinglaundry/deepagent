@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
@@ -34,13 +32,13 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 		{schema.AssistantMessage("done", nil)}, {schema.AssistantMessage("new", nil)},
 	}}
 	seen := 0
-	var complete *messagepkg.Message
-	config := Config{Model: chatModel, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+	var complete *agentmodel.Message
+	config := Config{Model: chatModel, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
 		if complete == nil && event.Kind == "llm_token" {
 			seen++
 		}
 		if event.Kind == "llm_end" {
-			message := event.Data.(types.LLMEnd).Message
+			message := event.Data.(agentmodel.LLMEnd).Message
 			if len(message.ToolCalls) > 0 {
 				complete = message
 			}
@@ -52,7 +50,7 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +75,7 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer next.Close(context.Background())
-	message, err := next.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("next")})
+	message, err := next.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("next")})
 	if err != nil || message.Content != "new" || len(message.ToolCalls) != 0 {
 		t.Fatalf("cross-stream state: message=%+v err=%v", message, err)
 	}
@@ -105,7 +103,7 @@ func TestModelStreamPropagatesStreamFailureWithoutReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 	if !errors.Is(err, want) || chatModel.calls != 1 {
 		t.Fatalf("stream error swallowed or replayed: err=%v calls=%d", err, chatModel.calls)
 	}
@@ -166,10 +164,10 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 		{newUsageReply("", schema.ToolCall{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}})},
 		{newUsageReply("done")}, {newUsageReply("new run")},
 	}}
-	var totals []types.Usage
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e types.RuntimeEvent) error {
+	var totals []agentmodel.RunUsage
+	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error {
 		if e.Kind == "tokens" {
-			totals = append(totals, e.Data.(types.Usage))
+			totals = append(totals, e.Data.(agentmodel.RunUsage))
 		}
 		return nil
 	}}))
@@ -187,7 +185,7 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 			}
 			defer graph.Close(ctx)
 		}
-		_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+		_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -199,7 +197,7 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 			t.Fatalf("context usage must remain last request: %+v", got)
 		}
 	}
-	if len(totals) != 3 || totals[0].TotalTokens != 5 || totals[1] != (types.Usage{PromptTokens: 6, CompletionTokens: 4, TotalTokens: 10}) || totals[2].TotalTokens != 5 {
+	if len(totals) != 3 || totals[0].TotalTokens != 5 || totals[1] != (agentmodel.RunUsage{PromptTokens: 6, CompletionTokens: 4, TotalTokens: 10}) || totals[2].TotalTokens != 5 {
 		t.Fatalf("token events=%+v", totals)
 	}
 }
@@ -210,12 +208,12 @@ func TestCheckpoint_ResumeContinuesCumulativeUsage(t *testing.T) {
 		{newUsageReply("", schema.ToolCall{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}})},
 		{newUsageReply("done")},
 	}}
-	config := Config{ThreadID: "thread", RunID: "run", Model: chatModel, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
+	config := Config{ThreadID: "thread", RunID: "run", Model: chatModel, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
 	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -234,11 +232,11 @@ func TestCheckpoint_ResumeContinuesCumulativeUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = next.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{Approved: true}}))
+	_, err = next.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.runState.Usage != (types.Usage{PromptTokens: 6, CompletionTokens: 4, TotalTokens: 10}) {
+	if next.runState.Usage != (agentmodel.RunUsage{PromptTokens: 6, CompletionTokens: 4, TotalTokens: 10}) {
 		t.Fatalf("restored usage=%+v", next.runState.Usage)
 	}
 }
@@ -253,10 +251,10 @@ func TestRun_LegacyExtraUsageUsesConversation(t *testing.T) {
 				response.ResponseMeta = &schema.ResponseMeta{Usage: &schema.TokenUsage{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5}}
 				want = 5
 			}
-			var totals []types.Usage
-			graph, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{responses: [][]*schema.Message{{response}}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+			var totals []agentmodel.RunUsage
+			graph, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{responses: [][]*schema.Message{{response}}}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
 				if event.Kind == "tokens" {
-					totals = append(totals, event.Data.(types.Usage))
+					totals = append(totals, event.Data.(agentmodel.RunUsage))
 				}
 				return nil
 			}}))
@@ -264,7 +262,7 @@ func TestRun_LegacyExtraUsageUsesConversation(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer graph.Close(context.Background())
-			_, executeErr := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+			_, executeErr := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 			if executeErr != nil {
 				t.Fatal(executeErr)
 			}
@@ -281,12 +279,12 @@ func TestRootResumeRestoresProviderContextBeforeNextModel(t *testing.T) {
 		{newUsageReply("", schema.ToolCall{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}})},
 		{newUsageReply("done")},
 	}}
-	config := Config{ThreadID: "thread", RunID: "run", Model: chatModel, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
+	config := Config{ThreadID: "thread", RunID: "run", Model: chatModel, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
 	first, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -298,7 +296,7 @@ func TestRootResumeRestoresProviderContextBeforeNextModel(t *testing.T) {
 	}
 	checked := false
 	var next *Graph
-	config.Emit = func(_ context.Context, event types.RuntimeEvent) error {
+	config.Emit = func(_ context.Context, event agentmodel.RuntimeEvent) error {
 		if event.Kind == "run_state_restored" {
 			got := next.conversation.GetContextUsage()
 			if got != saved {
@@ -317,7 +315,7 @@ func TestRootResumeRestoresProviderContextBeforeNextModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = next.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{Approved: true}}))
+	_, err = next.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}))
 	if err != nil {
 		t.Fatal(err)
 	}

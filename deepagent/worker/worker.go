@@ -12,7 +12,7 @@ import (
 	"eino-cli/deepagent/graph/computer"
 	"eino-cli/deepagent/helper/serialiser"
 	"eino-cli/deepagent/manager"
-	threadpkg "eino-cli/deepagent/thread"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 // Config controls scheduling, leases, polling and shutdown.
@@ -37,12 +37,12 @@ type Worker struct {
 	browsers           map[int64]*computer.Browser
 	browserExpirations map[int64]*time.Timer
 	Config
-	Client  manager.Client
+	Client  agentmodel.ManagerClient
 	Runtime RuntimeConfig
 	Deps    RuntimeDeps
 }
 
-var _ manager.Client = (*manager.Manager)(nil)
+var _ agentmodel.ManagerClient = (*manager.Manager)(nil)
 
 var (
 	ErrMissingClient  = errors.New("agentworker/cloud: client is required")
@@ -109,7 +109,7 @@ func (w *Worker) Run(ctx context.Context) (err error) {
 			return ctx.Err()
 		case sem <- struct{}{}:
 		}
-		claim, acquireErr := w.Client.Acquire(ctx, manager.AcquireRequest{LeaseMS: w.LeaseMS})
+		claim, acquireErr := w.Client.Acquire(ctx, agentmodel.AcquireRequest{LeaseMS: w.LeaseMS})
 		if acquireErr != nil || claim.Thread == nil {
 			<-sem
 			err = sleepContext(ctx, w.ScanInterval)
@@ -119,7 +119,7 @@ func (w *Worker) Run(ctx context.Context) (err error) {
 			continue
 		}
 		wg.Add(1)
-		go func(claim manager.AcquireResult) {
+		go func(claim agentmodel.AcquireResult) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			_ = w.RunThread(context.WithoutCancel(ctx), ctx, &claim)
@@ -128,7 +128,7 @@ func (w *Worker) Run(ctx context.Context) (err error) {
 }
 
 // RunThread creates the Thread, renews ownership, drives input/output, then closes and releases it.
-func (w *Worker) RunThread(ctx context.Context, acceptCtx context.Context, claim *manager.AcquireResult) (err error) {
+func (w *Worker) RunThread(ctx context.Context, acceptCtx context.Context, claim *agentmodel.AcquireResult) (err error) {
 	if w != nil {
 		w.normalize()
 	}
@@ -158,7 +158,7 @@ func (w *Worker) RunThread(ctx context.Context, acceptCtx context.Context, claim
 	defer stopLease()
 
 	thread, err := w.createThread(runCtx, claim.Thread)
-	var output *threadpkg.TransportThreadOutput
+	var output *agentmodel.TransportThreadOutput
 	if err == nil {
 		output, err = thread.Init(runCtx)
 		if err != nil {
@@ -196,7 +196,7 @@ func (w *Worker) RunThread(ctx context.Context, acceptCtx context.Context, claim
 	return run.finish(result, closeErr, waitLease)
 }
 
-func (w *Worker) startLease(ctx context.Context, lease *manager.Lease) (runCtx context.Context, stop func(), wait func() error) {
+func (w *Worker) startLease(ctx context.Context, lease *agentmodel.Lease) (runCtx context.Context, stop func(), wait func() error) {
 	runCtx, cancel := context.WithCancelCause(ctx)
 	done := make(chan struct{})
 	var leaseErr error
@@ -218,7 +218,7 @@ func (w *Worker) startLease(ctx context.Context, lease *manager.Lease) (runCtx c
 	return runCtx, stop, wait
 }
 
-func (w *Worker) renewLease(ctx context.Context, lease *manager.Lease) (err error) {
+func (w *Worker) renewLease(ctx context.Context, lease *agentmodel.Lease) (err error) {
 	deadline := lease.LeaseUntil
 	if deadline.IsZero() {
 		deadline = time.Now().Add(time.Duration(defaultLeaseMS) * time.Millisecond)

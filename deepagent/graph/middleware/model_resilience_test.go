@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -15,12 +15,12 @@ func TestModelRetryOnlyRetriesBeforeStream(t *testing.T) {
 	modelErr := errors.New("temporary model failure")
 	modelRetry := &ModelRetry{MaxAttempts: 3, Retryable: func(err error) bool { return errors.Is(err, modelErr) }}
 	attemptCount := 0
-	modelHandler := modelRetry.WrapModel(func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+	modelHandler := modelRetry.WrapModel(func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		attemptCount++
 		if attemptCount == 1 {
 			return nil, modelErr
 		}
-		return schema.StreamReaderFromArray([]*messagepkg.Message{messagepkg.NewAssistantMessage("done", nil)}), nil
+		return schema.StreamReaderFromArray([]*agentmodel.Message{agentmodel.NewAssistantMessage("done", nil)}), nil
 	})
 	stream, err := modelHandler(context.Background(), nil)
 	if err != nil {
@@ -31,10 +31,10 @@ func TestModelRetryOnlyRetriesBeforeStream(t *testing.T) {
 		t.Fatalf("attempts=%d", attemptCount)
 	}
 	attemptCount = 0
-	modelHandler = modelRetry.WrapModel(func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+	modelHandler = modelRetry.WrapModel(func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		attemptCount++
-		reader, writer := schema.Pipe[*messagepkg.Message](2)
-		writer.Send(messagepkg.NewAssistantMessage("partial", nil), nil)
+		reader, writer := schema.Pipe[*agentmodel.Message](2)
+		writer.Send(agentmodel.NewAssistantMessage("partial", nil), nil)
 		writer.Send(nil, modelErr)
 		writer.Close()
 		return reader, nil
@@ -61,7 +61,7 @@ func TestModelRetryNeverRetriesCancellation(t *testing.T) {
 	for _, cancellation := range []error{context.Canceled, context.DeadlineExceeded} {
 		attemptCount := 0
 		modelRetry := &ModelRetry{MaxAttempts: 3, Retryable: func(error) bool { return true }}
-		_, err := modelRetry.WrapModel(func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+		_, err := modelRetry.WrapModel(func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 			attemptCount++
 			return nil, cancellation
 		})(context.Background(), nil)
@@ -76,7 +76,7 @@ func TestModelRetryExhaustionPreservesError(t *testing.T) {
 	for _, isRetryable := range []bool{true, false} {
 		attemptCount := 0
 		modelRetry := &ModelRetry{MaxAttempts: 3, Retryable: func(error) bool { return isRetryable }}
-		stream, err := modelRetry.WrapModel(func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+		stream, err := modelRetry.WrapModel(func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 			attemptCount++
 			return nil, providerErr
 		})(context.Background(), nil)
@@ -101,7 +101,7 @@ func TestModelRetryCancellationDuringBackoff(t *testing.T) {
 		return true
 	}}
 	go func() {
-		stream, err := modelRetry.WrapModel(func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+		stream, err := modelRetry.WrapModel(func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 			attemptCount++
 			return nil, errors.New("temporary failure")
 		})(ctx, nil)
@@ -126,7 +126,7 @@ func TestCircuitBreakerThresholdRestoreAndRunIsolation(t *testing.T) {
 	circuitBreaker := &CircuitBreaker{Threshold: 2, Recovery: time.Hour}
 	providerErr := errors.New("provider unavailable")
 	attemptCount := 0
-	modelHandler := circuitBreaker.WrapModel(func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+	modelHandler := circuitBreaker.WrapModel(func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		attemptCount++
 		return nil, providerErr
 	})
@@ -150,7 +150,7 @@ func TestCircuitBreakerThresholdRestoreAndRunIsolation(t *testing.T) {
 		t.Fatal(restoredCallErr)
 	}
 	freshBreaker := circuitBreaker.NewRun().(*CircuitBreaker)
-	_, freshCallErr := freshBreaker.WrapModel(func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+	_, freshCallErr := freshBreaker.WrapModel(func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		return nil, providerErr
 	})(context.Background(), nil)
 	if !errors.Is(freshCallErr, providerErr) {
@@ -161,10 +161,10 @@ func TestCircuitBreakerThresholdRestoreAndRunIsolation(t *testing.T) {
 func TestCircuitBreakerOnlyOneRecoveryProbe(t *testing.T) {
 	circuitBreaker := &CircuitBreaker{Threshold: 1, failures: 1, openUntil: time.Now().Add(-time.Second)}
 	probeStarted, releaseProbe, probeDone := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-	modelHandler := circuitBreaker.WrapModel(func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+	modelHandler := circuitBreaker.WrapModel(func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		close(probeStarted)
 		<-releaseProbe
-		return schema.StreamReaderFromArray([]*messagepkg.Message{{Content: "ok"}}), nil
+		return schema.StreamReaderFromArray([]*agentmodel.Message{{Content: "ok"}}), nil
 	})
 	go func() {
 		stream, err := modelHandler(context.Background(), nil)
@@ -184,7 +184,7 @@ func TestCircuitBreakerOnlyOneRecoveryProbe(t *testing.T) {
 		t.Fatal(probeErr)
 	}
 	providerErr := errors.New("probe passed, next provider call")
-	_, nextCallErr := circuitBreaker.WrapModel(func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+	_, nextCallErr := circuitBreaker.WrapModel(func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		return nil, providerErr
 	})(context.Background(), nil)
 	if !errors.Is(nextCallErr, providerErr) {
@@ -194,7 +194,7 @@ func TestCircuitBreakerOnlyOneRecoveryProbe(t *testing.T) {
 
 func TestCircuitBreakerCancellationDoesNotCountAsFailure(t *testing.T) {
 	circuitBreaker := &CircuitBreaker{Threshold: 1}
-	modelHandler := circuitBreaker.WrapModel(func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+	modelHandler := circuitBreaker.WrapModel(func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		return nil, context.Canceled
 	})
 	for range 2 {

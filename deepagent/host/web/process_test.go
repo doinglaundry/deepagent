@@ -3,9 +3,6 @@ package web_test
 import (
 	"bytes"
 	"context"
-	"eino-cli/deepagent/protocol"
-	eventpkg "eino-cli/deepagent/protocol/event"
-	inputpkg "eino-cli/deepagent/protocol/input"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +17,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	agentmodel "eino-cli/deepagent/model"
+	"eino-cli/deepagent/protocol"
 )
 
 // Real entrypoints and independent OS processes, with a local fake model only.
@@ -166,7 +166,7 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 		}
 		return created.ID, nil
 	}
-	readEvents := func(ctx context.Context, threadID string) ([]protocol.Event, error) {
+	readEvents := func(ctx context.Context, threadID string) ([]agentmodel.ProtocolEvent, error) {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/threads/"+threadID+"/events", nil)
 		if err != nil {
 			return nil, err
@@ -190,46 +190,46 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 		if decodeErr2 != nil {
 			return nil, decodeErr2
 		}
-		var events []protocol.Event
+		var events []agentmodel.ProtocolEvent
 		for _, row := range rows {
-			event := protocol.Event{ID: row.Sequence, ThreadID: threadID, RunID: row.RunID}
+			event := agentmodel.ProtocolEvent{ID: row.Sequence, ThreadID: threadID, RunID: row.RunID}
 			switch row.Kind {
 			case "input":
 				if row.RunID == "" {
 					continue
 				}
 				event.ID += ":" + row.RunID
-				event.Kind = protocol.EventInputConsumed
+				event.Kind = agentmodel.ProtocolEventInputConsumed
 				if row.Status == "completed" {
 					events = append(events, event)
 					event.ID += ":completed"
-					event.Kind = protocol.EventRunCompleted
+					event.Kind = agentmodel.EventRunCompleted
 				}
 			case "approval", "question", "interrupt":
-				var payload eventpkg.ApprovalRequiredEventPayload
+				var payload agentmodel.ApprovalRequiredEventPayload
 				decodeErr := json.Unmarshal(row.Payload, &payload)
 				if decodeErr != nil {
 					return nil, decodeErr
 				}
-				event.Kind = protocol.EventBlocked
-				event.Block = &protocol.Block{RunID: row.RunID, CheckpointID: payload.CheckpointID, InterruptID: payload.InterruptID, Kind: payload.Kind, ToolName: payload.ToolName}
-				if payload.Kind == eventpkg.InputRequiredKindBatch {
-					var batch eventpkg.InterruptBatchRequiredEventPayload
+				event.Kind = agentmodel.EventBlocked
+				event.Block = &agentmodel.Block{RunID: row.RunID, CheckpointID: payload.CheckpointID, InterruptID: payload.InterruptID, Kind: payload.Kind, ToolName: payload.ToolName}
+				if payload.Kind == agentmodel.InputRequiredKindBatch {
+					var batch agentmodel.InterruptBatchRequiredEventPayload
 					err := json.Unmarshal(row.Payload, &batch)
 					if err != nil {
 						return nil, err
 					}
 					for _, item := range batch.Items {
-						event.Block.Items = append(event.Block.Items, protocol.BlockItem{InterruptID: item.InterruptID, Kind: item.Kind, ToolName: item.ToolName})
+						event.Block.Items = append(event.Block.Items, agentmodel.BlockItem{InterruptID: item.InterruptID, Kind: item.Kind, ToolName: item.ToolName})
 					}
 				}
 			case "error":
-				var payload eventpkg.ErrorEventPayload
+				var payload agentmodel.ErrorEventPayload
 				err := json.Unmarshal(row.Payload, &payload)
 				if err != nil {
 					return nil, err
 				}
-				event.Kind, event.Error = protocol.EventRunFailed, payload.Message
+				event.Kind, event.Error = agentmodel.EventRunFailed, payload.Message
 			default:
 				continue
 			}
@@ -237,7 +237,7 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 		}
 		return events, nil
 	}
-	call := func(threadID, prompt string, resume *protocol.Block) ([]protocol.Event, error) {
+	call := func(threadID, prompt string, resume *agentmodel.Block) ([]agentmodel.ProtocolEvent, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if threadID == "" {
@@ -257,15 +257,15 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 		}
 		body := map[string]any{"text": prompt}
 		if resume != nil {
-			answer := inputpkg.ResumeRunPayload{RunID: resume.RunID, CheckpointID: resume.CheckpointID, InterruptID: resume.InterruptID}
-			if resume.Kind == eventpkg.InputRequiredKindFollowUp {
-				answer.Interrupt = &inputpkg.InterruptResume{Kind: "follow_up", Data: json.RawMessage(`{"user_answer":"src"}`)}
-			} else if resume.Kind == eventpkg.InputRequiredKindBatch {
+			answer := agentmodel.ResumeRunPayload{RunID: resume.RunID, CheckpointID: resume.CheckpointID, InterruptID: resume.InterruptID}
+			if resume.Kind == agentmodel.InputRequiredKindFollowUp {
+				answer.Interrupt = &agentmodel.InterruptResume{Kind: "follow_up", Data: json.RawMessage(`{"user_answer":"src"}`)}
+			} else if resume.Kind == agentmodel.InputRequiredKindBatch {
 				for _, item := range resume.Items {
-					answer.Answers = append(answer.Answers, inputpkg.ResumeAnswer{InterruptID: item.InterruptID, Approval: &inputpkg.ApprovalDecision{Approved: true}})
+					answer.Answers = append(answer.Answers, agentmodel.ResumeAnswer{InterruptID: item.InterruptID, Approval: &agentmodel.ApprovalDecision{Approved: true}})
 				}
 			} else {
-				answer.Approval = &inputpkg.ApprovalDecision{Approved: true}
+				answer.Approval = &agentmodel.ApprovalDecision{Approved: true}
 			}
 			body = map[string]any{"resume": answer}
 		}
@@ -273,7 +273,7 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 		if postErr != nil {
 			return nil, postErr
 		}
-		var events []protocol.Event
+		var events []agentmodel.ProtocolEvent
 		for {
 			rows, err := readEvents(ctx, threadID)
 			if err != nil {
@@ -286,7 +286,7 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 				seen[event.ID] = true
 				events = append(events, event)
 				switch event.Kind {
-				case protocol.EventBlocked:
+				case agentmodel.EventBlocked:
 					// A persisted prompt can precede resource cleanup and lease release.
 					// Resume only after the Manager has committed the blocked state.
 					for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
@@ -316,7 +316,7 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 						}
 					}
 					return events, fmt.Errorf("prompt was persisted but Thread did not become blocked")
-				case protocol.EventRunCompleted:
+				case agentmodel.EventRunCompleted:
 					response, err := client.Get(baseURL + "/api/threads/" + threadID + "/events")
 					if err != nil {
 						return events, err
@@ -331,7 +331,7 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 						return events, fmt.Errorf("Web history unavailable")
 					}
 					return events, nil
-				case protocol.EventRunFailed:
+				case agentmodel.EventRunFailed:
 					return events, fmt.Errorf("worker failed: %s", event.Error)
 				}
 			}
@@ -347,9 +347,9 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 	if err == nil {
 		t.Fatal("one-shot blocked run should report waiting input")
 	}
-	var block protocol.Event
+	var block agentmodel.ProtocolEvent
 	for _, e := range events {
-		if e.Kind == protocol.EventBlocked {
+		if e.Kind == agentmodel.EventBlocked {
 			block = e
 		}
 	}
@@ -364,7 +364,7 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 	}
 	completed := ""
 	for _, e := range events {
-		if e.Kind == protocol.EventRunCompleted {
+		if e.Kind == agentmodel.EventRunCompleted {
 			completed = e.RunID
 		}
 	}
@@ -383,13 +383,13 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 	if err == nil {
 		t.Fatal("parallel child tools should wait for approval")
 	}
-	var pairBlock *protocol.Block
+	var pairBlock *agentmodel.Block
 	for _, event := range events {
-		if event.Kind == protocol.EventBlocked {
+		if event.Kind == agentmodel.EventBlocked {
 			pairBlock = event.Block
 		}
 	}
-	if pairBlock == nil || pairBlock.Kind != eventpkg.InputRequiredKindBatch || len(pairBlock.Items) != 2 {
+	if pairBlock == nil || pairBlock.Kind != agentmodel.InputRequiredKindBatch || len(pairBlock.Items) != 2 {
 		t.Fatalf("expected two pending child approvals, events=%v err=%v", events, err)
 	}
 	for _, name := range []string{"pair-a.txt", "pair-b.txt"} {
@@ -418,13 +418,13 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 	if err == nil {
 		t.Fatal("ask_user should block for an answer")
 	}
-	var questionBlock *protocol.Block
+	var questionBlock *agentmodel.Block
 	for _, event := range events {
-		if event.Kind == protocol.EventBlocked {
+		if event.Kind == agentmodel.EventBlocked {
 			questionBlock = event.Block
 		}
 	}
-	if questionBlock == nil || questionBlock.Kind != eventpkg.InputRequiredKindFollowUp {
+	if questionBlock == nil || questionBlock.Kind != agentmodel.InputRequiredKindFollowUp {
 		t.Fatalf("expected ask_user follow-up, events=%v err=%v", events, err)
 	}
 	response, err := client.Get(baseURL + "/api/threads/" + questionThread + "/events")
@@ -456,7 +456,7 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		questionVisible = payload.Kind == eventpkg.InputRequiredKindFollowUp && payload.Info.Question == "Which directory?" && len(payload.Info.Questions) == 2 && payload.Info.Questions[0] == "src" && payload.Info.Questions[1] == "docs"
+		questionVisible = payload.Kind == agentmodel.InputRequiredKindFollowUp && payload.Info.Question == "Which directory?" && len(payload.Info.Questions) == 2 && payload.Info.Questions[0] == "src" && payload.Info.Questions[1] == "docs"
 	}
 	if !questionVisible {
 		t.Fatalf("ask_user question and options not visible in Web events: %+v", questionRows)
@@ -473,7 +473,7 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 	}
 	before := calls.Load()
 	type outcome struct {
-		events []protocol.Event
+		events []agentmodel.ProtocolEvent
 		err    error
 	}
 	result := make(chan outcome, 1)
@@ -497,7 +497,7 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 			t.Fatal(e)
 		}
 		for _, event := range rows {
-			if event.Kind == protocol.EventInputConsumed {
+			if event.Kind == agentmodel.ProtocolEventInputConsumed {
 				consumed = true
 			}
 		}
@@ -522,10 +522,10 @@ func TestWebAndIndependentWorkerProcesses(t *testing.T) {
 	runs := map[string]bool{}
 	finished := false
 	for _, e := range recovered.events {
-		if e.Kind == protocol.EventInputConsumed {
+		if e.Kind == agentmodel.ProtocolEventInputConsumed {
 			runs[e.RunID] = true
 		}
-		if e.Kind == protocol.EventRunCompleted {
+		if e.Kind == agentmodel.EventRunCompleted {
 			finished = true
 		}
 	}

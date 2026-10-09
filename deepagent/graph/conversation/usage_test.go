@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 )
@@ -14,7 +13,7 @@ import (
 func TestContext_CumulativeUsageSurvivesCompaction(t *testing.T) {
 	ctx := context.Background()
 	conversation := New("thread", &testStore{}, &SummaryCompaction{Model: summaryModel{}, KeepRecent: 1}, nil, 1024, nil)
-	err := conversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("old"), messagepkg.NewAssistantMessage("done", nil), messagepkg.NewUserMessage("new"))
+	err := conversation.AddHistory(ctx, "run", agentmodel.NewUserMessage("old"), agentmodel.NewAssistantMessage("done", nil), agentmodel.NewUserMessage("new"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,21 +25,21 @@ func TestContext_CumulativeUsageSurvivesCompaction(t *testing.T) {
 	conversation.RecordModelUsage(ctx, nil)
 	conversation.RecordModelUsage(ctx, &model.TokenUsage{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5})
 	runUsage := conversation.GetRunUsage()
-	if runUsage != (types.Usage{PromptTokens: 6, CompletionTokens: 4, TotalTokens: 10}) {
+	if runUsage != (agentmodel.RunUsage{PromptTokens: 6, CompletionTokens: 4, TotalTokens: 10}) {
 		t.Fatalf("cumulative=%+v", runUsage)
 	}
 	contextUsage := conversation.GetContextUsage()
 	if contextUsage.TotalTokens != 5 || contextUsage.MaxContextTokens != 1024 {
 		t.Fatalf("context estimate=%+v", contextUsage)
 	}
-	cRestoreRunUsageErr := conversation.RestoreRunUsage(ctx, types.Usage{TotalTokens: -1})
+	cRestoreRunUsageErr := conversation.RestoreRunUsage(ctx, agentmodel.RunUsage{TotalTokens: -1})
 	if cRestoreRunUsageErr == nil {
 		t.Fatal("negative checkpoint usage accepted")
 	}
 	if conversation.GetRunUsage().TotalTokens != 10 {
 		t.Fatal("invalid snapshot modified tracker")
 	}
-	restoreRunUsageErr := conversation.RestoreRunUsage(ctx, types.Usage{})
+	restoreRunUsageErr := conversation.RestoreRunUsage(ctx, agentmodel.RunUsage{})
 	if restoreRunUsageErr != nil {
 		t.Fatal(restoreRunUsageErr)
 	}
@@ -52,23 +51,23 @@ func TestContext_CumulativeUsageSurvivesCompaction(t *testing.T) {
 func TestContextUsageRestoresAtDurableSequence(t *testing.T) {
 	ctx := context.Background()
 	store := &testStore{}
-	countTokenFunc := func(messages []*messagepkg.Message) int { return len(messages) * 3 }
+	countTokenFunc := func(messages []*agentmodel.Message) int { return len(messages) * 3 }
 	liveConversation := New("thread", store, nil, countTokenFunc, 0, nil)
-	err := liveConversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("input"), messagepkg.NewAssistantMessage("answer", nil))
+	err := liveConversation.AddHistory(ctx, "run", agentmodel.NewUserMessage("input"), agentmodel.NewAssistantMessage("answer", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	liveConversation.RecordModelUsage(ctx, &model.TokenUsage{PromptTokens: 400, CompletionTokens: 10, TotalTokens: 410})
-	err = liveConversation.AddHistory(ctx, "run", messagepkg.NewToolMessage("addition", "call"))
+	err = liveConversation.AddHistory(ctx, "run", agentmodel.NewToolMessage("addition", "call"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	historySeq, contextTokenUsage := liveConversation.SnapshotContext()
-	checkpointJSON, err := json.Marshal(types.RunState{HistorySeq: historySeq, ContextUsage: &contextTokenUsage})
+	checkpointJSON, err := json.Marshal(agentmodel.RunState{HistorySeq: historySeq, ContextUsage: &contextTokenUsage})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var runState types.RunState
+	var runState agentmodel.RunState
 	err = json.Unmarshal(checkpointJSON, &runState)
 	if err != nil {
 		t.Fatal(err)
@@ -88,12 +87,12 @@ func TestContextUsageRestoresAtDurableSequence(t *testing.T) {
 	if restoredConversation.GetContextUsage() != liveConversation.GetContextUsage() {
 		t.Fatalf("provider baseline lost: restored=%+v original=%+v", restoredConversation.GetContextUsage(), liveConversation.GetContextUsage())
 	}
-	err = restoredConversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("followup"))
+	err = restoredConversation.AddHistory(ctx, "run", agentmodel.NewUserMessage("followup"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	contextTokenUsage = restoredConversation.GetContextUsage()
-	wantUsage := types.ContextTokenUsage{
+	wantUsage := agentmodel.ContextTokenUsage{
 		TotalTokens:      416,
 		PromptTokens:     400,
 		CompletionTokens: 10,
@@ -119,18 +118,18 @@ func TestContextUsageRestoresAtDurableSequence(t *testing.T) {
 func TestContextUsageRejectsAheadAndPreservesNewerHistory(t *testing.T) {
 	ctx := context.Background()
 	store := &testStore{}
-	liveConversation := New("thread", store, nil, func(messages []*messagepkg.Message) int { return len(messages) * 3 }, 0, nil)
-	err := liveConversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("input"))
+	liveConversation := New("thread", store, nil, func(messages []*agentmodel.Message) int { return len(messages) * 3 }, 0, nil)
+	err := liveConversation.AddHistory(ctx, "run", agentmodel.NewUserMessage("input"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	liveConversation.RecordModelUsage(ctx, &model.TokenUsage{TotalTokens: 410})
 	historySeq, contextTokenUsage := liveConversation.SnapshotContext()
-	err = liveConversation.AddHistory(ctx, "run", messagepkg.NewUserMessage("newer"))
+	err = liveConversation.AddHistory(ctx, "run", agentmodel.NewUserMessage("newer"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredConversation := New("thread", store, nil, func(messages []*messagepkg.Message) int { return len(messages) * 3 }, 0, nil)
+	restoredConversation := New("thread", store, nil, func(messages []*agentmodel.Message) int { return len(messages) * 3 }, 0, nil)
 	err = restoredConversation.ReloadHistory(ctx)
 	if err != nil {
 		t.Fatal(err)

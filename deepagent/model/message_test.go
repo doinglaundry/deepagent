@@ -1,11 +1,11 @@
-package message
+package model_test
 
 import (
 	"encoding/json"
 	"reflect"
 	"testing"
 
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -30,10 +30,10 @@ func TestEinoRoundTripPreservesModelContent(t *testing.T) {
 		ResponseMeta: &schema.ResponseMeta{FinishReason: "tool_calls", Usage: &schema.TokenUsage{PromptTokens: 12, CompletionTokens: 4, TotalTokens: 16}},
 		Extra:        map[string]any{"provider_token": int64(9007199254740993), "typed_metadata": map[string]string{"key": "value"}},
 	}
-	business := FromEino(source)
+	business := agentmodel.FromEino(source)
 	business.MessageID, business.ThreadID, business.RunID, business.SenderID, business.SenderType = "9007199254740993", "thread", "run", "person", "user"
 	business.Seq, business.CreatedAt = 19, 42
-	roundTrip := ToEino(business)
+	roundTrip := agentmodel.ToEino(business)
 	if !reflect.DeepEqual(source, roundTrip) {
 		t.Fatalf("model conversion lost data:\nsource=%+v\nresult=%+v", source, roundTrip)
 	}
@@ -52,24 +52,24 @@ func TestEinoRoundTripPreservesModelContent(t *testing.T) {
 			t.Fatalf("business metadata %s leaked into model message", key)
 		}
 	}
-	if FromEino(nil) != nil || ToEino(nil) != nil {
+	if agentmodel.FromEino(nil) != nil || agentmodel.ToEino(nil) != nil {
 		t.Fatal("nil conversion must remain nil")
 	}
 }
 
 func TestBusinessMessageJSONPreservesIdentityAndOriginalInput(t *testing.T) {
-	source := &Message{
+	source := &agentmodel.Message{
 		MessageID: "9007199254740993", ThreadID: "thread", RunID: "run", Seq: 9, CreatedAt: 42, SenderID: "person", SenderType: "user", Role: schema.User, Content: "question",
-		OriginalParts: []inputpkg.MessagePart{
-			{Type: inputpkg.MessagePartTypeText, Text: "question", Extra: map[string]json.RawMessage{"source": json.RawMessage(`{"id":9007199254740993}`)}},
-			{Type: inputpkg.MessagePartTypeFile, URL: "https://example.test/file", Name: "notes.pdf", MIMEType: "application/pdf", Detail: "original"},
+		OriginalParts: []agentmodel.InputMessagePart{
+			{Type: agentmodel.InputMessagePartTypeText, Text: "question", Extra: map[string]json.RawMessage{"source": json.RawMessage(`{"id":9007199254740993}`)}},
+			{Type: agentmodel.InputMessagePartTypeFile, URL: "https://example.test/file", Name: "notes.pdf", MIMEType: "application/pdf", Detail: "original"},
 		},
 	}
 	raw, err := json.Marshal(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var restored Message
+	var restored agentmodel.Message
 	err = json.Unmarshal(raw, &restored)
 	if err != nil {
 		t.Fatal(err)
@@ -80,11 +80,11 @@ func TestBusinessMessageJSONPreservesIdentityAndOriginalInput(t *testing.T) {
 }
 
 func TestConcatMessagesPreservesStreamingParts(t *testing.T) {
-	chunks := []*Message{
+	chunks := []*agentmodel.Message{
 		{Role: schema.Assistant, Content: "hello ", ReasoningContent: "think ", AssistantGenMultiContent: []schema.MessageOutputPart{{Type: schema.ChatMessagePartTypeText, Text: "hello ", StreamingMeta: &schema.MessageStreamingMeta{Index: 0}}}},
 		{Content: "world", ReasoningContent: "more", AssistantGenMultiContent: []schema.MessageOutputPart{{Type: schema.ChatMessagePartTypeText, Text: "world", StreamingMeta: &schema.MessageStreamingMeta{Index: 0}}}, ResponseMeta: &schema.ResponseMeta{Usage: &schema.TokenUsage{TotalTokens: 12}}},
 	}
-	result, err := ConcatMessages(chunks)
+	result, err := agentmodel.ConcatMessages(chunks)
 	if err != nil {
 		t.Fatal(err)
 	}

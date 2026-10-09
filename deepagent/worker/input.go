@@ -9,24 +9,9 @@ import (
 	"fmt"
 	"time"
 
-	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/helper/serialiser"
-	"eino-cli/deepagent/manager"
-	threadpkg "eino-cli/deepagent/thread"
+	agentmodel "eino-cli/deepagent/model"
 )
-
-// CancelInputControlPayload is the JSON payload for
-// MessageTypeControlCancelInput.
-type CancelInputControlPayload struct {
-	CutoffMessageID int64  `json:"cutoff_message_id"`
-	Reason          string `json:"reason,omitempty"`
-}
-
-// CloseThreadControlPayload is the JSON payload for
-// MessageTypeControlCloseThread.
-type CloseThreadControlPayload struct {
-	Reason string `json:"reason,omitempty"`
-}
 
 func (c *threadRun) runInput(stop <-chan struct{}, activity chan<- time.Time, results chan<- runResult, done chan<- struct{}) {
 	defer close(done)
@@ -71,7 +56,7 @@ func (c *threadRun) runInput(stop <-chan struct{}, activity chan<- time.Time, re
 			return
 		case <-pollTicker.C:
 			lease := c.claim.Lease
-			result, err := c.worker.Client.Acquire(c.ctx, manager.AcquireRequest{ThreadID: lease.ThreadID, LeaseToken: lease.LeaseToken})
+			result, err := c.worker.Client.Acquire(c.ctx, agentmodel.AcquireRequest{ThreadID: lease.ThreadID, LeaseToken: lease.LeaseToken})
 			err = serialiser.WrapError(fmt.Sprintf("PullPendingMessages thread_id=%d", lease.ThreadID), err)
 			if err != nil {
 				if c.ctx.Err() != nil {
@@ -95,7 +80,7 @@ func (c *threadRun) runInput(stop <-chan struct{}, activity chan<- time.Time, re
 }
 
 // deliverMessage 将一条队列消息交给控制逻辑或 Thread，再确认投递。
-func (c *threadRun) deliverMessage(message *dalmodel.Message, pending *[]*dalmodel.Message, stop <-chan struct{}) (result runResult) {
+func (c *threadRun) deliverMessage(message *agentmodel.MailboxMessage, pending *[]*agentmodel.MailboxMessage, stop <-chan struct{}) (result runResult) {
 	switch message.MessageType {
 	case MessageTypeControlCancelInput:
 		return c.handleCancel(message, pending, stop)
@@ -109,7 +94,7 @@ func (c *threadRun) deliverMessage(message *dalmodel.Message, pending *[]*dalmod
 		if c.ctx.Err() != nil {
 			return runResult{}
 		}
-		if errors.Is(err, threadpkg.TransportErrThreadClosed) {
+		if errors.Is(err, agentmodel.TransportErrThreadClosed) {
 			return runResult{reason: defaultThreadClosedReason}
 		}
 		return runResult{reason: postMessageFailedReason, err: err}
@@ -121,7 +106,7 @@ func (c *threadRun) deliverMessage(message *dalmodel.Message, pending *[]*dalmod
 	return c.ackMessage(message, triggerRunID)
 }
 
-func (c *threadRun) ackMessage(message *dalmodel.Message, triggerRunID string) (result runResult) {
+func (c *threadRun) ackMessage(message *agentmodel.MailboxMessage, triggerRunID string) (result runResult) {
 	lease := c.claim.Lease
 	_, err := c.worker.Client.AckInput(c.ctx, lease.ThreadID, lease.LeaseToken, triggerRunID, []int64{message.MessageID})
 	err = serialiser.WrapError(fmt.Sprintf("AckThreadMessages thread_id=%d message_id=%d", lease.ThreadID, message.MessageID), err)
@@ -131,8 +116,8 @@ func (c *threadRun) ackMessage(message *dalmodel.Message, triggerRunID string) (
 	return runResult{}
 }
 
-func (c *threadRun) handleCancel(message *dalmodel.Message, pending *[]*dalmodel.Message, stop <-chan struct{}) (result runResult) {
-	var payload CancelInputControlPayload
+func (c *threadRun) handleCancel(message *agentmodel.MailboxMessage, pending *[]*agentmodel.MailboxMessage, stop <-chan struct{}) (result runResult) {
+	var payload agentmodel.WorkerCancelInputControlPayload
 	decodeErr := json.Unmarshal(message.Payload, &payload)
 	if decodeErr != nil || payload.CutoffMessageID <= 0 {
 		if decodeErr == nil {
@@ -156,8 +141,8 @@ func (c *threadRun) handleCancel(message *dalmodel.Message, pending *[]*dalmodel
 		reason = "user_cancel"
 	}
 	interruptTimeout := runtimeInterruptTimeout(c.worker.InterruptDrainTimeout)
-	err := c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
-		Kind:             threadpkg.TransportThreadInterruptKindCancelInput,
+	err := c.thread.Interrupt(c.ctx, agentmodel.TransportThreadInterruptRequest{
+		Kind:             agentmodel.TransportThreadInterruptKindCancelInput,
 		ControlMessageID: fmt.Sprint(message.MessageID),
 		CutoffMessageID:  fmt.Sprint(payload.CutoffMessageID),
 		Timeout:          &interruptTimeout,
@@ -181,9 +166,9 @@ func (c *threadRun) handleCancel(message *dalmodel.Message, pending *[]*dalmodel
 	return c.ackMessage(message, "")
 }
 
-func (c *threadRun) handleClose(message *dalmodel.Message, pending *[]*dalmodel.Message, stop <-chan struct{}) (result runResult) {
+func (c *threadRun) handleClose(message *agentmodel.MailboxMessage, pending *[]*agentmodel.MailboxMessage, stop <-chan struct{}) (result runResult) {
 	reason := defaultCloseThreadReason
-	var payload CloseThreadControlPayload
+	var payload agentmodel.WorkerCloseThreadControlPayload
 	parseErr := json.Unmarshal(message.Payload, &payload)
 	if parseErr == nil && payload.Reason != "" {
 		reason = payload.Reason
@@ -192,8 +177,8 @@ func (c *threadRun) handleClose(message *dalmodel.Message, pending *[]*dalmodel.
 
 	if c.thread.ActiveRun() != nil {
 		interruptTimeout := runtimeInterruptTimeout(c.worker.InterruptDrainTimeout)
-		_ = c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
-			Kind:             threadpkg.TransportThreadInterruptKindCloseThread,
+		_ = c.thread.Interrupt(c.ctx, agentmodel.TransportThreadInterruptRequest{
+			Kind:             agentmodel.TransportThreadInterruptKindCloseThread,
 			ControlMessageID: fmt.Sprint(message.MessageID),
 			Timeout:          &interruptTimeout,
 		})
@@ -265,7 +250,7 @@ func getPullErrorBackoff(base time.Duration, consecutiveErrors int) time.Duratio
 	return backoff
 }
 
-func dropCanceledMessages(messages []*dalmodel.Message, cutoff int64) (kept []*dalmodel.Message) {
+func dropCanceledMessages(messages []*agentmodel.MailboxMessage, cutoff int64) (kept []*agentmodel.MailboxMessage) {
 	kept = messages[:0]
 	for _, message := range messages {
 		if message != nil && (message.IsControl() || message.MessageID > cutoff) {

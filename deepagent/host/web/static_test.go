@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/manager"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 func TestEmbeddedWebClient(t *testing.T) {
@@ -61,7 +61,7 @@ func TestWorkspaceFilePreviewCannotFollowSymlinkOutsideRoot(t *testing.T) {
 }
 
 func TestMissingTaskTitleAndMessageSummary(t *testing.T) {
-	view := viewThread(&dalmodel.Thread{ThreadID: 2000000000000000001})
+	view := viewThread(&agentmodel.ThreadRecord{ThreadID: 2000000000000000001})
 	if view.Title != "未命名任务" {
 		t.Fatalf("missing title = %q", view.Title)
 	}
@@ -73,7 +73,7 @@ func TestMissingTaskTitleAndMessageSummary(t *testing.T) {
 	if long != strings.Repeat("项", 48)+"…" {
 		t.Fatalf("Unicode summary = %q", long)
 	}
-	named := viewThread(&dalmodel.Thread{Metadata: map[string]string{"title": "我的任务"}})
+	named := viewThread(&agentmodel.ThreadRecord{Metadata: map[string]string{"title": "我的任务"}})
 	if named.Title != "我的任务" {
 		t.Fatalf("explicit title changed: %q", named.Title)
 	}
@@ -93,7 +93,7 @@ func TestCancelRejectsSimpleCrossOriginForm(t *testing.T) {
 
 func TestThreadViewProjectsCurrentRunOutcome(t *testing.T) {
 	for _, status := range []string{"finished", "failed", "interrupted"} {
-		view := viewThread(&dalmodel.Thread{ThreadID: 1, LastRun: &dalmodel.RunRecord{RunID: "current-run", Status: status}})
+		view := viewThread(&agentmodel.ThreadRecord{ThreadID: 1, LastRun: &agentmodel.RunRecord{RunID: "current-run", Status: status}})
 		if view.RunID != "current-run" || view.RunStatus != status {
 			t.Fatalf("current Run projection = %+v", view)
 		}
@@ -112,7 +112,7 @@ func TestResumeRejectsSimpleCrossOriginRequest(t *testing.T) {
 }
 
 func TestThreadViewExposesParentIdentityAsString(t *testing.T) {
-	view := viewThread(&dalmodel.Thread{
+	view := viewThread(&agentmodel.ThreadRecord{
 		ThreadID: 2000000000000026246,
 		Metadata: map[string]string{"parent_thread_id": "2000000000000020608"},
 	})

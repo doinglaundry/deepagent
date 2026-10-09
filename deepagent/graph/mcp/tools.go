@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"time"
 
-	"eino-cli/deepagent/graph/tools"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -48,7 +48,7 @@ func (mcpTool *mcpTool) InvokableRun(ctx context.Context, argumentsJSON string, 
 
 var toolNameCleaner = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
-func LoadMCP(ctx context.Context, mcpConfigs []MCPConfig) (toolDescriptors []tools.ToolDescriptor, err error) {
+func LoadMCP(ctx context.Context, mcpConfigs []MCPConfig) (toolDescriptors []agentmodel.ToolDescriptor, err error) {
 	seenToolNames := map[string]bool{}
 
 	var mcpClients []*mcpClient
@@ -136,7 +136,7 @@ func LoadMCP(ctx context.Context, mcpConfigs []MCPConfig) (toolDescriptors []too
 				if operationErr != nil {
 					return toolDescriptors, operationErr
 				}
-				toolDescriptors = append(toolDescriptors, tools.ToolDescriptor{
+				toolDescriptors = append(toolDescriptors, agentmodel.ToolDescriptor{
 					Tool:     &mcpTool{client: mcpClient, remoteName: remoteToolConfig.Name, info: &schema.ToolInfo{Name: toolName, Desc: remoteToolConfig.Description, ParamsOneOf: schema.NewParamsOneOfByJSONSchema(&parameters)}},
 					ReadOnly: remoteToolConfig.Annotations.ReadOnly, RequiresApproval: !remoteToolConfig.Annotations.ReadOnly,
 				})
@@ -153,7 +153,7 @@ func LoadMCP(ctx context.Context, mcpConfigs []MCPConfig) (toolDescriptors []too
 	}
 	return toolDescriptors, nil
 }
-func CloseMCP(toolDescriptors []tools.ToolDescriptor) {
+func CloseMCP(toolDescriptors []agentmodel.ToolDescriptor) {
 	for _, toolDescriptor := range toolDescriptors {
 		loadedTool, ok := toolDescriptor.Tool.(*mcpTool)
 		if ok {

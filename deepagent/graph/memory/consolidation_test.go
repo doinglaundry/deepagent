@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -66,7 +66,7 @@ func TestConsolidationCancelledGenerationCannotCommitBaseline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = service.Observe(ctx, "scope", "source", []*messagepkg.Message{messagepkg.NewUserMessage("fact")})
+			err = service.Observe(ctx, "scope", "source", []*agentmodel.Message{agentmodel.NewUserMessage("fact")})
 			if err != nil {
 				t.Fatal(err)
 			}

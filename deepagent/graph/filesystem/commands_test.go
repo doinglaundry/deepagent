@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	agentmodel "eino-cli/deepagent/model"
 )
 
 func TestShell_JobsAreThreadScoped(t *testing.T) {
@@ -15,7 +17,7 @@ func TestShell_JobsAreThreadScoped(t *testing.T) {
 	secondCommands := NewCommands("thread-2", localFilesystem)
 	defer firstCommands.Close(context.Background())
 	defer secondCommands.Close(context.Background())
-	jobID, err := firstCommands.Start(ctx, CommandRequest{Command: "printf ready; sleep 30"})
+	jobID, err := firstCommands.Start(ctx, agentmodel.CommandRequest{Command: "printf ready; sleep 30"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,14 +49,14 @@ func TestCommands_CloseKillsJobsAndBoundsOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	commands := NewCommands("thread", newTestLocalFilesystem(t, &LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}))
-	result, err := commands.Execute(ctx, CommandRequest{Command: "printf 1234567890", MaxOutputBytes: 4})
+	result, err := commands.Execute(ctx, agentmodel.CommandRequest{Command: "printf 1234567890", MaxOutputBytes: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Output != "7890" || !result.Truncated {
 		t.Fatalf("unbounded output: %+v", result)
 	}
-	jobID, err := commands.Start(ctx, CommandRequest{Command: "printf ready; sleep 30"})
+	jobID, err := commands.Start(ctx, agentmodel.CommandRequest{Command: "printf ready; sleep 30"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +68,7 @@ func TestCommands_CloseKillsJobsAndBoundsOutput(t *testing.T) {
 	if closeErr != nil {
 		t.Fatal(closeErr)
 	}
-	_, startErr := commands.Start(ctx, CommandRequest{Command: "true"})
+	_, startErr := commands.Start(ctx, agentmodel.CommandRequest{Command: "true"})
 	if startErr == nil {
 		t.Fatal("closed service started a job")
 	}
@@ -81,7 +83,7 @@ func TestCommandsPrefixRetentionAndIncrementalOffsets(t *testing.T) {
 	defer cancel()
 	commands := NewCommands("thread", newTestLocalFilesystem(t, &LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true}))
 	defer commands.Close(context.Background())
-	jobID, err := commands.Start(ctx, CommandRequest{Command: "printf 1234567890", MaxOutputBytes: 4, KeepOutputPrefix: true})
+	jobID, err := commands.Start(ctx, agentmodel.CommandRequest{Command: "printf 1234567890", MaxOutputBytes: 4, KeepOutputPrefix: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,9 +1,23 @@
-// Package sandbox declares the Sandbox abstraction the LLM tools see.
-package sandbox
+package model
 
-import "context"
+import (
+	"context"
+)
 
-type FileInfo struct {
+type SandboxManager interface {
+	SessionID() string
+	GetSandboxIdBySessionId(ctx context.Context, sessionID string) (string, error)
+	Get(ctx context.Context, sandboxID string) (Sandbox, error)
+	Release(ctx context.Context, sandboxID string) error
+
+	Reset()
+	UsesSessionDataMounts() bool
+	AllowsIsolatedExec() bool
+}
+
+type Shutdowner interface{ Shutdown() }
+
+type SandboxFileInfo struct {
 	Path      string
 	IsDir     bool
 	IsSymlink bool
@@ -12,7 +26,7 @@ type FileInfo struct {
 
 // FileInfoProvider is optional metadata support for concrete container filesystems.
 type FileInfoProvider interface {
-	ListDirInfo(context.Context, string, int) ([]FileInfo, error)
+	ListDirInfo(context.Context, string, int) ([]SandboxFileInfo, error)
 }
 
 // ContainerPathResolver resolves symlinks inside a container before a workspace
@@ -21,7 +35,7 @@ type ContainerPathResolver interface {
 	ResolveContainerPath(context.Context, string) (string, error)
 }
 
-// Sandbox is the 7-method surface every concrete provider must implement.
+// Sandbox defines the file and command capabilities of a sandbox provider.
 type Sandbox interface {
 	ID() string
 	SessionID() string
@@ -33,26 +47,26 @@ type Sandbox interface {
 	UpdateFile(ctx context.Context, path string, content []byte) error
 
 	ListDir(ctx context.Context, path string, maxDepth int) ([]string, error)
-	Glob(ctx context.Context, path, pattern string, opts GlobOpts) ([]string, bool, error)
-	Grep(ctx context.Context, path, pattern string, opts GrepOpts) ([]GrepMatch, bool, error)
+	Glob(ctx context.Context, path, pattern string, opts SandboxGlobOptions) ([]string, bool, error)
+	Grep(ctx context.Context, path, pattern string, opts SandboxGrepOptions) ([]SandboxGrepMatch, bool, error)
 }
 
-// GlobOpts are the optional knobs of Sandbox.Glob.
-type GlobOpts struct {
+// SandboxGlobOptions controls Sandbox.Glob.
+type SandboxGlobOptions struct {
 	IncludeDirs bool
 	MaxResults  int // 0 → impl default (200)
 }
 
-// GrepOpts are the optional knobs of Sandbox.Grep.
-type GrepOpts struct {
+// SandboxGrepOptions controls Sandbox.Grep.
+type SandboxGrepOptions struct {
 	Glob          string
 	Literal       bool
 	CaseSensitive bool
 	MaxResults    int // 0 → impl default (100)
 }
 
-// GrepMatch is one hit reported by Sandbox.Grep.
-type GrepMatch struct {
+// SandboxGrepMatch is one hit reported by Sandbox.Grep.
+type SandboxGrepMatch struct {
 	Path       string
 	LineNumber int
 	Line       string

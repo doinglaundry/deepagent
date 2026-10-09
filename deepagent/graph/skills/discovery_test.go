@@ -10,6 +10,7 @@ import (
 	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/tools"
+	agentmodel "eino-cli/deepagent/model"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 )
@@ -97,7 +98,7 @@ func TestBundledSkillCatalogFitsExampleConfiguration(t *testing.T) {
 	}
 }
 
-func buildCatalogPrompt(t *testing.T, loader skills.SkillLoader) string {
+func buildCatalogPrompt(t *testing.T, loader agentmodel.SkillLoader) string {
 	t.Helper()
 	messages, err := middleware.NewSkillMiddleware(loader).BuildPrompt(context.Background())
 	if err != nil {

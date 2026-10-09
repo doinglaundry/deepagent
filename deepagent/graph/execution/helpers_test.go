@@ -15,9 +15,7 @@ import (
 	"eino-cli/deepagent/graph/conversation"
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	"eino-cli/deepagent/graph/middleware"
-	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -32,13 +30,13 @@ type terminalWriteFailureStore struct {
 
 func (terminalWriteFailureStore *terminalWriteFailureStore) Set(ctx context.Context, id string, raw []byte) error {
 	var snapshot struct {
-		MapValues map[string]struct{ JSONValue types.RunState }
+		MapValues map[string]struct{ JSONValue agentmodel.RunState }
 	}
 	decodeErr := json.Unmarshal(raw, &snapshot)
 	if decodeErr != nil {
 		return decodeErr
 	}
-	if snapshot.MapValues["State"].JSONValue.Phase == types.PhaseCompleted && terminalWriteFailureStore.failure != nil {
+	if snapshot.MapValues["State"].JSONValue.Phase == agentmodel.PhaseCompleted && terminalWriteFailureStore.failure != nil {
 		return terminalWriteFailureStore.failure
 	}
 	return terminalWriteFailureStore.checkpointMemory.Set(ctx, id, raw)
@@ -49,12 +47,12 @@ type checkpointLifecycle struct {
 	before, after *int
 }
 
-func (checkpointLifecycle *checkpointLifecycle) PrepareRun(context.Context, *types.RunState) error {
+func (checkpointLifecycle *checkpointLifecycle) PrepareRun(context.Context, *agentmodel.RunState) error {
 	*checkpointLifecycle.before++
 	return nil
 }
 
-func (checkpointLifecycle *checkpointLifecycle) FinishRun(context.Context, *types.RunState, error) error {
+func (checkpointLifecycle *checkpointLifecycle) FinishRun(context.Context, *agentmodel.RunState, error) error {
 	*checkpointLifecycle.after++
 	return nil
 }
@@ -67,7 +65,7 @@ type compactionEventConversation struct {
 
 func (*compactionEventConversation) NeedsCompaction(context.Context) bool { return true }
 
-func (compactionEventConversation *compactionEventConversation) Compact(context.Context, string) (*types.ContextTokenUsage, error) {
+func (compactionEventConversation *compactionEventConversation) Compact(context.Context, string) (*agentmodel.ContextTokenUsage, error) {
 	compactionEventConversation.calls++
 	if compactionEventConversation.err != nil {
 		return nil, compactionEventConversation.err
@@ -116,7 +114,7 @@ type inputEventConversation struct {
 	failure error
 }
 
-func (inputEventConversation *inputEventConversation) AddHistory(ctx context.Context, run string, messages ...*messagepkg.Message) error {
+func (inputEventConversation *inputEventConversation) AddHistory(ctx context.Context, run string, messages ...*agentmodel.Message) error {
 	if inputEventConversation.failure != nil && messages[0].Content == "second" {
 		return inputEventConversation.failure
 	}
@@ -276,18 +274,18 @@ type orderedMiddleware struct {
 
 func (orderedMiddleware *orderedMiddleware) GetName() string { return orderedMiddleware.name }
 
-func (orderedMiddleware *orderedMiddleware) PrepareRun(context.Context, *types.RunState) error {
+func (orderedMiddleware *orderedMiddleware) PrepareRun(context.Context, *agentmodel.RunState) error {
 	*orderedMiddleware.order = append(*orderedMiddleware.order, "before:"+orderedMiddleware.name)
 	return nil
 }
 
-func (orderedMiddleware *orderedMiddleware) FinishRun(context.Context, *types.RunState, error) error {
+func (orderedMiddleware *orderedMiddleware) FinishRun(context.Context, *agentmodel.RunState, error) error {
 	*orderedMiddleware.order = append(*orderedMiddleware.order, "after:"+orderedMiddleware.name)
 	return nil
 }
 
-func (orderedMiddleware *orderedMiddleware) WrapModel(next middleware.ModelHandler) middleware.ModelHandler {
-	return func(ctx context.Context, input []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+func (orderedMiddleware *orderedMiddleware) WrapModel(next agentmodel.ModelHandler) agentmodel.ModelHandler {
+	return func(ctx context.Context, input []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		*orderedMiddleware.order = append(*orderedMiddleware.order, "model:"+orderedMiddleware.name)
 		return next(ctx, input)
 	}
@@ -298,9 +296,9 @@ type endOrderMiddleware struct {
 	after bool
 }
 
-func (*endOrderMiddleware) PrepareRun(context.Context, *types.RunState) error { return nil }
+func (*endOrderMiddleware) PrepareRun(context.Context, *agentmodel.RunState) error { return nil }
 
-func (endOrderMiddleware *endOrderMiddleware) FinishRun(context.Context, *types.RunState, error) error {
+func (endOrderMiddleware *endOrderMiddleware) FinishRun(context.Context, *agentmodel.RunState, error) error {
 	endOrderMiddleware.after = true
 	return nil
 }
@@ -311,17 +309,17 @@ type modelTransformMiddleware struct {
 	failure       error
 }
 
-func (modelTransformMiddleware *modelTransformMiddleware) ModifyModelRequest(_ context.Context, _ []*messagepkg.Message, messages []*messagepkg.Message, _ *types.GraphState) ([]*messagepkg.Message, error) {
+func (modelTransformMiddleware *modelTransformMiddleware) ModifyModelRequest(_ context.Context, _ []*agentmodel.Message, messages []*agentmodel.Message, _ *agentmodel.GraphState) ([]*agentmodel.Message, error) {
 	modelTransformMiddleware.before++
 	if modelTransformMiddleware.failure != nil {
 		return nil, modelTransformMiddleware.failure
 	}
-	return append([]*messagepkg.Message{messagepkg.NewSystemMessage("middleware prompt")}, messages...), nil
+	return append([]*agentmodel.Message{agentmodel.NewSystemMessage("middleware prompt")}, messages...), nil
 }
 
-func (modelTransformMiddleware *modelTransformMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schema.StreamReader[*messagepkg.Message], _ *types.GraphState) (*schema.StreamReader[*messagepkg.Message], error) {
+func (modelTransformMiddleware *modelTransformMiddleware) ModifyModelStreamResponse(_ context.Context, stream *schema.StreamReader[*agentmodel.Message], _ *agentmodel.GraphState) (*schema.StreamReader[*agentmodel.Message], error) {
 	modelTransformMiddleware.after++
-	return schema.StreamReaderWithConvert(stream, func(message *messagepkg.Message) (*messagepkg.Message, error) {
+	return schema.StreamReaderWithConvert(stream, func(message *agentmodel.Message) (*agentmodel.Message, error) {
 		copy := *message
 		copy.Content = "rewritten"
 		return &copy, nil
@@ -355,7 +353,7 @@ type pendingWriteFailure struct {
 
 func (pendingWriteFailure *pendingWriteFailure) Set(ctx context.Context, id string, raw []byte) error {
 	var snapshot struct {
-		MapValues map[string]struct{ JSONValue types.RunState }
+		MapValues map[string]struct{ JSONValue agentmodel.RunState }
 	}
 	decodeErr := json.Unmarshal(raw, &snapshot)
 	if decodeErr != nil {
@@ -425,11 +423,11 @@ type promptContractMiddleware struct {
 
 func (promptContractMiddleware *promptContractMiddleware) GetName() string { return "prompt_contract" }
 
-func (promptContractMiddleware *promptContractMiddleware) BuildPrompt(context.Context) ([]*messagepkg.Message, error) {
-	return []*messagepkg.Message{messagepkg.NewSystemMessage("instructions")}, nil
+func (promptContractMiddleware *promptContractMiddleware) BuildPrompt(context.Context) ([]*agentmodel.Message, error) {
+	return []*agentmodel.Message{agentmodel.NewSystemMessage("instructions")}, nil
 }
 
-func (promptContractMiddleware *promptContractMiddleware) ModifyModelRequest(_ context.Context, initial, messages []*messagepkg.Message, _ *types.GraphState) ([]*messagepkg.Message, error) {
+func (promptContractMiddleware *promptContractMiddleware) ModifyModelRequest(_ context.Context, initial, messages []*agentmodel.Message, _ *agentmodel.GraphState) ([]*agentmodel.Message, error) {
 	if len(initial) != 1 || initial[0].Role != schema.System {
 		return nil, errors.New("initialContext no longer contains middleware prompts")
 	}
@@ -494,11 +492,11 @@ type resourceMiddleware struct {
 
 func (resourceMiddleware *resourceMiddleware) GetName() string { return resourceMiddleware.name }
 
-func (resourceMiddleware *resourceMiddleware) PrepareRun(context.Context, *types.RunState) error {
+func (resourceMiddleware *resourceMiddleware) PrepareRun(context.Context, *agentmodel.RunState) error {
 	return resourceMiddleware.beforeErr
 }
 
-func (resourceMiddleware *resourceMiddleware) FinishRun(context.Context, *types.RunState, error) error {
+func (resourceMiddleware *resourceMiddleware) FinishRun(context.Context, *agentmodel.RunState, error) error {
 	return nil
 }
 
@@ -530,14 +528,14 @@ func (*cancelableCheckpointRead) Set(context.Context, string, []byte) error {
 
 type streamErrorMiddleware struct {
 	middleware.BaseMiddleware
-	reader *schema.StreamReader[*messagepkg.Message]
+	reader *schema.StreamReader[*agentmodel.Message]
 	err    error
 }
 
 func (*streamErrorMiddleware) GetName() string { return "stream_open_error" }
 
-func (streamErrorMiddleware *streamErrorMiddleware) WrapModel(middleware.ModelHandler) middleware.ModelHandler {
-	return func(context.Context, []*messagepkg.Message) (*schema.StreamReader[*messagepkg.Message], error) {
+func (streamErrorMiddleware *streamErrorMiddleware) WrapModel(agentmodel.ModelHandler) agentmodel.ModelHandler {
+	return func(context.Context, []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
 		return streamErrorMiddleware.reader, streamErrorMiddleware.err
 	}
 }
@@ -562,12 +560,12 @@ func testChildApprovalResume(t *testing.T, allow bool) {
 		{schema.AssistantMessage("parent done", nil)},
 	}}
 	store := &checkpointMemory{}
-	graphConfig := Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: chatModel, ThreadID: "parent", RunID: "run", CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: first}, {Tool: approved, RequiresApproval: true}}}
+	graphConfig := Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: chatModel, ThreadID: "parent", RunID: "run", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: first}, {Tool: approved, RequiresApproval: true}}}
 	graph, err := New(ctx, WithConfig(&graphConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("delegate")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("delegate")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
 		t.Fatalf("missing child approval: %v %+v", err, info)
@@ -586,7 +584,7 @@ func testChildApprovalResume(t *testing.T, allow bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{CallID: "approved", Approved: allow}}))
+	out, err := restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "approved", Approved: allow}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -702,7 +700,7 @@ type boundedChildRunner struct {
 	release      chan struct{}
 }
 
-func (boundedChildRunner *boundedChildRunner) Run(ctx context.Context, req tools.ChildRequest, _ types.ModelChunkSink) (*messagepkg.Message, error) {
+func (boundedChildRunner *boundedChildRunner) Run(ctx context.Context, req agentmodel.ChildRequest, _ agentmodel.ModelChunkSink) (*agentmodel.Message, error) {
 	boundedChildRunner.mu.Lock()
 	boundedChildRunner.active++
 	if boundedChildRunner.active > boundedChildRunner.peak {
@@ -713,7 +711,7 @@ func (boundedChildRunner *boundedChildRunner) Run(ctx context.Context, req tools
 	boundedChildRunner.started <- req.Prompt
 	select {
 	case <-boundedChildRunner.release:
-		return messagepkg.NewAssistantMessage(req.Prompt, nil), nil
+		return agentmodel.NewAssistantMessage(req.Prompt, nil), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -794,14 +792,14 @@ type executionFenceStore struct {
 
 func (executionFenceStore *executionFenceStore) Set(ctx context.Context, id string, raw []byte) error {
 	var snapshot struct {
-		MapValues map[string]struct{ JSONValue types.RunState }
+		MapValues map[string]struct{ JSONValue agentmodel.RunState }
 	}
 	decodeErr := json.Unmarshal(raw, &snapshot)
 	if decodeErr != nil {
 		return decodeErr
 	}
 	for _, call := range snapshot.MapValues["State"].JSONValue.Calls {
-		if call.Status == types.CallOutcomeUnknown {
+		if call.Status == agentmodel.CallOutcomeUnknown {
 			executionFenceStore.fenced = append([]byte(nil), raw...)
 			if executionFenceStore.failure != nil {
 				return executionFenceStore.failure

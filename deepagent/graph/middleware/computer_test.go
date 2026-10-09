@@ -4,14 +4,15 @@ import (
 	"context"
 	"testing"
 
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
+
 	"github.com/cloudwego/eino/schema"
 )
 
 func TestComputer_KeepLatestScreenshotWithoutChangingHistory(t *testing.T) {
 	image := schema.MessageInputPart{Type: schema.ChatMessagePartTypeImageURL, Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{MIMEType: "image/png"}}}
 	text := schema.MessageInputPart{Type: schema.ChatMessagePartTypeText, Text: "old observation"}
-	messages := []*messagepkg.Message{
+	messages := []*agentmodel.Message{
 		nil,
 		{Role: schema.Tool, ToolName: "browser_observe", ToolCallID: "old", UserInputMultiContent: []schema.MessageInputPart{text, image}},
 		{Role: schema.Tool, ToolName: "image", ToolCallID: "other", UserInputMultiContent: []schema.MessageInputPart{image}},

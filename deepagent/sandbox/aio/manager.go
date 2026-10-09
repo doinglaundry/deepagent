@@ -13,12 +13,13 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"eino-cli/deepagent/config"
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/sandbox"
-	"eino-cli/deepagent/sandbox/paths"
+	sandboxpaths "eino-cli/deepagent/sandbox/paths"
 	"eino-cli/deepagent/utils/network"
+
+	"golang.org/x/sys/unix"
 )
 
 // Manager owns the aio sandbox for one CLI session.
@@ -46,7 +47,7 @@ type Manager struct {
 var errManagerShutdown = errors.New("aio manager is shut down")
 
 // New builds the aio Manager bound to sessionID and seeds the warm pool from orphans.
-func New(cfg *config.Config, sessionID string) (sandbox.SandboxManager, error) {
+func New(cfg *config.Config, sessionID string) (agentmodel.SandboxManager, error) {
 	if sessionID == "" {
 		return nil, sandbox.ErrSessionIDRequired
 	}
@@ -308,7 +309,7 @@ func (m *Manager) contextWithShutdown(ctx context.Context) (context.Context, fun
 }
 
 // Get returns the live Sandbox for sid.
-func (m *Manager) Get(ctx context.Context, sid string) (sandbox.Sandbox, error) {
+func (m *Manager) Get(ctx context.Context, sid string) (agentmodel.Sandbox, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || sid != m.sandboxID {

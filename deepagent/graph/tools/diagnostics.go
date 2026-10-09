@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	filesystempkg "eino-cli/deepagent/graph/filesystem"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -19,16 +19,16 @@ type readLintsArgs struct {
 }
 
 type readLintsTool struct {
-	filesystem     filesystempkg.Filesystem
-	commandService filesystempkg.CommandService
+	filesystem     agentmodel.Filesystem
+	commandService agentmodel.CommandService
 }
 
-func NewReadLintsTool(filesystem filesystempkg.Filesystem, commandService filesystempkg.CommandService) (ToolDescriptor, error) {
+func NewReadLintsTool(filesystem agentmodel.Filesystem, commandService agentmodel.CommandService) (agentmodel.ToolDescriptor, error) {
 	if filesystem == nil || commandService == nil {
-		return ToolDescriptor{}, fmt.Errorf("workspace and command service are required")
+		return agentmodel.ToolDescriptor{}, fmt.Errorf("workspace and command service are required")
 	}
 	// Go diagnostics execute project tests and require approval, like commands.
-	return ToolDescriptor{Tool: &readLintsTool{filesystem: filesystem, commandService: commandService}, RequiresApproval: true}, nil
+	return agentmodel.ToolDescriptor{Tool: &readLintsTool{filesystem: filesystem, commandService: commandService}, RequiresApproval: true}, nil
 }
 
 func (*readLintsTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -78,7 +78,7 @@ func (readLintsTool *readLintsTool) InvokableRun(ctx context.Context, arguments 
 	for _, packageArgument := range packagePatterns {
 		command += " '" + strings.ReplaceAll(packageArgument, "'", "'\"'\"'") + "'"
 	}
-	commandResult, err := readLintsTool.commandService.Execute(ctx, filesystempkg.CommandRequest{Command: command, Timeout: 2 * time.Minute, MaxOutputBytes: 64 << 10})
+	commandResult, err := readLintsTool.commandService.Execute(ctx, agentmodel.CommandRequest{Command: command, Timeout: 2 * time.Minute, MaxOutputBytes: 64 << 10})
 	if err != nil {
 		return "", err
 	}

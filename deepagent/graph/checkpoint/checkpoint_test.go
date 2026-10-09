@@ -6,8 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/compose"
 )
@@ -67,13 +66,13 @@ func TestFreshCheckpointReplacesForeignIdentityAndInvalidBytes(t *testing.T) {
 }
 
 func TestAppendInputsPreservesCheckpointFieldsAndInputCursor(t *testing.T) {
-	state := types.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhaseBlocked, PreparedInputs: 1, Consumed: []types.Input{{Message: messagepkg.NewUserMessage("original")}}, Extensions: map[string]json.RawMessage{"middleware:test": json.RawMessage(`{"value":3}`)}}
+	state := agentmodel.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: agentmodel.PhaseBlocked, PreparedInputs: 1, Consumed: []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("original")}}, Extensions: map[string]json.RawMessage{"middleware:test": json.RawMessage(`{"value":3}`)}}
 	encoded, _ := json.Marshal(state)
 	snapshot := []byte(`{"Type":{"PointerNum":1,"StructType":"_eino_checkpoint"},"future":"preserved","MapValues":{"State":{"Type":{"PointerNum":1,"SimpleType":"deepagent_run_state_v1"},"JSONValue":` + string(encoded) + `},"InterruptID2Addr":{"untouched":"address"},"Inputs":{"untouched":"node input"}}}`)
 	original := snapshot
 	rawStore := &memoryStore{data: map[string][]byte{"checkpoint": original}}
-	input := types.Input{Message: messagepkg.NewUserMessage("pending"), Meta: map[string]string{"MessageID": "9007199254740993"}}
-	appendInputsErr := AppendInputs(context.Background(), rawStore, "checkpoint", "thread", "run", []types.Input{input})
+	input := agentmodel.RunInput{Message: agentmodel.NewUserMessage("pending"), Meta: map[string]string{"MessageID": "9007199254740993"}}
+	appendInputsErr := AppendInputs(context.Background(), rawStore, "checkpoint", "thread", "run", []agentmodel.RunInput{input})
 	if appendInputsErr != nil {
 		t.Fatal(appendInputsErr)
 	}
@@ -109,7 +108,7 @@ func TestAppendInputsPreservesCheckpointFieldsAndInputCursor(t *testing.T) {
 	for _, testCase := range []struct{ name, thread, run string }{{"thread", "other", "run"}, {"run", "thread", "other"}} {
 		t.Run(testCase.name, func(t *testing.T) {
 			rawStore.data["checkpoint"] = original
-			err := AppendInputs(context.Background(), rawStore, "checkpoint", testCase.thread, testCase.run, []types.Input{input})
+			err := AppendInputs(context.Background(), rawStore, "checkpoint", testCase.thread, testCase.run, []agentmodel.RunInput{input})
 			if err == nil {
 				t.Fatal("foreign checkpoint accepted")
 			}
@@ -130,21 +129,21 @@ func TestCheckpointMutationsPreserveUnknownWireFields(t *testing.T) {
 			var err error
 			switch operation {
 			case "append":
-				err = AppendInputs(ctx, rawStore, "checkpoint", "thread", "run", []types.Input{{MessageID: "pending", Message: messagepkg.NewUserMessage("pending")}})
+				err = AppendInputs(ctx, rawStore, "checkpoint", "thread", "run", []agentmodel.RunInput{{MessageID: "pending", Message: agentmodel.NewUserMessage("pending")}})
 			case "fence":
-				err = store.MarkToolOutcomeUnknown(ctx, "checkpoint", types.ToolCall{ID: "call", Name: "write", Arguments: "{}"}, true)
+				err = store.MarkToolOutcomeUnknown(ctx, "checkpoint", agentmodel.ToolCall{ID: "call", Name: "write", Arguments: "{}"}, true)
 			case "pending":
-				err = store.SaveInterrupts(ctx, "checkpoint", []types.Interrupt{{InterruptID: "interrupt", CheckpointID: "checkpoint"}})
+				err = store.SaveInterrupts(ctx, "checkpoint", []agentmodel.Interrupt{{InterruptID: "interrupt", CheckpointID: "checkpoint"}})
 			case "finalize":
 				var root struct {
-					MapValues map[string]struct{ JSONValue types.RunState }
+					MapValues map[string]struct{ JSONValue agentmodel.RunState }
 				}
 				err = json.Unmarshal(snapshot, &root)
 				if err != nil {
 					t.Fatal(err)
 				}
 				state := root.MapValues["State"].JSONValue
-				state.Phase = types.PhaseCompleted
+				state.Phase = agentmodel.PhaseCompleted
 				err = store.SaveTerminalState(ctx, "checkpoint", &state, true)
 			}
 			if err != nil {
@@ -238,7 +237,7 @@ func TestToolFencesShareSnapshotButResumeRejectsUnknownOutcomes(t *testing.T) {
 	store := NewGraphStore(rawStore, "thread", "run")
 	ctx := context.Background()
 	for _, id := range []string{"first", "second"} {
-		err := store.MarkToolOutcomeUnknown(ctx, "checkpoint", types.ToolCall{ID: id, Name: "write", Arguments: "{}"}, true)
+		err := store.MarkToolOutcomeUnknown(ctx, "checkpoint", agentmodel.ToolCall{ID: id, Name: "write", Arguments: "{}"}, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -248,15 +247,15 @@ func TestToolFencesShareSnapshotButResumeRejectsUnknownOutcomes(t *testing.T) {
 		t.Fatal("unknown side effect was resumable")
 	}
 	state := readSavedSnapshotFields(t, rawStore.data["checkpoint"])
-	var calls []types.ToolCallState
+	var calls []agentmodel.ToolCallState
 	err = json.Unmarshal(state["Calls"], &calls)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 3 || calls[1].Status != types.CallOutcomeUnknown || calls[2].Status != types.CallOutcomeUnknown {
+	if len(calls) != 3 || calls[1].Status != agentmodel.CallOutcomeUnknown || calls[2].Status != agentmodel.CallOutcomeUnknown {
 		t.Fatalf("calls=%+v", calls)
 	}
-	err = AppendInputs(ctx, rawStore, "checkpoint", "thread", "run", []types.Input{{Message: messagepkg.NewUserMessage("accepted before interruption")}})
+	err = AppendInputs(ctx, rawStore, "checkpoint", "thread", "run", []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("accepted before interruption")}})
 	if err != nil {
 		t.Fatal("accepted input must be sealed even when side-effect outcome requires reconciliation", err)
 	}
@@ -267,12 +266,12 @@ func TestInterruptMetadataRejectsUnknownToolOutcome(t *testing.T) {
 	storage := &memoryStore{data: map[string][]byte{"checkpoint": raw}}
 	store := NewGraphStore(storage, "thread", "run")
 	ctx := context.Background()
-	err := store.MarkToolOutcomeUnknown(ctx, "checkpoint", types.ToolCall{ID: "call"}, true)
+	err := store.MarkToolOutcomeUnknown(ctx, "checkpoint", agentmodel.ToolCall{ID: "call"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	before := string(storage.data["checkpoint"])
-	err = store.SaveInterrupts(ctx, "checkpoint", []types.Interrupt{{InterruptID: "interrupt", CheckpointID: "checkpoint"}})
+	err = store.SaveInterrupts(ctx, "checkpoint", []agentmodel.Interrupt{{InterruptID: "interrupt", CheckpointID: "checkpoint"}})
 	var unknownOutcome *ToolOutcomeUnknownError
 	isUnknownOutcome := errors.As(err, &unknownOutcome)
 	if !isUnknownOutcome {
@@ -294,7 +293,7 @@ func TestTerminalCheckpointCannotResumeOrAcceptInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.Phase = types.PhaseInterrupted
+	state.Phase = agentmodel.PhaseInterrupted
 	err = store.SaveTerminalState(context.Background(), "checkpoint", state, true)
 	if err != nil {
 		t.Fatal(err)
@@ -306,13 +305,13 @@ func TestTerminalCheckpointCannotResumeOrAcceptInputs(t *testing.T) {
 	}
 	for name, mutate := range map[string]func() error{
 		"append": func() error {
-			return AppendInputs(context.Background(), rawStore, "checkpoint", "thread", "run", []types.Input{{Message: messagepkg.NewUserMessage("late")}})
+			return AppendInputs(context.Background(), rawStore, "checkpoint", "thread", "run", []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("late")}})
 		},
 		"interrupts": func() error {
-			return store.SaveInterrupts(context.Background(), "checkpoint", []types.Interrupt{{InterruptID: "interrupt", CheckpointID: "checkpoint"}})
+			return store.SaveInterrupts(context.Background(), "checkpoint", []agentmodel.Interrupt{{InterruptID: "interrupt", CheckpointID: "checkpoint"}})
 		},
 		"tool outcome": func() error {
-			return store.MarkToolOutcomeUnknown(context.Background(), "checkpoint", types.ToolCall{ID: "late"}, true)
+			return store.MarkToolOutcomeUnknown(context.Background(), "checkpoint", agentmodel.ToolCall{ID: "late"}, true)
 		},
 		"terminal state": func() error {
 			return store.SaveTerminalState(context.Background(), "checkpoint", state, true)
@@ -351,7 +350,7 @@ func TestSaveTerminalStateReplacesKnownOptionalToolResultFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.Phase = types.PhaseCompleted
+	state.Phase = agentmodel.PhaseCompleted
 	state.Calls[0].Result.Content = "new"
 	state.Calls[0].Result.MultiContent = nil
 	rawStore := &memoryStore{data: map[string][]byte{"checkpoint": snapshot}}
@@ -382,12 +381,12 @@ func TestGraphStoreResumesEinoSnapshotFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := &types.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhasePreparing}
-	build := func(storage compose.CheckPointStore) compose.Runnable[*types.RunState, *types.RunState] {
-		graph := compose.NewGraph[*types.RunState, *types.RunState](compose.WithGenLocalState(func(context.Context) *types.RunState { return state }))
-		err := graph.AddLambdaNode("work", compose.InvokableLambda(func(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
-			var restored *types.RunState
-			err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, localState *types.RunState) error { restored = localState; return nil })
+	state := &agentmodel.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: agentmodel.PhasePreparing}
+	build := func(storage compose.CheckPointStore) compose.Runnable[*agentmodel.RunState, *agentmodel.RunState] {
+		graph := compose.NewGraph[*agentmodel.RunState, *agentmodel.RunState](compose.WithGenLocalState(func(context.Context) *agentmodel.RunState { return state }))
+		err := graph.AddLambdaNode("work", compose.InvokableLambda(func(ctx context.Context, _ *agentmodel.RunState) (*agentmodel.RunState, error) {
+			var restored *agentmodel.RunState
+			err := compose.ProcessState[*agentmodel.RunState](ctx, func(_ context.Context, localState *agentmodel.RunState) error { restored = localState; return nil })
 			return restored, err
 		}))
 		if err != nil {
@@ -460,7 +459,7 @@ func (memoryStore *memoryStore) Set(_ context.Context, id string, value []byte) 
 
 func newPreservedSnapshot(t *testing.T) []byte {
 	t.Helper()
-	state := types.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhaseBlocked, Consumed: []types.Input{{MessageID: "original", Message: messagepkg.NewUserMessage("original"), Meta: map[string]string{"MessageID": "9007199254740993"}}}}
+	state := agentmodel.RunState{Version: 1, ThreadID: "thread", RunID: "run", Phase: agentmodel.PhaseBlocked, Consumed: []agentmodel.RunInput{{MessageID: "original", Message: agentmodel.NewUserMessage("original"), Meta: map[string]string{"MessageID": "9007199254740993"}}}}
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)

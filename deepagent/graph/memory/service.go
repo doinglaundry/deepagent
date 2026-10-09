@@ -8,35 +8,22 @@ import (
 	"strings"
 	"time"
 
-	messagepkg "eino-cli/deepagent/message"
-	memorypkg "eino-cli/deepagent/protocol/memory"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 )
 
 type Config struct {
-	Store        memorypkg.Store
+	Store        agentmodel.MemoryStore
 	LeaseTTL     time.Duration
 	Root         string
 	Model        model.ToolCallingChatModel
 	Consolidator func(context.Context, string, string) (string, error)
 }
 
-type Service interface {
-	Read(ctx context.Context, scope string) (*Snapshot, error)
-	Observe(ctx context.Context, scope, threadID string, messages []*messagepkg.Message) error
-	Consolidate(ctx context.Context, scope string) error
-}
-
-type Snapshot struct {
-	Scope     string
-	Summary   string
-	UpdatedAt time.Time
-}
-
 type memoryService struct{ c Config }
 
-func New(config Config) (Service, error) {
+func New(config Config) (agentmodel.MemoryService, error) {
 	if config.Model == nil || config.Root == "" {
 		return nil, errors.New("memory requires model and root")
 	}
@@ -61,7 +48,7 @@ func New(config Config) (Service, error) {
 	return &memoryService{config}, nil
 }
 
-func (memoryService *memoryService) Read(ctx context.Context, scope string) (*Snapshot, error) {
+func (memoryService *memoryService) Read(ctx context.Context, scope string) (*agentmodel.MemorySnapshot, error) {
 	validateScopeErr := validateScope(ctx, scope)
 	if validateScopeErr != nil {
 		return nil, validateScopeErr
@@ -76,7 +63,7 @@ func (memoryService *memoryService) Read(ctx context.Context, scope string) (*Sn
 	if err != nil {
 		return nil, err
 	}
-	return &Snapshot{Scope: scope, Summary: state.Summary, UpdatedAt: state.UpdatedAt}, nil
+	return &agentmodel.MemorySnapshot{Scope: scope, Summary: state.Summary, UpdatedAt: state.UpdatedAt}, nil
 }
 
 func validateScope(ctx context.Context, scope string) error {

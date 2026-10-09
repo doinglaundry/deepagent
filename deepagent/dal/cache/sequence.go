@@ -3,12 +3,14 @@ package cache
 import (
 	"context"
 	"errors"
+
+	agentmodel "eino-cli/deepagent/model"
 )
 
 var ErrRedisUnavailable = errors.New("redis unavailable")
 
 // GenerateSequence 在指定 Redis key 下生成递增序号，各作用域使用独立的 key。
-func GenerateSequence(ctx context.Context, redis RedisClient, key string) (int64, error) {
+func GenerateSequence(ctx context.Context, redis agentmodel.RedisClient, key string) (int64, error) {
 	if redis == nil {
 		return 0, ErrRedisUnavailable
 	}
@@ -23,7 +25,7 @@ func GenerateSequence(ctx context.Context, redis RedisClient, key string) (int64
 }
 
 // GenerateID 使用已有全局计数和偏移量，生成持久化实体的唯一 ID。
-func GenerateID(ctx context.Context, redis RedisClient) (int64, error) {
+func GenerateID(ctx context.Context, redis agentmodel.RedisClient) (int64, error) {
 	sequence, err := GenerateSequence(ctx, redis, "deepagent:coordinator:global_id")
 	if err != nil {
 		return 0, err

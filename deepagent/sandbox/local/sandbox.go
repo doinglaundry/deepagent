@@ -13,8 +13,9 @@ import (
 	"strings"
 	"time"
 
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/sandbox"
-	"eino-cli/deepagent/sandbox/paths"
+	sandboxpaths "eino-cli/deepagent/sandbox/paths"
 	"eino-cli/deepagent/sandbox/search"
 )
 
@@ -294,7 +295,7 @@ func (s *Sandbox) reverseListEntry(hostEntry string) string {
 }
 
 // Glob returns virtual paths matching pattern under virtualPath.
-func (s *Sandbox) Glob(ctx context.Context, virtualPath, pattern string, opts sandbox.GlobOpts) ([]string, bool, error) {
+func (s *Sandbox) Glob(ctx context.Context, virtualPath, pattern string, opts agentmodel.SandboxGlobOptions) ([]string, bool, error) {
 	resolved, err := resolveSandboxPath(s.mounts, virtualPath)
 	if err != nil {
 		return nil, false, err
@@ -329,7 +330,7 @@ func (s *Sandbox) Glob(ctx context.Context, virtualPath, pattern string, opts sa
 }
 
 // Grep returns virtual path matches for pattern under virtualPath.
-func (s *Sandbox) Grep(ctx context.Context, virtualPath, pattern string, opts sandbox.GrepOpts) ([]sandbox.GrepMatch, bool, error) {
+func (s *Sandbox) Grep(ctx context.Context, virtualPath, pattern string, opts agentmodel.SandboxGrepOptions) ([]agentmodel.SandboxGrepMatch, bool, error) {
 	resolved, err := resolveSandboxPath(s.mounts, virtualPath)
 	if err != nil {
 		return nil, false, err
@@ -462,10 +463,10 @@ func (s *Sandbox) reverseHostPaths(hostPaths []string) []string {
 	return virtualPaths
 }
 
-func (s *Sandbox) reverseGrepMatches(hostMatches []search.GrepMatch) []sandbox.GrepMatch {
-	virtualMatches := make([]sandbox.GrepMatch, len(hostMatches))
+func (s *Sandbox) reverseGrepMatches(hostMatches []search.GrepMatch) []agentmodel.SandboxGrepMatch {
+	virtualMatches := make([]agentmodel.SandboxGrepMatch, len(hostMatches))
 	for i, hostMatch := range hostMatches {
-		virtualMatches[i] = sandbox.GrepMatch{
+		virtualMatches[i] = agentmodel.SandboxGrepMatch{
 			Path:       sandbox.ReverseResolvePath(s.mounts, hostMatch.Path),
 			LineNumber: hostMatch.LineNumber,
 			Line:       s.maskHostPaths(hostMatch.Line),

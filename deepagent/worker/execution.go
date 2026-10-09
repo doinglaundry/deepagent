@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"eino-cli/deepagent/helper/serialiser"
-	"eino-cli/deepagent/manager"
+	agentmodel "eino-cli/deepagent/model"
 	threadpkg "eino-cli/deepagent/thread"
 )
 
@@ -29,13 +29,13 @@ type threadRun struct {
 	worker     *Worker
 	ctx        context.Context
 	acceptDone <-chan struct{}
-	claim      *manager.AcquireResult
+	claim      *agentmodel.AcquireResult
 	thread     *threadpkg.Thread
 	idleSince  time.Time
 	wasActive  bool
 }
 
-func (c *threadRun) run(items <-chan threadpkg.TransportThreadOutputItem) (result runResult, closeErr error) {
+func (c *threadRun) run(items <-chan agentmodel.TransportThreadOutputItem) (result runResult, closeErr error) {
 	stop := make(chan struct{})
 	stopOutput := make(chan struct{})
 	activity := make(chan time.Time, 1)
@@ -176,8 +176,8 @@ func (c *threadRun) drainShutdown(inputResults <-chan runResult, outputSignal <-
 
 func (c *threadRun) interruptShutdownTimeout() {
 	interruptTimeout := runtimeInterruptTimeout(c.worker.ShutdownInterruptDrainTimeout)
-	_ = c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
-		Kind:    threadpkg.TransportThreadInterruptKindWorkerShutdownTimeout,
+	_ = c.thread.Interrupt(c.ctx, agentmodel.TransportThreadInterruptRequest{
+		Kind:    agentmodel.TransportThreadInterruptKindWorkerShutdownTimeout,
 		Reason:  defaultShutdownTimeoutReason,
 		Timeout: &interruptTimeout,
 	})

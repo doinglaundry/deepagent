@@ -10,9 +10,7 @@ import (
 
 	"eino-cli/deepagent/graph/execution"
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 	runpkg "eino-cli/deepagent/run"
 
 	"github.com/cloudwego/eino/compose"
@@ -26,11 +24,11 @@ func TestThread_ApprovalCancellationRestoresInputOwnershipWithoutReplay(t *testi
 		return legacyParityMessageStream(schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "echo", Arguments: `{}`}}}))
 	}}
 	store := &threadCheckpointMemory{}
-	cfg := &runpkg.Config{Graph: execution.Config{Model: model, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{{Tool: legacyParityEchoTool{}, RequiresApproval: true}}}}
-	events := make(chan runpkg.Event, 32)
+	cfg := &runpkg.Config{Graph: execution.Config{Model: model, CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: legacyParityEchoTool{}, RequiresApproval: true}}}}
+	events := make(chan agentmodel.RunEvent, 32)
 	first := newTestThread("1", cfg, events, ThreadOptions{})
 	defer first.Close(ctx)
-	message := messagepkg.NewUserMessage("execute once")
+	message := agentmodel.NewUserMessage("execute once")
 	message.MessageID = "101"
 	started, err := first.SubmitInput(ctx, message, WithMessageID("101"))
 	if err != nil {
@@ -40,11 +38,11 @@ func TestThread_ApprovalCancellationRestoresInputOwnershipWithoutReplay(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	var approval runpkg.ApprovalRequiredPayload
+	var approval agentmodel.ApprovalRequiredPayload
 	for len(events) > 0 {
 		event := <-events
-		if event.Type == runpkg.EventApproveRequested {
-			approval = event.Payload.(runpkg.ApprovalRequiredPayload)
+		if event.Type == agentmodel.EventApproveRequested {
+			approval = event.Payload.(agentmodel.ApprovalRequiredPayload)
 		}
 	}
 	restored := newTestThread("1", cfg, nil, ThreadOptions{})
@@ -53,11 +51,11 @@ func TestThread_ApprovalCancellationRestoresInputOwnershipWithoutReplay(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(inputpkg.ResumeRunPayload{RunID: started.RunID, CheckpointID: approval.CheckpointID, InterruptID: approval.InterruptID, Approval: &inputpkg.ApprovalDecision{CancelRun: true}})
+	raw, err := json.Marshal(agentmodel.ResumeRunPayload{RunID: started.RunID, CheckpointID: approval.CheckpointID, InterruptID: approval.InterruptID, Approval: &agentmodel.ApprovalDecision{CancelRun: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = restored.PostMessage(ctx, &TransportMessage{ID: "102", Type: MessageTypeResumeRun, Payload: raw})
+	_, err = restored.PostMessage(ctx, &agentmodel.TransportMessage{ID: "102", Type: MessageTypeResumeRun, Payload: raw})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,11 +89,11 @@ func TestThread_ApprovalCancellationRestoresInputOwnershipWithoutReplay(t *testi
 func TestThread_UnknownToolOutcomeEndsOriginalRunWithoutReplayingInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	input := types.Input{MessageID: "2000000000000000664", Message: messagepkg.NewUserMessage("write once"), Meta: map[string]string{"sender": "user"}}
-	state := &types.RunState{
-		Version: 1, ThreadID: "thread", RunID: "run", Phase: types.PhaseBlocked,
-		Consumed: []types.Input{input}, PreparedInputs: 1,
-		Calls: []types.ToolCallState{{Call: types.ToolCall{ID: "write", Name: "write_file", Arguments: `{}`}, Status: types.CallOutcomeUnknown}},
+	input := agentmodel.RunInput{MessageID: "2000000000000000664", Message: agentmodel.NewUserMessage("write once"), Meta: map[string]string{"sender": "user"}}
+	state := &agentmodel.RunState{
+		Version: 1, ThreadID: "thread", RunID: "run", Phase: agentmodel.PhaseBlocked,
+		Consumed: []agentmodel.RunInput{input}, PreparedInputs: 1,
+		Calls: []agentmodel.ToolCallState{{Call: agentmodel.ToolCall{ID: "write", Name: "write_file", Arguments: `{}`}, Status: agentmodel.CallOutcomeUnknown}},
 	}
 	snapshot, err := json.Marshal(map[string]any{"MapValues": map[string]any{"State": map[string]any{
 		"Type": map[string]string{"SimpleType": "deepagent_run_state_v1"}, "JSONValue": state,
@@ -105,7 +103,7 @@ func TestThread_UnknownToolOutcomeEndsOriginalRunWithoutReplayingInput(t *testin
 	}
 	store := &threadCheckpointMemory{values: map[string][]byte{"checkpoint": snapshot}}
 	model := &threadModel{}
-	events := make(chan runpkg.Event, 32)
+	events := make(chan agentmodel.RunEvent, 32)
 	thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model, CheckpointStore: store}}, events, ThreadOptions{})
 	defer thread.Close(ctx)
 	handle, err := thread.ResumeRun(ctx, "run", ResumeRunOptions{CheckpointID: "checkpoint"})
@@ -119,8 +117,8 @@ func TestThread_UnknownToolOutcomeEndsOriginalRunWithoutReplayingInput(t *testin
 	failed := false
 	for len(events) > 0 {
 		event := <-events
-		if event.Type == runpkg.EventRunEnd {
-			end := event.Payload.(runpkg.RunEndPayload)
+		if event.Type == agentmodel.EventRunEnd {
+			end := event.Payload.(agentmodel.RunEndPayload)
 			failed = event.RunID == "run" && end.Status == "failed" && len(event.ConsumedInputs) == 1 && event.ConsumedInputs[0].Content == "write once"
 		}
 	}
@@ -150,15 +148,15 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			if fail {
 				store.failure = failure
 			}
-			cfg := &runpkg.Config{Graph: execution.Config{Model: &resumeModel{}, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{tools.NewFollowUpTool()}}}
+			cfg := &runpkg.Config{Graph: execution.Config{Model: &resumeModel{}, CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{tools.NewFollowUpTool()}}}
 			history := &historyMemory{}
-			events := make(chan runpkg.Event, 64)
+			events := make(chan agentmodel.RunEvent, 64)
 			first := newTestThread("thread", cfg, events, ThreadOptions{ConversationDB: history})
 			initHistoryErr := first.InitHistory(ctx)
 			if initHistoryErr != nil {
 				t.Fatal(initHistoryErr)
 			}
-			started, err := first.SubmitInput(ctx, messagepkg.NewUserMessage("ask"))
+			started, err := first.SubmitInput(ctx, agentmodel.NewUserMessage("ask"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -166,11 +164,11 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var question runpkg.FollowUpRequestedPayload
+			var question agentmodel.FollowUpRequestedPayload
 			for len(events) > 0 {
 				e := <-events
-				if e.Type == runpkg.EventFollowUpRequested {
-					question = e.Payload.(runpkg.FollowUpRequestedPayload)
+				if e.Type == agentmodel.EventFollowUpRequested {
+					question = e.Payload.(agentmodel.FollowUpRequestedPayload)
 				}
 			}
 			next := newTestThread("thread", cfg, events, ThreadOptions{ConversationDB: history})
@@ -178,7 +176,7 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			handle, err := next.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &tools.FollowUpInfo{UserAnswer: "a"}}})
+			handle, err := next.ResumeRun(ctx, started.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &agentmodel.FollowUpInfo{UserAnswer: "a"}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -198,7 +196,7 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			stop()
 			for len(events) > 0 {
 				e := <-events
-				if e.Type == runpkg.EventRunEnd {
+				if e.Type == agentmodel.EventRunEnd {
 					t.Fatal("final event overtook save")
 				}
 			}
@@ -213,10 +211,10 @@ func TestThread_CompletionCheckpointPersistsBeforeFinalEvent(t *testing.T) {
 			sawError := false
 			for len(events) > 0 {
 				e := <-events
-				if e.Type == runpkg.EventError {
+				if e.Type == agentmodel.EventError {
 					sawError = true
 				}
-				if e.Type == runpkg.EventFollowUpRequested {
+				if e.Type == agentmodel.EventFollowUpRequested {
 					t.Fatal("terminal save failure republished blocked")
 				}
 			}
@@ -240,7 +238,7 @@ func TestThread_ResumeRejectsUnavailableCheckpointBeforeAcceptance(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			events := make(chan runpkg.Event, 8)
+			events := make(chan agentmodel.RunEvent, 8)
 			model := &threadModel{}
 			thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model, CheckpointStore: tc.store}}, events, ThreadOptions{})
 			initHistoryErr := thread.InitHistory(ctx)
@@ -276,14 +274,14 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			}
 			history := &pendingConversationDB{}
 			m := &pendingQuestionModel{started: make(chan struct{}), release: make(chan struct{})}
-			cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: store, ToolDescriptors: []tools.ToolDescriptor{tools.NewFollowUpTool()}}}
-			events := make(chan runpkg.Event, 64)
+			cfg := &runpkg.Config{Graph: execution.Config{Model: m, CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{tools.NewFollowUpTool()}}}
+			events := make(chan agentmodel.RunEvent, 64)
 			first := newTestThread("thread", cfg, events, ThreadOptions{ConversationDB: history})
 			firstInitHistoryErr := first.InitHistory(ctx)
 			if firstInitHistoryErr != nil {
 				t.Fatal(firstInitHistoryErr)
 			}
-			run, err := first.SubmitInput(ctx, messagepkg.NewUserMessage("ask me"))
+			run, err := first.SubmitInput(ctx, agentmodel.NewUserMessage("ask me"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -292,7 +290,7 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			pending, err := first.SubmitInput(ctx, messagepkg.NewUserMessage("pending question"), WithInputMeta(map[string]string{"MessageID": "pending-id"}))
+			pending, err := first.SubmitInput(ctx, agentmodel.NewUserMessage("pending question"), WithInputMeta(map[string]string{"MessageID": "pending-id"}))
 			if err != nil || pending.RunID != run.RunID {
 				t.Fatalf("pending=%+v err=%v", pending, err)
 			}
@@ -307,7 +305,7 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			}
 			for len(events) > 0 {
 				e := <-events
-				if e.Type == runpkg.EventFollowUpRequested || e.Type == runpkg.EventRunEnd {
+				if e.Type == agentmodel.EventFollowUpRequested || e.Type == agentmodel.EventRunEnd {
 					t.Fatal("blocked/final published before checkpoint commit")
 				}
 			}
@@ -315,11 +313,11 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 				close(store.release)
 			}
 			err = run.RunHandle.Wait(ctx)
-			var question runpkg.FollowUpRequestedPayload
+			var question agentmodel.FollowUpRequestedPayload
 			for len(events) > 0 {
 				e := <-events
-				if e.Type == runpkg.EventFollowUpRequested {
-					question = e.Payload.(runpkg.FollowUpRequestedPayload)
+				if e.Type == agentmodel.EventFollowUpRequested {
+					question = e.Payload.(agentmodel.FollowUpRequestedPayload)
 				}
 			}
 			if fail {
@@ -342,12 +340,12 @@ func TestThread_PendingInputCheckpointCommittedBeforeBlocked(t *testing.T) {
 			if len(first.ContextManager().GetHistory(ctx)) != 2 {
 				t.Fatal("pending input inserted before tool completion")
 			}
-			restored := newTestThread("thread", cfg, make(chan runpkg.Event, 64), ThreadOptions{ConversationDB: history})
+			restored := newTestThread("thread", cfg, make(chan agentmodel.RunEvent, 64), ThreadOptions{ConversationDB: history})
 			initHistoryErr := restored.InitHistory(ctx)
 			if initHistoryErr != nil {
 				t.Fatal(initHistoryErr)
 			}
-			resumed, err := restored.ResumeRun(ctx, run.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &tools.FollowUpInfo{UserAnswer: "yes"}}})
+			resumed, err := restored.ResumeRun(ctx, run.RunID, ResumeRunOptions{CheckpointID: question.CheckpointID, ResumeData: map[string]any{question.InterruptID: &agentmodel.FollowUpInfo{UserAnswer: "yes"}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -379,13 +377,13 @@ func TestThread_CancelPersistsAcceptedPendingBeforeFinalEventAndWait(t *testing.
 				store.failure = failure
 			}
 			model := &threadModel{started: make(chan struct{}), release: make(chan struct{})}
-			events := make(chan runpkg.Event, 32)
+			events := make(chan agentmodel.RunEvent, 32)
 			thread := newTestThread("thread", &runpkg.Config{Graph: execution.Config{Model: model}}, events, ThreadOptions{ConversationDB: store})
 			initHistoryErr := thread.InitHistory(ctx)
 			if initHistoryErr != nil {
 				t.Fatal(initHistoryErr)
 			}
-			first, err := thread.SubmitInput(runCtx, messagepkg.NewUserMessage("first"))
+			first, err := thread.SubmitInput(runCtx, agentmodel.NewUserMessage("first"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -394,7 +392,7 @@ func TestThread_CancelPersistsAcceptedPendingBeforeFinalEventAndWait(t *testing.
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			next, err := thread.SubmitInput(runCtx, messagepkg.NewUserMessage("accepted pending"), WithInputMeta(map[string]string{"message_id": "pending-id"}))
+			next, err := thread.SubmitInput(runCtx, agentmodel.NewUserMessage("accepted pending"), WithInputMeta(map[string]string{"message_id": "pending-id"}))
 			if err != nil || next.RunID != first.RunID {
 				t.Fatalf("next=%+v err=%v", next, err)
 			}
@@ -416,7 +414,7 @@ func TestThread_CancelPersistsAcceptedPendingBeforeFinalEventAndWait(t *testing.
 			end()
 			for len(events) > 0 {
 				e := <-events
-				if e.Type == runpkg.EventRunEnd {
+				if e.Type == agentmodel.EventRunEnd {
 					t.Fatal("terminal event overtook history persistence")
 				}
 			}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	agentmodel "eino-cli/deepagent/model"
+
 	einotool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
@@ -21,7 +23,7 @@ func (testTool *toolSetTestTool) InvokableRun(_ context.Context, arguments strin
 func TestToolSetPreservesSchemaAndExecution(t *testing.T) {
 	ctx := context.Background()
 	originalTool := &toolSetTestTool{}
-	toolSet, err := NewToolSet(ctx, []ToolDescriptor{{Tool: originalTool, ReadOnly: true}})
+	toolSet, err := NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: originalTool, ReadOnly: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +47,7 @@ func TestToolSetPreservesSchemaAndExecution(t *testing.T) {
 
 func TestToolSetRejectsDuplicate(t *testing.T) {
 	ctx := context.Background()
-	_, err := NewToolSet(ctx, []ToolDescriptor{{Tool: &toolSetTestTool{}}, {Tool: &toolSetTestTool{}}})
+	_, err := NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: &toolSetTestTool{}}, {Tool: &toolSetTestTool{}}})
 	if err == nil {
 		t.Fatal("accepted duplicate tool name")
 	}
@@ -53,7 +55,7 @@ func TestToolSetRejectsDuplicate(t *testing.T) {
 
 func TestToolSetFilterKeepsExecutionAndOrder(t *testing.T) {
 	ctx := context.Background()
-	toolSet, err := NewToolSet(ctx, []ToolDescriptor{{Tool: &toolSetTestTool{}, ReadOnly: true}})
+	toolSet, err := NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: &toolSetTestTool{}, ReadOnly: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

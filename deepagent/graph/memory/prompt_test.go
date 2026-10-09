@@ -7,9 +7,7 @@ import (
 	"testing"
 
 	"eino-cli/deepagent/graph/execution"
-	"eino-cli/deepagent/graph/middleware"
-	"eino-cli/deepagent/graph/tools"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool/utils"
@@ -22,12 +20,12 @@ type promptService struct {
 	err     error
 }
 
-func (promptService *promptService) Read(_ context.Context, scope string) (*Snapshot, error) {
+func (promptService *promptService) Read(_ context.Context, scope string) (*agentmodel.MemorySnapshot, error) {
 	promptService.reads++
-	return &Snapshot{Scope: scope, Summary: promptService.summary}, promptService.err
+	return &agentmodel.MemorySnapshot{Scope: scope, Summary: promptService.summary}, promptService.err
 }
 
-func (*promptService) Observe(context.Context, string, string, []*messagepkg.Message) error {
+func (*promptService) Observe(context.Context, string, string, []*agentmodel.Message) error {
 	return nil
 }
 
@@ -62,12 +60,12 @@ func TestMemoryPrompt_ReadsCurrentScopeBeforeEachModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	chatModel := &promptModel{}
-	graph, err := execution.New(ctx, execution.WithConfig(&execution.Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
+	graph, err := execution.New(ctx, execution.WithConfig(&execution.Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}, Middlewares: []agentmodel.Middleware{NewPrompt(service, "user/one")}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, executeErr := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+	_, executeErr := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -94,12 +92,12 @@ func TestMemoryPrompt_ReadFailurePreventsModel(t *testing.T) {
 	want := errors.New("memory store unavailable")
 	service := &promptService{err: want}
 	chatModel := &promptModel{}
-	graph, err := execution.New(context.Background(), execution.WithConfig(&execution.Config{Model: chatModel, Middlewares: []middleware.Middleware{NewPrompt(service, "user/one")}}))
+	graph, err := execution.New(context.Background(), execution.WithConfig(&execution.Config{Model: chatModel, Middlewares: []agentmodel.Middleware{NewPrompt(service, "user/one")}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 	if !errors.Is(err, want) || len(chatModel.inputs) != 0 {
 		t.Fatalf("err=%v model=%d", err, len(chatModel.inputs))
 	}

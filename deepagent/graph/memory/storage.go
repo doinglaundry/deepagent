@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	memorypkg "eino-cli/deepagent/protocol/memory"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/google/uuid"
 )
@@ -23,7 +23,7 @@ func (memoryService *memoryService) buildMemoryKey(scope, suffix string) string 
 
 // Independent renewable leases protect long-term jobs; a lost lease cancels model work
 // and CompleteMemory fences every artifact/baseline mutation against the live token.
-func (memoryService *memoryService) runLeasedJob(ctx context.Context, key string, work func(context.Context, memorypkg.Lease) error) error {
+func (memoryService *memoryService) runLeasedJob(ctx context.Context, key string, work func(context.Context, agentmodel.MemoryLease) error) error {
 	lease, operationErr := memoryService.c.Store.ClaimMemory(ctx, key, uuid.NewString(), memoryService.c.LeaseTTL)
 	if operationErr != nil {
 		return operationErr
@@ -65,7 +65,7 @@ func (memoryService *memoryService) runLeasedJob(ctx context.Context, key string
 func (memoryService *memoryService) readSharedState(ctx context.Context, scope string) (consolidated, error) {
 	memoryState := consolidated{Baselines: map[string]string{}}
 	artifact, operationErr := memoryService.c.Store.GetMemory(ctx, memoryService.buildMemoryKey(scope, "consolidation"))
-	if errors.Is(operationErr, memorypkg.ErrNotFound) {
+	if errors.Is(operationErr, agentmodel.ErrMemoryNotFound) {
 		return memoryState, nil
 	}
 	if operationErr != nil {

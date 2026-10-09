@@ -9,9 +9,7 @@ import (
 	"time"
 
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
-	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -21,7 +19,7 @@ func (graph *Graph) savePendingInterrupts(ctx context.Context, checkpointID stri
 	if graph.runState == nil || len(interruptInfo.InterruptContexts) == 0 {
 		return nil
 	}
-	pendingInterrupts := make([]types.Interrupt, 0, len(interruptInfo.InterruptContexts))
+	pendingInterrupts := make([]agentmodel.Interrupt, 0, len(interruptInfo.InterruptContexts))
 	for _, interrupt := range interruptInfo.InterruptContexts {
 		if interrupt == nil {
 			continue
@@ -30,19 +28,19 @@ func (graph *Graph) savePendingInterrupts(ctx context.Context, checkpointID stri
 		if err != nil {
 			return err
 		}
-		item := types.Interrupt{InterruptID: interrupt.ID, CheckpointID: checkpointID, Kind: "custom", Data: data}
+		item := agentmodel.Interrupt{InterruptID: interrupt.ID, CheckpointID: checkpointID, Kind: "custom", Data: data}
 		switch value := interrupt.Info.(type) {
-		case *tools.ApprovalInfo:
+		case *agentmodel.ApprovalInfo:
 			item.Kind = "approval"
 			item.CallID = value.CallID
-		case *tools.FollowUpInfo:
+		case *agentmodel.FollowUpInfo:
 			item.Kind = "follow_up"
 		}
 		if item.CallID == "" {
 			// A single suspended call is unambiguous. Nested/parallel contexts keep
 			// their Eino identity; never guess among multiple blocked calls.
 			for _, call := range graph.runState.Calls {
-				if call.Status == types.CallBlocked {
+				if call.Status == agentmodel.CallBlocked {
 					if item.CallID != "" {
 						item.CallID = ""
 						break
@@ -75,7 +73,7 @@ type approvalCancelKey struct{}
 
 func init() { schema.RegisterName[*initialCheckpoint]("deepagent_initial_checkpoint_v1") }
 
-func (graph *Graph) invokeGraph(ctx context.Context, runState *types.RunState, runOptions RunOptions) (result *messagepkg.Message, initialCheckpointSaved bool, err error) {
+func (graph *Graph) invokeGraph(ctx context.Context, runState *agentmodel.RunState, runOptions RunOptions) (result *agentmodel.Message, initialCheckpointSaved bool, err error) {
 	invokeOptions := append([]compose.Option(nil), runOptions.composeOpts...)
 	if len(graph.config.Callbacks) > 0 {
 		invokeOptions = append(invokeOptions, compose.WithCallbacks(graph.config.Callbacks...))
@@ -93,12 +91,12 @@ func (graph *Graph) invokeGraph(ctx context.Context, runState *types.RunState, r
 		ctx = context.WithValue(ctx, initialCheckpointKey{}, runState)
 		store := checkpointer.NewGraphStore(graph.config.CheckpointStore, graph.config.ThreadID, graph.runID)
 		var fenceMu sync.Mutex
-		graph.toolExecutor.persistToolExecutionFence = func(ctx context.Context, call types.ToolCall) error {
+		graph.toolExecutor.persistToolExecutionFence = func(ctx context.Context, call agentmodel.ToolCall) error {
 			fenceMu.Lock()
 			defer fenceMu.Unlock()
 			// Fresh local state is the input pointer returned by our Eino state
 			// generator. A restored state is decoded from the checkpoint instead.
-			restored := types.GetRunState(ctx) != runState
+			restored := agentmodel.GetRunState(ctx) != runState
 			err := store.MarkToolOutcomeUnknown(ctx, runOptions.CheckpointID, call, restored)
 			if err != nil {
 				return fmt.Errorf("persist tool execution fence: %w", err)
@@ -107,7 +105,7 @@ func (graph *Graph) invokeGraph(ctx context.Context, runState *types.RunState, r
 		}
 	}
 
-	result, err = graph.runnable.Invoke(types.WithRunState(ctx, runState), runState, invokeOptions...)
+	result, err = graph.runnable.Invoke(agentmodel.WithRunState(ctx, runState), runState, invokeOptions...)
 	info, interrupted := compose.ExtractInterruptInfo(err)
 	if interrupted && len(info.InterruptContexts) == 1 {
 		_, initial := info.InterruptContexts[0].Info.(*initialCheckpoint)
@@ -120,7 +118,7 @@ func (graph *Graph) invokeGraph(ctx context.Context, runState *types.RunState, r
 			// A checkpoint-ID option resets it, so this invocation loads the new
 			// cursor instead of starting another forced run.
 			resumeOpts := append(append([]compose.Option(nil), invokeOptions...), compose.WithCheckPointID(runOptions.CheckpointID))
-			result, err = graph.runnable.Invoke(types.WithRunState(resumeCtx, runState), runState, resumeOpts...)
+			result, err = graph.runnable.Invoke(agentmodel.WithRunState(resumeCtx, runState), runState, resumeOpts...)
 		}
 	}
 	info, interrupted = compose.ExtractInterruptInfo(err)
@@ -202,7 +200,7 @@ func (toolExecutor *toolExecutor) getChildCheckpointStore(callID string) *childC
 	return toolExecutor.childCheckpointStoresByCallID[callID]
 }
 
-func (toolExecutor *toolExecutor) restoreChildCheckpoints(runState *types.RunState) {
+func (toolExecutor *toolExecutor) restoreChildCheckpoints(runState *agentmodel.RunState) {
 	toolExecutor.mu.Lock()
 	defer toolExecutor.mu.Unlock()
 	toolExecutor.childCheckpointStoresByCallID = map[string]*childCheckpointStore{}
@@ -216,7 +214,7 @@ func (toolExecutor *toolExecutor) restoreChildCheckpoints(runState *types.RunSta
 
 // Only the graph node writes RunState; concurrent child executions write their
 // own locked buffers. The executor owns both eager and ordinary task buffers.
-func (toolExecutor *toolExecutor) snapshotChildCheckpoints(runState *types.RunState) {
+func (toolExecutor *toolExecutor) snapshotChildCheckpoints(runState *agentmodel.RunState) {
 	toolExecutor.mu.Lock()
 	defer toolExecutor.mu.Unlock()
 	for callID, checkpoint := range toolExecutor.childCheckpointStoresByCallID {

@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/computer"
-	"eino-cli/deepagent/graph/types"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 func getHTTPOrigin(value string) (string, error) {
@@ -52,13 +52,13 @@ func ValidateComputerTargets(origins, apps []string) error {
 }
 
 // This scope check runs before read-only and remembered-approval shortcuts.
-func validateComputerTarget(runtime RuntimeConfig, call types.ToolCall) error {
+func validateComputerTarget(runtime RuntimeConfig, call agentmodel.ToolCall) error {
 	browser := strings.HasPrefix(call.Name, "browser_")
 	desktop := strings.HasPrefix(call.Name, "computer_")
 	if !browser && !desktop {
 		return nil
 	}
-	var action computer.Action
+	var action agentmodel.ComputerAction
 	err := json.Unmarshal([]byte(call.Arguments), &action)
 	if err != nil {
 		return err

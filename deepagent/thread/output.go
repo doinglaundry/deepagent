@@ -8,8 +8,7 @@ import (
 	"sync"
 
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	"eino-cli/deepagent/run"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 func (t *Thread) runOutputBridge(ctx context.Context, bridge *threadOutputBridge) {
@@ -59,7 +58,7 @@ func (t *Thread) startThreadOutputObserver(ctx context.Context) {
 		return
 	}
 	t.observerOnce.Do(func() {
-		t.observerQueue = make(chan ThreadOutputObservation, threadOutputObserverQueueSize)
+		t.observerQueue = make(chan agentmodel.ThreadOutputObservation, threadOutputObserverQueueSize)
 		observerCtx, cancel := context.WithCancel(ctx)
 		t.observerCancel = cancel
 		go t.runThreadOutputObserver(observerCtx)
@@ -77,7 +76,7 @@ func (t *Thread) runThreadOutputObserver(ctx context.Context) {
 	}
 }
 
-func (t *Thread) enqueueThreadOutputObservation(ctx context.Context, observation ThreadOutputObservation) {
+func (t *Thread) enqueueThreadOutputObservation(ctx context.Context, observation agentmodel.ThreadOutputObservation) {
 	select {
 	case t.observerQueue <- observation:
 	default:
@@ -85,41 +84,41 @@ func (t *Thread) enqueueThreadOutputObservation(ctx context.Context, observation
 	}
 }
 
-func (t *Thread) threadOutputObservation(item TransportThreadOutputItem) (ThreadOutputObservation, bool) {
+func (t *Thread) threadOutputObservation(item agentmodel.TransportThreadOutputItem) (agentmodel.ThreadOutputObservation, bool) {
 	if t.threadOutputObserver == nil || t.observerQueue == nil {
-		return ThreadOutputObservation{}, false
+		return agentmodel.ThreadOutputObservation{}, false
 	}
-	return ThreadOutputObservation{
+	return agentmodel.ThreadOutputObservation{
 		SessionID: t.sessionID,
 		ThreadID:  t.ThreadID,
 		Item:      cloneThreadOutputItem(item),
 	}, true
 }
 
-func (t *Thread) callThreadOutputObserver(ctx context.Context, obs ThreadOutputObservation) {
+func (t *Thread) callThreadOutputObserver(ctx context.Context, obs agentmodel.ThreadOutputObservation) {
 	defer func() {
 		_ = recover()
 	}()
 	t.threadOutputObserver(ctx, obs)
 }
 
-func (t *Thread) forwardAgentEvent(ctx context.Context, ev run.Event) bool {
+func (t *Thread) forwardAgentEvent(ctx context.Context, ev agentmodel.RunEvent) bool {
 	usage := t.ContextManager().GetContextUsage()
 	item, err := threadOutputItem(t.sessionID, t.ThreadID, ev, &usage)
 	if err != nil {
-		return t.outputBridge.deliver(ctx, t, TransportThreadOutputItem{Err: err})
+		return t.outputBridge.deliver(ctx, t, agentmodel.TransportThreadOutputItem{Err: err})
 	}
 	if item == nil {
 		return true
 	}
 
-	if ev.Type == run.EventRunEnd && t.runFinishedObserver != nil {
+	if ev.Type == agentmodel.EventRunEnd && t.runFinishedObserver != nil {
 		t.runFinishedObserver(ctx, ev)
 	}
 	return t.outputBridge.deliver(ctx, t, *item)
 }
 
-func (t *Thread) emitAgentEvent(ctx context.Context, ev run.Event) {
+func (t *Thread) emitAgentEvent(ctx context.Context, ev agentmodel.RunEvent) {
 	t.mu.Lock()
 	bridge := t.outputBridge
 	t.mu.Unlock()
@@ -129,7 +128,7 @@ func (t *Thread) emitAgentEvent(ctx context.Context, ev run.Event) {
 	usage := t.ContextManager().GetContextUsage()
 	item, err := threadOutputItem(t.sessionID, t.ThreadID, ev, &usage)
 	if err != nil {
-		bridge.send(ctx, TransportThreadOutputItem{Err: err})
+		bridge.send(ctx, agentmodel.TransportThreadOutputItem{Err: err})
 		return
 	}
 	if item == nil {
@@ -141,7 +140,7 @@ func (t *Thread) emitAgentEvent(ctx context.Context, ev run.Event) {
 
 const metadataAgentEventID = "agent_event_id"
 
-func threadOutputItem(sessionID string, threadID string, ev run.Event, usage *types.ContextTokenUsage) (item *TransportThreadOutputItem, err error) {
+func threadOutputItem(sessionID string, threadID string, ev agentmodel.RunEvent, usage *agentmodel.ContextTokenUsage) (item *agentmodel.TransportThreadOutputItem, err error) {
 	event, err := workerEvent(sessionID, threadID, ev, usage)
 	if err != nil {
 		return nil, err
@@ -150,34 +149,34 @@ func threadOutputItem(sessionID string, threadID string, ev run.Event, usage *ty
 	if event == nil && yield == nil {
 		return nil, nil
 	}
-	return &TransportThreadOutputItem{Event: event, Yield: yield}, nil
+	return &agentmodel.TransportThreadOutputItem{Event: event, Yield: yield}, nil
 }
 
-func yieldFromAgentEvent(ev run.Event) *TransportThreadYield {
+func yieldFromAgentEvent(ev agentmodel.RunEvent) *agentmodel.TransportThreadYield {
 	switch ev.Type {
-	case run.EventRunEnd:
-		payload, err := agentEventPayload[run.RunEndPayload](ev)
+	case agentmodel.EventRunEnd:
+		payload, err := agentEventPayload[agentmodel.RunEndPayload](ev)
 		if err != nil {
-			return &TransportThreadYield{Reason: "interrupted", Err: err}
+			return &agentmodel.TransportThreadYield{Reason: "interrupted", Err: err}
 		}
 		switch payload.Status {
 		case "", "finished":
-			return &TransportThreadYield{Reason: "finished"}
+			return &agentmodel.TransportThreadYield{Reason: "finished"}
 		case "failed":
-			return &TransportThreadYield{Reason: "failed"}
+			return &agentmodel.TransportThreadYield{Reason: "failed"}
 		case "interrupted":
-			return &TransportThreadYield{Reason: "interrupted"}
+			return &agentmodel.TransportThreadYield{Reason: "interrupted"}
 		case "blocked":
-			return &TransportThreadYield{Reason: "blocked"}
+			return &agentmodel.TransportThreadYield{Reason: "blocked"}
 		default:
-			return &TransportThreadYield{Reason: "interrupted", Err: fmt.Errorf("unknown run end status %q", payload.Status)}
+			return &agentmodel.TransportThreadYield{Reason: "interrupted", Err: fmt.Errorf("unknown run end status %q", payload.Status)}
 		}
 	default:
 		return nil
 	}
 }
 
-func workerEvent(_ string, threadID string, ev run.Event, usage *types.ContextTokenUsage) (output *TransportEvent, err error) {
+func workerEvent(_ string, threadID string, ev agentmodel.RunEvent, usage *agentmodel.ContextTokenUsage) (output *agentmodel.TransportEvent, err error) {
 	if isHiddenInternalToolEvent(ev) {
 		return nil, nil
 	}
@@ -193,11 +192,11 @@ func workerEvent(_ string, threadID string, ev run.Event, usage *types.ContextTo
 	if err != nil {
 		return nil, err
 	}
-	event := &TransportEvent{
+	event := &agentmodel.TransportEvent{
 		ID:       ev.ID,
 		ThreadID: threadID,
 		RunID:    ev.RunID,
-		Type:     TransportEventType(eventType.String()),
+		Type:     agentmodel.TransportEventType(eventType.String()),
 		Payload:  payload,
 		Metadata: map[string]string{metadataAgentEventID: ev.ID},
 		TS:       ev.TS,
@@ -208,21 +207,21 @@ func workerEvent(_ string, threadID string, ev run.Event, usage *types.ContextTo
 const threadOutputBridgeBufferSize = 4096
 
 type threadOutputBridge struct {
-	agentEvents <-chan run.Event
-	inbox       chan TransportThreadOutputItem
-	items       chan TransportThreadOutputItem
-	output      *TransportThreadOutput
+	agentEvents <-chan agentmodel.RunEvent
+	inbox       chan agentmodel.TransportThreadOutputItem
+	items       chan agentmodel.TransportThreadOutputItem
+	output      *agentmodel.TransportThreadOutput
 	done        chan struct{}
 	finish      chan struct{}
 	finishOnce  sync.Once
 }
 
-func (b *threadOutputBridge) start(ctx context.Context, runtime *Thread) *TransportThreadOutput {
+func (b *threadOutputBridge) start(ctx context.Context, runtime *Thread) *agentmodel.TransportThreadOutput {
 	if b.output != nil {
 		return b.output
 	}
-	b.inbox = make(chan TransportThreadOutputItem, threadOutputBridgeBufferSize)
-	b.items = make(chan TransportThreadOutputItem, threadOutputBridgeBufferSize)
+	b.inbox = make(chan agentmodel.TransportThreadOutputItem, threadOutputBridgeBufferSize)
+	b.items = make(chan agentmodel.TransportThreadOutputItem, threadOutputBridgeBufferSize)
 	b.done = make(chan struct{})
 	b.finish = make(chan struct{})
 	// Core emits terminal events after cancellation; Close owns bridge lifetime.
@@ -232,7 +231,7 @@ func (b *threadOutputBridge) start(ctx context.Context, runtime *Thread) *Transp
 		defer close(b.items)
 		runtime.runOutputBridge(bridgeCtx, b)
 	}(b.done)
-	b.output = &TransportThreadOutput{Items: b.items}
+	b.output = &agentmodel.TransportThreadOutput{Items: b.items}
 	return b.output
 }
 
@@ -249,7 +248,7 @@ func (b *threadOutputBridge) stopAndWait(ctx context.Context) error {
 	}
 }
 
-func (b *threadOutputBridge) send(ctx context.Context, item TransportThreadOutputItem) bool {
+func (b *threadOutputBridge) send(ctx context.Context, item agentmodel.TransportThreadOutputItem) bool {
 	if b == nil || b.inbox == nil {
 		return false
 	}
@@ -271,7 +270,7 @@ func (b *threadOutputBridge) send(ctx context.Context, item TransportThreadOutpu
 	}
 }
 
-func (b *threadOutputBridge) deliver(ctx context.Context, runtime *Thread, item TransportThreadOutputItem) bool {
+func (b *threadOutputBridge) deliver(ctx context.Context, runtime *Thread, item agentmodel.TransportThreadOutputItem) bool {
 	if b == nil || b.items == nil {
 		return false
 	}
@@ -290,15 +289,15 @@ func (b *threadOutputBridge) deliver(ctx context.Context, runtime *Thread, item 
 
 const threadOutputObserverQueueSize = 256
 
-func cloneThreadOutputItem(item TransportThreadOutputItem) TransportThreadOutputItem {
-	return TransportThreadOutputItem{
+func cloneThreadOutputItem(item agentmodel.TransportThreadOutputItem) agentmodel.TransportThreadOutputItem {
+	return agentmodel.TransportThreadOutputItem{
 		Err:   item.Err,
 		Event: cloneWorkerEvent(item.Event),
 		Yield: cloneThreadYield(item.Yield),
 	}
 }
 
-func cloneWorkerEvent(event *TransportEvent) *TransportEvent {
+func cloneWorkerEvent(event *agentmodel.TransportEvent) *agentmodel.TransportEvent {
 	if event == nil {
 		return nil
 	}
@@ -308,7 +307,7 @@ func cloneWorkerEvent(event *TransportEvent) *TransportEvent {
 	return &clone
 }
 
-func cloneThreadYield(yield *TransportThreadYield) *TransportThreadYield {
+func cloneThreadYield(yield *agentmodel.TransportThreadYield) *agentmodel.TransportThreadYield {
 	if yield == nil {
 		return nil
 	}
@@ -316,16 +315,16 @@ func cloneThreadYield(yield *TransportThreadYield) *TransportThreadYield {
 	return &clone
 }
 
-func isHiddenInternalToolEvent(ev run.Event) bool {
+func isHiddenInternalToolEvent(ev agentmodel.RunEvent) bool {
 	switch ev.Type {
-	case run.EventToolStart:
-		payload, ok := ev.Payload.(types.ToolStartPayload)
+	case agentmodel.EventToolStart:
+		payload, ok := ev.Payload.(agentmodel.ToolStartPayload)
 		return ok && payload.Name == tools.ToolUpdatePlan
-	case run.EventToolCallOutputChunk:
-		payload, ok := ev.Payload.(types.ToolCallOutputChunkPayload)
+	case agentmodel.EventToolCallOutputChunk:
+		payload, ok := ev.Payload.(agentmodel.ToolCallOutputChunkPayload)
 		return ok && payload.Name == tools.ToolUpdatePlan
-	case run.EventToolEnd:
-		payload, ok := ev.Payload.(types.ToolEndPayload)
+	case agentmodel.EventToolEnd:
+		payload, ok := ev.Payload.(agentmodel.ToolEndPayload)
 		return ok && payload.Name == tools.ToolUpdatePlan
 	default:
 		return false

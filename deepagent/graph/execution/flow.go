@@ -6,14 +6,13 @@ import (
 	"fmt"
 
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/compose"
 )
 
 func (graph *Graph) buildGraph(ctx context.Context) error {
-	einoGraph := compose.NewGraph[*types.RunState, *messagepkg.Message](compose.WithGenLocalState(graph.newLocalState))
+	einoGraph := compose.NewGraph[*agentmodel.RunState, *agentmodel.Message](compose.WithGenLocalState(graph.newLocalState))
 
 	prepareNode := compose.InvokableLambda(graph.executePrepareNode)
 	err := einoGraph.AddLambdaNode("prepare", prepareNode)
@@ -49,7 +48,7 @@ func (graph *Graph) buildGraph(ctx context.Context) error {
 	return err
 }
 
-func (graph *Graph) connectGraphEdges(einoGraph *compose.Graph[*types.RunState, *messagepkg.Message]) error {
+func (graph *Graph) connectGraphEdges(einoGraph *compose.Graph[*agentmodel.RunState, *agentmodel.Message]) error {
 	err := einoGraph.AddEdge(compose.START, "prepare")
 	if err != nil {
 		return err
@@ -75,14 +74,14 @@ func (graph *Graph) connectGraphEdges(einoGraph *compose.Graph[*types.RunState, 
 	return err
 }
 
-func (graph *Graph) routeAfterModel(_ context.Context, runState *types.RunState) (string, error) {
+func (graph *Graph) routeAfterModel(_ context.Context, runState *agentmodel.RunState) (string, error) {
 	if len(runState.Calls) > 0 {
 		return "tools", nil
 	}
 	return "continue", nil
 }
 
-func (graph *Graph) routeAfterTools(_ context.Context, runState *types.RunState) (string, error) {
+func (graph *Graph) routeAfterTools(_ context.Context, runState *agentmodel.RunState) (string, error) {
 	for _, call := range runState.Calls {
 		if call.Result != nil && call.Result.ReturnDirect {
 			return "continue", nil
@@ -91,8 +90,8 @@ func (graph *Graph) routeAfterTools(_ context.Context, runState *types.RunState)
 	return "model", nil
 }
 
-func (graph *Graph) routeAfterContinue(_ context.Context, runState *types.RunState) (string, error) {
-	if runState.Phase == types.PhasePreparing {
+func (graph *Graph) routeAfterContinue(_ context.Context, runState *agentmodel.RunState) (string, error) {
+	if runState.Phase == agentmodel.PhasePreparing {
 		return "prepare", nil
 	}
 	return "finish", nil
@@ -111,7 +110,7 @@ func (graph *Graph) buildGraphCompileOptions() []compose.GraphCompileOption {
 	return compileOptions
 }
 
-func (graph *Graph) executeModelNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+func (graph *Graph) executeModelNode(ctx context.Context, _ *agentmodel.RunState) (*agentmodel.RunState, error) {
 	ctx, runState, err := graph.enterNode(ctx)
 	if err != nil {
 		return nil, err
@@ -120,7 +119,7 @@ func (graph *Graph) executeModelNode(ctx context.Context, _ *types.RunState) (*t
 	return graph.leaveNode(ctx, runState, nextRunState, nodeErr)
 }
 
-func (graph *Graph) executePrepareNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+func (graph *Graph) executePrepareNode(ctx context.Context, _ *agentmodel.RunState) (*agentmodel.RunState, error) {
 	err := graph.ensureInitialCheckpoint(ctx)
 	if err != nil {
 		return nil, err
@@ -133,7 +132,7 @@ func (graph *Graph) executePrepareNode(ctx context.Context, _ *types.RunState) (
 	return graph.leaveNode(ctx, runState, nextRunState, nodeErr)
 }
 
-func (graph *Graph) executeToolsNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+func (graph *Graph) executeToolsNode(ctx context.Context, _ *agentmodel.RunState) (*agentmodel.RunState, error) {
 	ctx, runState, err := graph.enterNode(ctx)
 	if err != nil {
 		return nil, err
@@ -142,7 +141,7 @@ func (graph *Graph) executeToolsNode(ctx context.Context, _ *types.RunState) (*t
 	return graph.leaveNode(ctx, runState, nextRunState, nodeErr)
 }
 
-func (graph *Graph) executeContinueNode(ctx context.Context, _ *types.RunState) (*types.RunState, error) {
+func (graph *Graph) executeContinueNode(ctx context.Context, _ *agentmodel.RunState) (*agentmodel.RunState, error) {
 	ctx, runState, err := graph.enterNode(ctx)
 	if err != nil {
 		return nil, err
@@ -152,22 +151,22 @@ func (graph *Graph) executeContinueNode(ctx context.Context, _ *types.RunState) 
 }
 
 // Eino uses this value for a new run. A resumed run uses its checkpoint state.
-func (graph *Graph) newLocalState(ctx context.Context) *types.RunState {
-	runState := types.GetRunState(ctx)
+func (graph *Graph) newLocalState(ctx context.Context) *agentmodel.RunState {
+	runState := agentmodel.GetRunState(ctx)
 	if runState != nil {
 		return runState
 	}
-	return &types.RunState{}
+	return &agentmodel.RunState{}
 }
 
 // The first prepare establishes a durable Eino cursor before doing any work.
 func (graph *Graph) ensureInitialCheckpoint(ctx context.Context) error {
-	initialRunState, ok := ctx.Value(initialCheckpointKey{}).(*types.RunState)
+	initialRunState, ok := ctx.Value(initialCheckpointKey{}).(*agentmodel.RunState)
 	if !ok {
 		return nil
 	}
 	isInitialState := false
-	err := compose.ProcessState[*types.RunState](ctx, func(_ context.Context, runState *types.RunState) error {
+	err := compose.ProcessState[*agentmodel.RunState](ctx, func(_ context.Context, runState *agentmodel.RunState) error {
 		isInitialState = runState == initialRunState
 		return nil
 	})
@@ -184,7 +183,7 @@ func (graph *Graph) ensureInitialCheckpoint(ctx context.Context) error {
 }
 
 // enterNode always uses Eino's local state, including the restored state.
-func (graph *Graph) enterNode(ctx context.Context) (context.Context, *types.RunState, error) {
+func (graph *Graph) enterNode(ctx context.Context) (context.Context, *agentmodel.RunState, error) {
 	runState, err := graph.getLocalState(ctx)
 	if err != nil {
 		return ctx, nil, err
@@ -199,11 +198,11 @@ func (graph *Graph) enterNode(ctx context.Context) (context.Context, *types.RunS
 		return ctx, nil, fmt.Errorf("maximum graph steps exceeded: %d", graph.config.MaxSteps)
 	}
 	runState.GraphSteps++
-	ctx = types.WithRunState(ctx, runState)
+	ctx = agentmodel.WithRunState(ctx, runState)
 	return ctx, runState, nil
 }
 
-func (graph *Graph) leaveNode(ctx context.Context, runState, nextRunState *types.RunState, nodeErr error) (*types.RunState, error) {
+func (graph *Graph) leaveNode(ctx context.Context, runState, nextRunState *agentmodel.RunState, nodeErr error) (*agentmodel.RunState, error) {
 	if graph.config.Depth > 0 {
 		historyJSON, err := json.Marshal(graph.conversation.GetHistory(ctx))
 		if err != nil {
@@ -222,7 +221,7 @@ func (graph *Graph) leaveNode(ctx context.Context, runState, nextRunState *types
 	markRunError(ctx, runState, nodeErr)
 	snapshotErr := graph.graphState.SnapshotExtensions(runState)
 	if snapshotErr != nil {
-		runState.Phase = types.PhaseFailed
+		runState.Phase = agentmodel.PhaseFailed
 		return nil, snapshotErr
 	}
 	return nextRunState, nodeErr

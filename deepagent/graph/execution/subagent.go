@@ -10,10 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"eino-cli/deepagent/graph/middleware"
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -89,7 +87,7 @@ func LoadSubAgents(ctx context.Context, dir string) ([]*SubAgent, error) {
 		if strings.TrimSpace(subAgentConfig.Name) == "" || strings.TrimSpace(subAgentConfig.SystemPrompt) == "" || subAgentConfig.MaxSteps < 0 {
 			return nil, fmt.Errorf("subagent %s requires a name, system_prompt and non-negative max_steps", configPath)
 		}
-		var mask tools.Mask
+		var mask agentmodel.Mask
 		if subAgentConfig.Tools != nil {
 			allowedToolNames := make(map[string]bool, len(subAgentConfig.Tools))
 			for _, toolName := range subAgentConfig.Tools {
@@ -109,8 +107,8 @@ type SubAgent struct {
 	Name, SystemPrompt                    string
 	MaxSteps                              int
 	EnableFilesystem, EnableWeb, ReadOnly bool
-	ToolMask                              tools.Mask
-	Tools                                 []tools.ToolDescriptor
+	ToolMask                              agentmodel.Mask
+	Tools                                 []agentmodel.ToolDescriptor
 }
 
 // validateSubAgents checks the explicit list before task registration.
@@ -130,9 +128,11 @@ func validateSubAgents(subAgents []*SubAgent) error {
 
 type childRunner struct{ config Config }
 
-func NewChildRunner(config Config) tools.ChildRunner { return &childRunner{config: *config.Clone()} }
+func NewChildRunner(config Config) agentmodel.ChildRunner {
+	return &childRunner{config: *config.Clone()}
+}
 
-func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.ChildRequest, emit types.ModelChunkSink) (*messagepkg.Message, error) {
+func (childRunner *childRunner) Run(ctx context.Context, childRequest agentmodel.ChildRequest, emit agentmodel.ModelChunkSink) (*agentmodel.Message, error) {
 	if childRunner.config.Depth >= 4 {
 		return nil, fmt.Errorf("maximum child depth reached")
 	}
@@ -156,25 +156,25 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.Chil
 	}
 	config.DrainInput = nil
 	config.Emit = nil
-	var messageChunks []*messagepkg.Message
+	var messageChunks []*agentmodel.Message
 	hasEmittedOutput := false
 	if emit != nil {
-		config.Emit = func(ctx context.Context, event types.RuntimeEvent) error {
+		config.Emit = func(ctx context.Context, event agentmodel.RuntimeEvent) error {
 			if event.Kind == "llm_requesting" {
 				messageChunks = nil
 			}
 			if event.Kind == "llm_token" {
-				payload, ok := event.Data.(types.LLMTokenChunk)
+				payload, ok := event.Data.(agentmodel.LLMTokenChunk)
 				message := payload.Message
 				if ok {
-					messageChunks = append(messageChunks, types.CopyMessage(message))
+					messageChunks = append(messageChunks, agentmodel.CopyMessage(message))
 				}
 				return nil
 			}
 			if event.Kind != "llm_end" {
 				return nil
 			}
-			payload, ok := event.Data.(types.LLMEnd)
+			payload, ok := event.Data.(agentmodel.LLMEnd)
 			message := payload.Message
 			if !ok || len(message.ToolCalls) != 0 {
 				return nil
@@ -184,7 +184,7 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.Chil
 				contentBuilder.WriteString(chunk.Content)
 			}
 			if contentBuilder.String() != message.Content {
-				messageChunks = []*messagepkg.Message{message}
+				messageChunks = []*agentmodel.Message{message}
 			}
 			for _, chunk := range messageChunks {
 				err := emit(ctx, chunk)
@@ -207,7 +207,7 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.Chil
 	// shared. Each new Run invokes the factories before building its Graph.
 	config.Middlewares = nil
 	for _, currentMiddleware := range childRunner.config.Middlewares {
-		_, ok := currentMiddleware.(middleware.RunFactory)
+		_, ok := currentMiddleware.(agentmodel.RunFactory)
 		if ok {
 			config.Middlewares = append(config.Middlewares, currentMiddleware)
 			continue
@@ -228,7 +228,7 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.Chil
 		}
 		hasSubAgent = true
 		if subAgent.SystemPrompt != "" {
-			config.Prompts = append(config.Prompts, messagepkg.NewSystemMessage(subAgent.SystemPrompt))
+			config.Prompts = append(config.Prompts, agentmodel.NewSystemMessage(subAgent.SystemPrompt))
 		}
 		config.ReadOnlyToolsOnly = config.ReadOnlyToolsOnly || subAgent.ReadOnly
 		if !subAgent.EnableFilesystem {
@@ -239,7 +239,7 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.Chil
 		}
 		config.ToolMask = tools.CombineMasks(config.ToolMask, subAgent.ToolMask)
 		if len(subAgent.Tools) > 0 {
-			config.ToolDescriptors = append([]tools.ToolDescriptor(nil), subAgent.Tools...)
+			config.ToolDescriptors = append([]agentmodel.ToolDescriptor(nil), subAgent.Tools...)
 		}
 		if subAgent.MaxSteps > 0 {
 			config.MaxSteps = subAgent.MaxSteps
@@ -257,9 +257,9 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest tools.Chil
 		return nil, err
 	}
 	defer childGraph.Close(context.Background())
-	var inputMessages []*messagepkg.Message
+	var inputMessages []*agentmodel.Message
 	if !isResuming {
-		inputMessages = append(inputMessages, messagepkg.NewUserMessage(childRequest.Prompt))
+		inputMessages = append(inputMessages, agentmodel.NewUserMessage(childRequest.Prompt))
 	}
 	response, err := childGraph.Invoke(ctx, inputMessages, func(runOptions *RunOptions) {
 		if checkpointStore != nil {

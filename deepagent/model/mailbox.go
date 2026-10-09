@@ -7,11 +7,11 @@ import (
 	"gorm.io/gorm"
 )
 
-type SenderType = string
+type MailboxSenderType = string
 
 const (
-	SenderTypeAgent               = "agent"
-	SenderTypeSystem              = "system"
+	MailboxSenderTypeAgent        = "agent"
+	MailboxSenderTypeSystem       = "system"
 	RecordAgentManagerSenderID    = "manager"
 	ControlTypeCancelInput        = "cancel_input"
 	ControlTypeCloseThread        = "close_thread"
@@ -23,24 +23,17 @@ const (
 	MessageStatusCanceled         = "canceled"
 )
 
-func RecordNormalizeSenderType(sender SenderType) SenderType {
-	if sender == "" {
-		return SenderTypeSystem
-	}
-	return sender
+type MailboxSender struct {
+	Type MailboxSenderType `gorm:"column:sender_type" json:"type"`
+	ID   string            `gorm:"column:sender_id" json:"id"`
 }
 
-type Sender struct {
-	Type SenderType `gorm:"column:sender_type" json:"type"`
-	ID   string     `gorm:"column:sender_id" json:"id"`
-}
-
-type Message struct {
+type MailboxMessage struct {
 	OutputKey    *string           `gorm:"column:output_key;size:255;uniqueIndex:idx_message_output,priority:2"`
 	MessageID    int64             `gorm:"column:message_id;primaryKey"`
 	ThreadID     int64             `gorm:"column:thread_id;uniqueIndex:idx_message_output,priority:1;index:idx_message_delivery,priority:1"`
 	CreatedAt    time.Time         `gorm:"column:created_at"`
-	Sender       *Sender           `gorm:"embedded"`
+	Sender       *MailboxSender    `gorm:"embedded"`
 	MessageType  string            `gorm:"column:message_type"`
 	Status       string            `gorm:"column:status;size:32;index:idx_message_delivery,priority:2"`
 	Payload      []byte            `gorm:"column:payload;type:mediumblob"`
@@ -48,19 +41,7 @@ type Message struct {
 	TriggerRunID string            `gorm:"column:trigger_turn_id;size:191;index"`
 }
 
-func (Message) TableName() (name string) { return "message" }
-func (m *Message) IsControl() bool {
-	return m != nil && strings.HasPrefix(m.MessageType, ControlMessageTypePrefix)
-}
-func (m *Message) IsCloseControl() bool {
-	return m != nil && m.MessageType == ControlMessageTypeCloseThread
-}
-func (m *Message) IsCancelControl() bool {
-	return m != nil && m.MessageType == ControlMessageTypeCancelInput
-}
-func (m *Message) Normalize() error { return nil }
-
-type MessageFilter struct {
+type MailboxMessageFilter struct {
 	Total           *int64
 	InputOnly       bool
 	AfterID         *int64
@@ -82,7 +63,35 @@ type MessageFilter struct {
 	Primary         bool
 }
 
-func (f *MessageFilter) DBFilter(query *gorm.DB) *gorm.DB {
+const (
+	MessageTypeControl = "control"
+	MessageTypeOutput  = "output"
+)
+
+func RecordNormalizeSenderType(sender MailboxSenderType) MailboxSenderType {
+	if sender == "" {
+		return MailboxSenderTypeSystem
+	}
+	return sender
+}
+
+func (MailboxMessage) TableName() (name string) { return "message" }
+
+func (m *MailboxMessage) IsControl() bool {
+	return m != nil && strings.HasPrefix(m.MessageType, ControlMessageTypePrefix)
+}
+
+func (m *MailboxMessage) IsCloseControl() bool {
+	return m != nil && m.MessageType == ControlMessageTypeCloseThread
+}
+
+func (m *MailboxMessage) IsCancelControl() bool {
+	return m != nil && m.MessageType == ControlMessageTypeCancelInput
+}
+
+func (m *MailboxMessage) Normalize() error { return nil }
+
+func (f *MailboxMessageFilter) DBFilter(query *gorm.DB) *gorm.DB {
 	if f.PriorityOnly {
 		query = query.Where("message_type = ? OR message_type LIKE ?", "resume_run", ControlMessageTypePrefix+"%")
 	}
@@ -119,7 +128,7 @@ func (f *MessageFilter) DBFilter(query *gorm.DB) *gorm.DB {
 	return query
 }
 
-func (f *MessageFilter) Page(query *gorm.DB) *gorm.DB {
+func (f *MailboxMessageFilter) Page(query *gorm.DB) *gorm.DB {
 	order := "message_id ASC"
 	if f.Desc {
 		order = "message_id DESC"

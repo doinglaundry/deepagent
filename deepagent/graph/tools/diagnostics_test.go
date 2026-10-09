@@ -6,19 +6,20 @@ import (
 	"testing"
 
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
+	agentmodel "eino-cli/deepagent/model"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 )
 
 type diagnosticsCommands struct {
-	filesystempkg.CommandService
-	request filesystempkg.CommandRequest
+	agentmodel.CommandService
+	request agentmodel.CommandRequest
 	err     error
 }
 
-func (commandService *diagnosticsCommands) Execute(_ context.Context, request filesystempkg.CommandRequest) (*filesystempkg.CommandResult, error) {
+func (commandService *diagnosticsCommands) Execute(_ context.Context, request agentmodel.CommandRequest) (*agentmodel.CommandResult, error) {
 	commandService.request = request
-	return &filesystempkg.CommandResult{ExitCode: 1, Output: "diagnostic"}, commandService.err
+	return &agentmodel.CommandResult{ExitCode: 1, Output: "diagnostic"}, commandService.err
 }
 
 func TestReadLintsUsesCommandServiceAndPropagatesCancellation(t *testing.T) {

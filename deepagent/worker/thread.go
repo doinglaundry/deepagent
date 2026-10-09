@@ -13,18 +13,14 @@ import (
 	"time"
 
 	"eino-cli/deepagent/config"
-	dalmodel "eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/graph/computer"
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/execution"
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	longmemory "eino-cli/deepagent/graph/memory"
 	"eino-cli/deepagent/graph/middleware"
-	skillspkg "eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
-	memorypkg "eino-cli/deepagent/protocol/memory"
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/run"
 	"eino-cli/deepagent/sandbox/aio"
 	threadpkg "eino-cli/deepagent/thread"
@@ -59,20 +55,20 @@ type RuntimeConfig struct {
 // RuntimeDeps are long-lived resources shared by Thread runtimes.
 type RuntimeDeps struct {
 	Desktop             *computer.Desktop
-	ConversationDB      conversation.ConversationDB
+	ConversationDB      agentmodel.ConversationDB
 	Checkpoint          compose.CheckPointStore
-	Tools               []tools.ToolDescriptor
-	SkillLoader         skillspkg.SkillLoader
-	MemoryStore         memorypkg.Store
-	Collaboration       CollaborationBackend
-	GenerateMessageID   conversation.GetMessageIDFunc
-	ApprovalRemember    threadpkg.ApprovalRememberer
+	Tools               []agentmodel.ToolDescriptor
+	SkillLoader         agentmodel.SkillLoader
+	MemoryStore         agentmodel.MemoryStore
+	Collaboration       agentmodel.CollaborationBackend
+	GenerateMessageID   agentmodel.GetMessageIDFunc
+	ApprovalRemember    agentmodel.ApprovalRememberer
 	IsToolAlwaysAllowed func(context.Context, int64, string) (bool, error)
-	InterruptResume     threadpkg.InterruptResumeDecoder
+	InterruptResume     agentmodel.InterruptResumeDecoder
 }
 
 // createThread 准备资源和配置，再创建 Thread；初始化由 RunThread 负责。
-func (w *Worker) createThread(ctx context.Context, info *dalmodel.Thread) (thread *threadpkg.Thread, err error) {
+func (w *Worker) createThread(ctx context.Context, info *agentmodel.ThreadRecord) (thread *threadpkg.Thread, err error) {
 	// 1. 确定 Thread 身份、工作目录和模型。
 	if info == nil || info.ThreadID == 0 {
 		return nil, errors.New("worker: thread info is required")
@@ -97,7 +93,7 @@ func (w *Worker) createThread(ctx context.Context, info *dalmodel.Thread) (threa
 	}
 
 	// 2. 创建整个 Thread 共用的文件系统。
-	var filesystem filesystempkg.ToolFilesystem
+	var filesystem agentmodel.ToolFilesystem
 	switch w.Runtime.FilesystemKind {
 	case "", "local":
 		filesystem, err = filesystempkg.NewLocalFilesystem(&filesystempkg.LocalFilesystemConfig{RootDir: workDir, VirtualMode: true}, threadID)
@@ -123,32 +119,32 @@ func (w *Worker) createThread(ctx context.Context, info *dalmodel.Thread) (threa
 	agentConfig := execution.Config{
 		Model: chatModel, MaxSteps: w.Runtime.MaxSteps, MaxModelCalls: w.Runtime.MaxModelCalls,
 		CheckpointStore:  w.Deps.Checkpoint,
-		ToolDescriptors:  []tools.ToolDescriptor{tools.NewFollowUpTool()},
+		ToolDescriptors:  []agentmodel.ToolDescriptor{tools.NewFollowUpTool()},
 		SubAgents:        []*execution.SubAgent{{Name: "general-purpose", EnableFilesystem: true, EnableWeb: true}},
 		SkillLoader:      w.Deps.SkillLoader,
 		WebConfig:        w.Runtime.Web,
 		Filesystem:       filesystem,
 		FilesystemConfig: &execution.FilesystemConfig{},
 	}
-	agentConfig.Policy = tools.PolicyFunc(func(ctx context.Context, call types.ToolCall, descriptor tools.ToolDescriptor) (tools.Decision, error) {
+	agentConfig.Policy = agentmodel.PolicyFunc(func(ctx context.Context, call agentmodel.ToolCall, descriptor agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
 		scopeErr := validateComputerTarget(w.Runtime, call)
 		if scopeErr != nil {
-			return tools.Decision{Action: tools.Deny, Reason: scopeErr.Error()}, nil
+			return agentmodel.Decision{Action: agentmodel.Deny, Reason: scopeErr.Error()}, nil
 		}
 		if !descriptor.RequiresApproval {
-			return tools.Decision{Action: tools.Allow}, nil
+			return agentmodel.Decision{Action: agentmodel.Allow}, nil
 		}
 		if w.Deps.IsToolAlwaysAllowed == nil {
-			return tools.Decision{Action: tools.AskApproval}, nil
+			return agentmodel.Decision{Action: agentmodel.AskApproval}, nil
 		}
 		allowed, err := w.Deps.IsToolAlwaysAllowed(ctx, info.ThreadID, call.Name)
 		if err != nil {
-			return tools.Decision{}, err
+			return agentmodel.Decision{}, err
 		}
 		if allowed {
-			return tools.Decision{Action: tools.Allow}, nil
+			return agentmodel.Decision{Action: agentmodel.Allow}, nil
 		}
-		return tools.Decision{Action: tools.AskApproval}, nil
+		return agentmodel.Decision{Action: agentmodel.AskApproval}, nil
 	})
 	agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, w.Deps.Tools...)
 	if w.Deps.Collaboration != nil {
@@ -157,13 +153,13 @@ func (w *Worker) createThread(ctx context.Context, info *dalmodel.Thread) (threa
 			return nil, err
 		}
 		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, items...)
-		agentConfig.Prompts = append(agentConfig.Prompts, messagepkg.NewSystemMessage(collaborationPrompt))
+		agentConfig.Prompts = append(agentConfig.Prompts, agentmodel.NewSystemMessage(collaborationPrompt))
 	}
 	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)
 	if prompt != "" {
-		agentConfig.Prompts = append(agentConfig.Prompts, messagepkg.NewSystemMessage(prompt))
+		agentConfig.Prompts = append(agentConfig.Prompts, agentmodel.NewSystemMessage(prompt))
 	}
-	agentConfig.Middlewares = []middleware.Middleware{middleware.NewProjectInstructions(filesystem)}
+	agentConfig.Middlewares = []agentmodel.Middleware{middleware.NewProjectInstructions(filesystem)}
 	if w.Deps.Desktop != nil {
 		browser, err := w.getThreadBrowser(ctx, info.ThreadID)
 		if err != nil {
@@ -172,7 +168,7 @@ func (w *Worker) createThread(ctx context.Context, info *dalmodel.Thread) (threa
 		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.NewBrowserTools(browser)...)
 		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, tools.NewComputerTools(w.Deps.Desktop)...)
 		agentConfig.Middlewares = append(agentConfig.Middlewares, middleware.NewComputer(w.Deps.Desktop))
-		agentConfig.Prompts = append(agentConfig.Prompts, messagepkg.NewSystemMessage(tools.ComputerPrompt))
+		agentConfig.Prompts = append(agentConfig.Prompts, agentmodel.NewSystemMessage(tools.ComputerPrompt))
 		agentConfig.SubAgents[0].ToolMask = func(_ context.Context, info *schema.ToolInfo) bool {
 			return !strings.HasPrefix(info.Name, "browser_") && !strings.HasPrefix(info.Name, "computer_")
 		}
@@ -182,14 +178,14 @@ func (w *Worker) createThread(ctx context.Context, info *dalmodel.Thread) (threa
 	}
 	runConfig := &run.Config{Graph: agentConfig}
 	if memoryService != nil {
-		runConfig.RunCompleted = func(doneCtx context.Context, threadID, _ string, _ modelpkg.ToolCallingChatModel, history []*messagepkg.Message) {
+		runConfig.RunCompleted = func(doneCtx context.Context, threadID, _ string, _ modelpkg.ToolCallingChatModel, history []*agentmodel.Message) {
 			observeErr := memoryService.Observe(doneCtx, memoryScope(w.Runtime.MemoryUserID, info), threadID, history)
-			if observeErr != nil && !errors.Is(observeErr, memorypkg.ErrConflict) {
+			if observeErr != nil && !errors.Is(observeErr, agentmodel.ErrMemoryConflict) {
 				slog.ErrorContext(doneCtx, "extract long-term memory", "thread_id", threadID, "error", observeErr)
 				return
 			}
 			consolidateErr := memoryService.Consolidate(doneCtx, memoryScope(w.Runtime.MemoryUserID, info))
-			if consolidateErr != nil && !errors.Is(consolidateErr, memorypkg.ErrConflict) {
+			if consolidateErr != nil && !errors.Is(consolidateErr, agentmodel.ErrMemoryConflict) {
 				slog.ErrorContext(doneCtx, "consolidate long-term memory", "thread_id", threadID, "error", consolidateErr)
 			}
 		}
@@ -219,7 +215,7 @@ func (w *Worker) createThread(ctx context.Context, info *dalmodel.Thread) (threa
 	return threadpkg.NewThread(threadConfig)
 }
 
-func (w *Worker) memoryService(chatModel modelpkg.ToolCallingChatModel) (longmemory.Service, error) {
+func (w *Worker) memoryService(chatModel modelpkg.ToolCallingChatModel) (agentmodel.MemoryService, error) {
 	if !w.Runtime.MemoryEnabled {
 		return nil, nil
 	}
@@ -233,7 +229,7 @@ func (w *Worker) memoryService(chatModel modelpkg.ToolCallingChatModel) (longmem
 	return service, nil
 }
 
-func memoryScope(configured string, info *dalmodel.Thread) string {
+func memoryScope(configured string, info *agentmodel.ThreadRecord) string {
 	value := strings.TrimSpace(configured)
 	if value != "" {
 		return "user/" + value

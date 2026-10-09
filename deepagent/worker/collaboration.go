@@ -9,30 +9,20 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/deepagent/dal/model"
 	"eino-cli/deepagent/manager"
-	eventpkg "eino-cli/deepagent/protocol/event"
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 
-	"eino-cli/deepagent/graph/tools"
 	"github.com/cloudwego/eino/components/tool/utils"
 )
-
-type CollaborationBackend interface {
-	Submit(context.Context, manager.SubmitRequest) (manager.ThreadMessageResult, error)
-	ListThreads(context.Context, manager.ListThreadsRequest) (manager.ListThreadsResult, error)
-	ListMessages(context.Context, manager.ListMessagesRequest) (manager.ListMessagesResult, error)
-	Close(context.Context, int64, string) (*manager.ThreadMessageResult, error)
-}
 
 const collaborationPrompt = "Use spawn_task for bounded independent work, send_message only for new information, wait_message to collect a result, and close_task when a child task is no longer needed. Never target the current thread."
 
 type collaborationTools struct {
-	manager CollaborationBackend
-	current *model.Thread
+	manager agentmodel.CollaborationBackend
+	current *agentmodel.ThreadRecord
 }
 
-func newCollaborationTools(backend CollaborationBackend, current *model.Thread) ([]tools.ToolDescriptor, error) {
+func newCollaborationTools(backend agentmodel.CollaborationBackend, current *agentmodel.ThreadRecord) ([]agentmodel.ToolDescriptor, error) {
 	if backend == nil || current == nil {
 		return nil, nil
 	}
@@ -53,7 +43,7 @@ func newCollaborationTools(backend CollaborationBackend, current *model.Thread) 
 	if err != nil {
 		return nil, err
 	}
-	return []tools.ToolDescriptor{{Tool: send}, {Tool: spawn}, {Tool: wait}, {Tool: closeTask}}, nil
+	return []agentmodel.ToolDescriptor{{Tool: send}, {Tool: spawn}, {Tool: wait}, {Tool: closeTask}}, nil
 }
 
 type collaborationSpawnInput struct {
@@ -68,7 +58,7 @@ func (m *collaborationTools) spawn(ctx context.Context, input *collaborationSpaw
 	}
 	metadata := cloneStrings(input.Metadata)
 	metadata["parent_thread_id"] = strconv.FormatInt(m.current.ThreadID, 10)
-	result, err := m.manager.Submit(ctx, manager.SubmitRequest{
+	result, err := m.manager.Submit(ctx, agentmodel.SubmitRequest{
 		UserID: m.current.UserID, SessionID: m.current.SessionID,
 		Title: strings.TrimSpace(input.Title), Metadata: metadata, Profile: m.current.Profile,
 		Input: collaborationInput(m.current.ThreadID, input.Content, nil),
@@ -99,7 +89,7 @@ func (m *collaborationTools) send(ctx context.Context, input *collaborationSendI
 	if target == m.current.ThreadID {
 		return "", errors.New("cannot send_message to the current thread")
 	}
-	result, err := m.manager.Submit(ctx, manager.SubmitRequest{
+	result, err := m.manager.Submit(ctx, agentmodel.SubmitRequest{
 		ThreadID: target,
 		Input:    collaborationInput(m.current.ThreadID, input.Content, input.Metadata),
 	})
@@ -160,15 +150,15 @@ func (m *collaborationTools) wait(ctx context.Context, input *collaborationWaitI
 }
 
 func (m *collaborationTools) observe(ctx context.Context, threadID, messageID int64) (collaborationWaitResult, bool, error) {
-	threads, err := m.manager.ListThreads(ctx, manager.ListThreadsRequest{ThreadID: threadID})
+	threads, err := m.manager.ListThreads(ctx, agentmodel.ListThreadsRequest{ThreadID: threadID})
 	if err != nil {
 		return collaborationWaitResult{}, false, err
 	}
-	messages, err := m.manager.ListMessages(ctx, manager.ListMessagesRequest{ThreadID: threadID, Limit: 1000})
+	messages, err := m.manager.ListMessages(ctx, agentmodel.ListMessagesRequest{ThreadID: threadID, Limit: 1000})
 	if err != nil {
 		return collaborationWaitResult{}, false, err
 	}
-	var input *model.Message
+	var input *agentmodel.MailboxMessage
 	for _, message := range messages.Messages {
 		if message.MessageID == messageID {
 			input = message
@@ -178,22 +168,22 @@ func (m *collaborationTools) observe(ctx context.Context, threadID, messageID in
 	if input == nil {
 		return collaborationWaitResult{}, false, manager.ErrMessageNotFound
 	}
-	if input.Status == model.MessageStatusCanceled {
+	if input.Status == agentmodel.MessageStatusCanceled {
 		return collaborationWaitResult{State: "cancelled"}, true, nil
 	}
 	run := messages.Runs[input.TriggerRunID]
 	if run != nil {
 		switch run.Status {
-		case eventpkg.RunStatusFinished:
+		case agentmodel.RunStatusFinished:
 			return collaborationWaitResult{State: "completed", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
-		case eventpkg.RunStatusInterrupted, eventpkg.RunStatusFailed:
+		case agentmodel.RunStatusInterrupted, agentmodel.RunStatusFailed:
 			return collaborationWaitResult{State: "interrupted", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
 		}
 	}
-	if threads.Thread != nil && threads.Thread.Status == model.ThreadStatusClosed {
+	if threads.Thread != nil && threads.Thread.Status == agentmodel.ThreadStatusClosed {
 		return collaborationWaitResult{State: "closed", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
 	}
-	if (run != nil && run.Status == eventpkg.RunStatusBlocked) || (input.TriggerRunID == "" && threads.Thread != nil && threads.Thread.LastRun != nil && threads.Thread.LastRun.Status == eventpkg.RunStatusBlocked) {
+	if (run != nil && run.Status == agentmodel.RunStatusBlocked) || (input.TriggerRunID == "" && threads.Thread != nil && threads.Thread.LastRun != nil && threads.Thread.LastRun.Status == agentmodel.RunStatusBlocked) {
 		return collaborationWaitResult{State: "blocked", Result: collaborationResponse(messages.Messages, input.TriggerRunID)}, true, nil
 	}
 	return collaborationWaitResult{State: "waiting"}, false, nil
@@ -222,11 +212,11 @@ func (m *collaborationTools) close(ctx context.Context, input *collaborationClos
 	return collaborationJSON(map[string]any{"closed": true})
 }
 
-func collaborationInput(from int64, content string, metadata map[string]string) *manager.InputMessage {
-	payload, _ := json.Marshal(inputpkg.UserMessage{Parts: []inputpkg.MessagePart{{Type: inputpkg.MessagePartTypeText, Text: content}}})
-	return &manager.InputMessage{
-		SenderType: model.SenderTypeAgent, SenderID: strconv.FormatInt(from, 10),
-		MessageType: inputpkg.MessageTypeInput, Payload: payload, Metadata: cloneStrings(metadata),
+func collaborationInput(from int64, content string, metadata map[string]string) *agentmodel.InputMessage {
+	payload, _ := json.Marshal(agentmodel.UserMessage{Parts: []agentmodel.InputMessagePart{{Type: agentmodel.InputMessagePartTypeText, Text: content}}})
+	return &agentmodel.InputMessage{
+		SenderType: agentmodel.MailboxSenderTypeAgent, SenderID: strconv.FormatInt(from, 10),
+		MessageType: agentmodel.MessageTypeInput, Payload: payload, Metadata: cloneStrings(metadata),
 	}
 }
 
@@ -238,19 +228,19 @@ func collaborationThreadID(value string) (int64, error) {
 	return id, nil
 }
 
-func collaborationResponse(messages []*model.Message, runID string) string {
+func collaborationResponse(messages []*agentmodel.MailboxMessage, runID string) string {
 	var result string
 	for _, message := range messages {
 		if message.TriggerRunID != runID || message.MessageType != "assistant" {
 			continue
 		}
-		var payload eventpkg.MessageEventPayload
+		var payload agentmodel.MessageEventPayload
 		if json.Unmarshal(message.Payload, &payload) != nil {
 			continue
 		}
 		var text []string
 		for _, part := range payload.Parts {
-			if part.Type == eventpkg.MessagePartTypeText && strings.TrimSpace(part.Text) != "" {
+			if part.Type == agentmodel.OutputMessagePartTypeText && strings.TrimSpace(part.Text) != "" {
 				text = append(text, part.Text)
 			}
 		}

@@ -9,18 +9,20 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	agentmodel "eino-cli/deepagent/model"
+
+	yaml "gopkg.in/yaml.v3"
 )
 
-type fileLoader []*SkillMetadata
+type fileLoader []*agentmodel.SkillMetadata
 
-func (fileLoader fileLoader) ListSkills(context.Context) ([]*SkillMetadata, error) {
-	return append([]*SkillMetadata(nil), fileLoader...), nil
+func (fileLoader fileLoader) ListSkills(context.Context) ([]*agentmodel.SkillMetadata, error) {
+	return append([]*agentmodel.SkillMetadata(nil), fileLoader...), nil
 }
 
 // LoadSkills discovers SKILL.md files. In a public/custom layout, custom skills
 // replace public skills with the same name.
-func LoadSkills(paths []string) (SkillLoader, error) {
+func LoadSkills(paths []string) (agentmodel.SkillLoader, error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
@@ -71,7 +73,7 @@ func LoadSkills(paths []string) (SkillLoader, error) {
 	return skillMetadata, nil
 }
 
-func scanSkillDirectory(root string) ([]*SkillMetadata, error) {
+func scanSkillDirectory(root string) ([]*agentmodel.SkillMetadata, error) {
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -79,7 +81,7 @@ func scanSkillDirectory(root string) ([]*SkillMetadata, error) {
 	if err != nil {
 		return nil, err
 	}
-	var result []*SkillMetadata
+	var result []*agentmodel.SkillMetadata
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
@@ -109,7 +111,7 @@ func scanSkillDirectory(root string) ([]*SkillMetadata, error) {
 				}
 			}
 		}
-		result = append(result, &SkillMetadata{Name: name, Description: description, Path: path})
+		result = append(result, &agentmodel.SkillMetadata{Name: name, Description: description, Path: path})
 	}
 	return result, nil
 }

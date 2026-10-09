@@ -11,8 +11,7 @@ import (
 	"time"
 
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -22,12 +21,12 @@ func TestRun_ReadOnlyToolSetCannotExecuteUnclassifiedTool(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{}
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}, {schema.AssistantMessage("unavailable", nil)}}}
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ReadOnlyToolsOnly: true, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}}))
+	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ReadOnlyToolsOnly: true, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,15 +45,15 @@ func TestPolicy_DenyPreventsExecutionAndApproval(t *testing.T) {
 		chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
 		graph, err := New(context.Background(), WithConfig(&Config{
 			Model:           chatModel,
-			ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: requiresApproval, ReturnDirect: true}},
-			Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
-				return tools.Decision{Action: tools.Deny, Reason: "blocked"}, nil
+			ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter, RequiresApproval: requiresApproval, ReturnDirect: true}},
+			Policy: agentmodel.PolicyFunc(func(context.Context, agentmodel.ToolCall, agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
+				return agentmodel.Decision{Action: agentmodel.Deny, Reason: "blocked"}, nil
 			}),
 		}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+		result, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -71,12 +70,12 @@ func TestPolicy_DenyPreventsExecutionAndApproval(t *testing.T) {
 func TestRun_ToolPanicReleasesLedger(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: &panicTool{}}})
+	toolSet, err := tools.NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: &panicTool{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	executor := newToolExecutor(toolSet, 1, nil)
-	call := types.ToolCall{ID: "call", Name: "counter", Arguments: "{}"}
+	call := agentmodel.ToolCall{ID: "call", Name: "counter", Arguments: "{}"}
 	_, err = executor.executeToolCall(ctx, call, nil)
 	if err == nil || !strings.Contains(err.Error(), "tool crashed") {
 		t.Fatalf("panic not reported: %v", err)
@@ -94,12 +93,12 @@ func TestRun_ToolPanicReleasesLedger(t *testing.T) {
 func TestToolExecutor_CompletedCallIdentityCannotChange(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{}
-	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: tool}})
+	toolSet, err := tools.NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: tool}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	executor := newToolExecutor(toolSet, 1, nil)
-	call := types.ToolCall{ID: "call", Name: "counter", Arguments: "original"}
+	call := agentmodel.ToolCall{ID: "call", Name: "counter", Arguments: "original"}
 	_, executorexecuteErr := executor.executeToolCall(ctx, call, nil)
 	if executorexecuteErr != nil {
 		t.Fatal(executorexecuteErr)
@@ -117,12 +116,12 @@ func TestToolExecutor_CompletedCallIdentityCannotChange(t *testing.T) {
 func TestRun_EagerToolDoesNotExecuteTwice(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{started: make(chan struct{}), release: make(chan struct{})}
-	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: tool}})
+	toolSet, err := tools.NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: tool}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	toolExecutor := newToolExecutor(toolSet, 2, nil)
-	call := types.ToolCall{ID: "call", Name: "counter", Arguments: "one"}
+	call := agentmodel.ToolCall{ID: "call", Name: "counter", Arguments: "one"}
 	done := make(chan error, 2)
 	go func() { _, err := toolExecutor.executeToolCall(ctx, call, nil); done <- err }()
 	<-tool.started
@@ -146,18 +145,18 @@ func TestRun_EagerToolDoesNotExecuteTwice(t *testing.T) {
 func TestTools_ParallelResultsPersistInCallOrder(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{}
-	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: tool, ParallelSafe: true}})
+	toolSet, err := tools.NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: tool, ParallelSafe: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	toolExecutor := newToolExecutor(toolSet, 2, nil)
-	err = toolExecutor.executeToolBatch(ctx, []types.ToolCall{{ID: "b", Index: 1, Name: "counter", Arguments: "second"}, {ID: "a", Index: 0, Name: "counter", Arguments: "first"}}, nil)
+	err = toolExecutor.executeToolBatch(ctx, []agentmodel.ToolCall{{ID: "b", Index: 1, Name: "counter", Arguments: "second"}, {ID: "a", Index: 0, Name: "counter", Arguments: "first"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	states := []types.ToolCallState{{Call: types.ToolCall{ID: "a"}}, {Call: types.ToolCall{ID: "b"}}}
+	states := []agentmodel.ToolCallState{{Call: agentmodel.ToolCall{ID: "a"}}, {Call: agentmodel.ToolCall{ID: "b"}}}
 	toolExecutor.snapshotToolExecutions(states)
-	results := []*types.ToolResult{states[0].Result, states[1].Result}
+	results := []*agentmodel.ToolResult{states[0].Result, states[1].Result}
 	if len(results) != 2 || results[0].Content != "first" || results[1].Content != "second" {
 		t.Fatalf("out of order: %v", results)
 	}
@@ -166,13 +165,13 @@ func TestTools_ParallelResultsPersistInCallOrder(t *testing.T) {
 func TestCheckpoint_OutcomeUnknownToolIsNotReexecuted(t *testing.T) {
 	ctx := context.Background()
 	tool := &countingTool{}
-	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: tool}})
+	toolSet, err := tools.NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: tool}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	toolExecutor := newToolExecutor(toolSet, 1, nil)
-	call := types.ToolCall{ID: "call", Name: "counter"}
-	toolExecutor.restoreToolExecutions([]types.ToolCallState{{Call: call, Status: types.CallOutcomeUnknown}})
+	call := agentmodel.ToolCall{ID: "call", Name: "counter"}
+	toolExecutor.restoreToolExecutions([]agentmodel.ToolCallState{{Call: call, Status: agentmodel.CallOutcomeUnknown}})
 	_, executeErr := toolExecutor.executeToolCall(ctx, call, nil)
 	if executeErr == nil {
 		t.Fatal("unknown outcome must block")
@@ -184,21 +183,21 @@ func TestCheckpoint_OutcomeUnknownToolIsNotReexecuted(t *testing.T) {
 
 func TestToolExecutorExposesAssignedCallIdentity(t *testing.T) {
 	ctx := context.Background()
-	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: &identityTool{}, ParallelSafe: true}})
+	toolSet, err := tools.NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: &identityTool{}, ParallelSafe: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	executor := newToolExecutor(toolSet, 2, nil)
-	err = executor.executeToolBatch(ctx, []types.ToolCall{
+	err = executor.executeToolBatch(ctx, []agentmodel.ToolCall{
 		{ID: "first", Index: 0, Name: "counter", Arguments: "{}"},
 		{ID: "second", Index: 1, Name: "counter", Arguments: "{}"},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	states := []types.ToolCallState{{Call: types.ToolCall{ID: "first"}}, {Call: types.ToolCall{ID: "second"}}}
+	states := []agentmodel.ToolCallState{{Call: agentmodel.ToolCall{ID: "first"}}, {Call: agentmodel.ToolCall{ID: "second"}}}
 	executor.snapshotToolExecutions(states)
-	results := []*types.ToolResult{states[0].Result, states[1].Result}
+	results := []*agentmodel.ToolResult{states[0].Result, states[1].Result}
 	if len(results) != 2 || results[0].Content != "first" || results[1].Content != "second" {
 		t.Fatalf("incorrect tool context identities: %+v", results)
 	}
@@ -215,12 +214,12 @@ func TestRun_ToolErrorVisibleButCancellationStopsGraph(t *testing.T) {
 				{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
 				{schema.AssistantMessage("handled", nil)},
 			}}
-			graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: &failingContractTool{failure: failure}}}}))
+			graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &failingContractTool{failure: failure}}}}))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer graph.Close(context.Background())
-			out, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("go")})
+			out, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
 			if errors.Is(failure, context.Canceled) || errors.Is(failure, context.DeadlineExceeded) {
 				if !errors.Is(err, failure) || chatModel.calls != 1 {
 					t.Fatalf("cancellation swallowed: err=%v calls=%d", err, chatModel.calls)
@@ -252,20 +251,20 @@ func TestRun_PolicyAndExecutionReceiveModelArguments(t *testing.T) {
 	checked := 0
 	graph, err := New(ctx, WithConfig(&Config{
 		Model:           chatModel,
-		ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}},
-		Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.ToolDescriptor) (tools.Decision, error) {
+		ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, ReturnDirect: true}},
+		Policy: agentmodel.PolicyFunc(func(_ context.Context, call agentmodel.ToolCall, _ agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
 			checked++
 			if call.Arguments != `{"value":"hello"}` {
 				t.Fatalf("policy saw unexpected arguments: %q", call.Arguments)
 			}
-			return tools.Decision{Action: tools.Allow}, nil
+			return agentmodel.Decision{Action: agentmodel.Allow}, nil
 		}),
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	answer, err := graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("run")})
+	answer, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("run")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,41 +274,41 @@ func TestRun_PolicyAndExecutionReceiveModelArguments(t *testing.T) {
 }
 
 func TestToolExecutor_RestoreUsesOneCallState(t *testing.T) {
-	for _, status := range []types.CallStatus{
-		types.CallPending, types.CallBlocked, types.CallCompleted,
-		types.CallRunning, types.CallOutcomeUnknown,
+	for _, status := range []agentmodel.CallStatus{
+		agentmodel.CallPending, agentmodel.CallBlocked, agentmodel.CallCompleted,
+		agentmodel.CallRunning, agentmodel.CallOutcomeUnknown,
 	} {
 		t.Run(string(status), func(t *testing.T) {
 			ctx := context.Background()
 			counter := &countingTool{}
-			toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: counter}})
+			toolSet, err := tools.NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: counter}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			toolExecutor := newToolExecutor(toolSet, 1, nil)
 			defer toolExecutor.cancelToolExecutions(ctx)
-			call := types.ToolCall{ID: "call", Name: "counter", Arguments: "{}"}
-			state := types.ToolCallState{Call: call, Status: status, StartedAt: time.Unix(10, 0)}
-			if status == types.CallCompleted {
-				state.Result = &types.ToolResult{CallID: call.ID, Content: "saved"}
+			call := agentmodel.ToolCall{ID: "call", Name: "counter", Arguments: "{}"}
+			state := agentmodel.ToolCallState{Call: call, Status: status, StartedAt: time.Unix(10, 0)}
+			if status == agentmodel.CallCompleted {
+				state.Result = &agentmodel.ToolResult{CallID: call.ID, Content: "saved"}
 			}
-			toolExecutor.restoreToolExecutions([]types.ToolCallState{state})
-			snapshot := []types.ToolCallState{{Call: call}}
+			toolExecutor.restoreToolExecutions([]agentmodel.ToolCallState{state})
+			snapshot := []agentmodel.ToolCallState{{Call: call}}
 			toolExecutor.snapshotToolExecutions(snapshot)
 			expectedStatus := status
-			if status == types.CallRunning {
-				expectedStatus = types.CallOutcomeUnknown
+			if status == agentmodel.CallRunning {
+				expectedStatus = agentmodel.CallOutcomeUnknown
 			}
 			if snapshot[0].Status != expectedStatus || snapshot[0].StartedAt != state.StartedAt {
 				t.Fatalf("restored snapshot=%+v", snapshot[0])
 			}
 			result, err := toolExecutor.executeToolCall(ctx, call, nil)
 			switch status {
-			case types.CallRunning, types.CallOutcomeUnknown:
+			case agentmodel.CallRunning, agentmodel.CallOutcomeUnknown:
 				if err == nil || counter.count.Load() != 0 {
 					t.Fatalf("replayed unknown outcome: err=%v count=%d", err, counter.count.Load())
 				}
-			case types.CallCompleted:
+			case agentmodel.CallCompleted:
 				if err != nil || result.Content != "saved" || counter.count.Load() != 0 {
 					t.Fatalf("completed call replayed: result=%v err=%v", result, err)
 				}
@@ -346,7 +345,7 @@ func TestToolExecutor_AllInterfacesAuthorizeOnceBeforeInvocation(t *testing.T) {
 		for _, item := range cases {
 			t.Run(item.name+"/"+fmt.Sprint(deny), func(t *testing.T) {
 				ctx := context.Background()
-				toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{{Tool: item.tool}})
+				toolSet, err := tools.NewToolSet(ctx, []agentmodel.ToolDescriptor{{Tool: item.tool}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -355,20 +354,20 @@ func TestToolExecutor_AllInterfacesAuthorizeOnceBeforeInvocation(t *testing.T) {
 					t.Fatal(err)
 				}
 				decisions := 0
-				policy := tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
+				policy := agentmodel.PolicyFunc(func(context.Context, agentmodel.ToolCall, agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
 					decisions++
 					if item.calls() != 0 {
 						t.Fatal("tool executed before authorization")
 					}
-					action := tools.Allow
+					action := agentmodel.Allow
 					if deny {
-						action = tools.Deny
+						action = agentmodel.Deny
 					}
-					return tools.Decision{Action: action}, nil
+					return agentmodel.Decision{Action: action}, nil
 				})
 				toolExecutor := newToolExecutor(toolSet, 1, policy)
 				defer toolExecutor.cancelToolExecutions(ctx)
-				call := types.ToolCall{ID: "call", Name: info.Name, Arguments: "{}"}
+				call := agentmodel.ToolCall{ID: "call", Name: info.Name, Arguments: "{}"}
 				// Repeated calls must reuse the outer execution record.
 				for range 2 {
 					result, err := toolExecutor.executeToolCall(ctx, call, nil)
@@ -394,18 +393,18 @@ func TestRun_EnhancedToolPreservesMultimodalHistoryAndState(t *testing.T) {
 		{schema.AssistantMessage("", []schema.ToolCall{{ID: "image-call", Function: schema.FunctionCall{Name: "image", Arguments: "{}"}}})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	var completed types.ToolCallState
-	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
+	var completed agentmodel.ToolCallState
+	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
 		if event.Kind == "tool_end" {
-			payload := event.Data.(types.ToolEndPayload)
-			completed = types.ToolCallState{Call: types.ToolCall{ID: payload.CallID, Name: payload.Name, Arguments: payload.ArgumentsInJSON}, StartedAt: payload.ToolStartTime, Result: &types.ToolResult{CallID: payload.CallID, Content: payload.Result, MultiContent: payload.MultiContent}}
+			payload := event.Data.(agentmodel.ToolEndPayload)
+			completed = agentmodel.ToolCallState{Call: agentmodel.ToolCall{ID: payload.CallID, Name: payload.Name, Arguments: payload.ArgumentsInJSON}, StartedAt: payload.ToolStartTime, Result: &agentmodel.ToolResult{CallID: payload.CallID, Content: payload.Result, MultiContent: payload.MultiContent}}
 		}
 		return nil
 	}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show image")})
+	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("show image")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,11 +420,11 @@ func TestRun_EnhancedToolPreservesMultimodalHistoryAndState(t *testing.T) {
 	if found == nil || found.ToolName != "image" || len(found.UserInputMultiContent) != 2 || found.UserInputMultiContent[1].Image == nil || *found.UserInputMultiContent[1].Image.URL != "https://example.test/image.png" {
 		t.Fatalf("model lost image: %+v", found)
 	}
-	raw, err := json.Marshal(&types.RunState{Calls: []types.ToolCallState{completed}})
+	raw, err := json.Marshal(&agentmodel.RunState{Calls: []agentmodel.ToolCallState{completed}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var restored types.RunState
+	var restored agentmodel.RunState
 	err = json.Unmarshal(raw, &restored)
 	if err != nil {
 		t.Fatal(err)
@@ -440,20 +439,20 @@ func TestRun_EnhancedToolPolicyAndReturnDirect(t *testing.T) {
 		tool := &imageTool{}
 		chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "image-call", Function: schema.FunctionCall{Name: "image", Arguments: "{}"}}})}}}
 		policies := 0
-		graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}}, Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.ToolDescriptor) (tools.Decision, error) {
+		graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, ReturnDirect: true}}, Policy: agentmodel.PolicyFunc(func(_ context.Context, call agentmodel.ToolCall, _ agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
 			policies++
 			if call.Arguments != `{}` {
 				t.Errorf("policy saw original arguments: %s", call.Arguments)
 			}
 			if deny {
-				return tools.Decision{Action: tools.Deny, Reason: "denied"}, nil
+				return agentmodel.Decision{Action: agentmodel.Deny, Reason: "denied"}, nil
 			}
-			return tools.Decision{Action: tools.Allow}, nil
+			return agentmodel.Decision{Action: agentmodel.Allow}, nil
 		})}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		message, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show image")})
+		message, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("show image")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -475,8 +474,8 @@ func TestRun_EnhancedStreamPreservesTextOrderAndImage(t *testing.T) {
 	tool := &imageStreamTool{}
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "image-call", Function: schema.FunctionCall{Name: "image_stream", Arguments: "{}"}}})}}}
 	var chunks []string
-	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
-		chunk, ok := event.Data.(types.ToolCallOutputChunkPayload)
+	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, ReturnDirect: true}}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
+		chunk, ok := event.Data.(agentmodel.ToolCallOutputChunkPayload)
 		if ok {
 			chunks = append(chunks, chunk.Chunk)
 		}
@@ -485,7 +484,7 @@ func TestRun_EnhancedStreamPreservesTextOrderAndImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show")})
+	output, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("show")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,16 +502,16 @@ func TestRun_EnhancedStreamPolicyAndReturnDirect(t *testing.T) {
 			tool := &imageStreamTool{}
 			chatModel := newEnhancedStreamModel()
 			var chunks string
-			graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}}, Policy: tools.PolicyFunc(func(_ context.Context, call types.ToolCall, _ tools.ToolDescriptor) (tools.Decision, error) {
+			graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, ReturnDirect: true}}, Policy: agentmodel.PolicyFunc(func(_ context.Context, call agentmodel.ToolCall, _ agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
 				if call.Arguments != `{}` {
 					t.Errorf("wrong policy arguments: %s", call.Arguments)
 				}
 				if scenario == "deny" {
-					return tools.Decision{Action: tools.Deny, Reason: "denied"}, nil
+					return agentmodel.Decision{Action: agentmodel.Deny, Reason: "denied"}, nil
 				}
-				return tools.Decision{Action: tools.Allow}, nil
-			}), Emit: func(_ context.Context, event types.RuntimeEvent) error {
-				chunk, ok := event.Data.(types.ToolCallOutputChunkPayload)
+				return agentmodel.Decision{Action: agentmodel.Allow}, nil
+			}), Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
+				chunk, ok := event.Data.(agentmodel.ToolCallOutputChunkPayload)
 				if ok {
 					chunks += chunk.Chunk
 				}
@@ -521,7 +520,7 @@ func TestRun_EnhancedStreamPolicyAndReturnDirect(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			output, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show")})
+			output, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("show")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -548,13 +547,13 @@ func TestRun_EnhancedStreamCancelReleasesProducer(t *testing.T) {
 		go func() { defer close(exited); defer writer.Close(); close(opened); <-ctx.Done() }()
 		return reader, nil
 	}}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: newEnhancedStreamModel(), ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}}))
+	graph, err := New(context.Background(), WithConfig(&Config{Model: newEnhancedStreamModel(), ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show")})
+		_, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("show")})
 		done <- err
 	}()
 	<-opened
@@ -580,11 +579,11 @@ func TestRun_EnhancedStreamOpenErrorClosesReturnedReader(t *testing.T) {
 	defer writer.Close()
 	want := errors.New("stream open failure")
 	tool := &imageStreamTool{run: func(context.Context) (*schema.StreamReader[*schema.ToolResult], error) { return reader, want }}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: newEnhancedStreamModel(), ToolDescriptors: []tools.ToolDescriptor{{Tool: tool, ReturnDirect: true}}}))
+	graph, err := New(context.Background(), WithConfig(&Config{Model: newEnhancedStreamModel(), ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, ReturnDirect: true}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("show")})
+	message, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("show")})
 	if err != nil || message.Content != want.Error() {
 		t.Fatalf("message=%v err=%v", message, err)
 	}
@@ -626,7 +625,7 @@ func TestWebMasksApplyLocallyAndGlobally(t *testing.T) {
 						return !tc.localRejectsSearch || info.Name == "read_url"
 					},
 				},
-				ToolDescriptors: []tools.ToolDescriptor{{Tool: &webMaskTestTool{name: "keep"}}, {Tool: &webMaskTestTool{name: "discard"}}},
+				ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &webMaskTestTool{name: "keep"}}, {Tool: &webMaskTestTool{name: "discard"}}},
 				ToolMask: func(maskCtx context.Context, info *schema.ToolInfo) bool {
 					globalCalls++
 					if maskCtx.Value(graphWebMaskContextKey{}) != "present" {

@@ -4,13 +4,9 @@ import (
 	"context"
 	"time"
 
-	"eino-cli/deepagent/graph/conversation"
-	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	"eino-cli/deepagent/graph/middleware"
-	skillspkg "eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
@@ -19,18 +15,18 @@ import (
 
 type Config struct {
 	SubAgents         []*SubAgent
-	SkillLoader       skillspkg.SkillLoader
+	SkillLoader       agentmodel.SkillLoader
 	FilesystemConfig  *FilesystemConfig
 	WebConfig         *tools.WebConfig
-	Filesystem        filesystempkg.ToolFilesystem
+	Filesystem        agentmodel.ToolFilesystem
 	Callbacks         []callbacks.Handler
-	Middlewares       []middleware.Middleware
+	Middlewares       []agentmodel.Middleware
 	EnableEagerTools  bool
 	Model             model.ToolCallingChatModel
-	ToolDescriptors   []tools.ToolDescriptor
-	ToolMask          tools.Mask
+	ToolDescriptors   []agentmodel.ToolDescriptor
+	ToolMask          agentmodel.Mask
 	ReadOnlyToolsOnly bool
-	Policy            tools.Policy
+	Policy            agentmodel.Policy
 	Parallelism       int
 	MaxSteps          int
 	MaxModelCalls     int
@@ -38,10 +34,10 @@ type Config struct {
 	Depth             int
 	ThreadID          string
 	RunID             string
-	Prompts           []*messagepkg.Message
-	Conversation      conversation.IConversation
-	Emit              func(context.Context, types.RuntimeEvent) error
-	DrainInput        func(context.Context, string) ([]types.Input, bool, error)
+	Prompts           []*agentmodel.Message
+	Conversation      agentmodel.Conversation
+	Emit              func(context.Context, agentmodel.RuntimeEvent) error
+	DrainInput        func(context.Context, string) ([]agentmodel.RunInput, bool, error)
 	CheckpointStore   compose.CheckPointStore
 }
 
@@ -123,10 +119,10 @@ func (config *Config) Clone() (cloned *Config) {
 	}
 	value := *config
 	cloned = &value
-	cloned.ToolDescriptors = append([]tools.ToolDescriptor(nil), config.ToolDescriptors...)
-	cloned.Prompts = append([]*messagepkg.Message(nil), config.Prompts...)
+	cloned.ToolDescriptors = append([]agentmodel.ToolDescriptor(nil), config.ToolDescriptors...)
+	cloned.Prompts = append([]*agentmodel.Message(nil), config.Prompts...)
 	cloned.SubAgents = append([]*SubAgent(nil), config.SubAgents...)
-	cloned.Middlewares = append([]middleware.Middleware(nil), config.Middlewares...)
+	cloned.Middlewares = append([]agentmodel.Middleware(nil), config.Middlewares...)
 	cloned.Callbacks = append([]callbacks.Handler(nil), config.Callbacks...)
 
 	if config.FilesystemConfig != nil {
@@ -153,13 +149,13 @@ func WithMaxModelCalls(maxModelCalls int) Option {
 	}
 }
 
-func WithTools(toolDescriptors ...tools.ToolDescriptor) Option {
+func WithTools(toolDescriptors ...agentmodel.ToolDescriptor) Option {
 	return func(config *Config) {
 		config.ToolDescriptors = append(config.ToolDescriptors, toolDescriptors...)
 	}
 }
 
-func WithToolMask(toolMask tools.Mask) Option {
+func WithToolMask(toolMask agentmodel.Mask) Option {
 	return func(config *Config) {
 		config.ToolMask = toolMask
 	}
@@ -171,21 +167,21 @@ func WithSubAgents(subAgents ...*SubAgent) Option {
 	}
 }
 
-func WithSkillLoader(skillLoader skillspkg.SkillLoader) Option {
+func WithSkillLoader(skillLoader agentmodel.SkillLoader) Option {
 	return func(config *Config) {
 		config.SkillLoader = skillLoader
 	}
 }
 
 // WithPlan enables the plan tool and its prompt independently.
-func WithPlan(onUpdate tools.PlanUpdateHandler) Option {
+func WithPlan(onUpdate agentmodel.PlanUpdateHandler) Option {
 	return func(config *Config) {
 		config.ToolDescriptors = append(config.ToolDescriptors, tools.NewUpdatePlanTool(onUpdate))
 		config.Middlewares = append(config.Middlewares, middleware.NewPlan())
 	}
 }
 
-func WithFilesystem(filesystem filesystempkg.ToolFilesystem) Option {
+func WithFilesystem(filesystem agentmodel.ToolFilesystem) Option {
 	return func(config *Config) {
 		config.Filesystem = filesystem
 		if config.FilesystemConfig == nil {
@@ -249,7 +245,7 @@ func WithWebConfig(webConfig *tools.WebConfig) (option Option) {
 	return option
 }
 
-func WithMiddleware(currentMiddleware middleware.Middleware) Option {
+func WithMiddleware(currentMiddleware agentmodel.Middleware) Option {
 	return func(config *Config) {
 		config.Middlewares = append(config.Middlewares, currentMiddleware)
 	}

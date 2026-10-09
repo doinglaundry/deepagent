@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"eino-cli/deepagent/constant"
+	consts "eino-cli/deepagent/constant"
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/sandbox"
-	"eino-cli/deepagent/sandbox/paths"
+	sandboxpaths "eino-cli/deepagent/sandbox/paths"
 )
 
 type SandboxManagerLocal struct {
@@ -15,7 +16,7 @@ type SandboxManagerLocal struct {
 }
 
 // New builds a manager bound to one CLI session; the sandbox is created at startup.
-func New(sessionID string) (sandbox.SandboxManager, error) {
+func New(sessionID string) (agentmodel.SandboxManager, error) {
 	if sessionID == "" {
 		return nil, sandbox.ErrSessionIDRequired
 	}
@@ -37,7 +38,7 @@ func (m *SandboxManagerLocal) GetSandboxIdBySessionId(_ context.Context, session
 	return m.sandbox.ID(), nil
 }
 
-func (m *SandboxManagerLocal) Get(_ context.Context, sandboxID string) (sandbox.Sandbox, error) {
+func (m *SandboxManagerLocal) Get(_ context.Context, sandboxID string) (agentmodel.Sandbox, error) {
 	if sandboxID == "" || m.sandbox == nil || sandboxID != m.sandbox.ID() {
 		return nil, sandbox.NewNotFoundError(sandboxID)
 	}

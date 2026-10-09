@@ -8,29 +8,27 @@ import (
 	"sort"
 	"strings"
 
-	filesystempkg "eino-cli/deepagent/graph/filesystem"
-	skillspkg "eino-cli/deepagent/graph/skills"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 type projectInstructions struct {
 	BaseMiddleware
-	files filesystempkg.Filesystem
+	files agentmodel.Filesystem
 }
 
-func NewProjectInstructions(filesystem filesystempkg.Filesystem) Middleware {
+func NewProjectInstructions(filesystem agentmodel.Filesystem) agentmodel.Middleware {
 	return &projectInstructions{files: filesystem}
 }
 
 func (*projectInstructions) GetName() string { return "project_instructions" }
 
-func (projectInstructions *projectInstructions) BuildPrompt(ctx context.Context) ([]*messagepkg.Message, error) {
+func (projectInstructions *projectInstructions) BuildPrompt(ctx context.Context) ([]*agentmodel.Message, error) {
 	// Read the complete bounded backend file rather than the tool's default
 	// 2000-line window; the requested section may occur near the end.
 	lineLimit := int(^uint(0) >> 1)
 	instructionsText, err := projectInstructions.files.Read(ctx, "AGENTS.md", nil, &lineLimit)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, filesystempkg.ErrFileNotFound) {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, agentmodel.ErrFileNotFound) {
 			return nil, nil
 		}
 		return nil, err
@@ -39,7 +37,7 @@ func (projectInstructions *projectInstructions) BuildPrompt(ctx context.Context)
 	if disciplineInstructions == "" {
 		return nil, nil
 	}
-	return []*messagepkg.Message{messagepkg.NewSystemMessage("<agent_discipline>\n" + disciplineInstructions + "\n</agent_discipline>")}, nil
+	return []*agentmodel.Message{agentmodel.NewSystemMessage("<agent_discipline>\n" + disciplineInstructions + "\n</agent_discipline>")}, nil
 }
 
 func extractProjectInstructionSection(instructionsText, sectionTitle string) string {
@@ -64,16 +62,16 @@ func extractProjectInstructionSection(instructionsText, sectionTitle string) str
 
 type SkillMiddleware struct {
 	BaseMiddleware
-	skillLoader skillspkg.SkillLoader
+	skillLoader agentmodel.SkillLoader
 }
 
-func NewSkillMiddleware(skillLoader skillspkg.SkillLoader) Middleware {
+func NewSkillMiddleware(skillLoader agentmodel.SkillLoader) agentmodel.Middleware {
 	return &SkillMiddleware{skillLoader: skillLoader}
 }
 
 func (skillMiddleware *SkillMiddleware) GetName() string { return "skill" }
 
-func (skillMiddleware *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*messagepkg.Message, error) {
+func (skillMiddleware *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*agentmodel.Message, error) {
 
 	if skillMiddleware == nil || skillMiddleware.skillLoader == nil {
 		return nil, nil
@@ -83,7 +81,7 @@ func (skillMiddleware *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*mes
 	if err != nil {
 		return nil, err
 	}
-	validSkills := make([]*skillspkg.SkillMetadata, 0, len(availableSkills))
+	validSkills := make([]*agentmodel.SkillMetadata, 0, len(availableSkills))
 	for _, skill := range availableSkills {
 		if skill != nil && strings.TrimSpace(skill.Name) != "" {
 			validSkills = append(validSkills, skill)
@@ -97,5 +95,5 @@ func (skillMiddleware *SkillMiddleware) BuildPrompt(ctx context.Context) ([]*mes
 	for _, skill := range validSkills {
 		fmt.Fprintf(&skillPrompt, "- %s: %s (source: %s)\n", skill.Name, skill.Description, skill.Path)
 	}
-	return []*messagepkg.Message{messagepkg.NewSystemMessage(skillPrompt.String())}, nil
+	return []*agentmodel.Message{agentmodel.NewSystemMessage(skillPrompt.String())}, nil
 }

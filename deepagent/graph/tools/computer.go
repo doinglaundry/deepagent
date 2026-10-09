@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"eino-cli/deepagent/graph/computer"
-	"eino-cli/deepagent/graph/types"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -15,12 +15,12 @@ import (
 
 const ComputerPrompt = "Browser and Mac tools return a screenshot and observation_id. Observe before acting; use the latest observation_id and element_id, or screenshot coordinates. Every browser call must include its URL; every Mac call must include its app bundle ID. On stale_observation, observe again. Computer tools are for this root agent only. Never retry an action whose outcome is unknown."
 
-func NewBrowserTools(browser *computer.Browser) []ToolDescriptor {
+func NewBrowserTools(browser *computer.Browser) []agentmodel.ToolDescriptor {
 	return newScreenTools("browser", "open", browser.PerformAction)
 }
-func NewComputerTools(desktop *computer.Desktop) []ToolDescriptor {
-	return newScreenTools("computer", "open_app", func(ctx context.Context, operation string, action computer.Action) (*computer.Observation, error) {
-		return desktop.PerformAction(ctx, types.GetRunState(ctx).RunID, operation, action)
+func NewComputerTools(desktop *computer.Desktop) []agentmodel.ToolDescriptor {
+	return newScreenTools("computer", "open_app", func(ctx context.Context, operation string, action agentmodel.ComputerAction) (*agentmodel.ComputerObservation, error) {
+		return desktop.PerformAction(ctx, agentmodel.GetRunState(ctx).RunID, operation, action)
 	})
 }
 
@@ -29,11 +29,11 @@ type screenTool struct {
 	name      string
 	operation string
 	params    map[string]*schema.ParameterInfo
-	perform   func(context.Context, string, computer.Action) (*computer.Observation, error)
+	perform   func(context.Context, string, agentmodel.ComputerAction) (*agentmodel.ComputerObservation, error)
 }
 
-func newScreenTools(prefix, openOperation string, perform func(context.Context, string, computer.Action) (*computer.Observation, error)) []ToolDescriptor {
-	var descriptors []ToolDescriptor
+func newScreenTools(prefix, openOperation string, perform func(context.Context, string, agentmodel.ComputerAction) (*agentmodel.ComputerObservation, error)) []agentmodel.ToolDescriptor {
+	var descriptors []agentmodel.ToolDescriptor
 	for _, operation := range []string{openOperation, "observe", "click", "type_text", "press_key", "scroll"} {
 		target := "app"
 		if prefix == "browser" {
@@ -60,7 +60,7 @@ func newScreenTools(prefix, openOperation string, perform func(context.Context, 
 			params["delta_x"] = &schema.ParameterInfo{Type: schema.Integer}
 			params["delta_y"] = &schema.ParameterInfo{Type: schema.Integer, Desc: "Positive scrolls down"}
 		}
-		descriptors = append(descriptors, ToolDescriptor{Tool: &screenTool{name: prefix + "_" + operation, operation: operation, params: params, perform: perform}, ReadOnly: operation == "observe", RequiresApproval: operation != "observe"})
+		descriptors = append(descriptors, agentmodel.ToolDescriptor{Tool: &screenTool{name: prefix + "_" + operation, operation: operation, params: params, perform: perform}, ReadOnly: operation == "observe", RequiresApproval: operation != "observe"})
 	}
 	return descriptors
 }
@@ -68,14 +68,14 @@ func (screenTool *screenTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return newToolInfo(screenTool.name, "Perform "+screenTool.operation+" and return the current screen and visible elements.", screenTool.params)
 }
 func (screenTool *screenTool) InvokableRun(ctx context.Context, argument *schema.ToolArgument, _ ...tool.Option) (*schema.ToolResult, error) {
-	runState := types.GetRunState(ctx)
+	runState := agentmodel.GetRunState(ctx)
 	if runState == nil || runState.Depth != 0 || runState.RunID == "" {
 		return nil, errors.New("computer tools require a root Run")
 	}
 	if argument == nil {
 		return nil, errors.New("tool arguments are required")
 	}
-	var action computer.Action
+	var action agentmodel.ComputerAction
 	err := json.Unmarshal([]byte(argument.Text), &action)
 	if err != nil {
 		return nil, err
@@ -86,7 +86,7 @@ func (screenTool *screenTool) InvokableRun(ctx context.Context, argument *schema
 	observation, err := screenTool.perform(ctx, screenTool.operation, action)
 	if err != nil {
 		if errors.Is(err, computer.ErrOutcomeUnknown) {
-			return nil, &types.InternalError{Err: err}
+			return nil, &agentmodel.InternalError{Err: err}
 		}
 		return nil, err
 	}

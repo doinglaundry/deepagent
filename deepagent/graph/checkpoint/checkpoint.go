@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"eino-cli/deepagent/graph/types"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/compose"
 )
@@ -55,7 +55,7 @@ func (graphStore *GraphStore) Set(ctx context.Context, checkpointID string, snap
 }
 
 // SaveInterrupts 保存 Eino 分配的中断 ID，供后续回答或审批定位暂停点。
-func (graphStore *GraphStore) SaveInterrupts(ctx context.Context, checkpointID string, pending []types.Interrupt) error {
+func (graphStore *GraphStore) SaveInterrupts(ctx context.Context, checkpointID string, pending []agentmodel.Interrupt) error {
 	snapshot, exists, err := graphStore.storage.Get(ctx, checkpointID)
 	if err != nil {
 		return err
@@ -96,7 +96,7 @@ func (graphStore *GraphStore) SaveInterrupts(ctx context.Context, checkpointID s
 
 // AppendInputs seals accepted inputs before Thread publishes its blocked event.
 // PreparedInputs stays unchanged: newly appended inputs still need persistence.
-func AppendInputs(ctx context.Context, storage compose.CheckPointStore, checkpointID, threadID, runID string, inputs []types.Input) error {
+func AppendInputs(ctx context.Context, storage compose.CheckPointStore, checkpointID, threadID, runID string, inputs []agentmodel.RunInput) error {
 	if len(inputs) == 0 {
 		return nil
 	}
@@ -114,7 +114,7 @@ func AppendInputs(ctx context.Context, storage compose.CheckPointStore, checkpoi
 	if err != nil {
 		return err
 	}
-	if runState.Phase != types.PhaseBlocked {
+	if runState.Phase != agentmodel.PhaseBlocked {
 		return fmt.Errorf("pending input checkpoint is not a matching blocked run")
 	}
 	for _, input := range inputs {
@@ -136,7 +136,7 @@ func AppendInputs(ctx context.Context, storage compose.CheckPointStore, checkpoi
 
 // MarkToolOutcomeUnknown 在副作用执行前保存结果未知的标记，防止崩溃后重复执行。
 // 调用方串行保存这些标记；同一快照可以包含多个结果未知的调用。
-func (graphStore *GraphStore) MarkToolOutcomeUnknown(ctx context.Context, checkpointID string, call types.ToolCall, mustExist bool) error {
+func (graphStore *GraphStore) MarkToolOutcomeUnknown(ctx context.Context, checkpointID string, call agentmodel.ToolCall, mustExist bool) error {
 	snapshot, exists, err := graphStore.storage.Get(ctx, checkpointID)
 	if err != nil {
 		return err
@@ -161,7 +161,7 @@ func (graphStore *GraphStore) MarkToolOutcomeUnknown(ctx context.Context, checkp
 	}
 	var targetCall map[string]json.RawMessage
 	for _, callFields := range calls {
-		var toolCall types.ToolCall
+		var toolCall agentmodel.ToolCall
 		err = json.Unmarshal(callFields["Call"], &toolCall)
 		if err != nil {
 			return err
@@ -194,12 +194,12 @@ func (graphStore *GraphStore) MarkToolOutcomeUnknown(ctx context.Context, checkp
 }
 
 // SaveTerminalState 保存最终状态，保留 Eino 执行位置和未知字段。
-func (graphStore *GraphStore) SaveTerminalState(ctx context.Context, checkpointID string, runState *types.RunState, mustExist bool) error {
+func (graphStore *GraphStore) SaveTerminalState(ctx context.Context, checkpointID string, runState *agentmodel.RunState, mustExist bool) error {
 	if runState == nil || runState.ThreadID != graphStore.threadID || runState.RunID != graphStore.runID {
 		return fmt.Errorf("checkpoint terminal state mismatch")
 	}
 	switch runState.Phase {
-	case types.PhaseCompleted, types.PhaseFailed, types.PhaseInterrupted:
+	case agentmodel.PhaseCompleted, agentmodel.PhaseFailed, agentmodel.PhaseInterrupted:
 	default:
 		return fmt.Errorf("checkpoint terminal state mismatch")
 	}

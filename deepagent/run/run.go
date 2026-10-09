@@ -10,8 +10,7 @@ import (
 
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
 	"eino-cli/deepagent/graph/execution"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 // Run owns the identity, accepted inputs and completion of one execution.
@@ -21,13 +20,13 @@ type Run struct {
 	config          Config
 	mu              sync.Mutex
 	graph           *execution.Graph
-	consumed        []types.Input
+	consumed        []agentmodel.RunInput
 	cancel          context.CancelCauseFunc
 	done            chan struct{}
 	err             error
 	started         bool
 	active          bool
-	interruptOpts   *InterruptOptions
+	interruptOpts   *agentmodel.InterruptOptions
 	interruptTimer  *time.Timer
 	modelResponseID string
 }
@@ -38,7 +37,7 @@ func New(ctx context.Context, id string, cfg Config) (*Run, context.Context) {
 }
 
 // Execute completes only after cleanup and Thread's terminal output are delivered.
-func (r *Run) Execute(ctx context.Context) (result *messagepkg.Message, err error) {
+func (r *Run) Execute(ctx context.Context) (result *agentmodel.Message, err error) {
 	r.mu.Lock()
 	if r.started {
 		r.mu.Unlock()
@@ -90,7 +89,7 @@ func (r *Run) Execute(ctx context.Context) (result *messagepkg.Message, err erro
 		r.cancel(context.Canceled)
 	}
 	inputs := r.Inputs()
-	messages := make([]*messagepkg.Message, 0, len(inputs))
+	messages := make([]*agentmodel.Message, 0, len(inputs))
 	options := execution.RunOptions{}
 	if r.config.Resume != nil {
 		options = *r.config.Resume
@@ -102,11 +101,11 @@ func (r *Run) Execute(ctx context.Context) (result *messagepkg.Message, err erro
 		options.InputIDs = append(options.InputIDs, input.MessageID)
 		options.InputMeta = append(options.InputMeta, input.Meta)
 	}
-	var first *messagepkg.Message
+	var first *agentmodel.Message
 	if len(messages) > 0 {
 		first = messages[0]
 	}
-	err = r.PublishEvent(ctx, EventRunStart, RunStartPayload{Input: first})
+	err = r.PublishEvent(ctx, agentmodel.EventRunStart, agentmodel.RunStartPayload{Input: first})
 	if err != nil {
 		return nil, err
 	}
@@ -135,24 +134,24 @@ func (r *Run) IsActive() bool {
 }
 
 // AddInputs returns only the new inputs, preserving identity across redelivery.
-func (r *Run) AddInputs(inputs ...types.Input) []types.Input {
+func (r *Run) AddInputs(inputs ...agentmodel.RunInput) []agentmodel.RunInput {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	before := len(r.consumed)
-	r.consumed = types.AppendInputs(r.consumed, inputs...)
-	return append([]types.Input(nil), r.consumed[before:]...)
+	r.consumed = agentmodel.AppendInputs(r.consumed, inputs...)
+	return append([]agentmodel.RunInput(nil), r.consumed[before:]...)
 }
 
-func (r *Run) RestoreInputs(inputs []types.Input) {
+func (r *Run) RestoreInputs(inputs []agentmodel.RunInput) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.consumed = append([]types.Input(nil), inputs...)
+	r.consumed = append([]agentmodel.RunInput(nil), inputs...)
 }
 
-func (r *Run) Inputs() []types.Input {
+func (r *Run) Inputs() []agentmodel.RunInput {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]types.Input(nil), r.consumed...)
+	return append([]agentmodel.RunInput(nil), r.consumed...)
 }
 
 func (r *Run) CheckpointID() string {
@@ -166,14 +165,14 @@ func (r *Run) CheckpointID() string {
 }
 
 // PersistPending keeps Thread's accepted inputs in this Run's selected store.
-func (r *Run) PersistPending(ctx context.Context, inputs []types.Input) error {
+func (r *Run) PersistPending(ctx context.Context, inputs []agentmodel.RunInput) error {
 	return checkpointer.AppendInputs(ctx, r.config.Graph.CheckpointStore, r.CheckpointID(), r.config.Graph.ThreadID, r.id, inputs)
 }
 
-func (r *Run) RequestInterrupt(opts InterruptOptions) {
+func (r *Run) RequestInterrupt(opts agentmodel.InterruptOptions) {
 	r.mu.Lock()
 	alreadyRequested := r.interruptOpts != nil
-	request := InterruptOptions{Metadata: maps.Clone(opts.Metadata)}
+	request := agentmodel.InterruptOptions{Metadata: maps.Clone(opts.Metadata)}
 	if opts.Timeout != nil {
 		timeout := *opts.Timeout
 		request.Timeout = &timeout
@@ -198,7 +197,7 @@ func (r *Run) RequestInterrupt(opts InterruptOptions) {
 	}
 }
 
-func (r *Run) InterruptRequest() *InterruptOptions {
+func (r *Run) InterruptRequest() *agentmodel.InterruptOptions {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.interruptOpts

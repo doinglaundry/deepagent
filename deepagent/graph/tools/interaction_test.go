@@ -9,8 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"eino-cli/deepagent/graph/skills"
-	"eino-cli/deepagent/graph/types"
+	agentmodel "eino-cli/deepagent/model"
 
 	einotool "github.com/cloudwego/eino/components/tool"
 )
@@ -24,13 +23,13 @@ func TestUpdatePlanAliasesShareRunState(t *testing.T) {
 		`inspect`,
 	} {
 		t.Run(arguments, func(t *testing.T) {
-			runState := &types.RunState{}
-			ctx := types.WithRunState(context.Background(), runState)
+			runState := &agentmodel.RunState{}
+			ctx := agentmodel.WithRunState(context.Background(), runState)
 			output, err := NewUpdatePlanTool(nil).Tool.(einotool.InvokableTool).InvokableRun(ctx, arguments)
 			if err != nil {
 				t.Fatal(err)
 			}
-			var planUpdate PlanUpdate
+			var planUpdate agentmodel.PlanUpdate
 			decodeErr := json.Unmarshal([]byte(output), &planUpdate)
 			if decodeErr != nil {
 				t.Fatal(decodeErr)
@@ -43,18 +42,18 @@ func TestUpdatePlanAliasesShareRunState(t *testing.T) {
 }
 
 func TestUpdatePlanFailedPublishPreservesState(t *testing.T) {
-	runState := &types.RunState{Plan: []types.PlanStep{{Step: "old", Status: "pending"}}}
+	runState := &agentmodel.RunState{Plan: []agentmodel.PlanStep{{Step: "old", Status: "pending"}}}
 	publishErr := errors.New("publish failed")
-	planDescriptor := NewUpdatePlanTool(func(context.Context, PlanUpdate) error { return publishErr })
-	_, err := planDescriptor.Tool.(einotool.InvokableTool).InvokableRun(types.WithRunState(context.Background(), runState), `{"plan":"new"}`)
+	planDescriptor := NewUpdatePlanTool(func(context.Context, agentmodel.PlanUpdate) error { return publishErr })
+	_, err := planDescriptor.Tool.(einotool.InvokableTool).InvokableRun(agentmodel.WithRunState(context.Background(), runState), `{"plan":"new"}`)
 	if !errors.Is(err, publishErr) || runState.Plan[0].Step != "old" {
 		t.Fatalf("err=%v plan=%v", err, runState.Plan)
 	}
 }
 
 func TestUpdatePlanPublishesValidatedPlan(t *testing.T) {
-	var publishedUpdate PlanUpdate
-	planDescriptor := NewUpdatePlanTool(func(_ context.Context, planUpdate PlanUpdate) error {
+	var publishedUpdate agentmodel.PlanUpdate
+	planDescriptor := NewUpdatePlanTool(func(_ context.Context, planUpdate agentmodel.PlanUpdate) error {
 		publishedUpdate = planUpdate
 		return nil
 	})
@@ -76,9 +75,9 @@ func TestUpdatePlanRejectsInvalidState(t *testing.T) {
 	}
 }
 
-type skillTestLoader struct{ items []*skills.SkillMetadata }
+type skillTestLoader struct{ items []*agentmodel.SkillMetadata }
 
-func (skillLoader skillTestLoader) ListSkills(context.Context) ([]*skills.SkillMetadata, error) {
+func (skillLoader skillTestLoader) ListSkills(context.Context) ([]*agentmodel.SkillMetadata, error) {
 	return skillLoader.items, nil
 }
 
@@ -88,7 +87,7 @@ func TestActivateSkillLoadsInstructionsWithoutMiddleware(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	skillLoader := skillTestLoader{items: []*skills.SkillMetadata{{Name: "review", Path: skillPath}}}
+	skillLoader := skillTestLoader{items: []*agentmodel.SkillMetadata{{Name: "review", Path: skillPath}}}
 	output, err := NewActivateSkillTool(skillLoader).Tool.(einotool.InvokableTool).InvokableRun(context.Background(), `{"name":"review"}`)
 	if err != nil || !strings.Contains(output, "follow these instructions") {
 		t.Fatalf("activate_skill = %q, %v", output, err)

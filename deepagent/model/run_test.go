@@ -1,9 +1,11 @@
-package types
+package model_test
 
 import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	agentmodel "eino-cli/deepagent/model"
 )
 
 type stateFixture struct {
@@ -21,10 +23,10 @@ func (stateFixture *stateFixture) UnmarshalRuntimeState(data string) error {
 }
 
 func TestGraphStateExtensionPersistenceBoundary(t *testing.T) {
-	source := NewGraphState()
+	source := agentmodel.NewGraphState()
 	source.RegisterStateful("saved", &stateFixture{value: "checkpoint-value"})
 	source.RegisterRuntimeOnlyStateful("local", &stateFixture{value: "must-not-persist"})
-	snapshot := &RunState{}
+	snapshot := &agentmodel.RunState{}
 	err := source.SnapshotExtensions(snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +35,7 @@ func TestGraphStateExtensionPersistenceBoundary(t *testing.T) {
 	if hasLocal {
 		t.Fatal("runtime-only state persisted")
 	}
-	target := NewGraphState()
+	target := agentmodel.NewGraphState()
 	saved, local := &stateFixture{}, &stateFixture{value: "fresh-local"}
 	target.RegisterStateful("saved", saved)
 	target.RegisterStateful("local", local)
@@ -72,10 +74,10 @@ func TestGraphStateExtensionRestoreErrors(t *testing.T) {
 		{name: "component rejects state", raw: json.RawMessage(`"new"`), restoreErr: failure, wantError: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			graphState := NewGraphState()
+			graphState := agentmodel.NewGraphState()
 			stateFixture := &stateFixture{value: "original", restoreErr: testCase.restoreErr}
 			graphState.RegisterStateful("saved", stateFixture)
-			snapshot := &RunState{Extensions: map[string]json.RawMessage{"middleware:unknown": json.RawMessage(`"ignored"`)}}
+			snapshot := &agentmodel.RunState{Extensions: map[string]json.RawMessage{"middleware:unknown": json.RawMessage(`"ignored"`)}}
 			if testCase.raw != nil {
 				snapshot.Extensions["middleware:saved"] = testCase.raw
 			}

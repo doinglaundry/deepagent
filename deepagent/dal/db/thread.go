@@ -6,7 +6,8 @@ import (
 	"errors"
 	"maps"
 
-	"eino-cli/deepagent/dal/model"
+	agentmodel "eino-cli/deepagent/model"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -15,21 +16,21 @@ var ErrThreadNotClosed = errors.New("only closed threads can be deleted")
 
 type ThreadDAO struct{ Client *MySQLClient }
 
-func (d *ThreadDAO) Create(ctx context.Context, thread *model.Thread) error {
+func (d *ThreadDAO) Create(ctx context.Context, thread *agentmodel.ThreadRecord) error {
 	return d.Client.DB(ctx, true).Create(thread).Error
 }
 
-func (d *ThreadDAO) Get(ctx context.Context, filter *model.ThreadFilter) ([]*model.Thread, error) {
+func (d *ThreadDAO) Get(ctx context.Context, filter *agentmodel.ThreadFilter) ([]*agentmodel.ThreadRecord, error) {
 	if filter == nil || filter.Offset < 0 {
 		return nil, errors.New("invalid thread filter")
 	}
-	var threads []*model.Thread
+	var threads []*agentmodel.ThreadRecord
 	if filter.ForUpdate {
 		if ctx == nil || ctx.Value(d.Client) == nil {
 			return nil, errors.New("select for update requires a transaction")
 		}
 	}
-	query := filter.DBFilter(d.Client.DB(ctx, filter.Primary || filter.ForUpdate).Model(&model.Thread{}))
+	query := filter.DBFilter(d.Client.DB(ctx, filter.Primary || filter.ForUpdate).Model(&agentmodel.ThreadRecord{}))
 	if filter.ForUpdate {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
@@ -46,12 +47,12 @@ func (d *ThreadDAO) Get(ctx context.Context, filter *model.ThreadFilter) ([]*mod
 		ids = append(ids, thread.ThreadID)
 		runIDs = append(runIDs, thread.LastRunID)
 	}
-	var runs []*model.RunRecord
+	var runs []*agentmodel.RunRecord
 	err = d.Client.DB(ctx, filter.Primary || filter.ForUpdate).Where("run_id IN ?", runIDs).Find(&runs).Error
 	if err != nil {
 		return nil, err
 	}
-	byID := make(map[string]*model.RunRecord, len(runs))
+	byID := make(map[string]*agentmodel.RunRecord, len(runs))
 	for _, run := range runs {
 		byID[run.RunID] = run
 	}
@@ -59,7 +60,7 @@ func (d *ThreadDAO) Get(ctx context.Context, filter *model.ThreadFilter) ([]*mod
 		ThreadID int64
 		Count    int64
 	}
-	err = d.Client.DB(ctx, filter.Primary || filter.ForUpdate).Model(&model.Message{}).Select("thread_id, COUNT(*) AS count").Where("thread_id IN ? AND status = ?", ids, model.MessageStatusPending).Group("thread_id").Scan(&counts).Error
+	err = d.Client.DB(ctx, filter.Primary || filter.ForUpdate).Model(&agentmodel.MailboxMessage{}).Select("thread_id, COUNT(*) AS count").Where("thread_id IN ? AND status = ?", ids, agentmodel.MessageStatusPending).Group("thread_id").Scan(&counts).Error
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +75,7 @@ func (d *ThreadDAO) Get(ctx context.Context, filter *model.ThreadFilter) ([]*mod
 	return threads, nil
 }
 
-func (d *ThreadDAO) Update(ctx context.Context, filter *model.ThreadFilter, values map[string]any) (bool, error) {
+func (d *ThreadDAO) Update(ctx context.Context, filter *agentmodel.ThreadFilter, values map[string]any) (bool, error) {
 	if filter == nil || len(filter.IDs) == 0 || filter.ForUpdate {
 		return false, errors.New("invalid thread filter")
 	}
@@ -87,7 +88,7 @@ func (d *ThreadDAO) Update(ctx context.Context, filter *model.ThreadFilter, valu
 		}
 		values["metadata_json"] = string(encoded)
 	}
-	result := filter.DBFilter(d.Client.DB(ctx, true).Model(&model.Thread{})).Updates(values)
+	result := filter.DBFilter(d.Client.DB(ctx, true).Model(&agentmodel.ThreadRecord{})).Updates(values)
 	if result.Error != nil {
 		return false, result.Error
 	}
@@ -97,19 +98,19 @@ func (d *ThreadDAO) Update(ctx context.Context, filter *model.ThreadFilter, valu
 // Delete removes a closed thread and its mailbox in one transaction.
 func (d *ThreadDAO) Delete(ctx context.Context, id int64) error {
 	return d.Client.DB(ctx, true).Transaction(func(tx *gorm.DB) error {
-		var thread model.Thread
+		var thread agentmodel.ThreadRecord
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("thread_id = ?", id).Take(&thread).Error
 		if err != nil {
 			return err
 		}
-		if thread.Status != model.ThreadStatusClosed {
+		if thread.Status != agentmodel.ThreadStatusClosed {
 			return ErrThreadNotClosed
 		}
-		err = tx.Where("thread_id = ?", id).Delete(&Message{}).Error
+		err = tx.Where("thread_id = ?", id).Delete(&agentmodel.MailboxMessage{}).Error
 		if err != nil {
 			return err
 		}
-		err = tx.Where("thread_id = ?", id).Delete(&model.RunRecord{}).Error
+		err = tx.Where("thread_id = ?", id).Delete(&agentmodel.RunRecord{}).Error
 		if err != nil {
 			return err
 		}

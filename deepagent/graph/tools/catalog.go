@@ -6,30 +6,23 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cloudwego/eino/components/tool"
+	agentmodel "eino-cli/deepagent/model"
+
 	"github.com/cloudwego/eino/schema"
 )
 
-// ToolDescriptor carries the tool and its execution capabilities from the constructor.
-// ToolSet registers this descriptor; execution uses the original Eino Tool.
-type ToolDescriptor struct {
-	Tool             tool.BaseTool
-	ReadOnly         bool
-	RequiresApproval bool
-	ParallelSafe     bool
-	ReturnDirect     bool
-
-	toolInfo *schema.ToolInfo // Cached by NewToolSet; not supplied by callers.
-}
-
 // ToolSet is immutable after construction; filtered sets share their tool definitions.
 type ToolSet struct {
-	toolsByName map[string]ToolDescriptor
-	toolNames   []string
+	toolsByName     map[string]agentmodel.ToolDescriptor
+	toolInfosByName map[string]*schema.ToolInfo
+	toolNames       []string
 }
 
-func NewToolSet(ctx context.Context, toolDescriptors []ToolDescriptor) (*ToolSet, error) {
-	toolSet := &ToolSet{toolsByName: make(map[string]ToolDescriptor)}
+func NewToolSet(ctx context.Context, toolDescriptors []agentmodel.ToolDescriptor) (*ToolSet, error) {
+	toolSet := &ToolSet{
+		toolsByName:     make(map[string]agentmodel.ToolDescriptor),
+		toolInfosByName: make(map[string]*schema.ToolInfo),
+	}
 	for _, toolDescriptor := range toolDescriptors {
 		if toolDescriptor.Tool == nil {
 			return nil, fmt.Errorf("nil tool")
@@ -49,14 +42,14 @@ func NewToolSet(ctx context.Context, toolDescriptors []ToolDescriptor) (*ToolSet
 		if err != nil {
 			return nil, err
 		}
-		toolDescriptor.toolInfo = toolInfo
 		toolSet.toolsByName[toolInfo.Name] = toolDescriptor
+		toolSet.toolInfosByName[toolInfo.Name] = toolInfo
 		toolSet.toolNames = append(toolSet.toolNames, toolInfo.Name)
 	}
 	return toolSet, nil
 }
 
-func (toolSet *ToolSet) GetToolDescriptor(toolName string) (ToolDescriptor, bool) {
+func (toolSet *ToolSet) GetToolDescriptor(toolName string) (agentmodel.ToolDescriptor, bool) {
 	toolDescriptor, exists := toolSet.toolsByName[toolName]
 	return toolDescriptor, exists
 }
@@ -68,7 +61,7 @@ func (toolSet *ToolSet) GetToolInfos(ctx context.Context) ([]*schema.ToolInfo, e
 	}
 	toolInfos := make([]*schema.ToolInfo, 0, len(toolSet.toolNames))
 	for _, toolName := range toolSet.toolNames {
-		toolInfo, err := cloneToolInfo(toolSet.toolsByName[toolName].toolInfo)
+		toolInfo, err := cloneToolInfo(toolSet.toolInfosByName[toolName])
 		if err != nil {
 			return nil, err
 		}
@@ -77,8 +70,11 @@ func (toolSet *ToolSet) GetToolInfos(ctx context.Context) ([]*schema.ToolInfo, e
 	return toolInfos, nil
 }
 
-func (toolSet *ToolSet) FilterTools(ctx context.Context, readOnly bool, mask Mask) (*ToolSet, error) {
-	filteredToolSet := &ToolSet{toolsByName: make(map[string]ToolDescriptor)}
+func (toolSet *ToolSet) FilterTools(ctx context.Context, readOnly bool, mask agentmodel.Mask) (*ToolSet, error) {
+	filteredToolSet := &ToolSet{
+		toolsByName:     make(map[string]agentmodel.ToolDescriptor),
+		toolInfosByName: toolSet.toolInfosByName,
+	}
 	for _, toolName := range toolSet.toolNames {
 		err := ctx.Err()
 		if err != nil {
@@ -88,7 +84,7 @@ func (toolSet *ToolSet) FilterTools(ctx context.Context, readOnly bool, mask Mas
 		if readOnly && !toolDescriptor.ReadOnly {
 			continue
 		}
-		toolInfo, err := cloneToolInfo(toolSet.toolsByName[toolName].toolInfo)
+		toolInfo, err := cloneToolInfo(toolSet.toolInfosByName[toolName])
 		if err != nil {
 			return nil, err
 		}

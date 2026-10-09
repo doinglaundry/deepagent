@@ -9,7 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	agentmodel "eino-cli/deepagent/model"
+
+	yaml "gopkg.in/yaml.v3"
 )
 
 type projectSkill struct{ name, description, path, body string }
@@ -18,7 +20,7 @@ type skillCatalog struct {
 	names  []string
 }
 
-func DiscoverSkills(workDir string, configured []string) (SkillLoader, error) {
+func DiscoverSkills(workDir string, configured []string) (agentmodel.SkillLoader, error) {
 	skillCatalog := &skillCatalog{skills: map[string]projectSkill{}}
 	paths := append([]string(nil), configured...)
 	if len(paths) == 0 {
@@ -133,15 +135,15 @@ func DiscoverSkills(workDir string, configured []string) (SkillLoader, error) {
 	sort.Strings(skillCatalog.names)
 	return skillCatalog, nil
 }
-func (skillCatalog *skillCatalog) ListSkills(ctx context.Context) ([]*SkillMetadata, error) {
+func (skillCatalog *skillCatalog) ListSkills(ctx context.Context) ([]*agentmodel.SkillMetadata, error) {
 	err := ctx.Err()
 	if err != nil {
 		return nil, err
 	}
-	skillMetadata := make([]*SkillMetadata, 0, len(skillCatalog.names))
+	skillMetadata := make([]*agentmodel.SkillMetadata, 0, len(skillCatalog.names))
 	for _, name := range skillCatalog.names {
 		skill := skillCatalog.skills[name]
-		skillMetadata = append(skillMetadata, &SkillMetadata{Name: skill.name, Description: skill.description, Path: skill.path})
+		skillMetadata = append(skillMetadata, &agentmodel.SkillMetadata{Name: skill.name, Description: skill.description, Path: skill.path})
 	}
 	return skillMetadata, nil
 }

@@ -10,8 +10,8 @@ import (
 
 	dalcache "eino-cli/deepagent/dal/cache"
 	daldb "eino-cli/deepagent/dal/db"
-	dalmodel "eino-cli/deepagent/dal/model"
-	eventpkg "eino-cli/deepagent/protocol/event"
+	agentmodel "eino-cli/deepagent/model"
+
 	"github.com/google/uuid"
 )
 
@@ -19,11 +19,11 @@ func TestToolCallOutputRoutingFromPublicPayload(t *testing.T) {
 	delta, result := "partial result", "completed result"
 	cases := []struct {
 		name    string
-		payload eventpkg.ToolCallEventPayload
+		payload agentmodel.ToolCallEventPayload
 		action  outputEventAction
 	}{
-		{"streaming", eventpkg.ToolCallEventPayload{ToolCallID: "call-1", OutputDelta: &delta}, outputActionLiveOnly},
-		{"completed", eventpkg.ToolCallEventPayload{ToolCallID: "call-1", ResultJSON: &result, Status: eventpkg.ToolCallStatusFinished}, outputActionSaveMessage},
+		{"streaming", agentmodel.ToolCallEventPayload{ToolCallID: "call-1", OutputDelta: &delta}, outputActionLiveOnly},
+		{"completed", agentmodel.ToolCallEventPayload{ToolCallID: "call-1", ResultJSON: &result, Status: agentmodel.ToolCallStatusFinished}, outputActionSaveMessage},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -35,7 +35,7 @@ func TestToolCallOutputRoutingFromPublicPayload(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rule := outputEventRuleFor(eventpkg.EventTypeToolCall.String(), payload)
+			rule := outputEventRuleFor(agentmodel.EventTypeToolCall.String(), payload)
 			if rule.action != tc.action || rule.messageType != "tool" {
 				t.Fatalf("rule = %+v, want action %d and tool message type", rule, tc.action)
 			}
@@ -47,7 +47,7 @@ func TestToolCallOutputRoutingFromPublicPayload(t *testing.T) {
 }
 
 // These tests use an isolated database selected explicitly by the caller.
-func releaseTestManager(t *testing.T) (*Manager, *dalmodel.Thread) {
+func releaseTestManager(t *testing.T) (*Manager, *agentmodel.ThreadRecord) {
 	t.Helper()
 	dsn := os.Getenv("DEEPAGENT_TEST_MYSQL_DSN")
 	addr := os.Getenv("DEEPAGENT_TEST_REDIS_ADDR")
@@ -80,21 +80,21 @@ func releaseTestManager(t *testing.T) (*Manager, *dalmodel.Thread) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	thread := &dalmodel.Thread{ThreadID: id, Status: dalmodel.ThreadStatusOpen, LeaseToken: uuid.NewString()}
+	thread := &agentmodel.ThreadRecord{ThreadID: id, Status: agentmodel.ThreadStatusOpen, LeaseToken: uuid.NewString()}
 	err = manager.threads.Create(ctx, thread)
 	if err != nil {
 		t.Fatal(err)
 	}
 	until := time.Now().Add(time.Minute)
 	thread.LeaseUntil = &until
-	_, err = manager.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{id}}, map[string]any{"lease_until": until})
+	_, err = manager.threads.Update(ctx, &agentmodel.ThreadFilter{IDs: []int64{id}}, map[string]any{"lease_until": until})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		client.DB(ctx, true).Where("thread_id = ?", id).Delete(&dalmodel.Message{})
-		client.DB(ctx, true).Where("thread_id = ?", id).Delete(&dalmodel.Thread{})
-		client.DB(ctx, true).Where("thread_id = ?", id).Delete(&dalmodel.RunRecord{})
+		client.DB(ctx, true).Where("thread_id = ?", id).Delete(&agentmodel.MailboxMessage{})
+		client.DB(ctx, true).Where("thread_id = ?", id).Delete(&agentmodel.ThreadRecord{})
+		client.DB(ctx, true).Where("thread_id = ?", id).Delete(&agentmodel.RunRecord{})
 	})
 	return manager, thread
 }
@@ -112,7 +112,7 @@ func TestManager_ReleaseKeepsRunOutcomeSeparate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{{EventType: "run_status", Payload: raw}})
+			err = manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{{EventType: "run_status", Payload: raw}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,7 +120,7 @@ func TestManager_ReleaseKeepsRunOutcomeSeparate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if released.Status != dalmodel.ThreadStatusOpen || released.LeaseToken != "" || released.LastRunID != "run" || released.LastRun.Status != status {
+			if released.Status != agentmodel.ThreadStatusOpen || released.LeaseToken != "" || released.LastRunID != "run" || released.LastRun.Status != status {
 				t.Fatalf("released=%+v outcome=%+v", released, released.LastRun)
 			}
 
@@ -131,7 +131,7 @@ func TestManager_ReleaseKeepsRunOutcomeSeparate(t *testing.T) {
 func TestManager_ReleaseIgnoresOutcomeFromPreviousLease(t *testing.T) {
 	manager, thread := releaseTestManager(t)
 	ctx := context.Background()
-	err := manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"interrupt"}`)}})
+	err := manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"interrupt"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,15 +143,15 @@ func TestManager_ReleaseIgnoresOutcomeFromPreviousLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = manager.Submit(ctx, SubmitRequest{ThreadID: thread.ThreadID, Input: &InputMessage{MessageType: "input", Payload: []byte(`{}`)}})
+	_, err = manager.Submit(ctx, agentmodel.SubmitRequest{ThreadID: thread.ThreadID, Input: &agentmodel.InputMessage{MessageType: "input", Payload: []byte(`{}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	acquired, err := manager.Acquire(ctx, AcquireRequest{})
+	acquired, err := manager.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || acquired.Lease == nil {
 		t.Fatalf("claim=%+v err=%v", acquired, err)
 	}
-	err = manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"finished"}`)}})
+	err = manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"finished"}`)}})
 	if !errors.Is(err, ErrLeaseMismatch) {
 		t.Fatalf("old writer error=%v", err)
 	}
@@ -159,7 +159,7 @@ func TestManager_ReleaseIgnoresOutcomeFromPreviousLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if released.Status != dalmodel.ThreadStatusOpen {
+	if released.Status != agentmodel.ThreadStatusOpen {
 		t.Fatalf("old blocked outcome affected new lease: %+v", released)
 	}
 }
@@ -167,20 +167,20 @@ func TestManager_ReleaseIgnoresOutcomeFromPreviousLease(t *testing.T) {
 func TestManager_RunOutcomeRejectsStaleRunAndMissingCheckpoint(t *testing.T) {
 	manager, thread := releaseTestManager(t)
 	ctx := context.Background()
-	err := manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "new-run", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"started"}`)}})
+	err := manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "new-run", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"started"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, frame := range []OutputFrame{
+	for _, frame := range []agentmodel.OutputFrame{
 		{RunID: "old-run", EventType: "run_status", Payload: []byte(`{"status":"finished"}`)},
 		{RunID: "new-run", EventType: "run_status", Payload: []byte(`{"status":"blocked"}`)},
 	} {
-		err = manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, frame.RunID, []OutputFrame{frame})
+		err = manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, frame.RunID, []agentmodel.OutputFrame{frame})
 		if err == nil {
 			t.Fatalf("accepted invalid terminal frame: %+v", frame)
 		}
 	}
-	rows, err := manager.threads.Get(ctx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}, Primary: true})
+	rows, err := manager.threads.Get(ctx, &agentmodel.ThreadFilter{IDs: []int64{thread.ThreadID}, Primary: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,11 +196,11 @@ func TestManager_ReleasePreservesClosingAndRejectsLostLease(t *testing.T) {
 	if !errors.Is(err, ErrLeaseMismatch) {
 		t.Fatalf("wrong token error=%v", err)
 	}
-	_, err = manager.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"status": dalmodel.ThreadStatusClosing})
+	_, err = manager.threads.Update(ctx, &agentmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"status": agentmodel.ThreadStatusClosing})
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"interrupt"}`)}})
+	err = manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"interrupt"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestManager_ReleasePreservesClosingAndRejectsLostLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if released.Status != dalmodel.ThreadStatusClosing || released.LeaseToken != "" || released.LeaseUntil != nil {
+	if released.Status != agentmodel.ThreadStatusClosing || released.LeaseToken != "" || released.LeaseUntil != nil {
 		t.Fatalf("closing lost: %+v", released)
 	}
 }
@@ -233,11 +233,11 @@ func TestManager_RunOutcomeIncludesCompactionAndStartupFailure(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, step.run, []OutputFrame{{EventType: "run_status", Payload: raw}})
+		err = manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, step.run, []agentmodel.OutputFrame{{EventType: "run_status", Payload: raw}})
 		if err != nil {
 			t.Fatalf("step=%+v error=%v", step, err)
 		}
-		rows, err := manager.threads.Get(ctx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}, Primary: true})
+		rows, err := manager.threads.Get(ctx, &agentmodel.ThreadFilter{IDs: []int64{thread.ThreadID}, Primary: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -268,7 +268,7 @@ func TestSessionSequenceResumesFromExistingCounter(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream := &StreamStreamOut{redis: redis}
-	err = stream.FanoutEventRecords(ctx, sessionID, []OutputFrame{
+	err = stream.FanoutEventRecords(ctx, sessionID, []agentmodel.OutputFrame{
 		{EventType: "assistant_message", Payload: []byte(`{"text":"first"}`)},
 		{EventType: "assistant_message", Payload: []byte(`{"text":"second"}`)},
 	})

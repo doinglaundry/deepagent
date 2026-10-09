@@ -1,40 +1,28 @@
 package sandbox
 
 import (
-	"context"
 	"sync"
+
+	agentmodel "eino-cli/deepagent/model"
 )
-
-type SandboxManager interface {
-	SessionID() string
-	GetSandboxIdBySessionId(ctx context.Context, sessionID string) (string, error)
-	Get(ctx context.Context, sandboxID string) (Sandbox, error)
-	Release(ctx context.Context, sandboxID string) error
-
-	Reset()
-	UsesSessionDataMounts() bool
-	AllowsIsolatedExec() bool
-}
 
 var defaultManager struct {
 	sync.RWMutex
-	m SandboxManager
+	m agentmodel.SandboxManager
 }
 
 // Default returns the process-wide manager, or nil when none is registered.
-func Default() SandboxManager {
+func Default() agentmodel.SandboxManager {
 	defaultManager.RLock()
 	defer defaultManager.RUnlock()
 	return defaultManager.m
 }
 
-func SetDefault(m SandboxManager) {
+func SetDefault(m agentmodel.SandboxManager) {
 	defaultManager.Lock()
 	defer defaultManager.Unlock()
 	defaultManager.m = m
 }
-
-type Shutdowner interface{ Shutdown() }
 
 func ShutdownDefault() {
 	defaultManager.Lock()
@@ -42,7 +30,7 @@ func ShutdownDefault() {
 	defaultManager.m = nil
 	defaultManager.Unlock()
 
-	s, ok := m.(Shutdowner)
+	s, ok := m.(agentmodel.Shutdowner)
 	if ok {
 		s.Shutdown()
 	}

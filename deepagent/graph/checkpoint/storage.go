@@ -9,18 +9,18 @@ import (
 	"path/filepath"
 	"strings"
 
-	dalcache "eino-cli/deepagent/dal/cache"
+	agentmodel "eino-cli/deepagent/model"
 
 	redis "github.com/redis/go-redis/v9"
 )
 
 // RedisStore 使用通用 Redis 客户端，适配 Eino 的字节存储接口。
 type RedisStore struct {
-	client dalcache.RedisClient
+	client agentmodel.RedisClient
 	prefix string
 }
 
-func NewRedisStore(client dalcache.RedisClient, prefix string) (*RedisStore, error) {
+func NewRedisStore(client agentmodel.RedisClient, prefix string) (*RedisStore, error) {
 	if client == nil || strings.TrimSpace(prefix) == "" {
 		return nil, errors.New("Redis checkpoint client and namespace prefix required")
 	}

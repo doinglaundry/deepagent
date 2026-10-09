@@ -9,10 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/run"
 
 	"github.com/google/uuid"
@@ -40,7 +37,7 @@ func (t *Thread) ResumeRun(ctx context.Context, runID string, opts ResumeRunOpti
 	return r.Handle(), nil
 }
 
-func (t *Thread) InterruptRun(opts run.InterruptOptions) bool {
+func (t *Thread) InterruptRun(opts agentmodel.InterruptOptions) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.current == nil {
@@ -50,11 +47,11 @@ func (t *Thread) InterruptRun(opts run.InterruptOptions) bool {
 	return true
 }
 
-func (t *Thread) Compact(ctx context.Context) (*types.ContextTokenUsage, error) {
+func (t *Thread) Compact(ctx context.Context) (*agentmodel.ContextTokenUsage, error) {
 	return t.CompactWithRunID(ctx, uuid.NewString())
 }
 
-func (t *Thread) CompactWithRunID(ctx context.Context, runID string) (*types.ContextTokenUsage, error) {
+func (t *Thread) CompactWithRunID(ctx context.Context, runID string) (*agentmodel.ContextTokenUsage, error) {
 	if runID == "" {
 		return nil, ErrInvalidOp
 	}
@@ -68,13 +65,13 @@ func (t *Thread) CompactWithRunID(ctx context.Context, runID string) (*types.Con
 	return t.conversation.Compact(compactCtx, runID)
 }
 
-func (t *Thread) Interrupt(ctx context.Context, req TransportThreadInterruptRequest) error {
+func (t *Thread) Interrupt(ctx context.Context, req agentmodel.TransportThreadInterruptRequest) error {
 	ctx = t.withThreadInfo(ctx)
 
 	if t.interruptCompact(ctx, req) {
 		return nil
 	}
-	if t.InterruptRun(run.InterruptOptions{Timeout: req.Timeout, Metadata: threadInterruptMetadata(req)}) {
+	if t.InterruptRun(agentmodel.InterruptOptions{Timeout: req.Timeout, Metadata: threadInterruptMetadata(req)}) {
 		return nil
 	}
 	if t.ActiveRun() == nil {
@@ -83,7 +80,7 @@ func (t *Thread) Interrupt(ctx context.Context, req TransportThreadInterruptRequ
 	return fmt.Errorf("interrupt active turn failed: kind=%s control_message_id=%s", req.Kind, req.ControlMessageID)
 }
 
-func (t *Thread) postResumeRun(ctx context.Context, cmd resumeRunCommand) (posted *TransportPostMessageResult, err error) {
+func (t *Thread) postResumeRun(ctx context.Context, cmd resumeRunCommand) (posted *agentmodel.TransportPostMessageResult, err error) {
 	payload := cmd.payload
 	resumeData, err := t.resumeData(ctx, payload)
 	if err != nil {
@@ -102,14 +99,14 @@ func (t *Thread) postResumeRun(ctx context.Context, cmd resumeRunCommand) (poste
 			resumeIDs = append(resumeIDs, answer.InterruptID)
 		}
 	}
-	enablePlan := cmd.mode == inputpkg.UserMessageModeImplPlan
+	enablePlan := cmd.mode == agentmodel.UserMessageModeImplPlan
 	opts := ResumeRunOptions{
 		EnablePlan:         &enablePlan,
 		CheckpointID:       payload.CheckpointID,
 		ResumeInterruptIDs: resumeIDs,
 		ResumeData:         resumeData,
 		OnRunStart: func(runCtx context.Context, req RunStartRequest) context.Context {
-			return ContextContextWithRunIdentity(runCtx, ContextRunIdentity{
+			return agentmodel.ContextContextWithRunIdentity(runCtx, agentmodel.ContextRunIdentity{
 				ThreadID:  t.threadInfo.ThreadID,
 				RunID:     req.RunID,
 				MessageID: workerMessageID(cmd.message),
@@ -120,10 +117,10 @@ func (t *Thread) postResumeRun(ctx context.Context, cmd resumeRunCommand) (poste
 	if err != nil {
 		return nil, fmt.Errorf("resume turn: %w", err)
 	}
-	return &TransportPostMessageResult{RunID: payload.RunID}, nil
+	return &agentmodel.TransportPostMessageResult{RunID: payload.RunID}, nil
 }
 
-func (t *Thread) resumeData(ctx context.Context, payload inputpkg.ResumeRunPayload) (map[string]any, error) {
+func (t *Thread) resumeData(ctx context.Context, payload agentmodel.ResumeRunPayload) (map[string]any, error) {
 	return resumeData(ctx, payload, t.interruptResume)
 }
 
@@ -149,15 +146,15 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 	defer t.finishCompact(op)
 	defer cancel()
 	defer func() {
-		t.emitAgentEvent(context.WithoutCancel(ctx), run.Event{ID: t.eventID(runID), TS: time.Now(), ThreadID: t.ThreadID, RunID: runID, Type: run.EventRunEnd, Payload: run.RunEndPayload{}, ConsumedInputs: cmd.consumedInputs, ConsumedInputsMeta: cmd.consumedInputsMeta})
+		t.emitAgentEvent(context.WithoutCancel(ctx), agentmodel.RunEvent{ID: t.eventID(runID), TS: time.Now(), ThreadID: t.ThreadID, RunID: runID, Type: agentmodel.EventRunEnd, Payload: agentmodel.RunEndPayload{}, ConsumedInputs: cmd.consumedInputs, ConsumedInputsMeta: cmd.consumedInputsMeta})
 	}()
 
-	t.emitAgentEvent(context.WithoutCancel(ctx), run.Event{
+	t.emitAgentEvent(context.WithoutCancel(ctx), agentmodel.RunEvent{
 		ID:                 t.eventID(runID),
 		TS:                 time.Now(),
 		ThreadID:           t.ThreadID,
 		RunID:              runID,
-		Type:               run.EventContextCompactStarted,
+		Type:               agentmodel.EventContextCompactStarted,
 		Payload:            t.ContextManager().GetContextUsage(),
 		ConsumedInputs:     cmd.consumedInputs,
 		ConsumedInputsMeta: cmd.consumedInputsMeta,
@@ -165,13 +162,13 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 	usage, err := t.conversation.Compact(compactCtx, runID)
 	if err != nil {
 		if errors.Is(err, ErrThreadRunning) {
-			t.emitAgentEvent(context.WithoutCancel(ctx), run.Event{
+			t.emitAgentEvent(context.WithoutCancel(ctx), agentmodel.RunEvent{
 				ID:                 t.eventID(runID),
 				TS:                 time.Now(),
 				ThreadID:           t.ThreadID,
 				RunID:              runID,
-				Type:               run.EventError,
-				Payload:            run.ErrorPayload{Message: "compact rejected: thread is running"},
+				Type:               agentmodel.EventError,
+				Payload:            agentmodel.ErrorPayload{Message: "compact rejected: thread is running"},
 				ConsumedInputs:     cmd.consumedInputs,
 				ConsumedInputsMeta: cmd.consumedInputsMeta,
 			})
@@ -184,13 +181,13 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 			return nil
 		}
 
-		t.emitAgentEvent(context.WithoutCancel(ctx), run.Event{
+		t.emitAgentEvent(context.WithoutCancel(ctx), agentmodel.RunEvent{
 			ID:                 t.eventID(runID),
 			TS:                 time.Now(),
 			ThreadID:           t.ThreadID,
 			RunID:              runID,
-			Type:               run.EventError,
-			Payload:            run.ErrorPayload{Message: fmt.Sprintf("compact failed: %v", err), Cancelled: errors.Is(err, context.Canceled)},
+			Type:               agentmodel.EventError,
+			Payload:            agentmodel.ErrorPayload{Message: fmt.Sprintf("compact failed: %v", err), Cancelled: errors.Is(err, context.Canceled)},
 			ConsumedInputs:     cmd.consumedInputs,
 			ConsumedInputsMeta: cmd.consumedInputsMeta,
 		})
@@ -201,12 +198,12 @@ func (t *Thread) postCompact(ctx context.Context, cmd compactCommand) (err error
 		usage = &currentUsage
 	}
 
-	t.emitAgentEvent(context.WithoutCancel(ctx), run.Event{
+	t.emitAgentEvent(context.WithoutCancel(ctx), agentmodel.RunEvent{
 		ID:                 t.eventID(runID),
 		TS:                 time.Now(),
 		ThreadID:           t.ThreadID,
 		RunID:              runID,
-		Type:               run.EventContextCompacted,
+		Type:               agentmodel.EventContextCompacted,
 		Payload:            *usage,
 		ConsumedInputs:     cmd.consumedInputs,
 		ConsumedInputsMeta: cmd.consumedInputsMeta,
@@ -245,7 +242,7 @@ func (t *Thread) activeCompact() *compactOperation {
 	return &copy
 }
 
-func (t *Thread) interruptCompact(_ context.Context, req TransportThreadInterruptRequest) bool {
+func (t *Thread) interruptCompact(_ context.Context, req agentmodel.TransportThreadInterruptRequest) bool {
 	t.mu.Lock()
 	op := t.compact
 	if op == nil {
@@ -267,20 +264,20 @@ func (t *Thread) interruptCompact(_ context.Context, req TransportThreadInterrup
 	return true
 }
 
-func (t *Thread) compactInterruptRequest(op *compactOperation) (TransportThreadInterruptRequest, bool) {
+func (t *Thread) compactInterruptRequest(op *compactOperation) (agentmodel.TransportThreadInterruptRequest, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.compact != op || !op.interrupted {
-		return TransportThreadInterruptRequest{}, false
+		return agentmodel.TransportThreadInterruptRequest{}, false
 	}
 	return op.interrupt, true
 }
 
-func (t *Thread) emitCompactInterruptedEvent(ctx context.Context, op *compactOperation, req TransportThreadInterruptRequest) {
+func (t *Thread) emitCompactInterruptedEvent(ctx context.Context, op *compactOperation, req agentmodel.TransportThreadInterruptRequest) {
 	if op == nil {
 		return
 	}
-	t.emitAgentEvent(ctx, run.Event{
+	t.emitAgentEvent(ctx, agentmodel.RunEvent{
 		ID:                 t.eventID(op.runID),
 		TS:                 time.Now(),
 		ThreadID:           t.ThreadID,
@@ -293,27 +290,27 @@ func (t *Thread) emitCompactInterruptedEvent(ctx context.Context, op *compactOpe
 }
 
 type userInputCommand struct {
-	message      *TransportMessage
-	input        inputpkg.UserMessage
-	inputMessage *messagepkg.Message
-	mode         inputpkg.UserMessageMode
+	message      *agentmodel.TransportMessage
+	input        agentmodel.UserMessage
+	inputMessage *agentmodel.Message
+	mode         agentmodel.UserMessageMode
 }
 
 type resumeRunCommand struct {
-	message *TransportMessage
-	payload inputpkg.ResumeRunPayload
-	mode    inputpkg.UserMessageMode
+	message *agentmodel.TransportMessage
+	payload agentmodel.ResumeRunPayload
+	mode    agentmodel.UserMessageMode
 }
 
 type compactCommand struct {
-	message            *TransportMessage
+	message            *agentmodel.TransportMessage
 	runID              string
 	consumedMessageIDs []string
-	consumedInputs     []*messagepkg.Message
+	consumedInputs     []*agentmodel.Message
 	consumedInputsMeta []any
 }
 
-func decodeUserInputCommand(message *TransportMessage) (cmd userInputCommand, err error) {
+func decodeUserInputCommand(message *agentmodel.TransportMessage) (cmd userInputCommand, err error) {
 	input, err := parseUserMessage(message)
 	if err != nil {
 		return userInputCommand{}, err
@@ -335,7 +332,7 @@ func decodeUserInputCommand(message *TransportMessage) (cmd userInputCommand, er
 	}, nil
 }
 
-func decodeResumeRunCommand(message *TransportMessage) (cmd resumeRunCommand, err error) {
+func decodeResumeRunCommand(message *agentmodel.TransportMessage) (cmd resumeRunCommand, err error) {
 	payload, err := parseResumePayload(message)
 	if err != nil {
 		return resumeRunCommand{}, err
@@ -347,7 +344,7 @@ func decodeResumeRunCommand(message *TransportMessage) (cmd resumeRunCommand, er
 	}, nil
 }
 
-func decodeCompactCommand(message *TransportMessage) compactCommand {
+func decodeCompactCommand(message *agentmodel.TransportMessage) compactCommand {
 	consumed := compactConsumedMessageIDs(message)
 	return compactCommand{
 		message:            message,
@@ -358,14 +355,14 @@ func decodeCompactCommand(message *TransportMessage) compactCommand {
 	}
 }
 
-func workerMessageID(message *TransportMessage) (id string) {
+func workerMessageID(message *agentmodel.TransportMessage) (id string) {
 	if message == nil {
 		return ""
 	}
 	return message.ID
 }
 
-func compactRunID(message *TransportMessage) string {
+func compactRunID(message *agentmodel.TransportMessage) string {
 	if message != nil {
 		id := strings.TrimSpace(message.ID)
 		if id != "" {
@@ -375,41 +372,41 @@ func compactRunID(message *TransportMessage) string {
 	return "compact_" + uuid.NewString()
 }
 
-func compactConsumedMessageIDs(message *TransportMessage) []string {
+func compactConsumedMessageIDs(message *agentmodel.TransportMessage) []string {
 	if message == nil || strings.TrimSpace(message.ID) == "" {
 		return nil
 	}
 	return []string{strings.TrimSpace(message.ID)}
 }
 
-func compactConsumedInputsFromIDs(ids []string) []*messagepkg.Message {
+func compactConsumedInputsFromIDs(ids []string) []*agentmodel.Message {
 	if len(ids) == 0 {
 		return nil
 	}
-	out := make([]*messagepkg.Message, 0, len(ids))
+	out := make([]*agentmodel.Message, 0, len(ids))
 	for _, id := range ids {
-		msg := messagepkg.NewSystemMessage("compact")
+		msg := agentmodel.NewSystemMessage("compact")
 		msg.MessageID = id
 		out = append(out, msg)
 	}
 	return out
 }
 
-func compactConsumedInputsMeta(message *TransportMessage, consumedMessageIDs []string) []any {
+func compactConsumedInputsMeta(message *agentmodel.TransportMessage, consumedMessageIDs []string) []any {
 	if message == nil || len(consumedMessageIDs) == 0 || len(message.Metadata) == 0 {
 		return nil
 	}
 	return []any{maps.Clone(message.Metadata)}
 }
 
-func unsupportedRuntimeCommand(message *TransportMessage) error {
+func unsupportedRuntimeCommand(message *agentmodel.TransportMessage) error {
 	if message == nil {
 		return fmt.Errorf("worker message is required")
 	}
 	return fmt.Errorf("unsupported message type: %s", message.Type)
 }
 
-const agentEventContextCompactInterrupted run.EventType = "context_compact_interrupted"
+const agentEventContextCompactInterrupted agentmodel.RunEventType = "context_compact_interrupted"
 
 type contextCompactInterruptedPayload struct {
 	Kind             string
@@ -418,7 +415,7 @@ type contextCompactInterruptedPayload struct {
 	CutoffMessageID  string
 }
 
-func newContextCompactInterruptedPayload(req TransportThreadInterruptRequest) contextCompactInterruptedPayload {
+func newContextCompactInterruptedPayload(req agentmodel.TransportThreadInterruptRequest) contextCompactInterruptedPayload {
 	return contextCompactInterruptedPayload{
 		Kind:             string(req.Kind),
 		Reason:           req.Reason,
@@ -434,12 +431,12 @@ type compactOperation struct {
 	consumedInputsMeta []any
 	cancel             context.CancelFunc
 	interrupted        bool
-	interrupt          TransportThreadInterruptRequest
+	interrupt          agentmodel.TransportThreadInterruptRequest
 }
 
 // threadInterruptMetadata is the metadata forwarded into Run's
 // own interrupted event. Compact has its own worker event and does not use this.
-func threadInterruptMetadata(req TransportThreadInterruptRequest) map[string]string {
+func threadInterruptMetadata(req agentmodel.TransportThreadInterruptRequest) map[string]string {
 	metadata := map[string]string{}
 	if req.Kind != "" {
 		metadata["kind"] = string(req.Kind)
@@ -456,20 +453,20 @@ func threadInterruptMetadata(req TransportThreadInterruptRequest) map[string]str
 	return metadata
 }
 
-func parseResumePayload(message *TransportMessage) (inputpkg.ResumeRunPayload, error) {
-	var payload inputpkg.ResumeRunPayload
+func parseResumePayload(message *agentmodel.TransportMessage) (agentmodel.ResumeRunPayload, error) {
+	var payload agentmodel.ResumeRunPayload
 	err := json.Unmarshal(message.Payload, &payload)
 	if err != nil {
-		return inputpkg.ResumeRunPayload{}, fmt.Errorf("unmarshal resume payload: %w", err)
+		return agentmodel.ResumeRunPayload{}, fmt.Errorf("unmarshal resume payload: %w", err)
 	}
 	validationErr := payload.Validate()
 	if validationErr != nil {
-		return inputpkg.ResumeRunPayload{}, validationErr
+		return agentmodel.ResumeRunPayload{}, validationErr
 	}
 	return payload, nil
 }
 
-func resumeData(ctx context.Context, payload inputpkg.ResumeRunPayload, interruptResume InterruptResumeDecoder) (map[string]any, error) {
+func resumeData(ctx context.Context, payload agentmodel.ResumeRunPayload, interruptResume agentmodel.InterruptResumeDecoder) (map[string]any, error) {
 	if len(payload.Answers) > 0 {
 		if payload.Answers[0].InterruptID != payload.InterruptID || payload.Approval != nil || payload.RequestUserInput != nil || payload.Interrupt != nil {
 			return nil, fmt.Errorf("batch resume correlation or answer format is invalid")
@@ -483,7 +480,7 @@ func resumeData(ctx context.Context, payload inputpkg.ResumeRunPayload, interrup
 			if exists {
 				return nil, fmt.Errorf("duplicate batch interrupt ID %q", answer.InterruptID)
 			}
-			one := inputpkg.ResumeRunPayload{InterruptID: answer.InterruptID, Approval: answer.Approval, RequestUserInput: answer.RequestUserInput, Interrupt: answer.Interrupt}
+			one := agentmodel.ResumeRunPayload{InterruptID: answer.InterruptID, Approval: answer.Approval, RequestUserInput: answer.RequestUserInput, Interrupt: answer.Interrupt}
 			value, err := resumeData(ctx, one, interruptResume)
 			if err != nil {
 				return nil, err
@@ -510,29 +507,29 @@ func resumeData(ctx context.Context, payload inputpkg.ResumeRunPayload, interrup
 	return out, nil
 }
 
-func approvalResult(decision *inputpkg.ApprovalDecision) *tools.ApprovalResult {
+func approvalResult(decision *agentmodel.ApprovalDecision) *agentmodel.ApprovalResult {
 	if decision == nil {
-		return &tools.ApprovalResult{}
+		return &agentmodel.ApprovalResult{}
 	}
-	out := &tools.ApprovalResult{Approved: decision.Approved, CancelRun: decision.CancelRun}
+	out := &agentmodel.ApprovalResult{Approved: decision.Approved, CancelRun: decision.CancelRun}
 	if decision.Reason != "" {
 		out.DisapproveReason = &decision.Reason
 	}
 	return out
 }
 
-func planInputResponse(response *inputpkg.RequestUserInputResponse) *types.RequestUserInputResponse {
+func planInputResponse(response *agentmodel.InputRequestUserInputResponse) *agentmodel.RequestUserInputResponse {
 	if response == nil {
 		return nil
 	}
-	answers := make(map[string]types.RequestUserInputAnswer, len(response.Answers))
+	answers := make(map[string]agentmodel.RequestUserInputAnswer, len(response.Answers))
 	for key, answer := range response.Answers {
-		answers[key] = types.RequestUserInputAnswer{Answers: append([]string(nil), answer.Answers...)}
+		answers[key] = agentmodel.RequestUserInputAnswer{Answers: append([]string(nil), answer.Answers...)}
 	}
-	return &types.RequestUserInputResponse{Answers: answers}
+	return &agentmodel.RequestUserInputResponse{Answers: answers}
 }
 
-func interruptResumeData(ctx context.Context, payload inputpkg.ResumeRunPayload, decoder InterruptResumeDecoder) (any, error) {
+func interruptResumeData(ctx context.Context, payload agentmodel.ResumeRunPayload, decoder agentmodel.InterruptResumeDecoder) (any, error) {
 	if payload.Interrupt == nil {
 		return nil, fmt.Errorf("interrupt resume payload is required")
 	}
@@ -549,7 +546,7 @@ func interruptResumeData(ctx context.Context, payload inputpkg.ResumeRunPayload,
 		if answer == "" {
 			return nil, fmt.Errorf("follow_up.user_answer is required")
 		}
-		return &tools.FollowUpInfo{UserAnswer: answer}, nil
+		return &agentmodel.FollowUpInfo{UserAnswer: answer}, nil
 	default:
 		if decoder == nil {
 			return nil, fmt.Errorf("unsupported interrupt resume kind=%q info_type=%q", payload.Interrupt.Kind, payload.Interrupt.InfoType)

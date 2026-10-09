@@ -9,22 +9,21 @@ import (
 	"sort"
 
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )
 
-func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*types.RunState, error) {
-	runState.Phase = types.PhaseTools
-	toolCalls := make([]types.ToolCall, len(runState.Calls))
+func (graph *Graph) callTools(ctx context.Context, runState *agentmodel.RunState) (*agentmodel.RunState, error) {
+	runState.Phase = agentmodel.PhaseTools
+	toolCalls := make([]agentmodel.ToolCall, len(runState.Calls))
 	for i := range runState.Calls {
 		toolCalls[i] = runState.Calls[i].Call
 	}
-	err := graph.toolExecutor.executeToolBatch(ctx, toolCalls, func(ctx context.Context, call types.ToolCall, chunk string) error {
-		return graph.emitEvent(ctx, runState, "tool_call_output_chunk", call.ID, types.ToolCallOutputChunkPayload{Name: call.Name, CallID: call.ID, Chunk: chunk})
+	err := graph.toolExecutor.executeToolBatch(ctx, toolCalls, func(ctx context.Context, call agentmodel.ToolCall, chunk string) error {
+		return graph.emitEvent(ctx, runState, "tool_call_output_chunk", call.ID, agentmodel.ToolCallOutputChunkPayload{Name: call.Name, CallID: call.ID, Chunk: chunk})
 	})
 	graph.toolExecutor.snapshotToolExecutions(runState.Calls)
 	// A later call may interrupt this batch. Its first Eino snapshot must not
@@ -33,7 +32,7 @@ func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*t
 	for _, item := range runState.Pending {
 		completed := false
 		for _, call := range runState.Calls {
-			if item.CallID != "" && item.CallID == call.Call.ID && call.Status == types.CallCompleted {
+			if item.CallID != "" && item.CallID == call.Call.ID && call.Status == agentmodel.CallCompleted {
 				completed = true
 				break
 			}
@@ -51,7 +50,7 @@ func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*t
 		call := callState.Call
 		result := callState.Result
 		if call.Name == tools.ToolUpdatePlan && !result.IsError {
-			var update tools.PlanUpdate
+			var update agentmodel.PlanUpdate
 			err := json.Unmarshal([]byte(result.Content), &update)
 			if err != nil {
 				return nil, fmt.Errorf("decode update_plan result: %w", err)
@@ -61,7 +60,7 @@ func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*t
 				return nil, err
 			}
 		}
-		message := messagepkg.NewToolMessage(result.Content, result.CallID)
+		message := agentmodel.NewToolMessage(result.Content, result.CallID)
 		message.ToolName = call.Name
 		if len(result.MultiContent) > 0 {
 			message.Content = ""
@@ -71,7 +70,7 @@ func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*t
 		if err != nil {
 			return nil, err
 		}
-		err = graph.emitEvent(ctx, runState, "tool_end", result.CallID, types.ToolEndPayload{MultiContent: result.MultiContent, Name: call.Name, CallID: call.ID, ArgumentsInJSON: call.Arguments, ToolStartTime: callState.StartedAt, Result: result.Content, IsError: result.IsError})
+		err = graph.emitEvent(ctx, runState, "tool_end", result.CallID, agentmodel.ToolEndPayload{MultiContent: result.MultiContent, Name: call.Name, CallID: call.ID, ArgumentsInJSON: call.Arguments, ToolStartTime: callState.StartedAt, Result: result.Content, IsError: result.IsError})
 		if err != nil {
 			return nil, err
 		}
@@ -80,9 +79,9 @@ func (graph *Graph) callTools(ctx context.Context, runState *types.RunState) (*t
 	return runState, nil
 }
 
-func (toolExecutor *toolExecutor) authorizeToolCall(ctx context.Context, toolCall types.ToolCall) (tools.ToolDescriptor, *types.ToolResult, error) {
+func (toolExecutor *toolExecutor) authorizeToolCall(ctx context.Context, toolCall agentmodel.ToolCall) (agentmodel.ToolDescriptor, *agentmodel.ToolResult, error) {
 	toolDescriptor, ok := toolExecutor.toolSet.GetToolDescriptor(toolCall.Name)
-	toolResult := &types.ToolResult{CallID: toolCall.ID, ReturnDirect: toolDescriptor.ReturnDirect}
+	toolResult := &agentmodel.ToolResult{CallID: toolCall.ID, ReturnDirect: toolDescriptor.ReturnDirect}
 	if !ok {
 		toolResult.IsError = true
 		toolResult.Content = "unknown tool: " + toolCall.Name
@@ -92,9 +91,9 @@ func (toolExecutor *toolExecutor) authorizeToolCall(ctx context.Context, toolCal
 	if err != nil {
 		return toolDescriptor, nil, err
 	}
-	decision := tools.Decision{Action: tools.Allow}
+	decision := agentmodel.Decision{Action: agentmodel.Allow}
 	if toolDescriptor.RequiresApproval {
-		decision.Action = tools.AskApproval
+		decision.Action = agentmodel.AskApproval
 	}
 	if toolExecutor.toolPolicy != nil {
 		toolExecutor.mu.Lock()
@@ -104,7 +103,7 @@ func (toolExecutor *toolExecutor) authorizeToolCall(ctx context.Context, toolCal
 			if approvedArguments != toolCall.Arguments {
 				return toolDescriptor, nil, fmt.Errorf("eager tool %s arguments changed after policy approval", toolCall.ID)
 			}
-			decision.Action = tools.Allow
+			decision.Action = agentmodel.Allow
 		} else {
 			var err error
 			decision, err = toolExecutor.toolPolicy.Decide(ctx, toolCall, toolDescriptor)
@@ -113,17 +112,17 @@ func (toolExecutor *toolExecutor) authorizeToolCall(ctx context.Context, toolCal
 			}
 		}
 	}
-	runState := types.GetRunState(ctx)
-	if runState != nil && decision.Action == tools.Allow {
+	runState := agentmodel.GetRunState(ctx)
+	if runState != nil && decision.Action == agentmodel.Allow {
 		for _, pending := range runState.Pending {
 			if pending.CallID == toolCall.ID && pending.Kind == "approval" {
-				decision.Action = tools.AskApproval
+				decision.Action = agentmodel.AskApproval
 				break
 			}
 		}
 	}
-	if decision.Action == tools.AskApproval {
-		isResumeTarget, hasApprovalResult, approvalResult := compose.GetResumeContext[*tools.ApprovalResult](ctx)
+	if decision.Action == agentmodel.AskApproval {
+		isResumeTarget, hasApprovalResult, approvalResult := compose.GetResumeContext[*agentmodel.ApprovalResult](ctx)
 		toolExecutor.mu.Lock()
 		canConsumeApprovalAnswer := isResumeTarget && hasApprovalResult && approvalResult != nil && !toolExecutor.approvalAnswerConsumed
 		if canConsumeApprovalAnswer && approvalResult.CallID != "" && approvalResult.CallID != toolCall.ID {
@@ -135,7 +134,7 @@ func (toolExecutor *toolExecutor) authorizeToolCall(ctx context.Context, toolCal
 		}
 		toolExecutor.mu.Unlock()
 		if !canConsumeApprovalAnswer {
-			approvalInfo := &tools.ApprovalInfo{CallID: toolCall.ID, ToolName: toolCall.Name, Arguments: toolCall.Arguments, Reason: decision.Reason}
+			approvalInfo := &agentmodel.ApprovalInfo{CallID: toolCall.ID, ToolName: toolCall.Name, Arguments: toolCall.Arguments, Reason: decision.Reason}
 			// Approval calls are sequential barriers. Persist the obligation before
 			// Eino saves its first snapshot, even if later ID enrichment fails.
 			if runState != nil {
@@ -147,21 +146,21 @@ func (toolExecutor *toolExecutor) authorizeToolCall(ctx context.Context, toolCal
 				}
 				if !found {
 					data, _ := json.Marshal(approvalInfo)
-					runState.Pending = append(runState.Pending, types.Interrupt{CallID: toolCall.ID, Kind: "approval", Data: data})
+					runState.Pending = append(runState.Pending, agentmodel.Interrupt{CallID: toolCall.ID, Kind: "approval", Data: data})
 				}
 			}
 			return toolDescriptor, nil, compose.Interrupt(ctx, approvalInfo)
 		}
 		if approvalResult.Approved {
-			decision.Action = tools.Allow
+			decision.Action = agentmodel.Allow
 		} else {
-			decision.Action = tools.Deny
+			decision.Action = agentmodel.Deny
 			if approvalResult.DisapproveReason != nil && *approvalResult.DisapproveReason != "" {
 				decision.Reason = *approvalResult.DisapproveReason
 			}
 		}
 	}
-	if decision.Action == tools.Deny {
+	if decision.Action == agentmodel.Deny {
 		toolResult.IsError = true
 		toolResult.Content = decision.Reason
 		if toolResult.Content == "" {
@@ -169,7 +168,7 @@ func (toolExecutor *toolExecutor) authorizeToolCall(ctx context.Context, toolCal
 		}
 		return toolDescriptor, toolResult, nil
 	}
-	if decision.Action != tools.Allow {
+	if decision.Action != agentmodel.Allow {
 		return toolDescriptor, nil, fmt.Errorf("invalid policy action %q", decision.Action)
 	}
 	if !toolDescriptor.ReadOnly && toolExecutor.persistToolExecutionFence != nil {
@@ -191,7 +190,7 @@ func GetToolCallID(ctx context.Context) string {
 }
 
 // Every tool passes policy and checkpoint fencing before interface dispatch.
-func (toolExecutor *toolExecutor) invokeTool(ctx context.Context, toolCallState types.ToolCallState, emitToolChunk types.ToolChunkSink) (toolResult *types.ToolResult, err error) {
+func (toolExecutor *toolExecutor) invokeTool(ctx context.Context, toolCallState agentmodel.ToolCallState, emitToolChunk agentmodel.ToolChunkSink) (toolResult *agentmodel.ToolResult, err error) {
 	toolCall := toolCallState.Call
 	// Tool code may panic after producing a side effect.
 	// Return a system error so execute can finalize the shared ledger and waiters
@@ -216,7 +215,7 @@ func (toolExecutor *toolExecutor) invokeTool(ctx context.Context, toolCallState 
 	if policyResult != nil || err != nil {
 		return policyResult, err
 	}
-	toolResult = &types.ToolResult{CallID: toolCall.ID, ReturnDirect: toolDescriptor.ReturnDirect}
+	toolResult = &agentmodel.ToolResult{CallID: toolCall.ID, ReturnDirect: toolDescriptor.ReturnDirect}
 	switch einoTool := toolDescriptor.Tool.(type) {
 	case tool.EnhancedStreamableTool:
 		stream, err := einoTool.StreamableRun(ctx, &schema.ToolArgument{Text: toolCall.Arguments})
@@ -245,7 +244,7 @@ func (toolExecutor *toolExecutor) invokeTool(ctx context.Context, toolCallState 
 			if chunk == nil {
 				continue
 			}
-			converted, convertErr := finishEnhancedResult(&types.ToolResult{}, chunk)
+			converted, convertErr := finishEnhancedResult(&agentmodel.ToolResult{}, chunk)
 			if convertErr != nil {
 				return nil, convertErr
 			}
@@ -308,11 +307,11 @@ func (toolExecutor *toolExecutor) invokeTool(ctx context.Context, toolCallState 
 	}
 }
 
-func finishToolResult(ctx context.Context, toolResult *types.ToolResult, err error) (*types.ToolResult, error) {
+func finishToolResult(ctx context.Context, toolResult *agentmodel.ToolResult, err error) (*agentmodel.ToolResult, error) {
 	if err == nil {
 		return toolResult, nil
 	}
-	var internalError *types.InternalError
+	var internalError *agentmodel.InternalError
 	if errors.As(err, &internalError) {
 		return nil, err
 	}
@@ -329,7 +328,7 @@ func finishToolResult(ctx context.Context, toolResult *types.ToolResult, err err
 	return toolResult, nil
 }
 
-func finishEnhancedResult(toolResult *types.ToolResult, einoToolResult *schema.ToolResult) (*types.ToolResult, error) {
+func finishEnhancedResult(toolResult *agentmodel.ToolResult, einoToolResult *schema.ToolResult) (*agentmodel.ToolResult, error) {
 	if einoToolResult == nil {
 		return nil, fmt.Errorf("enhanced tool returned nil output")
 	}

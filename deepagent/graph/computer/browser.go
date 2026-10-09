@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	agentmodel "eino-cli/deepagent/model"
+
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
@@ -20,49 +22,12 @@ import (
 
 var ErrOutcomeUnknown = errors.New("computer action outcome is unknown; do not retry automatically")
 
-// Action is the JSON argument of a browser/desktop operation, not a Graph request.
-type Action struct {
-	URL           string   `json:"url,omitempty"`
-	App           string   `json:"app,omitempty"`
-	ObservationID string   `json:"observation_id,omitempty"`
-	ElementID     int      `json:"element_id,omitempty"`
-	Text          string   `json:"text,omitempty"`
-	Key           string   `json:"key,omitempty"`
-	X             *float64 `json:"x,omitempty"`
-	Y             *float64 `json:"y,omitempty"`
-	DeltaX        int      `json:"delta_x,omitempty"`
-	DeltaY        int      `json:"delta_y,omitempty"`
-}
-
-type Element struct {
-	ID     int     `json:"element_id"`
-	Role   string  `json:"role"`
-	Name   string  `json:"name"`
-	X      float64 `json:"x"`
-	Y      float64 `json:"y"`
-	Width  float64 `json:"width"`
-	Height float64 `json:"height"`
-}
-
-// Observation is one actual screen and its accessible elements.
-type Observation struct {
-	ID       string    `json:"observation_id"`
-	URL      string    `json:"url,omitempty"`
-	App      string    `json:"app,omitempty"`
-	Text     string    `json:"text"`
-	Width    int       `json:"width"`
-	Height   int       `json:"height"`
-	ScrollY  float64   `json:"scroll_y,omitempty"`
-	Elements []Element `json:"elements,omitempty"`
-	Image    string    `json:"png,omitempty"`
-}
-
 type Browser struct {
 	mu              sync.Mutex
 	ctx             context.Context
 	cancel          context.CancelFunc
 	cancelAllocator context.CancelFunc
-	observation     *Observation
+	observation     *agentmodel.ComputerObservation
 	closed          bool
 }
 
@@ -94,7 +59,7 @@ func (browser *Browser) newOperation(ctx context.Context) (context.Context, cont
 	return operationCtx, func() { stop(); cancel() }
 }
 
-func (browser *Browser) PerformAction(ctx context.Context, operation string, action Action) (observation *Observation, err error) {
+func (browser *Browser) PerformAction(ctx context.Context, operation string, action agentmodel.ComputerAction) (observation *agentmodel.ComputerObservation, err error) {
 	browser.mu.Lock()
 	defer browser.mu.Unlock()
 	err = ctx.Err()
@@ -188,12 +153,12 @@ func (browser *Browser) PerformAction(ctx context.Context, operation string, act
 	resultOrigin, _ := url.Parse(resultURL)
 	if expectedOrigin.Scheme != resultOrigin.Scheme || expectedOrigin.Host != resultOrigin.Host {
 		browser.observation = nil
-		return &Observation{URL: resultURL, Text: "Origin changed. Call browser_observe with this URL so Policy can authorize it."}, nil
+		return &agentmodel.ComputerObservation{URL: resultURL, Text: "Origin changed. Call browser_observe with this URL so Policy can authorize it."}, nil
 	}
 	return browser.observe(operationCtx, resultURL)
 }
 
-func (browser *Browser) validateObservation(ctx context.Context, operation string, action Action, pageURL string) error {
+func (browser *Browser) validateObservation(ctx context.Context, operation string, action agentmodel.ComputerAction, pageURL string) error {
 	observation := browser.observation
 	if observation == nil || action.ObservationID == "" || action.ObservationID != observation.ID || observation.URL != pageURL {
 		return errors.New("stale_observation: observe the page again")
@@ -210,7 +175,7 @@ func (browser *Browser) validateObservation(ctx context.Context, operation strin
 		return errors.New("stale_observation: viewport changed")
 	}
 	if action.ElementID > 0 {
-		var actual Element
+		var actual agentmodel.ComputerElement
 		script := fmt.Sprintf(`(() => {const e=window.__deepagentElements?.[%d];if(!e?.isConnected)return null;const r=e.getBoundingClientRect();return {element_id:%d,role:e.tagName.toLowerCase(),name:(e.innerText||e.getAttribute('aria-label')||e.placeholder||'').slice(0,120),x:r.x,y:r.y,width:r.width,height:r.height}})()`, action.ElementID-1, action.ElementID)
 		err = chromedp.Run(ctx, chromedp.Evaluate(script, &actual))
 		if err != nil {
@@ -251,8 +216,8 @@ func (browser *Browser) validateObservation(ctx context.Context, operation strin
 	return nil
 }
 
-func (browser *Browser) observe(ctx context.Context, pageURL string) (*Observation, error) {
-	observation := &Observation{ID: uuid.NewString()}
+func (browser *Browser) observe(ctx context.Context, pageURL string) (*agentmodel.ComputerObservation, error) {
+	observation := &agentmodel.ComputerObservation{ID: uuid.NewString()}
 	script := `(() => {
   const elements=[...document.querySelectorAll('button,a,input,textarea,select,[role="button"],[contenteditable="true"]')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&r.x>=0&&r.y>=0&&r.bottom<=innerHeight&&r.right<=innerWidth}).slice(0,150);
   window.__deepagentElements=elements;window.__deepagentFocused=document.activeElement;window.__deepagentScrollY=scrollY;

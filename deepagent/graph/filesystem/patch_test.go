@@ -12,7 +12,7 @@ import (
 	"time"
 
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
-	"eino-cli/deepagent/sandbox"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 func (fileSandbox *fileSandbox) FileExists(ctx context.Context, path string) (bool, error) {
@@ -37,7 +37,7 @@ func (fileSandbox *fileSandbox) CreateFileNoReplace(ctx context.Context, path, c
 	}
 	_, exists := fileSandbox.files[path]
 	if exists {
-		return filesystempkg.ErrAlreadyExists
+		return agentmodel.ErrAlreadyExists
 	}
 	fileSandbox.files[path] = content
 	fileSandbox.writes++
@@ -73,7 +73,7 @@ func TestWorkspacePatchHasSameLocalAndDockerBehavior(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dockerFilesystem.Close(ctx)
-	for workspaceName, filesystem := range map[string]filesystempkg.ToolFilesystem{"local": localFilesystem, "docker": dockerFilesystem} {
+	for workspaceName, filesystem := range map[string]agentmodel.ToolFilesystem{"local": localFilesystem, "docker": dockerFilesystem} {
 		t.Run(workspaceName, func(t *testing.T) {
 			invalidPatch := "*** Begin Patch\n*** Update File: a.txt\n@@\n-missing\n+new\n*** End Patch"
 			_, stalePatchErr := filesystem.ApplyPatch(ctx, invalidPatch)
@@ -155,7 +155,7 @@ func TestWorkspacePatchRejectsRepeatedSourcesAndSelfMoves(t *testing.T) {
 			}
 			defer dockerFilesystem.Close(ctx)
 
-			workspaces := map[string]filesystempkg.Filesystem{
+			workspaces := map[string]agentmodel.Filesystem{
 				"local":  localFilesystem,
 				"docker": dockerFilesystem,
 			}
@@ -187,7 +187,7 @@ func TestWorkspacePatchRejectsRepeatedSourcesAndSelfMoves(t *testing.T) {
 
 func TestWorkspacePatchProtectsExistingTargetsAndDeletesOversizedFiles(t *testing.T) {
 	ctx := context.Background()
-	oversizedContent := strings.Repeat("x", (filesystempkg.MaxFileSizeMB<<20)+1)
+	oversizedContent := strings.Repeat("x", (agentmodel.MaxFileSizeMB<<20)+1)
 	addPatch := "*** Begin Patch\n*** Add File: target.txt\n+replacement\n*** End Patch"
 	deletePatch := "*** Begin Patch\n*** Delete File: target.txt\n*** End Patch"
 
@@ -226,7 +226,7 @@ func TestWorkspacePatchProtectsExistingTargetsAndDeletesOversizedFiles(t *testin
 	}
 	defer dockerFilesystem.Close(ctx)
 
-	for workspaceName, filesystem := range map[string]filesystempkg.Filesystem{"local": localFilesystem, "docker": dockerFilesystem} {
+	for workspaceName, filesystem := range map[string]agentmodel.Filesystem{"local": localFilesystem, "docker": dockerFilesystem} {
 		t.Run(workspaceName, func(t *testing.T) {
 			_, err := filesystem.ApplyPatch(ctx, addPatch)
 			if err == nil || !strings.Contains(err.Error(), "already exists") {
@@ -307,7 +307,7 @@ func TestWorkspacePatchRejectsExistingMoveDestinations(t *testing.T) {
 	}
 	defer dockerFilesystem.Close(ctx)
 
-	for workspaceName, filesystem := range map[string]filesystempkg.Filesystem{"local": localFilesystem, "docker": dockerFilesystem} {
+	for workspaceName, filesystem := range map[string]agentmodel.Filesystem{"local": localFilesystem, "docker": dockerFilesystem} {
 		t.Run(workspaceName, func(t *testing.T) {
 			_, err := filesystem.ApplyPatch(ctx, patch)
 			if err == nil || !strings.Contains(err.Error(), "destination already exists") {
@@ -361,7 +361,7 @@ func TestWorkspacePatchCreateDoesNotReplaceExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = localFilesystem.CreateFileNoReplace(ctx, "target.txt", "second\n")
-	if err == nil || !errors.Is(err, filesystempkg.ErrAlreadyExists) {
+	if err == nil || !errors.Is(err, agentmodel.ErrAlreadyExists) {
 		t.Fatalf("direct local create error = %v", err)
 	}
 	_, err = localFilesystem.ApplyPatch(ctx, patch)
@@ -375,7 +375,7 @@ func TestWorkspacePatchCreateDoesNotReplaceExistingFile(t *testing.T) {
 }
 
 type execDockerSandbox struct {
-	sandbox.Sandbox
+	agentmodel.Sandbox
 }
 
 func (*execDockerSandbox) GetDockerExecTarget() (string, bool) {
@@ -424,7 +424,7 @@ func TestDockerPatchFallbackUsesContainerNoReplaceCreation(t *testing.T) {
 		t.Fatalf("container create content: %q %v", content, err)
 	}
 	_, err = filesystem.CreateFileNoReplace(context.Background(), "target.txt", "second\n")
-	if err == nil || !errors.Is(err, filesystempkg.ErrAlreadyExists) {
+	if err == nil || !errors.Is(err, agentmodel.ErrAlreadyExists) {
 		t.Fatalf("direct container create error = %v", err)
 	}
 	_, err = filesystem.ApplyPatch(context.Background(), patch)
@@ -497,7 +497,7 @@ func TestDockerCommandRunsInSelectedContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dockerFilesystem.Close(context.Background())
-	result, err := dockerFilesystem.Execute(context.Background(), filesystempkg.CommandRequest{Command: "pwd"})
+	result, err := dockerFilesystem.Execute(context.Background(), agentmodel.CommandRequest{Command: "pwd"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +531,7 @@ func TestDockerFilesystemRealContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dockerFilesystem.Close(context.Background())
-	result, err := dockerFilesystem.Execute(context.Background(), filesystempkg.CommandRequest{Command: "printf docker-ok"})
+	result, err := dockerFilesystem.Execute(context.Background(), agentmodel.CommandRequest{Command: "printf docker-ok"})
 	if err != nil || result.ExitCode != 0 || result.Output != "docker-ok" {
 		t.Fatalf("command=%+v err=%v", result, err)
 	}
@@ -548,7 +548,7 @@ func TestDockerFilesystemRealContainer(t *testing.T) {
 	if !os.IsNotExist(deleteStatErr) {
 		t.Fatalf("Docker delete did not remove mounted file: %v", deleteStatErr)
 	}
-	jobID, err := dockerFilesystem.Start(context.Background(), filesystempkg.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(rootDir, "leak.txt")})
+	jobID, err := dockerFilesystem.Start(context.Background(), agentmodel.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(rootDir, "leak.txt")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +562,7 @@ func TestDockerFilesystemRealContainer(t *testing.T) {
 	if !os.IsNotExist(cancelStatErr) {
 		t.Fatalf("cancelled Docker job continued running: %v", cancelStatErr)
 	}
-	timedJobID, err := dockerFilesystem.Start(context.Background(), filesystempkg.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(rootDir, "timeout-leak.txt"), Timeout: 100 * time.Millisecond})
+	timedJobID, err := dockerFilesystem.Start(context.Background(), agentmodel.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(rootDir, "timeout-leak.txt"), Timeout: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,7 +575,7 @@ func TestDockerFilesystemRealContainer(t *testing.T) {
 	if !os.IsNotExist(timeoutStatErr) {
 		t.Fatalf("timed out Docker job continued running: %v", timeoutStatErr)
 	}
-	_, startErr := dockerFilesystem.Start(context.Background(), filesystempkg.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(rootDir, "close-leak.txt")})
+	_, startErr := dockerFilesystem.Start(context.Background(), agentmodel.CommandRequest{Command: "sleep 2; printf survived > " + filepath.Join(rootDir, "close-leak.txt")})
 	if startErr != nil {
 		t.Fatal(startErr)
 	}
@@ -591,14 +591,14 @@ func TestDockerFilesystemRealContainer(t *testing.T) {
 	}
 }
 
-type rejectedPatchWrite struct{ filesystempkg.Filesystem }
+type rejectedPatchWrite struct{ agentmodel.Filesystem }
 
 func (*rejectedPatchWrite) HasFile(_ context.Context, filePath string) (bool, error) {
 	return filepath.Base(filePath) == "source", nil
 }
 
-func (*rejectedPatchWrite) CreateFileNoReplace(context.Context, string, string) (*filesystempkg.WriteResult, error) {
-	return &filesystempkg.WriteResult{Error: "write rejected"}, nil
+func (*rejectedPatchWrite) CreateFileNoReplace(context.Context, string, string) (*agentmodel.WriteResult, error) {
+	return &agentmodel.WriteResult{Error: "write rejected"}, nil
 }
 
 func TestPatchDoesNotDeleteSourceAfterResultError(t *testing.T) {

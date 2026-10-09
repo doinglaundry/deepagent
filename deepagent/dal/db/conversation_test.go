@@ -8,21 +8,20 @@ import (
 	"os"
 	"testing"
 
-	dalcache "eino-cli/deepagent/dal/cache"
 	daldb "eino-cli/deepagent/dal/db"
 	"eino-cli/deepagent/graph/conversation"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
+	yaml "gopkg.in/yaml.v3"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 type conversationRedis struct {
-	dalcache.RedisClient
+	agentmodel.RedisClient
 	sequences map[string]int64
 }
 
@@ -81,20 +80,20 @@ func TestConversationDAORoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal("schema setup must be idempotent:", err)
 	}
-	first := &messagepkg.Message{ThreadID: "thread", RunID: "run", MessageID: "9007199254740993", SenderID: "person", SenderType: "user", Role: schema.User, Content: "old", CreatedAt: 42, Extra: map[string]any{"source": "round-trip"}}
-	retained := &messagepkg.Message{ThreadID: "thread", RunID: "run", MessageID: "2", Role: schema.User, Content: "retain"}
-	for _, message := range []*messagepkg.Message{first, retained} {
+	first := &agentmodel.Message{ThreadID: "thread", RunID: "run", MessageID: "9007199254740993", SenderID: "person", SenderType: "user", Role: schema.User, Content: "old", CreatedAt: 42, Extra: map[string]any{"source": "round-trip"}}
+	retained := &agentmodel.Message{ThreadID: "thread", RunID: "run", MessageID: "2", Role: schema.User, Content: "retain"}
+	for _, message := range []*agentmodel.Message{first, retained} {
 		err = store.AppendMessage(ctx, message)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	summary := &messagepkg.Message{ThreadID: "thread", RunID: "run", MessageID: "3", Role: schema.System, Content: "summary"}
-	err = store.SaveContext(ctx, []*messagepkg.Message{summary, retained})
+	summary := &agentmodel.Message{ThreadID: "thread", RunID: "run", MessageID: "3", Role: schema.System, Content: "summary"}
+	err = store.SaveContext(ctx, []*agentmodel.Message{summary, retained})
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := &messagepkg.Message{ThreadID: "thread", RunID: "next-run", MessageID: "4", Role: schema.User, Content: "next"}
+	next := &agentmodel.Message{ThreadID: "thread", RunID: "next-run", MessageID: "4", Role: schema.User, Content: "next"}
 	err = store.AppendMessage(ctx, next)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +123,7 @@ func TestConversationDAORoundTrip(t *testing.T) {
 	}
 	rollback := errors.New("rollback conversation write")
 	err = client.Transaction(ctx, func(txCtx context.Context) error {
-		writeErr := store.AppendMessage(txCtx, &messagepkg.Message{ThreadID: "rollback", MessageID: "9", Role: schema.User, Content: "in transaction"})
+		writeErr := store.AppendMessage(txCtx, &agentmodel.Message{ThreadID: "rollback", MessageID: "9", Role: schema.User, Content: "in transaction"})
 		if writeErr != nil {
 			return writeErr
 		}
@@ -145,7 +144,7 @@ func TestConversationDAORoundTrip(t *testing.T) {
 		t.Fatalf("write escaped rollback: messages=%v err=%v", rolledBack, err)
 	}
 	for index := 0; index < 205; index++ {
-		message := &messagepkg.Message{ThreadID: "pages", MessageID: fmt.Sprint(index + 1), Role: schema.User, Content: fmt.Sprint(index)}
+		message := &agentmodel.Message{ThreadID: "pages", MessageID: fmt.Sprint(index + 1), Role: schema.User, Content: fmt.Sprint(index)}
 		err = store.AppendMessage(ctx, message)
 		if err != nil {
 			t.Fatal(err)
@@ -156,7 +155,7 @@ func TestConversationDAORoundTrip(t *testing.T) {
 		t.Fatalf("page boundary lost messages: count=%d cursor=%d err=%v", len(pages), sequence, err)
 	}
 	// Check full metadata before any compaction replaces this thread's window.
-	err = store.AppendMessage(ctx, &messagepkg.Message{ThreadID: "metadata", MessageID: first.MessageID, RunID: first.RunID, CreatedAt: first.CreatedAt, Role: first.Role, SenderID: first.SenderID, SenderType: first.SenderType, Content: first.Content, Extra: first.Extra})
+	err = store.AppendMessage(ctx, &agentmodel.Message{ThreadID: "metadata", MessageID: first.MessageID, RunID: first.RunID, CreatedAt: first.CreatedAt, Role: first.Role, SenderID: first.SenderID, SenderType: first.SenderType, Content: first.Content, Extra: first.Extra})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +167,7 @@ func TestConversationDAORoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var roundTrip messagepkg.Message
+	var roundTrip agentmodel.Message
 	err = json.Unmarshal(raw, &roundTrip)
 	if err != nil || roundTrip.MessageID != "9007199254740993" {
 		t.Fatal("large message identity was truncated", err)

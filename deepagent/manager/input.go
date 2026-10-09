@@ -10,66 +10,22 @@ import (
 
 	"eino-cli/deepagent/dal/cache"
 	"eino-cli/deepagent/dal/db"
-	"eino-cli/deepagent/dal/model"
-	eventpkg "eino-cli/deepagent/protocol/event"
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 )
 
-type InputMessage struct {
-	SenderType  model.SenderType
-	SenderID    string
-	MessageType string
-	Payload     []byte
-	Metadata    map[string]string
-}
-
-type SubmitRequest struct {
-	ThreadID  int64
-	UserID    int64
-	SessionID string
-	Title     string
-	Metadata  map[string]string
-	Profile   *model.Profile
-	Input     *InputMessage
-}
-
-type ListMessagesRequest struct {
-	ThreadID  int64
-	SessionID string
-	RunID     string
-	AfterID   int64
-	Limit     int32
-	Offset    int
-	Backward  bool
-}
-
-type ListMessagesResult struct {
-	Messages []*db.Message
-	Runs     map[string]*model.RunRecord
-	Total    int64
-}
-
-type CancelInputControlPayload struct {
-	ControlType     string `json:"control_type"`
-	RequestID       string `json:"request_id"`
-	ThreadID        int64  `json:"thread_id"`
-	CutoffMessageID int64  `json:"cutoff_message_id"`
-	Reason          string `json:"reason,omitempty"`
-}
-
-func (c *Manager) Submit(ctx context.Context, req SubmitRequest) (result ThreadMessageResult, err error) {
+func (c *Manager) Submit(ctx context.Context, req agentmodel.SubmitRequest) (result agentmodel.ThreadMessageResult, err error) {
 	if req.ThreadID != 0 && req.Input == nil {
 		return result, errors.New("input is required")
 	}
 	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
-		var thread *model.Thread
+		var thread *agentmodel.ThreadRecord
 		if req.ThreadID != 0 {
 			var err error
 			thread, err = c.lockThread(txCtx, req.ThreadID)
 			if err != nil {
 				return err
 			}
-			if thread.Status != model.ThreadStatusOpen {
+			if thread.Status != agentmodel.ThreadStatusOpen {
 				return ErrThreadClosed
 			}
 		} else {
@@ -96,12 +52,12 @@ func (c *Manager) Submit(ctx context.Context, req SubmitRequest) (result ThreadM
 		return nil
 	})
 	if err != nil {
-		return ThreadMessageResult{}, err
+		return agentmodel.ThreadMessageResult{}, err
 	}
 	return result, nil
 }
 
-func (c *Manager) AckInput(ctx context.Context, threadID int64, leaseToken, runID string, ids []int64) (delivered []*model.Message, err error) {
+func (c *Manager) AckInput(ctx context.Context, threadID int64, leaseToken, runID string, ids []int64) (delivered []*agentmodel.MailboxMessage, err error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -113,7 +69,7 @@ func (c *Manager) AckInput(ctx context.Context, threadID int64, leaseToken, runI
 		if !thread.OwnsLease(leaseToken, time.Now()) {
 			return ErrLeaseMismatch
 		}
-		messages, err := c.messages.Get(txCtx, &model.MessageFilter{ThreadIDs: []int64{threadID}, IDs: ids, Primary: true})
+		messages, err := c.messages.Get(txCtx, &agentmodel.MailboxMessageFilter{ThreadIDs: []int64{threadID}, IDs: ids, Primary: true})
 		if err != nil {
 			return err
 		}
@@ -127,20 +83,20 @@ func (c *Manager) AckInput(ctx context.Context, threadID int64, leaseToken, runI
 			}
 		}
 		for _, message := range messages {
-			if message.Status == model.MessageStatusCanceled {
+			if message.Status == agentmodel.MessageStatusCanceled {
 				continue
 			}
 			if message.OutputKey != nil {
 				return InputErrMessageNotFound
 			}
-			if message.Status == model.MessageStatusAccepted && message.TriggerRunID != "" && message.TriggerRunID != runID {
+			if message.Status == agentmodel.MessageStatusAccepted && message.TriggerRunID != "" && message.TriggerRunID != runID {
 				return errors.New("input belongs to another Run")
 			}
-			message.Status = model.MessageStatusAccepted
+			message.Status = agentmodel.MessageStatusAccepted
 			if runID != "" {
 				message.TriggerRunID = runID
 			}
-			_, err = c.messages.Update(txCtx, &model.MessageFilter{ThreadIDs: []int64{threadID}, IDs: []int64{message.MessageID}}, map[string]any{"status": message.Status, "trigger_turn_id": message.TriggerRunID})
+			_, err = c.messages.Update(txCtx, &agentmodel.MailboxMessageFilter{ThreadIDs: []int64{threadID}, IDs: []int64{message.MessageID}}, map[string]any{"status": message.Status, "trigger_turn_id": message.TriggerRunID})
 			if err != nil {
 				return err
 			}
@@ -151,25 +107,25 @@ func (c *Manager) AckInput(ctx context.Context, threadID int64, leaseToken, runI
 	return delivered, err
 }
 
-func (c *Manager) Resume(ctx context.Context, threadID int64, input *InputMessage) (result ThreadMessageResult, err error) {
+func (c *Manager) Resume(ctx context.Context, threadID int64, input *agentmodel.InputMessage) (result agentmodel.ThreadMessageResult, err error) {
 	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
 		thread, err := c.lockThread(txCtx, threadID)
 		if err != nil {
 			return err
 		}
-		if thread.Status != model.ThreadStatusOpen {
+		if thread.Status != agentmodel.ThreadStatusOpen {
 			return ErrThreadClosed
 		}
 		run := thread.LastRun
-		if run == nil || run.Status != eventpkg.RunStatusBlocked {
+		if run == nil || run.Status != agentmodel.RunStatusBlocked {
 			return ErrThreadNotBlocked
 		}
 		result.Thread = thread
 		if input == nil {
-			run.Status = eventpkg.RunStatusInterrupted
+			run.Status = agentmodel.RunStatusInterrupted
 			return c.runs.Save(txCtx, run)
 		}
-		var resume inputpkg.ResumeRunPayload
+		var resume agentmodel.ResumeRunPayload
 		err = json.Unmarshal(input.Payload, &resume)
 		if err != nil {
 			return err
@@ -178,12 +134,12 @@ func (c *Manager) Resume(ctx context.Context, threadID int64, input *InputMessag
 		if err != nil {
 			return err
 		}
-		if input.MessageType != inputpkg.MessageTypeResume || resume.RunID != run.RunID || resume.CheckpointID != run.CheckpointID || resume.InterruptID != run.InterruptID {
+		if input.MessageType != agentmodel.MessageTypeResume || resume.RunID != run.RunID || resume.CheckpointID != run.CheckpointID || resume.InterruptID != run.InterruptID {
 			return ErrThreadNotBlocked
 		}
 		// Queue the answer during cleanup; never clear a live Worker's lease.
 		var count int64
-		err = c.db.DB(txCtx, true).Model(&model.Message{}).Where("thread_id = ? AND message_type = ? AND status = ?", threadID, inputpkg.MessageTypeResume, model.MessageStatusPending).Count(&count).Error
+		err = c.db.DB(txCtx, true).Model(&agentmodel.MailboxMessage{}).Where("thread_id = ? AND message_type = ? AND status = ?", threadID, agentmodel.MessageTypeResume, agentmodel.MessageStatusPending).Count(&count).Error
 		if err != nil {
 			return err
 		}
@@ -203,22 +159,22 @@ func (c *Manager) Resume(ctx context.Context, threadID int64, input *InputMessag
 		return nil
 	})
 	if err != nil {
-		return ThreadMessageResult{}, err
+		return agentmodel.ThreadMessageResult{}, err
 	}
 	return result, nil
 }
 
-func (c *Manager) Cancel(ctx context.Context, threadID int64, reason string, cutoffMessageID *int64) (result *ThreadMessageResult, err error) {
+func (c *Manager) Cancel(ctx context.Context, threadID int64, reason string, cutoffMessageID *int64) (result *agentmodel.ThreadMessageResult, err error) {
 	err = c.db.Transaction(ctx, func(txCtx context.Context) error {
 		ctx = txCtx
 		thread, err := c.lockThread(ctx, threadID)
 		if err != nil {
 			return err
 		}
-		if thread.Status == model.ThreadStatusClosing || thread.Status == model.ThreadStatusClosed {
+		if thread.Status == agentmodel.ThreadStatusClosing || thread.Status == agentmodel.ThreadStatusClosed {
 			return ErrThreadClosed
 		}
-		if thread.LastRun != nil && thread.LastRun.Status == eventpkg.RunStatusBlocked {
+		if thread.LastRun != nil && thread.LastRun.Status == agentmodel.RunStatusBlocked {
 			return ErrThreadBlocked
 		}
 		if reason == "" {
@@ -239,7 +195,7 @@ func (c *Manager) Cancel(ctx context.Context, threadID int64, reason string, cut
 				return fmt.Errorf("%w: cutoff_message_id=%d is control message", ErrInvalidCancel, cancelUntilMessageID)
 			}
 		} else {
-			messages, err := c.messages.Get(ctx, &model.MessageFilter{ThreadIDs: []int64{threadID}, InputOnly: true, Primary: true, Desc: true, Limit: 1})
+			messages, err := c.messages.Get(ctx, &agentmodel.MailboxMessageFilter{ThreadIDs: []int64{threadID}, InputOnly: true, Primary: true, Desc: true, Limit: 1})
 			if err != nil {
 				return err
 			}
@@ -248,7 +204,7 @@ func (c *Manager) Cancel(ctx context.Context, threadID int64, reason string, cut
 			}
 		}
 		if cancelUntilMessageID == 0 {
-			result = &ThreadMessageResult{Thread: thread}
+			result = &agentmodel.ThreadMessageResult{Thread: thread}
 			return nil
 		}
 		err = c.cancelQueuedInputsUntil(ctx, threadID, cancelUntilMessageID)
@@ -261,19 +217,19 @@ func (c *Manager) Cancel(ctx context.Context, threadID int64, reason string, cut
 			return err
 		}
 		requestID := strconv.FormatInt(messageID, 10)
-		metadata := map[string]string{"control_type": model.ControlTypeCancelInput, "request_id": requestID, "cutoff_message_id": strconv.FormatInt(cancelUntilMessageID, 10)}
+		metadata := map[string]string{"control_type": agentmodel.ControlTypeCancelInput, "request_id": requestID, "cutoff_message_id": strconv.FormatInt(cancelUntilMessageID, 10)}
 		if reason != "" {
 			metadata["reason"] = reason
 		}
-		payload, err := json.Marshal(CancelInputControlPayload{ControlType: model.ControlTypeCancelInput, RequestID: requestID, ThreadID: threadID, CutoffMessageID: cancelUntilMessageID, Reason: reason})
+		payload, err := json.Marshal(agentmodel.CancelInputControlPayload{ControlType: agentmodel.ControlTypeCancelInput, RequestID: requestID, ThreadID: threadID, CutoffMessageID: cancelUntilMessageID, Reason: reason})
 		if err != nil {
 			return err
 		}
-		controlMessage := &model.Message{
+		controlMessage := &agentmodel.MailboxMessage{
 			MessageID:   messageID,
 			ThreadID:    threadID,
-			Sender:      &model.Sender{Type: model.SenderTypeSystem, ID: model.RecordAgentManagerSenderID},
-			MessageType: model.ControlMessageTypeCancelInput, Status: model.MessageStatusPending,
+			Sender:      &agentmodel.MailboxSender{Type: agentmodel.MailboxSenderTypeSystem, ID: agentmodel.RecordAgentManagerSenderID},
+			MessageType: agentmodel.ControlMessageTypeCancelInput, Status: agentmodel.MessageStatusPending,
 			Payload:   payload,
 			Metadata:  metadata,
 			CreatedAt: time.Now(),
@@ -284,19 +240,19 @@ func (c *Manager) Cancel(ctx context.Context, threadID int64, reason string, cut
 		}
 
 		thread.PendingInputs++
-		result = &ThreadMessageResult{Thread: thread, Message: controlMessage}
+		result = &agentmodel.ThreadMessageResult{Thread: thread, Message: controlMessage}
 		return nil
 	})
 	return result, err
 }
 
 // ListMessages 查询历史消息。
-func (c *Manager) ListMessages(ctx context.Context, req ListMessagesRequest) (result ListMessagesResult, err error) {
+func (c *Manager) ListMessages(ctx context.Context, req agentmodel.ListMessagesRequest) (result agentmodel.ListMessagesResult, err error) {
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 100
 	}
-	filter := &model.MessageFilter{
+	filter := &agentmodel.MailboxMessageFilter{
 		Primary: true, SkipNormalize: true, ExcludeControls: true,
 		SessionID: req.SessionID, RunID: req.RunID,
 		Offset: max(req.Offset, 0), Limit: int(min(limit, 1000)), Desc: req.Backward,
@@ -322,31 +278,31 @@ func (c *Manager) ListMessages(ctx context.Context, req ListMessagesRequest) (re
 		ids = append(ids, message.TriggerRunID)
 	}
 	// A session query may span multiple Threads; RunIDs are globally unique.
-	var rows []*model.RunRecord
+	var rows []*agentmodel.RunRecord
 	err = c.db.DB(ctx, true).Where("run_id IN ?", ids).Find(&rows).Error
 	if err != nil {
 		return result, err
 	}
-	result.Runs = make(map[string]*model.RunRecord, len(rows))
+	result.Runs = make(map[string]*agentmodel.RunRecord, len(rows))
 	for _, run := range rows {
 		result.Runs[run.RunID] = run
 	}
 	return result, nil
 }
 
-func (c *Manager) createInput(ctx context.Context, threadID int64, input *InputMessage) (*model.Message, error) {
+func (c *Manager) createInput(ctx context.Context, threadID int64, input *agentmodel.InputMessage) (*agentmodel.MailboxMessage, error) {
 	id, err := cache.GenerateID(ctx, c.redis)
 	if err != nil {
 		return nil, err
 	}
-	message := &model.Message{
+	message := &agentmodel.MailboxMessage{
 		MessageID: id, ThreadID: threadID, CreatedAt: time.Now(),
-		Sender:      &model.Sender{Type: model.RecordNormalizeSenderType(input.SenderType), ID: input.SenderID},
-		MessageType: input.MessageType, Status: model.MessageStatusPending,
+		Sender:      &agentmodel.MailboxSender{Type: agentmodel.RecordNormalizeSenderType(input.SenderType), ID: input.SenderID},
+		MessageType: input.MessageType, Status: agentmodel.MessageStatusPending,
 		Payload: append([]byte(nil), input.Payload...), Metadata: input.Metadata,
 	}
-	if input.MessageType == inputpkg.MessageTypeResume {
-		var resume inputpkg.ResumeRunPayload
+	if input.MessageType == agentmodel.MessageTypeResume {
+		var resume agentmodel.ResumeRunPayload
 		err = json.Unmarshal(input.Payload, &resume)
 		if err != nil {
 			return nil, err
@@ -358,21 +314,21 @@ func (c *Manager) createInput(ctx context.Context, threadID int64, input *InputM
 }
 
 // Ack can arrive before RunStart is drained. Persist its Run identity here too.
-func (c *Manager) ensureRun(ctx context.Context, thread *model.Thread, runID string) error {
+func (c *Manager) ensureRun(ctx context.Context, thread *agentmodel.ThreadRecord, runID string) error {
 	runs, err := c.runs.Get(ctx, thread.ThreadID, []string{runID})
 	if err != nil {
 		return err
 	}
 	run := runs[runID]
 	if run == nil {
-		run = &model.RunRecord{RunID: runID, ThreadID: thread.ThreadID, Status: eventpkg.RunStatusStarted, LeaseToken: thread.LeaseToken}
+		run = &agentmodel.RunRecord{RunID: runID, ThreadID: thread.ThreadID, Status: agentmodel.RunStatusStarted, LeaseToken: thread.LeaseToken}
 		err = c.runs.Save(ctx, run)
 		if err != nil {
 			return err
 		}
 	}
 	if !run.Ended() && (thread.LastRun == nil || thread.LastRun.Ended()) {
-		_, err = c.threads.Update(ctx, &model.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"last_run_id": runID})
+		_, err = c.threads.Update(ctx, &agentmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"last_run_id": runID})
 		if err != nil {
 			return err
 		}
@@ -381,11 +337,11 @@ func (c *Manager) ensureRun(ctx context.Context, thread *model.Thread, runID str
 	return nil
 }
 
-func (c *Manager) findMessage(ctx context.Context, threadID, messageID int64) (message *model.Message, err error) {
+func (c *Manager) findMessage(ctx context.Context, threadID, messageID int64) (message *agentmodel.MailboxMessage, err error) {
 	if threadID <= 0 || messageID <= 0 {
 		return nil, ErrMessageNotFound
 	}
-	messages, err := c.messages.Get(ctx, &model.MessageFilter{ThreadIDs: []int64{threadID}, IDs: []int64{messageID}, Take: true, Primary: true})
+	messages, err := c.messages.Get(ctx, &agentmodel.MailboxMessageFilter{ThreadIDs: []int64{threadID}, IDs: []int64{messageID}, Take: true, Primary: true})
 	if errors.Is(err, db.MySQLErrRecordNotFound) {
 		return nil, ErrMessageNotFound
 	}
@@ -396,7 +352,7 @@ func (c *Manager) findMessage(ctx context.Context, threadID, messageID int64) (m
 }
 
 func (c *Manager) cancelQueuedInputsUntil(ctx context.Context, threadID int64, cutoff int64) error {
-	messages, err := c.messages.Get(ctx, &model.MessageFilter{ThreadIDs: []int64{threadID}, InputOnly: true, Statuses: []string{model.MessageStatusPending}, Primary: true})
+	messages, err := c.messages.Get(ctx, &agentmodel.MailboxMessageFilter{ThreadIDs: []int64{threadID}, InputOnly: true, Statuses: []string{agentmodel.MessageStatusPending}, Primary: true})
 	if err != nil {
 		return err
 	}
@@ -409,6 +365,6 @@ func (c *Manager) cancelQueuedInputsUntil(ctx context.Context, threadID int64, c
 	if len(ids) == 0 {
 		return nil
 	}
-	_, err = c.messages.Update(ctx, &model.MessageFilter{ThreadIDs: []int64{threadID}, IDs: ids}, map[string]any{"status": model.MessageStatusCanceled})
+	_, err = c.messages.Update(ctx, &agentmodel.MailboxMessageFilter{ThreadIDs: []int64{threadID}, IDs: ids}, map[string]any{"status": agentmodel.MessageStatusCanceled})
 	return err
 }

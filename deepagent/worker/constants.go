@@ -5,7 +5,7 @@ package worker
 import (
 	"time"
 
-	dalmodel "eino-cli/deepagent/dal/model"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 const (
@@ -37,8 +37,8 @@ const (
 const (
 	// MessageTypeControlCancelInput is the Manager mailbox message type
 	// used by control-plane callers to cancel input up to a cutoff message.
-	MessageTypeControlCancelInput = dalmodel.ControlMessageTypeCancelInput
+	MessageTypeControlCancelInput = agentmodel.ControlMessageTypeCancelInput
 	// MessageTypeControlCloseThread is the Manager mailbox message type
 	// used by control-plane callers to close a thread.
-	MessageTypeControlCloseThread = dalmodel.ControlMessageTypeCloseThread
+	MessageTypeControlCloseThread = agentmodel.ControlMessageTypeCloseThread
 )

@@ -2,14 +2,13 @@ package manager
 
 import (
 	"context"
-	dalmodel "eino-cli/deepagent/dal/model"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
 
-	inputpkg "eino-cli/deepagent/protocol/input"
+	agentmodel "eino-cli/deepagent/model"
 )
 
 func TestManager_ReleaseOnlyClearsLease(t *testing.T) {
@@ -29,7 +28,7 @@ func TestManager_ReleaseOnlyClearsLease(t *testing.T) {
 func TestManager_BlockedRunDoesNotReplayAnOldResume(t *testing.T) {
 	manager, thread := releaseTestManager(t)
 	ctx := context.Background()
-	err := manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"first"}`)}})
+	err := manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"first"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,11 +36,11 @@ func TestManager_BlockedRunDoesNotReplayAnOldResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := manager.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"first","approval":{"approved":true}}`)})
+	response, err := manager.Resume(ctx, thread.ThreadID, &agentmodel.InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"first","approval":{"approved":true}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim, err := manager.Acquire(ctx, AcquireRequest{})
+	claim, err := manager.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || claim.Lease == nil {
 		t.Fatalf("claim=%+v error=%v", claim, err)
 	}
@@ -49,7 +48,7 @@ func TestManager_BlockedRunDoesNotReplayAnOldResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = manager.SaveOutput(ctx, thread.ThreadID, claim.Lease.LeaseToken, "run", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"started"}`)}, {EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"second"}`)}})
+	err = manager.SaveOutput(ctx, thread.ThreadID, claim.Lease.LeaseToken, "run", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"started"}`)}, {EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"second"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +56,7 @@ func TestManager_BlockedRunDoesNotReplayAnOldResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim, err = manager.Acquire(ctx, AcquireRequest{})
+	claim, err = manager.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || claim.Lease != nil {
 		t.Fatalf("old answer scheduled again: %+v error=%v", claim, err)
 	}
@@ -66,7 +65,7 @@ func TestManager_BlockedRunDoesNotReplayAnOldResume(t *testing.T) {
 func TestManager_ResumeQueuedBeforeAckSurvivesLeaseLoss(t *testing.T) {
 	m, thread := releaseTestManager(t)
 	ctx := context.Background()
-	err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"question"}`)}})
+	err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"question"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,29 +73,29 @@ func TestManager_ResumeQueuedBeforeAckSurvivesLeaseLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = m.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true}}`)})
+	_, err = m.Resume(ctx, thread.ThreadID, &agentmodel.InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := m.Acquire(ctx, AcquireRequest{})
+	first, err := m.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || first.Lease == nil {
 		t.Fatalf("claim=%+v error=%v", first, err)
 	}
 	// The model emits RunStart before the input thread finishes AckInput.
-	err = m.SaveOutput(ctx, thread.ThreadID, first.Lease.LeaseToken, "run", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"started"}`)}})
+	err = m.SaveOutput(ctx, thread.ThreadID, first.Lease.LeaseToken, "run", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"started"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	expired := time.Now().Add(-time.Second)
-	_, err = m.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_until": expired})
+	_, err = m.threads.Update(ctx, &agentmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_until": expired})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := m.Acquire(ctx, AcquireRequest{})
+	second, err := m.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || second.Lease == nil || len(second.PendingMessages) != 1 {
 		t.Fatalf("claim=%+v error=%v", second, err)
 	}
-	err = m.SaveOutput(ctx, thread.ThreadID, second.Lease.LeaseToken, "run", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"started"}`)}})
+	err = m.SaveOutput(ctx, thread.ThreadID, second.Lease.LeaseToken, "run", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"started"}`)}})
 	if err != nil {
 		t.Fatalf("checkpoint Run cannot resume: %v", err)
 	}
@@ -108,15 +107,15 @@ func saveState(t *testing.T, m *Manager, threadID int64, token, runID, status st
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = m.SaveOutput(context.Background(), threadID, token, runID, []OutputFrame{{EventType: "run_status", Payload: payload}})
+	err = m.SaveOutput(context.Background(), threadID, token, runID, []agentmodel.OutputFrame{{EventType: "run_status", Payload: payload}})
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
-func submitStateInput(t *testing.T, m *Manager, threadID int64) *dalmodel.Message {
+func submitStateInput(t *testing.T, m *Manager, threadID int64) *agentmodel.MailboxMessage {
 	t.Helper()
-	result, err := m.Submit(context.Background(), SubmitRequest{ThreadID: threadID, Input: &InputMessage{MessageType: "input", Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`)}})
+	result, err := m.Submit(context.Background(), agentmodel.SubmitRequest{ThreadID: threadID, Input: &agentmodel.InputMessage{MessageType: "input", Payload: []byte(`{"parts":[{"type":"text","text":"hello"}]}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +136,7 @@ func TestManager_RunHistoryIsIndependentOfInputDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	history, err := m.ListMessages(ctx, ListMessagesRequest{ThreadID: thread.ThreadID})
+	history, err := m.ListMessages(ctx, agentmodel.ListMessagesRequest{ThreadID: thread.ThreadID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,15 +144,15 @@ func TestManager_RunHistoryIsIndependentOfInputDelivery(t *testing.T) {
 		t.Fatalf("lost outcomes: %+v", history.Runs)
 	}
 	for _, message := range history.Messages {
-		if message.Status != dalmodel.MessageStatusAccepted {
+		if message.Status != agentmodel.MessageStatusAccepted {
 			t.Fatalf("execution outcome copied into message: %+v", message)
 		}
 	}
-	err = m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "second", []OutputFrame{{EventType: "assistant_message", Payload: []byte(`{"parts":[{"type":"text","text":"answer"}]}`)}})
+	err = m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "second", []agentmodel.OutputFrame{{EventType: "assistant_message", Payload: []byte(`{"parts":[{"type":"text","text":"answer"}]}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	history, err = m.ListMessages(ctx, ListMessagesRequest{ThreadID: thread.ThreadID})
+	history, err = m.ListMessages(ctx, agentmodel.ListMessagesRequest{ThreadID: thread.ThreadID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,11 +178,11 @@ func TestManager_CrashOnlyRedeliversUnfinishedInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	expired := time.Now().Add(-time.Second)
-	_, err = m.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_until": expired})
+	_, err = m.threads.Update(ctx, &agentmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_until": expired})
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim, err := m.Acquire(ctx, AcquireRequest{})
+	claim, err := m.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || claim.Lease == nil || len(claim.PendingMessages) != 1 {
 		t.Fatalf("claim=%+v error=%v", claim, err)
 	}
@@ -191,7 +190,7 @@ func TestManager_CrashOnlyRedeliversUnfinishedInput(t *testing.T) {
 	if replay.MessageID != unfinished.MessageID || replay.TriggerRunID != "" {
 		t.Fatalf("wrong redelivery: %+v", replay)
 	}
-	history, err := m.ListMessages(ctx, ListMessagesRequest{ThreadID: thread.ThreadID})
+	history, err := m.ListMessages(ctx, agentmodel.ListMessagesRequest{ThreadID: thread.ThreadID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +207,7 @@ func TestManager_CrashOnlyRedeliversUnfinishedInput(t *testing.T) {
 		},
 		func() error { _, err := m.ReleaseThread(ctx, thread.ThreadID, thread.LeaseToken); return err },
 		func() error {
-			return m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "crashed", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"finished"}`)}})
+			return m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "crashed", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"finished"}`)}})
 		},
 	} {
 		err = operation()
@@ -223,14 +222,14 @@ func TestManager_BlockedInputWaitsAndResumeDoesNotStealLease(t *testing.T) {
 	ctx := context.Background()
 	saveState(t, m, thread.ThreadID, thread.LeaseToken, "blocked", "blocked")
 	ordinary := submitStateInput(t, m, thread.ThreadID)
-	response, err := m.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"blocked","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true}}`)})
+	response, err := m.Resume(ctx, thread.ThreadID, &agentmodel.InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"blocked","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if response.Thread.LeaseToken != thread.LeaseToken {
 		t.Fatal("Resume stole ownership during cleanup")
 	}
-	claim, err := m.Acquire(ctx, AcquireRequest{})
+	claim, err := m.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || claim.Lease != nil {
 		t.Fatalf("live lease acquired: %+v %v", claim, err)
 	}
@@ -242,12 +241,12 @@ func TestManager_BlockedInputWaitsAndResumeDoesNotStealLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim, err = m.Acquire(ctx, AcquireRequest{})
+	claim, err = m.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || claim.Lease == nil || len(claim.PendingMessages) != 1 || claim.PendingMessages[0].MessageID != response.Message.MessageID {
 		t.Fatalf("ordinary input bypassed block: %+v %v", claim, err)
 	}
 	saveState(t, m, thread.ThreadID, claim.Lease.LeaseToken, "blocked", "started")
-	fetched, err := m.Acquire(ctx, AcquireRequest{ThreadID: thread.ThreadID, LeaseToken: claim.Lease.LeaseToken})
+	fetched, err := m.Acquire(ctx, agentmodel.AcquireRequest{ThreadID: thread.ThreadID, LeaseToken: claim.Lease.LeaseToken})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,10 +268,10 @@ func TestManager_CancelAndClosePreserveDeliveryAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	message, err := m.findMessage(ctx, thread.ThreadID, input.MessageID)
-	if err != nil || message.Status != dalmodel.MessageStatusCanceled {
+	if err != nil || message.Status != agentmodel.MessageStatusCanceled {
 		t.Fatalf("message=%+v error=%v", message, err)
 	}
-	fetched, err := m.Acquire(ctx, AcquireRequest{ThreadID: thread.ThreadID, LeaseToken: thread.LeaseToken})
+	fetched, err := m.Acquire(ctx, agentmodel.AcquireRequest{ThreadID: thread.ThreadID, LeaseToken: thread.LeaseToken})
 	if err != nil || len(fetched.PendingMessages) != 1 || fetched.PendingMessages[0].MessageID != canceled.Message.MessageID {
 		t.Fatalf("cancel delivery=%+v %v", fetched, err)
 	}
@@ -281,10 +280,10 @@ func TestManager_CancelAndClosePreserveDeliveryAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	closing, err := m.Close(ctx, thread.ThreadID, "")
-	if err != nil || closing.Thread.Status != dalmodel.ThreadStatusClosing || closing.Thread.LeaseToken != thread.LeaseToken {
+	if err != nil || closing.Thread.Status != agentmodel.ThreadStatusClosing || closing.Thread.LeaseToken != thread.LeaseToken {
 		t.Fatalf("close=%+v %v", closing, err)
 	}
-	_, err = m.Submit(ctx, SubmitRequest{ThreadID: thread.ThreadID, Input: &InputMessage{MessageType: "input"}})
+	_, err = m.Submit(ctx, agentmodel.SubmitRequest{ThreadID: thread.ThreadID, Input: &agentmodel.InputMessage{MessageType: "input"}})
 	if !errors.Is(err, ErrThreadClosed) {
 		t.Fatalf("closing accepted input: %v", err)
 	}
@@ -293,10 +292,10 @@ func TestManager_CancelAndClosePreserveDeliveryAndOwnership(t *testing.T) {
 		t.Fatalf("wrong lease closed thread: %v", err)
 	}
 	closed, err := m.ConfirmThreadClosed(ctx, thread.ThreadID, thread.LeaseToken, closing.Message.MessageID)
-	if err != nil || closed.Thread.Status != dalmodel.ThreadStatusClosed || closed.Thread.LeaseToken != "" {
+	if err != nil || closed.Thread.Status != agentmodel.ThreadStatusClosed || closed.Thread.LeaseToken != "" {
 		t.Fatalf("closed=%+v %v", closed, err)
 	}
-	claim, err := m.Acquire(ctx, AcquireRequest{})
+	claim, err := m.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || claim.Lease != nil {
 		t.Fatalf("closed thread acquired: %+v %v", claim, err)
 	}
@@ -306,7 +305,7 @@ func TestManager_OutputFailureRollsBackRunAndConsumedInputTogether(t *testing.T)
 	m, thread := releaseTestManager(t)
 	ctx := context.Background()
 	message := submitStateInput(t, m, thread.ThreadID)
-	err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{
+	err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{
 		{EventType: "run_status", Payload: []byte(fmt.Sprintf(`{"status":"started","consumed_message_ids":["%d"]}`, message.MessageID))},
 		{EventType: "run_status", Payload: []byte(`{"status":"blocked"}`)},
 	})
@@ -314,7 +313,7 @@ func TestManager_OutputFailureRollsBackRunAndConsumedInputTogether(t *testing.T)
 		t.Fatal("accepted malformed blocked result")
 	}
 	saved, err := m.findMessage(ctx, thread.ThreadID, message.MessageID)
-	if err != nil || saved.Status != dalmodel.MessageStatusPending || saved.TriggerRunID != "" {
+	if err != nil || saved.Status != agentmodel.MessageStatusPending || saved.TriggerRunID != "" {
 		t.Fatalf("partial input binding=%+v %v", saved, err)
 	}
 	runs, err := m.runs.Get(ctx, thread.ThreadID, []string{"run"})
@@ -342,7 +341,7 @@ func TestManager_SubmitAndReleaseCannotLoseWork(t *testing.T) {
 	<-locked
 	operations := make(chan error, 2)
 	go func() {
-		_, err := m.Submit(ctx, SubmitRequest{ThreadID: thread.ThreadID, Input: &InputMessage{MessageType: "input", Payload: []byte(`{}`)}})
+		_, err := m.Submit(ctx, agentmodel.SubmitRequest{ThreadID: thread.ThreadID, Input: &agentmodel.InputMessage{MessageType: "input", Payload: []byte(`{}`)}})
 		operations <- err
 	}()
 	go func() { _, err := m.ReleaseThread(ctx, thread.ThreadID, thread.LeaseToken); operations <- err }()
@@ -363,8 +362,8 @@ func TestManager_SubmitAndReleaseCannotLoseWork(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	claim, err := m.Acquire(ctx, AcquireRequest{})
-	if err != nil || claim.Lease == nil || len(claim.PendingMessages) != 1 || claim.Thread.Status != dalmodel.ThreadStatusOpen {
+	claim, err := m.Acquire(ctx, agentmodel.AcquireRequest{})
+	if err != nil || claim.Lease == nil || len(claim.PendingMessages) != 1 || claim.Thread.Status != agentmodel.ThreadStatusOpen {
 		t.Fatalf("work lost: %+v error=%v", claim, err)
 	}
 }
@@ -377,11 +376,11 @@ func TestManager_ResumeRecoveryDoesNotDropAcceptedFollowUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := m.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true}}`)})
+	response, err := m.Resume(ctx, thread.ThreadID, &agentmodel.InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	claim, err := m.Acquire(ctx, AcquireRequest{})
+	claim, err := m.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || claim.Lease == nil {
 		t.Fatalf("claim=%+v %v", claim, err)
 	}
@@ -396,11 +395,11 @@ func TestManager_ResumeRecoveryDoesNotDropAcceptedFollowUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	expired := time.Now().Add(-time.Second)
-	_, err = m.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_until": expired})
+	_, err = m.threads.Update(ctx, &agentmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_until": expired})
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := m.Acquire(ctx, AcquireRequest{})
+	recovered, err := m.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || recovered.Lease == nil || len(recovered.PendingMessages) != 2 {
 		t.Fatalf("accepted follow-up lost: %+v %v", recovered, err)
 	}
@@ -414,7 +413,7 @@ func TestManager_RenewCannotReviveLeaseExpiredWhileWaitingForLock(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	until := time.Now().Add(100 * time.Millisecond)
-	_, err := m.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_until": until})
+	_, err := m.threads.Update(ctx, &agentmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_until": until})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,11 +452,11 @@ func TestManager_RepeatedLeaseLossKeepsResumeRunIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := m.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true}}`)})
+	response, err := m.Resume(ctx, thread.ThreadID, &agentmodel.InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := m.Acquire(ctx, AcquireRequest{})
+	first, err := m.Acquire(ctx, agentmodel.AcquireRequest{})
 	if err != nil || first.Lease == nil {
 		t.Fatalf("claim=%+v %v", first, err)
 	}
@@ -468,11 +467,11 @@ func TestManager_RepeatedLeaseLossKeepsResumeRunIdentity(t *testing.T) {
 	saveState(t, m, thread.ThreadID, first.Lease.LeaseToken, "run", "started")
 	for i := 0; i < 2; i++ {
 		expired := time.Now().Add(-time.Second)
-		_, err = m.threads.Update(ctx, &dalmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_until": expired})
+		_, err = m.threads.Update(ctx, &agentmodel.ThreadFilter{IDs: []int64{thread.ThreadID}}, map[string]any{"lease_until": expired})
 		if err != nil {
 			t.Fatal(err)
 		}
-		claim, err := m.Acquire(ctx, AcquireRequest{})
+		claim, err := m.Acquire(ctx, agentmodel.AcquireRequest{})
 		if err != nil || claim.Lease == nil || len(claim.PendingMessages) != 1 {
 			t.Fatalf("recovery %d: %+v %v", i, claim, err)
 		}
@@ -486,7 +485,7 @@ func TestManager_RunIdentityCannotOverwriteAnotherThread(t *testing.T) {
 	m, first := releaseTestManager(t)
 	_, second := releaseTestManager(t)
 	saveState(t, m, first.ThreadID, first.LeaseToken, "shared-id", "started")
-	err := m.SaveOutput(context.Background(), second.ThreadID, second.LeaseToken, "shared-id", []OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"started"}`)}})
+	err := m.SaveOutput(context.Background(), second.ThreadID, second.LeaseToken, "shared-id", []agentmodel.OutputFrame{{EventType: "run_status", Payload: []byte(`{"status":"started"}`)}})
 	if err == nil {
 		t.Fatal("Run identity reassigned to another Thread")
 	}
@@ -512,18 +511,18 @@ func TestManager_AlwaysAllowOnlyRemembersTheApprovedTool(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			m, thread := releaseTestManager(t)
 			ctx := context.Background()
-			err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{
+			err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{
 				{EventType: "input_required", Payload: []byte(`{"kind":"approval","checkpoint_id":"checkpoint","interrupt_id":"question","tool_name":"execute"}`)},
 				{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"question"}`)},
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := json.Marshal(inputpkg.ResumeRunPayload{RunID: "run", CheckpointID: "checkpoint", InterruptID: "question", Approval: &inputpkg.ApprovalDecision{Approved: testCase.approved, AlwaysAllow: testCase.alwaysAllow}})
+			payload, err := json.Marshal(agentmodel.ResumeRunPayload{RunID: "run", CheckpointID: "checkpoint", InterruptID: "question", Approval: &agentmodel.ApprovalDecision{Approved: testCase.approved, AlwaysAllow: testCase.alwaysAllow}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = m.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: payload})
+			_, err = m.Resume(ctx, thread.ThreadID, &agentmodel.InputMessage{MessageType: "resume_run", Payload: payload})
 			if (err != nil) != testCase.wantError {
 				t.Fatalf("resume error = %v", err)
 			}
@@ -547,14 +546,14 @@ func TestManager_AlwaysAllowOnlyRemembersTheApprovedTool(t *testing.T) {
 func TestManager_AlwaysAllowCannotAuthorizeAQuestion(t *testing.T) {
 	m, thread := releaseTestManager(t)
 	ctx := context.Background()
-	err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{
+	err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{
 		{EventType: "input_required", Payload: []byte(`{"kind":"follow_up","checkpoint_id":"checkpoint","interrupt_id":"question","info":{"question":"What next?"}}`)},
 		{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"question"}`)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = m.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true,"always_allow":true}}`)})
+	_, err = m.Resume(ctx, thread.ThreadID, &agentmodel.InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"question","approval":{"approved":true,"always_allow":true}}`)})
 	if err == nil {
 		t.Fatal("a follow-up question cannot grant tool approval")
 	}
@@ -563,7 +562,7 @@ func TestManager_AlwaysAllowCannotAuthorizeAQuestion(t *testing.T) {
 func TestManager_AlwaysAllowBatchCannotReuseAnOldApproval(t *testing.T) {
 	m, thread := releaseTestManager(t)
 	ctx := context.Background()
-	err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []OutputFrame{
+	err := m.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{
 		{EventType: "input_required", Payload: []byte(`{"kind":"approval","checkpoint_id":"checkpoint","interrupt_id":"old","tool_name":"write_file"}`)},
 		{EventType: "input_required", Payload: []byte(`{"kind":"batch","checkpoint_id":"checkpoint","interrupt_id":"current","items":[{"kind":"approve","interrupt_id":"current","tool_name":"execute"}]}`)},
 		{EventType: "run_status", Payload: []byte(`{"status":"blocked","checkpoint_id":"checkpoint","interrupt_id":"current"}`)},
@@ -571,7 +570,7 @@ func TestManager_AlwaysAllowBatchCannotReuseAnOldApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = m.Resume(ctx, thread.ThreadID, &InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"current","answers":[{"interrupt_id":"current","approval":{"approved":true,"always_allow":true}},{"interrupt_id":"old","approval":{"approved":true,"always_allow":true}}]}`)})
+	_, err = m.Resume(ctx, thread.ThreadID, &agentmodel.InputMessage{MessageType: "resume_run", Payload: []byte(`{"run_id":"run","checkpoint_id":"checkpoint","interrupt_id":"current","answers":[{"interrupt_id":"current","approval":{"approved":true,"always_allow":true}},{"interrupt_id":"old","approval":{"approved":true,"always_allow":true}}]}`)})
 	if err == nil {
 		t.Fatal("stale approval accepted in the current batch")
 	}

@@ -13,8 +13,7 @@ import (
 
 	"eino-cli/deepagent/graph/conversation"
 	"eino-cli/deepagent/graph/tools"
-	"eino-cli/deepagent/graph/types"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -30,20 +29,20 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 	ctx := context.Background()
 	childModel := &parallelChildModel{both: make(chan struct{})}
 	counter := &countingTool{}
-	task := tools.NewTaskTool(NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: childModel, ToolDescriptors: []tools.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}))
+	task := tools.NewTaskTool(NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: childModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter, RequiresApproval: true}}}))
 	task.ParallelSafe = true
 	parentModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{
 		{ID: "a", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"a"}`}},
 		{ID: "b", Function: schema.FunctionCall{Name: "task", Arguments: `{"description":"b"}`}},
 	})}, {schema.AssistantMessage("parent done", nil)}}}
-	config := Config{Model: parentModel, RunID: "run", Parallelism: 2, CheckpointStore: &checkpointMemory{}, Policy: tools.PolicyFunc(func(context.Context, types.ToolCall, tools.ToolDescriptor) (tools.Decision, error) {
-		return tools.Decision{Action: tools.Allow}, nil
-	}), ToolDescriptors: []tools.ToolDescriptor{task}}
+	config := Config{Model: parentModel, RunID: "run", Parallelism: 2, CheckpointStore: &checkpointMemory{}, Policy: agentmodel.PolicyFunc(func(context.Context, agentmodel.ToolCall, agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
+		return agentmodel.Decision{Action: agentmodel.Allow}, nil
+	}), ToolDescriptors: []agentmodel.ToolDescriptor{task}}
 	graph, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("delegate")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("delegate")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 2 {
 		t.Fatalf("expected two child approvals: %v", err)
@@ -51,9 +50,9 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 	answers := map[string]any{}
 	ids := make([]string, 0, len(info.InterruptContexts))
 	for _, interrupt := range info.InterruptContexts {
-		approval := interrupt.Info.(*tools.ApprovalInfo)
+		approval := interrupt.Info.(*agentmodel.ApprovalInfo)
 		ids = append(ids, interrupt.ID)
-		answers[interrupt.ID] = &tools.ApprovalResult{CallID: approval.CallID, Approved: true}
+		answers[interrupt.ID] = &agentmodel.ApprovalResult{CallID: approval.CallID, Approved: true}
 	}
 	config.Conversation = graph.conversation
 	resumed, err := New(ctx, WithConfig(&config))
@@ -71,7 +70,7 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 
 func TestCheckpoint_ChildConversationRestoresProviderUsage(t *testing.T) {
 	ctx := context.Background()
-	counter := func(messages []*messagepkg.Message) int { return len(messages) * 3 }
+	counter := func(messages []*agentmodel.Message) int { return len(messages) * 3 }
 	initial := conversation.New("", nil, nil, counter, 0, nil)
 	fresh := conversation.New("", nil, nil, counter, 0, nil)
 	reply := schema.AssistantMessage("", []schema.ToolCall{{ID: "approval", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})
@@ -82,12 +81,12 @@ func TestCheckpoint_ChildConversationRestoresProviderUsage(t *testing.T) {
 			t.Errorf("lost context token usage: %+v", usage)
 		}
 	}}
-	config := Config{Depth: 1, RunID: "child-run", Model: chatModel, Conversation: initial, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []tools.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
+	config := Config{Depth: 1, RunID: "child-run", Model: chatModel, Conversation: initial, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
 	graph, err := New(ctx, WithConfig(&config))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*messagepkg.Message{messagepkg.NewUserMessage("work")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("work")}, WithCheckpointID("checkpoint"))
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -97,7 +96,7 @@ func TestCheckpoint_ChildConversationRestoresProviderUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &tools.ApprovalResult{Approved: true}}))
+	_, err = restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +137,7 @@ func TestChildAgent_DirectoryConfigurationReachesTaskGraph(t *testing.T) {
 	if err != nil || !strings.Contains(string(raw), "reviewer") {
 		t.Fatalf("task schema does not advertise loaded agent: %s %v", raw, err)
 	}
-	_, executeErr := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("delegate")})
+	_, executeErr := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("delegate")})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -150,7 +149,7 @@ func TestChildAgent_DirectoryConfigurationReachesTaskGraph(t *testing.T) {
 		t.Fatalf("duplicate configured child accepted: %v", err)
 	}
 	directModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("direct", nil)}}}
-	out, err := NewChildRunner(Config{Model: directModel, SubAgents: agents}).Run(context.Background(), tools.ChildRequest{Name: "reviewer", Prompt: "direct task"}, nil)
+	out, err := NewChildRunner(Config{Model: directModel, SubAgents: agents}).Run(context.Background(), agentmodel.ChildRequest{Name: "reviewer", Prompt: "direct task"}, nil)
 	if err != nil || out.Content != "direct" || directModel.inputs[0][0].Content != "review loaded configuration" {
 		t.Fatalf("direct child runner did not load config: out=%v err=%v", out, err)
 	}
@@ -165,8 +164,8 @@ func TestChildAgent_TaskStreamingReturnsOnlyFinalAnswer(t *testing.T) {
 	}}
 	var chunks []string
 	tool := &countingTool{}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, SubAgents: []*SubAgent{{Name: "general-purpose"}}, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}, Emit: func(_ context.Context, event types.RuntimeEvent) error {
-		chunk, ok := event.Data.(types.ToolCallOutputChunkPayload)
+	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, SubAgents: []*SubAgent{{Name: "general-purpose"}}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
+		chunk, ok := event.Data.(agentmodel.ToolCallOutputChunkPayload)
 		if ok && chunk.CallID == "task-call" {
 			chunks = append(chunks, chunk.Chunk)
 		}
@@ -175,7 +174,7 @@ func TestChildAgent_TaskStreamingReturnsOnlyFinalAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("delegate")})
+	out, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("delegate")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +196,7 @@ func TestChildAgent_NamedCapabilitiesAndContext(t *testing.T) {
 		FilesystemConfig: &FilesystemConfig{},
 		SubAgents:        []*SubAgent{{Name: "reviewer", SystemPrompt: "review carefully"}},
 	})
-	result, err := runner.Run(context.Background(), tools.ChildRequest{Name: "reviewer", Prompt: "selected context\nreview task"}, nil)
+	result, err := runner.Run(context.Background(), agentmodel.ChildRequest{Name: "reviewer", Prompt: "selected context\nreview task"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,18 +211,18 @@ func TestChildAgent_NamedCapabilitiesAndContext(t *testing.T) {
 func TestChildAgent_UsesSameGraphWithIndependentBudget(t *testing.T) {
 	ctx := context.Background()
 	parentHistory := conversation.New("parent", nil, nil, nil, 0, nil)
-	addHistoryErr := parentHistory.AddHistory(ctx, "parent-run", messagepkg.NewUserMessage("private parent context"))
+	addHistoryErr := parentHistory.AddHistory(ctx, "parent-run", agentmodel.NewUserMessage("private parent context"))
 	if addHistoryErr != nil {
 		t.Fatal(addHistoryErr)
 	}
 	model := &childModel{}
 	tool := &countingTool{}
-	runner := NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: model, RunID: "parent-run", MaxModelCalls: 1, Conversation: parentHistory, ToolDescriptors: []tools.ToolDescriptor{{Tool: tool}}})
-	_, err := runner.Run(ctx, tools.ChildRequest{Name: "general-purpose", Prompt: "first child", MaxModelCalls: 1}, nil)
+	runner := NewChildRunner(Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: model, RunID: "parent-run", MaxModelCalls: 1, Conversation: parentHistory, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}})
+	_, err := runner.Run(ctx, agentmodel.ChildRequest{Name: "general-purpose", Prompt: "first child", MaxModelCalls: 1}, nil)
 	if err == nil || !strings.Contains(err.Error(), "maximum model calls") {
 		t.Fatalf("child budget not enforced: %v", err)
 	}
-	result, err := runner.Run(ctx, tools.ChildRequest{Name: "general-purpose", Prompt: "second child", MaxModelCalls: 2}, nil)
+	result, err := runner.Run(ctx, agentmodel.ChildRequest{Name: "general-purpose", Prompt: "second child", MaxModelCalls: 2}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +251,7 @@ func TestChildAgent_TaskIsRegisteredOnParentGraph(t *testing.T) {
 	if !ok {
 		t.Fatal("task is not registered")
 	}
-	result, err := graph.Invoke(context.Background(), []*messagepkg.Message{messagepkg.NewUserMessage("delegate")})
+	result, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("delegate")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,35 +273,35 @@ func TestChildAgent_ConcurrencyLimitQueuesEveryTask(t *testing.T) {
 	runner := &boundedChildRunner{started: make(chan string, 5), release: make(chan struct{}, 5)}
 	task := tools.NewTaskTool(runner)
 	task.ParallelSafe = true
-	toolSet, err := tools.NewToolSet(ctx, []tools.ToolDescriptor{task})
+	toolSet, err := tools.NewToolSet(ctx, []agentmodel.ToolDescriptor{task})
 	if err != nil {
 		t.Fatal(err)
 	}
 	executor := newToolExecutor(toolSet, 2, nil)
-	var calls []types.ToolCall
+	var calls []agentmodel.ToolCall
 	for _, i := range []int{4, 2, 0, 3, 1} {
-		calls = append(calls, types.ToolCall{ID: fmt.Sprint(i), Index: i, Name: "task", Arguments: fmt.Sprintf(`{"description":"task-%d"}`, i)})
+		calls = append(calls, agentmodel.ToolCall{ID: fmt.Sprint(i), Index: i, Name: "task", Arguments: fmt.Sprintf(`{"description":"task-%d"}`, i)})
 	}
 	done := make(chan struct {
-		results []types.ToolResult
+		results []agentmodel.ToolResult
 		err     error
 	}, 1)
 	go func() {
 		err := executor.executeToolBatch(ctx, calls, nil)
-		states := make([]types.ToolCallState, len(calls))
+		states := make([]agentmodel.ToolCallState, len(calls))
 		for i, call := range calls {
 			states[i].Call = call
 		}
 		executor.snapshotToolExecutions(states)
 		sort.SliceStable(states, func(i, j int) bool { return states[i].Call.Index < states[j].Call.Index })
-		results := make([]types.ToolResult, 0, len(states))
+		results := make([]agentmodel.ToolResult, 0, len(states))
 		for _, state := range states {
 			if state.Result != nil {
 				results = append(results, *state.Result)
 			}
 		}
 		done <- struct {
-			results []types.ToolResult
+			results []agentmodel.ToolResult
 			err     error
 		}{results, err}
 	}()
@@ -401,7 +400,7 @@ func TestChildAgent_RequiresExplicitRegistration(t *testing.T) {
 		t.Fatal("task registered without configured subagents")
 	}
 	runner := NewChildRunner(Config{Model: chatModel})
-	_, err = runner.Run(ctx, tools.ChildRequest{Name: "general-purpose", Prompt: "work"}, nil)
+	_, err = runner.Run(ctx, agentmodel.ChildRequest{Name: "general-purpose", Prompt: "work"}, nil)
 	if err == nil || chatModel.calls != 0 {
 		t.Fatalf("unconfigured child executed: err=%v calls=%d", err, chatModel.calls)
 	}
@@ -411,10 +410,10 @@ func TestChildAgent_CustomPromptRetainsSharedInstructions(t *testing.T) {
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
 	config := Config{
 		Model:     chatModel,
-		Prompts:   []*messagepkg.Message{messagepkg.NewSystemMessage("shared operating instructions")},
+		Prompts:   []*agentmodel.Message{agentmodel.NewSystemMessage("shared operating instructions")},
 		SubAgents: []*SubAgent{{Name: "review", SystemPrompt: "review-specific instructions"}},
 	}
-	_, err := NewChildRunner(config).Run(context.Background(), tools.ChildRequest{Name: "review", Prompt: "inspect"}, nil)
+	_, err := NewChildRunner(config).Run(context.Background(), agentmodel.ChildRequest{Name: "review", Prompt: "inspect"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

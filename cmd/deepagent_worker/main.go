@@ -20,7 +20,7 @@ import (
 	"eino-cli/deepagent/graph/modelhub"
 	skillspkg "eino-cli/deepagent/graph/skills"
 	"eino-cli/deepagent/manager"
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/worker"
 
 	modelpkg "github.com/cloudwego/eino/components/model"
@@ -115,7 +115,7 @@ func runWorker(ctx context.Context, cfg appconfig.Config) error {
 			ConversationDB: conversationDAO, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
 			MemoryStore: coordinator, Collaboration: coordinator,
 			IsToolAlwaysAllowed: coordinator.IsToolAlwaysAllowed,
-			GenerateMessageID: func(idCtx context.Context, _ *messagepkg.Message) (string, error) {
+			GenerateMessageID: func(idCtx context.Context, _ *agentmodel.Message) (string, error) {
 				id, err := dalcache.GenerateID(idCtx, redisClient)
 				if err != nil {
 					return "", err

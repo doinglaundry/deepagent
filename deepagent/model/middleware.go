@@ -1,81 +1,46 @@
-package types
+package model
 
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/cloudwego/eino/schema"
 )
 
-type Phase string
-
-const (
-	PhasePreparing   Phase = "preparing"
-	PhaseModeling    Phase = "modeling"
-	PhaseTools       Phase = "tools"
-	PhaseBlocked     Phase = "blocked"
-	PhaseCompleted   Phase = "completed"
-	PhaseInterrupted Phase = "interrupted"
-	PhaseFailed      Phase = "failed"
-)
-
-type PlanStep struct {
-	Step   string `json:"step"`
-	Status string `json:"status"`
+// Middleware is the lifecycle contract for one graph middleware.
+// BaseMiddleware supplies no-op implementations for optional hooks.
+type Middleware interface {
+	GetName() string
+	PrepareAgent(context.Context) error
+	GetStateHandler() RunTimeStateful
+	BuildPrompt(context.Context) ([]*Message, error)
+	ModifyModelRequest(context.Context, []*Message, []*Message, *GraphState) ([]*Message, error)
+	ModifyModelResponse(context.Context, *Message, *GraphState) (*Message, error)
+	ModifyModelStreamResponse(context.Context, *schema.StreamReader[*Message], *GraphState) (*schema.StreamReader[*Message], error)
 }
 
-type runStateKey struct{}
-
-// WithRunState exposes the graph-owned state to tools and middleware executing
-// inside a node. It does not create or persist another state object.
-func WithRunState(ctx context.Context, runState *RunState) context.Context {
-	return context.WithValue(ctx, runStateKey{}, runState)
-}
-func GetRunState(ctx context.Context) *RunState {
-	runState, _ := ctx.Value(runStateKey{}).(*RunState)
-	return runState
+// Optional capabilities are detected directly by Graph; there is no second
+// middleware pipeline or intermediate execution object.
+type RunMiddleware interface {
+	PrepareRun(context.Context, *RunState) error
+	FinishRun(context.Context, *RunState, error) error
 }
 
-// RunState is the serializable local state of the Eino graph. Live resources
-// belong to Graph, never to this checkpointed value.
-type RunState struct {
-	Version        int
-	ThreadID       string
-	RunID          string
-	Depth          int
-	Phase          Phase
-	ModelCalls     int
-	GraphSteps     int
-	EventSeq       uint64
-	PreparedInputs int
-	HistorySeq     int64
-	ContextUsage   *ContextTokenUsage
-	Consumed       []Input
-	Calls          []ToolCallState
-	Plan           []PlanStep
-	Pending        []Interrupt
-	Usage          Usage
-	Extensions     map[string]json.RawMessage
+type EventObserver interface {
+	Observe(context.Context, RuntimeEvent) error
 }
 
-func init() { schema.RegisterName[*RunState]("deepagent_run_state_v1") }
+type ModelHandler func(context.Context, []*Message) (*schema.StreamReader[*Message], error)
 
-// Eino's reflective serializer in the pinned version does not round-trip
-// json.RawMessage map values. Encoding this state as one JSON value preserves
-// extension payloads while leaving the Eino checkpoint as the only snapshot.
-func (runState RunState) MarshalJSON() ([]byte, error) {
-	type wire RunState
-	return json.Marshal(wire(runState))
-}
-func (runState *RunState) UnmarshalJSON(raw []byte) error {
-	type wire RunState
-	return json.Unmarshal(raw, (*wire)(runState))
+type ModelMiddleware interface {
+	WrapModel(ModelHandler) ModelHandler
 }
 
-type Usage struct {
-	PromptTokens     int64
-	CompletionTokens int64
-	TotalTokens      int64
-}
+// RunFactory creates fresh mutable state when a configured middleware is reused.
+type RunFactory interface{ NewRun() Middleware }
+
+// ResourceCloser releases resources acquired during setup or execution. Close must tolerate construction without PrepareRun.
+type ResourceCloser interface{ Close(context.Context) error }
 
 // RunTimeStateful serializes and restores a component's runtime state.
 type RunTimeStateful interface {
@@ -138,6 +103,7 @@ func (graphState *GraphState) RestoreExtensions(runState *RunState) error {
 	}
 	return nil
 }
+
 func (graphState *GraphState) SnapshotExtensions(runState *RunState) error {
 	if runState.Extensions == nil {
 		runState.Extensions = make(map[string]json.RawMessage)

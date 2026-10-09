@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	agentmodel "eino-cli/deepagent/model"
+
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"golang.org/x/net/html"
@@ -17,7 +19,7 @@ import (
 
 type WebConfig struct {
 	Enabled         bool              `yaml:"enabled"`
-	ToolMask        Mask              `yaml:"-"`
+	ToolMask        agentmodel.Mask   `yaml:"-"`
 	MaxResults      int               `yaml:"max_results"`
 	Topic           string            `yaml:"topic"`
 	EnableWebSearch bool              `yaml:"enable_web_search"`
@@ -34,7 +36,7 @@ func NewDefaultWebConfig() *WebConfig {
 }
 
 // NewWebTools supplies model-callable Web actions without owning agent lifecycle.
-func NewWebTools(ctx context.Context, webConfig *WebConfig) ([]ToolDescriptor, error) {
+func NewWebTools(ctx context.Context, webConfig *WebConfig) ([]agentmodel.ToolDescriptor, error) {
 	if webConfig == nil {
 		return nil, nil
 	}
@@ -56,17 +58,17 @@ func NewWebTools(ctx context.Context, webConfig *WebConfig) ([]ToolDescriptor, e
 	if maxBytes == 0 {
 		maxBytes = 1 << 20
 	}
-	var toolDescriptors []ToolDescriptor
+	var toolDescriptors []agentmodel.ToolDescriptor
 	if webConfig.EnableFetchURL {
-		toolDescriptors = append(toolDescriptors, ToolDescriptor{Tool: &webTool{client: httpClient, maxBytes: maxBytes}, ReadOnly: true})
+		toolDescriptors = append(toolDescriptors, agentmodel.ToolDescriptor{Tool: &webTool{client: httpClient, maxBytes: maxBytes}, ReadOnly: true})
 	}
 	if webConfig.EnableWebSearch && webConfig.SearchURL != "" {
-		toolDescriptors = append(toolDescriptors, ToolDescriptor{Tool: &webTool{client: httpClient, maxBytes: maxBytes, searchURL: webConfig.SearchURL, headers: webConfig.Headers}, ReadOnly: true})
+		toolDescriptors = append(toolDescriptors, agentmodel.ToolDescriptor{Tool: &webTool{client: httpClient, maxBytes: maxBytes, searchURL: webConfig.SearchURL, headers: webConfig.Headers}, ReadOnly: true})
 	}
 	if webConfig.ToolMask == nil {
 		return toolDescriptors, nil
 	}
-	filteredDescriptors := make([]ToolDescriptor, 0, len(toolDescriptors))
+	filteredDescriptors := make([]agentmodel.ToolDescriptor, 0, len(toolDescriptors))
 	for _, toolDescriptor := range toolDescriptors {
 		toolInfo, err := toolDescriptor.Tool.Info(ctx)
 		if err != nil {

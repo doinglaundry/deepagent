@@ -1,10 +1,10 @@
 package utils
 
 import (
-	messagepkg "eino-cli/deepagent/message"
+	agentmodel "eino-cli/deepagent/model"
 )
 
-func SimpleTokenCounter(messages []*messagepkg.Message) int {
+func SimpleTokenCounter(messages []*agentmodel.Message) int {
 	n := 0
 	for _, m := range messages {
 		if m != nil {
