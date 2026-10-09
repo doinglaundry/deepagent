@@ -1,6 +1,6 @@
 //go:build !windows
 
-package threadhost
+package worker
 
 import (
 	"context"
@@ -31,7 +31,7 @@ type CloseThreadControlPayload struct {
 func (c *threadRun) runInput(stop <-chan struct{}, activity chan<- time.Time, results chan<- runResult, done chan<- struct{}) {
 	defer close(done)
 	pending := c.claim.PendingMessages
-	pollTicker := time.NewTicker(c.host.MessagePollInterval)
+	pollTicker := time.NewTicker(c.worker.MessagePollInterval)
 	defer pollTicker.Stop()
 	consecutivePullErrors := 0
 
@@ -71,14 +71,14 @@ func (c *threadRun) runInput(stop <-chan struct{}, activity chan<- time.Time, re
 			return
 		case <-pollTicker.C:
 			lease := c.claim.Lease
-			result, err := c.host.Client.Acquire(c.ctx, manager.AcquireRequest{ThreadID: lease.ThreadID, LeaseToken: lease.LeaseToken})
+			result, err := c.worker.Client.Acquire(c.ctx, manager.AcquireRequest{ThreadID: lease.ThreadID, LeaseToken: lease.LeaseToken})
 			err = serialiser.WrapError(fmt.Sprintf("PullPendingMessages thread_id=%d", lease.ThreadID), err)
 			if err != nil {
 				if c.ctx.Err() != nil {
 					return
 				}
 				consecutivePullErrors++
-				if c.waitInput(stop, getPullErrorBackoff(c.host.MessagePollInterval, consecutivePullErrors)) {
+				if c.waitInput(stop, getPullErrorBackoff(c.worker.MessagePollInterval, consecutivePullErrors)) {
 					return
 				}
 				continue
@@ -123,7 +123,7 @@ func (c *threadRun) deliverMessage(message *dalmodel.Message, pending *[]*dalmod
 
 func (c *threadRun) ackMessage(message *dalmodel.Message, triggerRunID string) (result runResult) {
 	lease := c.claim.Lease
-	_, err := c.host.Client.AckInput(c.ctx, lease.ThreadID, lease.LeaseToken, triggerRunID, []int64{message.MessageID})
+	_, err := c.worker.Client.AckInput(c.ctx, lease.ThreadID, lease.LeaseToken, triggerRunID, []int64{message.MessageID})
 	err = serialiser.WrapError(fmt.Sprintf("AckThreadMessages thread_id=%d message_id=%d", lease.ThreadID, message.MessageID), err)
 	if err != nil {
 		return runResult{reason: ackMessageFailedReason, err: err}
@@ -155,7 +155,7 @@ func (c *threadRun) handleCancel(message *dalmodel.Message, pending *[]*dalmodel
 	if reason == "" {
 		reason = "user_cancel"
 	}
-	interruptTimeout := runtimeInterruptTimeout(c.host.InterruptDrainTimeout)
+	interruptTimeout := runtimeInterruptTimeout(c.worker.InterruptDrainTimeout)
 	err := c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
 		Kind:             threadpkg.TransportThreadInterruptKindCancelInput,
 		ControlMessageID: fmt.Sprint(message.MessageID),
@@ -191,7 +191,7 @@ func (c *threadRun) handleClose(message *dalmodel.Message, pending *[]*dalmodel.
 	*pending = nil
 
 	if c.thread.ActiveRun() != nil {
-		interruptTimeout := runtimeInterruptTimeout(c.host.InterruptDrainTimeout)
+		interruptTimeout := runtimeInterruptTimeout(c.worker.InterruptDrainTimeout)
 		_ = c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
 			Kind:             threadpkg.TransportThreadInterruptKindCloseThread,
 			ControlMessageID: fmt.Sprint(message.MessageID),
@@ -203,9 +203,9 @@ func (c *threadRun) handleClose(message *dalmodel.Message, pending *[]*dalmodel.
 }
 
 func (c *threadRun) waitForInterrupt(stop <-chan struct{}) (timedOut bool, err error) {
-	timer := time.NewTimer(c.host.InterruptDrainTimeout)
+	timer := time.NewTimer(c.worker.InterruptDrainTimeout)
 	defer timer.Stop()
-	poll := time.NewTicker(c.host.MessagePollInterval)
+	poll := time.NewTicker(c.worker.MessagePollInterval)
 	defer poll.Stop()
 
 	for {

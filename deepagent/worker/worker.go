@@ -1,6 +1,6 @@
 //go:build !windows
 
-package threadhost
+package worker
 
 import (
 	"context"
@@ -31,8 +31,8 @@ type Config struct {
 	InterruptDrainTimeout time.Duration `yaml:"interrupt_drain_timeout"`
 }
 
-// ThreadHost owns scanning, claims, input delivery and lease release.
-type ThreadHost struct {
+// Worker owns scanning, claims, input delivery and lease release.
+type Worker struct {
 	browserMu          sync.Mutex
 	browsers           map[int64]*computer.Browser
 	browserExpirations map[int64]*time.Timer
@@ -51,7 +51,7 @@ var (
 	ErrMissingLease   = errors.New("agentworker/cloud: lease is required")
 )
 
-func (w *ThreadHost) normalize() {
+func (w *Worker) normalize() {
 	if w.Concurrency <= 0 {
 		w.Concurrency = defaultConcurrency
 	}
@@ -78,7 +78,7 @@ func (w *ThreadHost) normalize() {
 	}
 }
 
-func (w *ThreadHost) Validate() error {
+func (w *Worker) Validate() error {
 	if w == nil {
 		return errors.New("agentworker: worker is nil")
 	}
@@ -92,7 +92,7 @@ func (w *ThreadHost) Validate() error {
 }
 
 // Run 在有空闲执行槽位时领取任务，再启动 Thread。
-func (w *ThreadHost) Run(ctx context.Context) (err error) {
+func (w *Worker) Run(ctx context.Context) (err error) {
 	if w != nil {
 		w.normalize()
 	}
@@ -128,7 +128,7 @@ func (w *ThreadHost) Run(ctx context.Context) (err error) {
 }
 
 // RunThread creates the Thread, renews ownership, drives input/output, then closes and releases it.
-func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, claim *manager.AcquireResult) (err error) {
+func (w *Worker) RunThread(ctx context.Context, acceptCtx context.Context, claim *manager.AcquireResult) (err error) {
 	if w != nil {
 		w.normalize()
 	}
@@ -188,7 +188,7 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 
 	active := thread.ActiveRun()
 	run := &threadRun{
-		host: w, ctx: runCtx, acceptDone: acceptCtx.Done(), claim: claim, thread: thread,
+		worker: w, ctx: runCtx, acceptDone: acceptCtx.Done(), claim: claim, thread: thread,
 		idleSince: time.Now(), wasActive: active != nil,
 	}
 	result, closeErr := run.run(output.Items)
@@ -196,7 +196,7 @@ func (w *ThreadHost) RunThread(ctx context.Context, acceptCtx context.Context, c
 	return run.finish(result, closeErr, waitLease)
 }
 
-func (w *ThreadHost) startLease(ctx context.Context, lease *manager.Lease) (runCtx context.Context, stop func(), wait func() error) {
+func (w *Worker) startLease(ctx context.Context, lease *manager.Lease) (runCtx context.Context, stop func(), wait func() error) {
 	runCtx, cancel := context.WithCancelCause(ctx)
 	done := make(chan struct{})
 	var leaseErr error
@@ -218,7 +218,7 @@ func (w *ThreadHost) startLease(ctx context.Context, lease *manager.Lease) (runC
 	return runCtx, stop, wait
 }
 
-func (w *ThreadHost) renewLease(ctx context.Context, lease *manager.Lease) (err error) {
+func (w *Worker) renewLease(ctx context.Context, lease *manager.Lease) (err error) {
 	deadline := lease.LeaseUntil
 	if deadline.IsZero() {
 		deadline = time.Now().Add(time.Duration(defaultLeaseMS) * time.Millisecond)

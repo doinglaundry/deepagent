@@ -1,6 +1,6 @@
 //go:build !windows
 
-package threadhost
+package worker
 
 import (
 	"context"
@@ -28,10 +28,10 @@ func (*runtimeModel) WithTools([]*schema.ToolInfo) (modelpkg.ToolCallingChatMode
 	return &runtimeModel{}, nil
 }
 
-func TestThreadHostCanonicalRuntimeSubmitToYield(t *testing.T) {
+func TestWorkerCanonicalRuntimeSubmitToYield(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	host := &ThreadHost{Runtime: RuntimeConfig{Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default"}}
+	host := &Worker{Runtime: RuntimeConfig{Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default"}}
 	runtime, err := host.createThread(ctx, &model.Thread{ThreadID: 42, SessionID: "session", Profile: &model.Profile{Cwd: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
@@ -94,8 +94,8 @@ func (*runtimeModel) Stream(context.Context, []*schema.Message, ...modelpkg.Opti
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("ok", nil)}), nil
 }
 
-func TestThreadHostCreatesCanonicalRuntime(t *testing.T) {
-	host := &ThreadHost{Runtime: RuntimeConfig{
+func TestWorkerCreatesCanonicalRuntime(t *testing.T) {
+	host := &Worker{Runtime: RuntimeConfig{
 		Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default",
 	}}
 	runtime, err := host.createThread(context.Background(), &model.Thread{ThreadID: 42, SessionID: "session"})
@@ -132,12 +132,12 @@ func (m *configuredHostModel) Stream(_ context.Context, input []*schema.Message,
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("ok", nil)}), nil
 }
 
-func TestThreadHostBuildsPromptsAndToolsForEachRun(t *testing.T) {
+func TestWorkerBuildsPromptsAndToolsForEachRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	dir := t.TempDir()
 	chatModel := &configuredHostModel{}
-	host := &ThreadHost{Runtime: RuntimeConfig{
+	host := &Worker{Runtime: RuntimeConfig{
 		Models:       map[string]modelpkg.ToolCallingChatModel{"default": chatModel},
 		DefaultModel: "default", SystemPrompt: "host system prompt",
 	}}
@@ -182,7 +182,7 @@ func TestThreadHostBuildsPromptsAndToolsForEachRun(t *testing.T) {
 }
 
 func TestCreateThreadDockerAllocationFailure(t *testing.T) {
-	host := &ThreadHost{Runtime: RuntimeConfig{
+	host := &Worker{Runtime: RuntimeConfig{
 		FilesystemKind: "docker",
 		Models:         map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}},
 		DefaultModel:   "default",
@@ -234,7 +234,7 @@ esac
 				}
 				return strings.Count(string(data), "rm -f ")
 			}
-			host := &ThreadHost{Runtime: RuntimeConfig{
+			host := &Worker{Runtime: RuntimeConfig{
 				FilesystemKind: "docker", Docker: config.SandboxConfig{Image: "test-image"},
 				Models: map[string]modelpkg.ToolCallingChatModel{"default": &runtimeModel{}}, DefaultModel: "default",
 			}}

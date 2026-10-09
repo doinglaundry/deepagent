@@ -44,6 +44,9 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func writeError(w http.ResponseWriter, status int, err error) {
+	if errors.Is(err, manager.ErrThreadNotFound) {
+		status = http.StatusNotFound
+	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
 
@@ -189,7 +192,7 @@ func (s *Server) thread(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 1 && r.Method == http.MethodGet {
 		result, err := s.Manager.ListThreads(r.Context(), manager.ListThreadsRequest{ThreadID: threadID})
 		if err != nil {
-			writeError(w, http.StatusNotFound, err)
+			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 		views, err := s.getThreadViews(r.Context(), result.Thread)
@@ -382,7 +385,7 @@ func messageText(message *dalmodel.Message) string {
 func (s *Server) openFile(w http.ResponseWriter, r *http.Request, threadID int64) {
 	result, err := s.Manager.ListThreads(r.Context(), manager.ListThreadsRequest{ThreadID: threadID})
 	if err != nil {
-		writeError(w, http.StatusNotFound, err)
+		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if result.Thread.Profile == nil || strings.TrimSpace(result.Thread.Profile.Cwd) == "" {
@@ -432,7 +435,7 @@ func (s *Server) Shutdown(context.Context) error { return nil }
 func (s *Server) stream(w http.ResponseWriter, r *http.Request, threadID int64) {
 	result, err := s.Manager.ListThreads(r.Context(), manager.ListThreadsRequest{ThreadID: threadID})
 	if err != nil {
-		writeError(w, http.StatusNotFound, err)
+		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	subscription, err := s.Manager.SubscribeSession(r.Context(), result.Thread.SessionID, r.Header.Get("Last-Event-ID"))

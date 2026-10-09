@@ -37,7 +37,7 @@ func AppendInputs(existing []Input, incoming ...Input) []Input {
 }
 
 // Metadata remains typed across checkpoint restore (in particular the
-// ThreadHost's map[string]string and 64-bit message identifiers).
+// Worker's map[string]string and 64-bit message identifiers).
 func init() { gob.Register(map[string]string{}); gob.Register(map[string]any{}); gob.Register([]any{}) }
 
 type persistedInput struct {

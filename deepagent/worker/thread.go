@@ -1,6 +1,6 @@
 //go:build !windows
 
-package threadhost
+package worker
 
 import (
 	"context"
@@ -72,10 +72,10 @@ type RuntimeDeps struct {
 }
 
 // createThread 准备资源和配置，再创建 Thread；初始化由 RunThread 负责。
-func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (thread *threadpkg.Thread, err error) {
+func (w *Worker) createThread(ctx context.Context, info *dalmodel.Thread) (thread *threadpkg.Thread, err error) {
 	// 1. 确定 Thread 身份、工作目录和模型。
 	if info == nil || info.ThreadID == 0 {
-		return nil, errors.New("threadhost: thread info is required")
+		return nil, errors.New("worker: thread info is required")
 	}
 	threadID := strconv.FormatInt(info.ThreadID, 10)
 	workDir := ""
@@ -219,7 +219,7 @@ func (w *ThreadHost) createThread(ctx context.Context, info *dalmodel.Thread) (t
 	return threadpkg.NewThread(threadConfig)
 }
 
-func (w *ThreadHost) memoryService(chatModel modelpkg.ToolCallingChatModel) (longmemory.Service, error) {
+func (w *Worker) memoryService(chatModel modelpkg.ToolCallingChatModel) (longmemory.Service, error) {
 	if !w.Runtime.MemoryEnabled {
 		return nil, nil
 	}

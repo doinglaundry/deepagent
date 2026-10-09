@@ -1,4 +1,4 @@
-package threadhost
+package worker
 
 import (
 	"context"

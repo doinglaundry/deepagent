@@ -1,6 +1,6 @@
 //go:build !windows
 
-package threadhost
+package worker
 
 import (
 	"context"
@@ -86,15 +86,15 @@ func validateComputerTarget(runtime RuntimeConfig, call types.ToolCall) error {
 
 // A blocked logical Thread retains Chrome for an unchanged approval target.
 // The claim's Thread object can close; another Worker gets a fresh observation.
-func (host *ThreadHost) getThreadBrowser(ctx context.Context, threadID int64) (*computer.Browser, error) {
-	host.browserMu.Lock()
-	defer host.browserMu.Unlock()
-	expiration := host.browserExpirations[threadID]
+func (worker *Worker) getThreadBrowser(ctx context.Context, threadID int64) (*computer.Browser, error) {
+	worker.browserMu.Lock()
+	defer worker.browserMu.Unlock()
+	expiration := worker.browserExpirations[threadID]
 	if expiration != nil {
 		expiration.Stop()
-		delete(host.browserExpirations, threadID)
+		delete(worker.browserExpirations, threadID)
 	}
-	browser := host.browsers[threadID]
+	browser := worker.browsers[threadID]
 	if browser != nil {
 		return browser, nil
 	}
@@ -107,36 +107,36 @@ func (host *ThreadHost) getThreadBrowser(ctx context.Context, threadID int64) (*
 	if err != nil {
 		return nil, err
 	}
-	if host.browsers == nil {
-		host.browsers = map[int64]*computer.Browser{}
+	if worker.browsers == nil {
+		worker.browsers = map[int64]*computer.Browser{}
 	}
-	host.browsers[threadID] = browser
+	worker.browsers[threadID] = browser
 	return browser, nil
 }
-func (host *ThreadHost) closeThreadBrowser(ctx context.Context, threadID int64) error {
-	host.browserMu.Lock()
-	browser := host.browsers[threadID]
-	expiration := host.browserExpirations[threadID]
+func (worker *Worker) closeThreadBrowser(ctx context.Context, threadID int64) error {
+	worker.browserMu.Lock()
+	browser := worker.browsers[threadID]
+	expiration := worker.browserExpirations[threadID]
 	if expiration != nil {
 		expiration.Stop()
-		delete(host.browserExpirations, threadID)
+		delete(worker.browserExpirations, threadID)
 	}
-	delete(host.browsers, threadID)
-	host.browserMu.Unlock()
+	delete(worker.browsers, threadID)
+	worker.browserMu.Unlock()
 	if browser == nil {
 		return nil
 	}
 	return browser.Close(ctx)
 }
-func (host *ThreadHost) closeBrowsers(ctx context.Context) error {
-	host.browserMu.Lock()
-	for _, timer := range host.browserExpirations {
+func (worker *Worker) closeBrowsers(ctx context.Context) error {
+	worker.browserMu.Lock()
+	for _, timer := range worker.browserExpirations {
 		timer.Stop()
 	}
-	host.browserExpirations = nil
-	browsers := host.browsers
-	host.browsers = nil
-	host.browserMu.Unlock()
+	worker.browserExpirations = nil
+	browsers := worker.browsers
+	worker.browsers = nil
+	worker.browserMu.Unlock()
 	var err error
 	for _, browser := range browsers {
 		err = errors.Join(err, browser.Close(ctx))
@@ -145,31 +145,31 @@ func (host *ThreadHost) closeBrowsers(ctx context.Context) error {
 }
 
 // Bound blocked retention so another Worker's takeover cannot leave Chrome forever.
-func (host *ThreadHost) retainThreadBrowser(threadID int64, duration time.Duration) {
-	host.browserMu.Lock()
-	defer host.browserMu.Unlock()
-	browser := host.browsers[threadID]
+func (worker *Worker) retainThreadBrowser(threadID int64, duration time.Duration) {
+	worker.browserMu.Lock()
+	defer worker.browserMu.Unlock()
+	browser := worker.browsers[threadID]
 	if browser == nil {
 		return
 	}
-	if host.browserExpirations == nil {
-		host.browserExpirations = map[int64]*time.Timer{}
+	if worker.browserExpirations == nil {
+		worker.browserExpirations = map[int64]*time.Timer{}
 	}
-	previous := host.browserExpirations[threadID]
+	previous := worker.browserExpirations[threadID]
 	if previous != nil {
 		previous.Stop()
 	}
 	var timer *time.Timer
 	timer = time.AfterFunc(duration, func() {
-		host.browserMu.Lock()
-		if host.browserExpirations[threadID] != timer {
-			host.browserMu.Unlock()
+		worker.browserMu.Lock()
+		if worker.browserExpirations[threadID] != timer {
+			worker.browserMu.Unlock()
 			return
 		}
-		delete(host.browserExpirations, threadID)
-		delete(host.browsers, threadID)
-		host.browserMu.Unlock()
+		delete(worker.browserExpirations, threadID)
+		delete(worker.browsers, threadID)
+		worker.browserMu.Unlock()
 		browser.Close(context.Background())
 	})
-	host.browserExpirations[threadID] = timer
+	worker.browserExpirations[threadID] = timer
 }

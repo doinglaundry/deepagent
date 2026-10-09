@@ -12,7 +12,7 @@ import (
 	"eino-cli/deepagent/graph/modelhub"
 	"eino-cli/deepagent/graph/tools"
 	"eino-cli/deepagent/manager"
-	"eino-cli/deepagent/threadhost"
+	"eino-cli/deepagent/worker"
 
 	yaml "gopkg.in/yaml.v3"
 )
@@ -26,7 +26,7 @@ type Config struct {
 	FilesystemKind         string               `yaml:"filesystem_kind"`
 	Docker                 config.SandboxConfig `yaml:"docker"`
 	Manager                ManagerConfig        `yaml:"manager"`
-	Host                   threadhost.Config    `yaml:"worker"`
+	Worker                 worker.Config        `yaml:"worker"`
 	Models                 []modelhub.Config    `yaml:"models"`
 	DefaultModel           string               `yaml:"default_model"`
 	SystemPrompt           string               `yaml:"system_prompt"`
@@ -80,7 +80,7 @@ func (c Config) Validate() error {
 		if runtime.GOOS != "darwin" {
 			return fmt.Errorf("computer use requires macOS")
 		}
-		err := threadhost.ValidateComputerTargets(c.BrowserOrigins, c.ComputerApps)
+		err := worker.ValidateComputerTargets(c.BrowserOrigins, c.ComputerApps)
 		if err != nil {
 			return err
 		}

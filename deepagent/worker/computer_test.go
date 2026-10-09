@@ -1,6 +1,6 @@
 //go:build !windows
 
-package threadhost
+package worker
 
 import (
 	"context"
@@ -43,7 +43,7 @@ func TestComputer_BlockedBrowserExpiresAndReclaimCancelsExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &ThreadHost{browsers: map[int64]*computer.Browser{1: browser}}
+	host := &Worker{browsers: map[int64]*computer.Browser{1: browser}}
 	defer host.closeBrowsers(context.Background())
 	host.retainThreadBrowser(1, 50*time.Millisecond)
 	reclaimed, err := host.getThreadBrowser(context.Background(), 1)

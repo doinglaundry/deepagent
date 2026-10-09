@@ -16,9 +16,9 @@ flowchart TB
     end
 
     subgraph WorkerProcess[Worker 进程：可运行多个]
-        Worker[Worker 启动与装配] --> Host[ThreadHost]
-        Host -->|领取 / 续租 / 确认输入 / 保存输出| RM[Manager]
-        Host --> Thread[Thread：会话与输入]
+        Worker[Worker]
+        Worker -->|领取 / 续租 / 确认输入 / 保存输出| RM[Manager]
+        Worker --> Thread[Thread：会话与输入]
         Thread --> Run[Run：一次执行]
         Run --> Graph[Eino Graph]
     end
@@ -34,14 +34,14 @@ flowchart TB
     Tools --> FS[LocalFilesystem / DockerFilesystem]
 ```
 
-**Manager 是进程内模块，不是需要额外启动的第三个服务。** Web 提交后写入存储，ThreadHost 主动领取；两者不是同步调用模型的关系。
+**Manager 是进程内模块，不是需要额外启动的第三个服务。** Web 提交后写入存储，Worker 主动领取；两者不是同步调用模型的关系。
 
 ### 一条输入的执行路径
 
 ```text
 Manager.Submit                     保存输入，标记可调度
-    ↓ ThreadHost 调用 Acquire
-ThreadHost                         获取租约，创建运行环境
+    ↓ Worker 调用 Acquire
+Worker                         获取租约，创建运行环境
     ↓
 Thread.PostMessage                 解码 Input / Resume / Compact
     ↓
@@ -57,7 +57,7 @@ Eino Graph                         模型与工具循环
 | 对象 | 管理什么 | 生命周期 |
 | --- | --- | --- |
 | Manager | Thread 调度、租约、输入投递、输出和 Run 结果 | 进程 |
-| ThreadHost | 领取、续租、投递、保存输出和释放 | 进程 / 一次领取 |
+| Worker | 领取、续租、投递、保存输出和释放 | 进程 / 一次领取 |
 | Thread | 历史、待处理输入、当前 Run、外部协议和环境清理 | 一次领取，可先后执行多个 Run |
 | Run | 执行 ID、输入归属、取消、事件与完成 | 一次执行；恢复沿用原 RunID |
 | Graph | Eino 图、模型、工具、middleware 与 checkpoint | 一次 Graph 调用 |
@@ -97,7 +97,7 @@ finish    返回最终消息
 Graph 事件
     → Run 补充执行身份
     → Thread 转换外部协议
-    → ThreadHost 调用 Manager.SaveOutput
+    → Worker 调用 Manager.SaveOutput
     → Web 读取已持久化输出
 
 工具需要审批
@@ -107,12 +107,12 @@ Graph 事件
 
 用户回复审批
     → Manager.Resume
-    → ThreadHost 领取
+    → Worker 领取
     → Thread.ResumeRun
     → 新 Run 对象沿用原执行身份，从 Graph 中断位置继续
 ```
 
-ThreadHost 先处理输出保存，再处理 Yield 和租约释放。完整结果与流式增量的持久化策略不同，完整历史以存储中的消息为准。审批取消也恢复原 checkpoint 和输入归属，再终结原 Run；工具结果不确定时明确失败，等待人工核对结果，不会自动重跑。
+Worker 先处理输出保存，再处理 Yield 和租约释放。完整结果与流式增量的持久化策略不同，完整历史以存储中的消息为准。审批取消也恢复原 checkpoint 和输入归属，再终结原 Run；工具结果不确定时明确失败，等待人工核对结果，不会自动重跑。
 
 ### 状态与租约
 
@@ -142,7 +142,7 @@ Run:     started → blocked → started → finished / interrupted / failed
 | 交互 | `ask_user`、`update_plan` | 独立 Eino 工具；Plan middleware 只读取 RunState 生成提醒 |
 | 技能 | `activate_skill` | Skill loader；工具独立注册，middleware 只生成目录提示 |
 | 内部子代理 | `task` | ChildRunner → Graph |
-| 跨 Thread 协作 | `spawn_task`、`send_message`、`wait_message`、`close_task` | ThreadHost → Manager |
+| 跨 Thread 协作 | `spawn_task`、`send_message`、`wait_message`、`close_task` | Worker → Manager |
 | 网络 | `read_url`、`web_search` | Web 配置启用 |
 | MCP | 服务发现返回的工具 | MCP client → ToolSet |
 
@@ -247,10 +247,10 @@ Graph 另有文件 checkpoint 实现，但当前 Worker 没有通过 YAML 选择
 | 顺序 | 文件 | 重点入口 |
 | --- | --- | --- |
 | 1 | [manager/input.go](../deepagent/manager/input.go)、[manager/thread.go](../deepagent/manager/thread.go)、[manager/output.go](../deepagent/manager/output.go) | `Submit`、`Acquire`、`SaveOutput` |
-| 2 | [threadhost/threadhost.go](../deepagent/threadhost/threadhost.go) | `Run`、`RunThread` |
-| 3 | [threadhost/thread.go](../deepagent/threadhost/thread.go) | `createThread`：准备资源并创建 Thread |
-| 4 | [threadhost/execution.go](../deepagent/threadhost/execution.go) | `threadRun.run`、`wait`、`finish` |
-| 5 | [threadhost/input.go](../deepagent/threadhost/input.go)、[threadhost/output.go](../deepagent/threadhost/output.go) | `deliverMessage`、`handleOutput` |
+| 2 | [worker/worker.go](../deepagent/worker/worker.go) | `Run`、`RunThread` |
+| 3 | [worker/thread.go](../deepagent/worker/thread.go) | `createThread`：准备资源并创建 Thread |
+| 4 | [worker/execution.go](../deepagent/worker/execution.go) | `threadRun.run`、`wait`、`finish` |
+| 5 | [worker/input.go](../deepagent/worker/input.go)、[worker/output.go](../deepagent/worker/output.go) | `deliverMessage`、`handleOutput` |
 | 6 | [thread/config.go](../deepagent/thread/config.go)、[run/config.go](../deepagent/run/config.go)、[graph/execution/config.go](../deepagent/graph/execution/config.go) | 会话、执行、Graph 配置 |
 | 7 | [thread/thread.go](../deepagent/thread/thread.go) | `PostMessage`、`SubmitInput`、输入归属与结束边界 |
 | 8 | [thread/thread_control.go](../deepagent/thread/thread_control.go) | 中断、`ResumeRun`、手动压缩 |
@@ -264,9 +264,8 @@ Graph 另有文件 checkpoint 实现，但当前 Worker 没有通过 YAML 选择
 cmd/                         Web / Worker 入口
 deepagent/
 ├── host/web/               页面、HTTP、输出轮询
-├── worker/                 进程启动与资源装配
 ├── manager/                消息与调度
-├── threadhost/             租约与执行宿主
+├── worker/                 领取任务、租约与 Thread 执行
 ├── thread/                 会话、输入队列与外部协议
 │   ├── thread.go           接收输入、创建 Run、原子结束边界
 │   ├── thread_control.go   中断、恢复与手动压缩
@@ -321,7 +320,7 @@ node --test deepagent/host/web/app.test.cjs
 
 # 主链并发检查
 go test -race ./deepagent/graph/... ./deepagent/run/... ./deepagent/thread/... \
-  ./deepagent/threadhost/... ./deepagent/manager/... ./deepagent/worker/...
+  ./deepagent/worker/... ./deepagent/manager/...
 ```
 
 独立进程验收需要专用测试数据库和 Redis：

@@ -1,5 +1,7 @@
 # DeepAgent
 
+[English](README.en.md) · 简体中文
+
 **一个住在像素办公室里的编码搭档。** 用自然语言读代码、改文件、运行命令，并查看执行过程和成果。基于 Go 与 Eino Graph，支持本地和 Docker 文件系统。
 
 ![DeepAgent 像素办公室产品方案](docs/images/pixel-office.png)
@@ -70,10 +72,10 @@ go run ./cmd/deepagent_web --config yaml/deepagent.yaml --root . --addr 127.0.0.
 ```mermaid
 flowchart LR
     Web -->|保存输入| Manager
-    ThreadHost -->|领取与续租| Manager
+    Worker -->|领取与续租| Manager
     Manager --> MySQL[(MySQL)]
     Manager --> Redis[(Redis)]
-    ThreadHost --> Thread --> Run --> Graph[Eino Graph]
+    Worker --> Thread --> Run --> Graph[Eino Graph]
     Graph --> Model[模型]
     Graph --> Tools[工具]
 ```
@@ -81,7 +83,7 @@ flowchart LR
 | 对象 | 职责 |
 | --- | --- |
 | Manager | 持久化、调度资格、租约、输入与输出；嵌入 Web／Worker 进程 |
-| ThreadHost | 领取 Thread、投递消息、保存输出与释放租约 |
+| Worker | 领取 Thread、投递消息、保存输出与释放租约 |
 | Thread | 对话历史、待处理输入、当前 Run 和资源生命周期 |
 | Run | 一次执行的身份、取消与完成 |
 | Graph | 模型／工具流程、审批中断与 checkpoint 恢复 |

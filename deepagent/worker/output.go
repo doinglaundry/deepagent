@@ -1,6 +1,6 @@
 //go:build !windows
 
-package threadhost
+package worker
 
 import (
 	"context"
@@ -50,7 +50,7 @@ func (c *threadRun) handleOutput(item threadpkg.TransportThreadOutputItem, signa
 		return
 	}
 	if item.Event != nil {
-		err := c.host.saveThreadOutput(c.ctx, c.claim.Thread.ThreadID, item.Event, c.claim.Lease.LeaseToken)
+		err := c.worker.saveThreadOutput(c.ctx, c.claim.Thread.ThreadID, item.Event, c.claim.Lease.LeaseToken)
 		if err != nil {
 			*result = runResult{reason: defaultErrorReleaseReason, err: err, outputFailed: true}
 			select {
@@ -99,7 +99,7 @@ func (c *threadRun) drainOutput(items <-chan threadpkg.TransportThreadOutputItem
 	}
 }
 
-func (w *ThreadHost) saveThreadOutput(ctx context.Context, threadID int64, event *threadpkg.TransportEvent, leaseToken string) (resultErr error) {
+func (w *Worker) saveThreadOutput(ctx context.Context, threadID int64, event *threadpkg.TransportEvent, leaseToken string) (resultErr error) {
 	if event.ThreadID == "" {
 		event.ThreadID = fmt.Sprint(threadID)
 	}

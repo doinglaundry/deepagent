@@ -32,7 +32,11 @@ function updateComposer() {
 async function api(url, options) {
   const response = await fetch(url, {headers: {'content-type': 'application/json'}, ...options});
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || t('请求失败 ({status})', {status: response.status}));
+  if (!response.ok) {
+    const error = new Error(data.error || t('请求失败 ({status})', {status: response.status}));
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 function getTaskTitle(row) { return row.untitled || !row.title ? t('未命名任务') : row.title; }
@@ -156,7 +160,7 @@ function renderActivity(event) {
   }
   updateActivity();
 }
-function reset(id) {
+function reset(id, draft = '') {
   save(draftKey(thread), $('input').value);
   generation++;
   clearTimeout(timer); timer = null; polling = false;
@@ -174,7 +178,8 @@ function reset(id) {
   changedFilesByPath.clear(); $('changedFiles').replaceChildren();
   $('file').textContent = ''; $('file').hidden = true; delete $('file').dataset.path;
   delete $('fileStatus').dataset.i18n; $('fileStatus').textContent = '';
-  $('input').value = localStorage[draftKey(id)] || '';
+  $('input').value = draft || localStorage[draftKey(id)] || '';
+  save(draftKey(id), $('input').value);
   $('mode').value = '';
   save('selectedThread', id || '');
   showThread({}); updateComposer(); report(null); showPanel('Talk');
@@ -200,12 +205,19 @@ async function select(id) {
   reset(id);
   showPanel('Talk');
   const current = generation;
-  const row = await api('/api/threads/' + id);
-  if (current !== generation) return;
-  showThread(row);
-  await list();
-  if (current !== generation) return;
-  poll();
+  try {
+    const row = await api('/api/threads/' + id);
+    if (current !== generation) return;
+    showThread(row);
+    await list();
+    if (current !== generation) return;
+    poll();
+  } catch (error) {
+    if (current !== generation) return;
+    if (error.status !== 404) throw error;
+    reset(null, $('input').value);
+    await list();
+  }
 }
 async function submit(text) {
   if (submitting || ['closing', 'closed'].includes($('runStatus').dataset.status)) return;
@@ -227,7 +239,11 @@ async function submit(text) {
     report(null); await list();
     if (current === generation) poll();
   } catch (error) {
-    if (current === generation) { save(draftKey(thread), $('input').value); report(error); }
+    if (current !== generation) return;
+    if (error.status === 404) {
+      reset(null, $('input').value);
+      await list().catch(report);
+    } else { save(draftKey(thread), $('input').value); report(error); }
   } finally { submitting = false; updateComposer(); }
 }
 function resolvePrompt(box, label = '已处理') {
@@ -601,8 +617,13 @@ async function poll() {
       await list();
     }
     if ($('status').dataset.errorSource === 'poll') report(null);
-  } catch (error) { if (current === generation) report(error, 'poll'); }
-  finally {
+  } catch (error) {
+    if (current !== generation) return;
+    if (error.status === 404) {
+      reset(null, $('input').value);
+      await list().catch(report);
+    } else report(error, 'poll');
+  } finally {
     if (current === generation) { polling = false; timer = setTimeout(poll, 500); }
   }
 }

@@ -1,4 +1,4 @@
-package threadhost
+package worker
 
 import (
 	"context"
@@ -148,26 +148,26 @@ func testClaim() *manager.AcquireResult {
 
 // Feed the Host output boundary directly for malformed and precisely ordered
 // output cases. Thread initialization, active Run and resource cleanup are real.
-func runTestThread(host *ThreadHost, thread *threadpkg.Thread, ctx, acceptCtx context.Context, claim *manager.AcquireResult, items <-chan threadpkg.TransportThreadOutputItem) error {
+func runTestThread(host *Worker, thread *threadpkg.Thread, ctx, acceptCtx context.Context, claim *manager.AcquireResult, items <-chan threadpkg.TransportThreadOutputItem) error {
 	host.normalize()
 	runCtx, stopLease, waitLease := host.startLease(ctx, claim.Lease)
 	defer stopLease()
 	run := &threadRun{
-		host: host, ctx: runCtx, acceptDone: acceptCtx.Done(), claim: claim, thread: thread,
+		worker: host, ctx: runCtx, acceptDone: acceptCtx.Done(), claim: claim, thread: thread,
 		idleSince: time.Now(), wasActive: thread.ActiveRun() != nil,
 	}
 	result, closeErr := run.run(items)
 	return run.finish(result, closeErr, waitLease)
 }
 
-func testHost(client *managerProbe) *ThreadHost {
-	return &ThreadHost{
+func testHost(client *managerProbe) *Worker {
+	return &Worker{
 		Config: Config{MessagePollInterval: time.Millisecond, IdleTimeout: time.Hour},
 		Client: client,
 	}
 }
 
-func TestThreadHost_PersistsEventBeforeYield(t *testing.T) {
+func TestWorker_PersistsEventBeforeYield(t *testing.T) {
 	client := &managerProbe{}
 	thread := newHostThread(t, nil, nil)
 	output := make(chan threadpkg.TransportThreadOutputItem, 2)
@@ -185,7 +185,7 @@ func TestThreadHost_PersistsEventBeforeYield(t *testing.T) {
 	}
 }
 
-func TestThreadHost_FinishedRunKeepsThreadUntilIdleTimeout(t *testing.T) {
+func TestWorker_FinishedRunKeepsThreadUntilIdleTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	client := &managerProbe{releaseDone: make(chan struct{})}
@@ -244,7 +244,7 @@ func TestThreadHost_FinishedRunKeepsThreadUntilIdleTimeout(t *testing.T) {
 	}
 }
 
-func TestThreadHost_FailedRunReleasesThreadWithoutWaitingForIdle(t *testing.T) {
+func TestWorker_FailedRunReleasesThreadWithoutWaitingForIdle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	client := &managerProbe{}
@@ -280,7 +280,7 @@ func TestThreadHost_FailedRunReleasesThreadWithoutWaitingForIdle(t *testing.T) {
 	}
 }
 
-func TestThreadHost_ShutdownWaitsForDelayedFinalOutput(t *testing.T) {
+func TestWorker_ShutdownWaitsForDelayedFinalOutput(t *testing.T) {
 	client := &managerProbe{}
 	closing := make(chan struct{})
 	gate := make(chan struct{})
@@ -333,7 +333,7 @@ func TestThreadHost_ShutdownWaitsForDelayedFinalOutput(t *testing.T) {
 	}
 }
 
-func TestThreadHost_CloseFailureDoesNotConfirmOrRelease(t *testing.T) {
+func TestWorker_CloseFailureDoesNotConfirmOrRelease(t *testing.T) {
 	client := &managerProbe{}
 	failure := errors.New("close failed")
 	thread := newHostThread(t, nil, func(context.Context) error { return failure })
@@ -418,7 +418,7 @@ func TestCloseControlConfirmsThreadClosed(t *testing.T) {
 	}
 }
 
-func TestThreadHost_DrainsOutputProducedDuringClose(t *testing.T) {
+func TestWorker_DrainsOutputProducedDuringClose(t *testing.T) {
 	for _, failSave := range []bool{false, true} {
 		t.Run(map[bool]string{false: "save", true: "save failure"}[failSave], func(t *testing.T) {
 			client := &managerProbe{}
@@ -451,7 +451,7 @@ func TestThreadHost_DrainsOutputProducedDuringClose(t *testing.T) {
 	}
 }
 
-func TestThreadHost_CloseTimeoutKeepsDrainingUntilThreadStops(t *testing.T) {
+func TestWorker_CloseTimeoutKeepsDrainingUntilThreadStops(t *testing.T) {
 	client := &managerProbe{}
 	output := make(chan threadpkg.TransportThreadOutputItem)
 	gate := make(chan struct{})
@@ -486,7 +486,7 @@ func TestThreadHost_CloseTimeoutKeepsDrainingUntilThreadStops(t *testing.T) {
 	}
 }
 
-func TestThreadHost_OutputConversionFailurePreventsRelease(t *testing.T) {
+func TestWorker_OutputConversionFailurePreventsRelease(t *testing.T) {
 	expected := errors.New("event conversion failed")
 	output := make(chan threadpkg.TransportThreadOutputItem, 1)
 	output <- threadpkg.TransportThreadOutputItem{Err: expected}
@@ -501,7 +501,7 @@ func TestThreadHost_OutputConversionFailurePreventsRelease(t *testing.T) {
 	}
 }
 
-func TestThreadHost_InterruptTimeoutPersistsBeforeRelease(t *testing.T) {
+func TestWorker_InterruptTimeoutPersistsBeforeRelease(t *testing.T) {
 	for _, scenario := range []string{"cancel", "shutdown"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

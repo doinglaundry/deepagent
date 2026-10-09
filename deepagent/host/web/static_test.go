@@ -2,6 +2,8 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"testing"
 
 	dalmodel "eino-cli/deepagent/dal/model"
+	"eino-cli/deepagent/manager"
 )
 
 func TestEmbeddedWebClient(t *testing.T) {
@@ -124,5 +127,25 @@ func TestThreadViewExposesParentIdentityAsString(t *testing.T) {
 	}
 	if fields["parent_thread_id"] != "2000000000000020608" {
 		t.Fatalf("parent identity lost or rounded: %s", raw)
+	}
+}
+
+func TestMissingThreadErrorHasNotFoundStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"missing thread", fmt.Errorf("query thread: %w", manager.ErrThreadNotFound), http.StatusNotFound},
+		{"database failure", errors.New("database unavailable"), http.StatusInternalServerError},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			writeError(response, http.StatusInternalServerError, test.err)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d", response.Code, test.want)
+			}
+		})
 	}
 }

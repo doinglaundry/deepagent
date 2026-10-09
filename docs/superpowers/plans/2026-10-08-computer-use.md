@@ -48,23 +48,23 @@
 
 ### Task 3: Eino Tools, Policy and Lifecycle
 
-**Files:** tools/computer.go、tools/computer_test.go、middleware/computer.go、middleware/computer_test.go、threadhost/thread.go、threadhost/computer.go、threadhost/computer_test.go。
+**Files:** tools/computer.go、tools/computer_test.go、middleware/computer.go、middleware/computer_test.go、worker/thread.go、worker/computer.go、worker/computer_test.go。
 **Interfaces:** NewBrowserTools(*Browser)、NewComputerTools(*Desktop) 返回 []ToolDescriptor；NewComputer(*Desktop) 返回现有 Middleware；现有 PolicyFunc 调用唯一目标检查。
 
 - [x] 测试 12 个工具名称/schema、只读/审批/并行属性、图片结果、子代理拒绝、目标名单先于始终允许；先确认失败。
 - [x] 一个 EnhancedInvokableTool 实现复用两组工具 schema/解码/结果转换，直接调用真实操作；不增加协议。
 - [x] Policy 检查 browser_open URL 或当前 URL，检查每个 Mac 调用的 bundle ID；拒绝无效 URL/越界/缺少目标。构造器无名单，资源层只做界面身份核对。
 - [x] RunFactory 绑定桌面 owner，ResourceCloser 在工具取消后释放；请求副本只保留最近电脑工具截图，原历史和非电脑图像不变。
-- [x] ThreadHost 独立 Chrome profile + CloseResources，默认子代理 ToolMask 排除电脑工具。
+- [x] Worker 独立 Chrome profile + CloseResources，默认子代理 ToolMask 排除电脑工具。
 - [x] 跑工具、middleware、Policy 测试与竞态检查；记录结果；源码暂未提交。
 
 ### Task 4: Worker/UI and Real Acceptance
 
-**Files:** appconfig/config.go、worker/app.go、yaml/deepagent.example.yaml、protocol/event/event.go、thread/events.go、host/web/app.js/app.css/i18n.js、相关既有测试、README.md。
+**Files:** appconfig/config.go、cmd/deepagent_worker/main.go、yaml/deepagent.example.yaml、protocol/event/event.go、thread/events.go、host/web/app.js/app.css/i18n.js、相关既有测试、README.md。
 **Interfaces:** 三项新配置；工具完成事件 parts 使用当前 MessagePart，不定义第二套图片事件。
 
 - [x] 测试禁用默认、启用时名单校验、图片事件与 UI 展示，先确认失败。
-- [x] Worker 创建/关闭 Desktop，ThreadHost 接入工具；配置名单不进入 Graph Config。
+- [x] Worker 创建/关闭 Desktop，Worker 接入工具；配置名单不进入 Graph Config。
 - [x] 现有工具页展示截图，对话用简短浏览/桌面状态，保留中英切换和审批。
 - [x] go build ./...；go test -race ./...；node --test deepagent/host/web/app.test.cjs。
 - [ ] 启动本地真实服务；真实模型读取截图后分别完成浏览器、Mac 任务；人工/自动检查外部实际结果。
@@ -95,7 +95,7 @@
 
 ## 用户确认后的逻辑精简
 
-- YAML 的 computer_enabled 为唯一开关，ThreadHost 根据已创建的 Desktop 装配能力，不重复保存启用状态。
+- YAML 的 computer_enabled 为唯一开关，Worker 根据已创建的 Desktop 装配能力，不重复保存启用状态。
 - 工具结果在写入历史时填写 ToolName；截图中间件倒序遍历一次，只从模型请求中移除旧截图。Transcript 同步使用工具名，避免重复记录。
 - 浏览器各动作只准备 chromedp.Action，共用一次执行；Desktop 的写入、读取、解码失败共用一条取消清理路径。
 - 删除 Browser 工厂转发闭包和 Desktop.ReleaseRun，未新增结构体。

@@ -15,7 +15,7 @@ Swift 程序只接受本地 JSON 请求并返回界面描述、操作结果和 P
 ## 执行路径
 
 ```text
-ThreadHost → Thread → Run → 现有 Eino Graph
+Worker → Thread → Run → 现有 Eino Graph
                              ↓
                            Model
                              ↓
@@ -38,7 +38,7 @@ ThreadHost → Thread → Run → 现有 Eino Graph
 | deepagent/graph/tools/computer.go | 两组 Eino 工具 schema 与直接调用，复用参数解码和图像结果转换 |
 | deepagent/graph/middleware/computer.go | 每次 Run 的桌面资源清理与模型请求图像裁剪；不注册工具、不保存第二份 Graph 状态 |
 
-配置和资源接入只修改现有 appconfig/config.go、worker/app.go、threadhost/thread.go 与启动/构建说明；现有 Web 静态页仅按需补动作状态和图片展示。复用既有 Graph 生命周期，不新建 Graph 节点或修改主循环。普通工具结果和图片结果继续经过当前 tools.go 与 message 转换路径。
+配置和资源接入只修改现有 appconfig/config.go、cmd/deepagent_worker/main.go、worker/thread.go 与启动/构建说明；现有 Web 静态页仅按需补动作状态和图片展示。复用既有 Graph 生命周期，不新建 Graph 节点或修改主循环。普通工具结果和图片结果继续经过当前 tools.go 与 message 转换路径。
 
 构造入口保持直接：
 
@@ -57,10 +57,10 @@ func NewComputerTools(desktop *computer.Desktop) []ToolDescriptor
 - Mac 工具：computer_open_app、computer_observe、computer_click、computer_type_text、computer_press_key、computer_scroll。
 - 观察工具为只读；动作工具要求审批。全部 ParallelSafe=false，禁止 eager 执行。
 - 每个动作返回当前观察结果与截图；动作导致跨 origin 跳转时只返回 URL 和重新观察的提示，不读取或返回新 origin 内容，由下一次 browser_observe 的 Policy 重新检查。浏览器优先页面元素；Mac 优先辅助功能元素，无法访问元素的界面才用窗口内坐标。
-- appconfig 增加 computer_enabled、browser_origins、computer_apps 三项。默认禁用；启用时限制明确的网站 origin 和应用 bundle ID，并要求本机辅助程序存在。辅助程序固定命名 deepagent-computer，放在 Worker 可执行文件同目录，不增加路径配置。网站与应用限制仅由 ThreadHost 的现有 Policy 判断，Browser/Desktop 不保存授权列表；限制检查必须先于只读放行和始终允许。配置不扩散到 Graph Config。
+- appconfig 增加 computer_enabled、browser_origins、computer_apps 三项。默认禁用；启用时限制明确的网站 origin 和应用 bundle ID，并要求本机辅助程序存在。辅助程序固定命名 deepagent-computer，放在 Worker 可执行文件同目录，不增加路径配置。网站与应用限制仅由 Worker 的现有 Policy 判断，Browser/Desktop 不保存授权列表；限制检查必须先于只读放行和始终允许。配置不扩散到 Graph Config。
 - Chrome 使用每个 Thread 独立的 profile 与受控实例。第一版不接管用户已打开的个人 Chrome；可在该实例内人工登录。
-- 桌面辅助程序按 Run 持有本机文件锁；多个 Worker、多个任务不得同时操作同一 Mac。ThreadHost 为默认子代理配置 ToolMask，排除 browser_ 与 computer_ 工具；工具执行入口也检查 RunState.Depth，防止通过其他子代理配置继承绕过限制。
-- 浏览器属于逻辑 Thread；ThreadHost 在审批 blocked 后最多保留该实例五分钟，原 Worker 及时续跑可复用；领取时原子取消过期定时器。超时关闭后必须重新观察。正常结束、关闭、失败及 Worker 退出时关闭；另一 Worker 或重启后使用隔离 profile，旧观察失效。Profile 在当前 Worker 内可保留登录数据，不承诺跨 Worker 复制登录。Desktop 是 Worker 资源；每次 Run 的资源清理使用现有 RunFactory 与 ResourceCloser，在工具取消完成后释放该 Run 的占用。未获取占用时 Close 也是安全的。
+- 桌面辅助程序按 Run 持有本机文件锁；多个 Worker、多个任务不得同时操作同一 Mac。Worker 为默认子代理配置 ToolMask，排除 browser_ 与 computer_ 工具；工具执行入口也检查 RunState.Depth，防止通过其他子代理配置继承绕过限制。
+- 浏览器属于逻辑 Thread；Worker 在审批 blocked 后最多保留该实例五分钟，原 Worker 及时续跑可复用；领取时原子取消过期定时器。超时关闭后必须重新观察。正常结束、关闭、失败及 Worker 退出时关闭；另一 Worker 或重启后使用隔离 profile，旧观察失效。Profile 在当前 Worker 内可保留登录数据，不承诺跨 Worker 复制登录。Desktop 是 Worker 资源；每次 Run 的资源清理使用现有 RunFactory 与 ResourceCloser，在工具取消完成后释放该 Run 的占用。未获取占用时 Close 也是安全的。
 - 临时按键/鼠标输入不会持有跨工具状态；每次操作都完成按下与释放。
 
 ## 中断、恢复与授权

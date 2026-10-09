@@ -29,19 +29,19 @@ class Element {
   }
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
-function load(handler) {
+function load(handler, storage = {}) {
   const elements = new Map();
   const get = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
   const timers = new Map(); let nextTimer = 0;
   const calls = [];
   const context = vm.createContext({
     document: {getElementById: get, querySelector: get, querySelectorAll: () => [], createElement: tag => new Element(tag), createTextNode: text => { const node = new Element('#text'); node.textContent = text; return node; }, body: new Element('body'), documentElement: new Element('html')},
-    localStorage: {session: 'session'}, crypto: {randomUUID: () => 'session'},
+    localStorage: {session: 'session', ...storage}, crypto: {randomUUID: () => 'session'},
     setTimeout: fn => { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout: id => timers.delete(id),
     fetch: async (url, options) => {
       calls.push({url, options});
       const result = await handler(url, options);
-      return {ok: result?.ok !== false, status: result?.ok === false ? 409 : 200, json: async () => result?.data ?? []};
+      return {ok: result?.ok !== false, status: result?.status ?? (result?.ok === false ? 409 : 200), json: async () => result?.data ?? []};
     }
   });
   vm.runInContext(fs.readFileSync(__dirname + '/i18n.js', 'utf8'), context);
@@ -620,4 +620,78 @@ test('computer screenshot stays in Tools and appears once', () => {
  const images=app.get('toolOutput').querySelectorAll('img');
  assert.equal(images.length,1); assert.equal(images[0].src,'data:image/png;base64,cG5n');
  assert.equal(app.get('messages').querySelectorAll('img').length,0);
+});
+
+
+test('missing saved task returns to a new task with its draft and can send again', async () => {
+  const app = load((url, options) => {
+    if (url === '/api/threads/missing') return {ok: false, status: 404, data: {error: 'thread not found'}};
+    if (url === '/api/threads' && options?.method === 'POST') return {data: {id: 'new', status: 'idle'}};
+    if (url === '/api/threads/new') return {data: {id: 'new', status: 'idle'}};
+  }, {selectedThread: 'missing', 'draft:session:missing': 'keep this draft'});
+  await tick();
+  assert.equal(app.context.localStorage.selectedThread, '');
+  assert.equal(app.get('input').value, 'keep this draft');
+  assert.equal(app.context.localStorage['draft:session:new'], 'keep this draft');
+  assert.equal(app.get('status').hidden, true);
+  assert.equal(app.timers.size, 0);
+  await app.context.submit('keep this draft'); await tick();
+  assert.equal(app.context.localStorage.selectedThread, 'new');
+  assert.equal(app.calls.filter(call => call.url === '/api/threads/new/messages').length, 1);
+  assert.equal(app.calls.filter(call => call.url === '/api/threads/missing/messages').length, 0);
+});
+
+test('a task removed during polling stops retries and preserves the current draft', async () => {
+  let missing = false;
+  const app = load(url => {
+    if (missing && url.includes('/events?')) return {ok: false, status: 404, data: {error: 'thread not found'}};
+    if (url === '/api/threads/one') return {data: {id: 'one', status: 'idle'}};
+  });
+  await app.context.select('one'); await tick();
+  app.get('input').value = 'unfinished question';
+  missing = true;
+  await app.context.poll(); await tick();
+  assert.equal(app.context.localStorage.selectedThread, '');
+  assert.equal(app.get('input').value, 'unfinished question');
+  assert.equal(app.get('status').hidden, true);
+  assert.equal(app.timers.size, 0);
+});
+
+test('a late missing-task response cannot clear the newly selected task', async () => {
+  let release;
+  const app = load(url => {
+    if (url === '/api/threads/old') return new Promise(resolve => release = resolve);
+    if (url === '/api/threads/current') return {data: {id: 'current', status: 'idle'}};
+  });
+  const oldSelection = app.context.select('old');
+  await app.context.select('current'); await tick();
+  release({ok: false, status: 404, data: {error: 'thread not found'}});
+  await oldSelection;
+  assert.equal(app.context.localStorage.selectedThread, 'current');
+  assert.equal(app.get('status').hidden, true);
+  assert.equal(app.timers.size, 1);
+});
+
+test('server failures retain the saved task and show the actual error', async () => {
+  const app = load(url => url === '/api/threads/one' ? {ok: false, status: 500, data: {error: 'database unavailable'}} : undefined,
+    {selectedThread: 'one', 'draft:session:one': 'keep this draft'});
+  await tick();
+  assert.equal(app.context.localStorage.selectedThread, 'one');
+  assert.equal(app.get('input').value, 'keep this draft');
+  assert.equal(app.get('status').textContent, 'database unavailable');
+  assert.equal(app.get('status').hidden, false);
+});
+
+test('submission to a removed task keeps the draft without automatically resending', async () => {
+  const app = load(url => {
+    if (url === '/api/threads/one') return {data: {id: 'one', status: 'idle'}};
+    if (url.endsWith('/messages')) return {ok: false, status: 404, data: {error: 'thread not found'}};
+  });
+  await app.context.select('one'); await tick();
+  app.get('input').value = 'do not lose this question';
+  await app.context.submit('do not lose this question'); await tick();
+  assert.equal(app.context.localStorage.selectedThread, '');
+  assert.equal(app.get('input').value, 'do not lose this question');
+  assert.equal(app.calls.filter(call => call.options?.method === 'POST').length, 1);
+  assert.equal(app.timers.size, 0);
 });

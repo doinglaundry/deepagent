@@ -1,6 +1,6 @@
 //go:build !windows
 
-package threadhost
+package worker
 
 import (
 	"context"
@@ -26,7 +26,7 @@ func (r runResult) empty() bool {
 
 // threadRun owns only state that spans one claimed runtime execution.
 type threadRun struct {
-	host       *ThreadHost
+	worker     *Worker
 	ctx        context.Context
 	acceptDone <-chan struct{}
 	claim      *manager.AcquireResult
@@ -53,7 +53,7 @@ func (c *threadRun) run(items <-chan threadpkg.TransportThreadOutputItem) (resul
 	// consumer stays alive until all producers stop, so terminal sends can finish.
 	closed := make(chan error, 1)
 	go func() { closed <- c.thread.Close(context.WithoutCancel(c.ctx)) }()
-	timer := time.NewTimer(c.host.ShutdownInterruptDrainTimeout)
+	timer := time.NewTimer(c.worker.ShutdownInterruptDrainTimeout)
 	defer timer.Stop()
 	select {
 	case closeErr = <-closed:
@@ -92,7 +92,7 @@ func (c *threadRun) run(items <-chan threadpkg.TransportThreadOutputItem) (resul
 }
 
 func (c *threadRun) wait(activity <-chan time.Time, inputResults <-chan runResult, outputSignal <-chan struct{}, stop <-chan struct{}) (requested runResult, input runResult) {
-	idleTicker := time.NewTicker(c.host.MessagePollInterval)
+	idleTicker := time.NewTicker(c.worker.MessagePollInterval)
 	defer idleTicker.Stop()
 
 	for {
@@ -137,16 +137,16 @@ func (c *threadRun) checkIdleRelease(activity <-chan time.Time) (result runResul
 		c.idleSince = time.Now()
 		return runResult{}
 	}
-	if time.Since(c.idleSince) < c.host.IdleTimeout {
+	if time.Since(c.idleSince) < c.worker.IdleTimeout {
 		return runResult{}
 	}
 	return runResult{reason: defaultReleaseReason}
 }
 
 func (c *threadRun) drainShutdown(inputResults <-chan runResult, outputSignal <-chan struct{}, stop <-chan struct{}) (result runResult) {
-	timer := time.NewTimer(c.host.ShutdownDrainTimeout)
+	timer := time.NewTimer(c.worker.ShutdownDrainTimeout)
 	defer timer.Stop()
-	poll := time.NewTicker(c.host.MessagePollInterval)
+	poll := time.NewTicker(c.worker.MessagePollInterval)
 	defer poll.Stop()
 
 	for {
@@ -175,7 +175,7 @@ func (c *threadRun) drainShutdown(inputResults <-chan runResult, outputSignal <-
 }
 
 func (c *threadRun) interruptShutdownTimeout() {
-	interruptTimeout := runtimeInterruptTimeout(c.host.ShutdownInterruptDrainTimeout)
+	interruptTimeout := runtimeInterruptTimeout(c.worker.ShutdownInterruptDrainTimeout)
 	_ = c.thread.Interrupt(c.ctx, threadpkg.TransportThreadInterruptRequest{
 		Kind:    threadpkg.TransportThreadInterruptKindWorkerShutdownTimeout,
 		Reason:  defaultShutdownTimeoutReason,
@@ -184,7 +184,7 @@ func (c *threadRun) interruptShutdownTimeout() {
 }
 
 func (c *threadRun) waitForShutdownOutput(inputResults <-chan runResult, outputSignal <-chan struct{}, stop <-chan struct{}) (result runResult) {
-	timer := time.NewTimer(c.host.ShutdownInterruptDrainTimeout)
+	timer := time.NewTimer(c.worker.ShutdownInterruptDrainTimeout)
 	defer timer.Stop()
 
 	select {
@@ -201,7 +201,7 @@ func (c *threadRun) waitForShutdownOutput(inputResults <-chan runResult, outputS
 	}
 }
 
-func (w *ThreadHost) closeThread(ctx context.Context, thread *threadpkg.Thread) error {
+func (w *Worker) closeThread(ctx context.Context, thread *threadpkg.Thread) error {
 	timeout := w.ShutdownInterruptDrainTimeout
 	if timeout <= 0 {
 		timeout = defaultShutdownInterruptDrain
@@ -235,10 +235,10 @@ func (c *threadRun) finish(result runResult, closeErr error, waitLease func() er
 	}
 	lease := c.claim.Lease
 	if result.closeMessageID != 0 {
-		_, err := c.host.Client.ConfirmThreadClosed(c.ctx, lease.ThreadID, lease.LeaseToken, result.closeMessageID)
+		_, err := c.worker.Client.ConfirmThreadClosed(c.ctx, lease.ThreadID, lease.LeaseToken, result.closeMessageID)
 		return serialiser.WrapError(fmt.Sprintf("CompleteCloseThread thread_id=%d control_message_id=%d", lease.ThreadID, result.closeMessageID), err)
 	}
-	_, releaseErr := c.host.Client.ReleaseThread(c.ctx, lease.ThreadID, lease.LeaseToken)
+	_, releaseErr := c.worker.Client.ReleaseThread(c.ctx, lease.ThreadID, lease.LeaseToken)
 	releaseErr = serialiser.WrapError(fmt.Sprintf("ReleaseThread thread_id=%d", lease.ThreadID), releaseErr)
 	return errors.Join(result.err, closeErr, releaseErr)
 }
