@@ -68,6 +68,35 @@
     "macOSBuild": "passed",
     "linuxCrossBuild": "passed",
     "independentProcessRecovery": "passed",
-    "independentReview": "passed"
-  }
+    "independentReview": "passed",
+    "go125LinuxUploads": "passed after reproducing and fixing the root-relative directory listing failure",
+    "collaborationDeadlineRegression": "passed; own wait deadline returns waiting, storage errors remain errors",
+    "githubCI": {
+      "commit": "228831b651b5b5d60a1a7877ae11b49ac188a6ac",
+      "conclusion": "success",
+      "url": "https://github.com/doinglaundry/deepagent/actions/runs/38070801551"
+    }
+  },
+  "extendedBrowser": {
+    "passed": [
+      "apply_patch, glob, rg, semantic_search and real Go diagnostics; patched-file preview",
+      "background shell survives into next Run; await_shell returns real completion output",
+      "command nonzero exit and timeout appear as failed tools",
+      "spawn_task, wait_message, send_message, second child Run and close_task",
+      "real Chrome typing, key, click, scroll and observe; stale observation and denied origin rejected",
+      "extended browser acceptance has no page errors"
+    ],
+    "errors": []
+  },
+  "optionalBrowser": {
+    "passed": [
+      "long-term extraction/consolidation persisted in Redis; new task after Worker restart receives memory",
+      "actual context compaction stored in MySQL; restart loads summary while UI retains original conversation",
+      "real Docker filesystem write/edit/read/list/glob/grep/rg/semantic/patch/delete; container execute and background shell; file preview",
+      "Docker thread shutdown removes its owned container",
+      "optional browser acceptance has no page errors"
+    ],
+    "errors": []
+  },
+  "browserChecksPassed": 42
 }
