@@ -1,0 +1,73 @@
+{
+  "date": "2026-10-11",
+  "browser": {
+    "passed": [
+      "Mac windows1512/1280/1024/900 keep composer visible",
+      "streamed conversation and current Run result, no replay duplicate",
+      "independent center tabs and keyboard Training entry",
+      "refresh keeps selected task, draft and history",
+      "training preview/edit/include previous/save/reload/remove, bilingual dark persistence",
+      "tool approval, compact link, details and changed-file preview",
+      "Always allow remembers only this tool in current task",
+      "different tool still asks, edited file invalidates preview",
+      "deleted files are listed without broken preview links",
+      "read/search/list tools and tool-error display",
+      "new task has no remembered grant; denied operation does not execute",
+      "batch approvals preserve individual allow/deny decisions",
+      "question survives refresh and resumes the original Run",
+      "plan updates render actual progress without copied previews",
+      "actual Graph skill tool workflow",
+      "actual Graph mcp tool workflow",
+      "actual Graph web tool workflow",
+      "actual Graph subagent tool workflow",
+      "actual Graph collaboration tool workflow",
+      "main/child task hierarchy, return to parent and closed-task readonly",
+      "task search retains parent context",
+      "approved real shell execution and output",
+      "real MLX local model invoked through Graph",
+      "stop interrupts execution and never presents a successful result",
+      "final long reply folds; expansion, independent scrolling and chat reopen work",
+      "actual Worker process restart resumes the original Run through browser",
+      "connection loss and recovery retain draft and clear retry notice",
+      "input appended during execution survives completion and reload without duplicate",
+      "stale selected task recovers to new task and keeps draft",
+      "real Chrome browser open/observe returns screenshot through Graph and approval",
+      "no browser page errors in final acceptance"
+    ],
+    "errors": []
+  },
+  "realAPIModelConversation": true,
+  "automaticMLXTraining": {
+    "jobID": "8681639d-521c-4a2f-9038-aff3585f006d",
+    "status": "pending_validation",
+    "parameterBytes": 2889527,
+    "partitions": [
+      8,
+      1,
+      1
+    ],
+    "remainingExamples": 9,
+    "pageErrors": [],
+    "acceptanceOverrides": {
+      "minimumExamples": 10,
+      "idleSeconds": 10,
+      "iterations": 20
+    },
+    "productionUnchanged": {
+      "minimumExamples": 100,
+      "idleMinutes": 10
+    }
+  },
+  "desktop": {
+    "permissionErrorShown": true,
+    "desktopSuccessTest": "blocked by macOS Accessibility permission"
+  },
+  "checks": {
+    "frontendTestsPassed": 59,
+    "fullFreshGoRace": "passed",
+    "macOSBuild": "passed",
+    "linuxCrossBuild": "passed",
+    "independentProcessRecovery": "passed",
+    "independentReview": "passed"
+  }
+}

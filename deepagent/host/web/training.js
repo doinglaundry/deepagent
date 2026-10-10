@@ -9,7 +9,6 @@ async function loadTrainingData() {
   if (request !== trainingDataRequest) return;
   trainingEnabled = !!status.enabled; trainingStatus = status; trainingExamples = examples;
   $('tabTraining').hidden = !trainingEnabled;
-  if (trainingEnabled && !panelNames.includes('Training')) panelNames.push('Training');
   messagesByKey.forEach(renderTrainingButton); renderTrainingData();
 }
 function renderTrainingButton(record) {

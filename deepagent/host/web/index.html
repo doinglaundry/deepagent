@@ -2,71 +2,45 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light dark"><title data-i18n="DeepAgent · 像素办公室">DeepAgent · 像素办公室</title>
+<meta name="color-scheme" content="light dark"><title>DeepAgent · 静海</title>
 <link rel="stylesheet" href="/app.css"><script src="/i18n.js" defer></script><script src="/training.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><span class="brand-mark" aria-hidden="true">d<span>·</span></span><strong data-i18n="DeepAgent · 小办公室">DeepAgent · 小办公室</strong></div>
-  <div class="task-heading"><span aria-hidden="true">◇</span><h1 id="title" data-i18n="等待你的第一个任务">等待你的第一个任务</h1></div>
-  <span id="workspace" class="workspace" data-i18n="本地工作空间">本地工作空间</span><span id="runStatus" class="badge" data-status="idle" data-i18n="就绪">就绪</span>
-  <nav aria-label="办公室导航" data-i18n-label="办公室导航"><button data-panel="Tasks" data-i18n="任务">任务</button><button id="new" data-i18n="＋ 新任务">＋ 新任务</button><button id="stop" type="button" disabled data-i18n="■ 停止">■ 停止</button><button id="language" type="button" aria-label="Switch to English">EN</button><button id="theme" aria-label="切换深浅主题" data-i18n-label="切换深浅主题">◐</button></nav>
+  <a class="brand" href="/" aria-label="DeepAgent"><span class="brand-mark" aria-hidden="true">≈</span><strong>DeepAgent</strong><span data-i18n="静海">静海</span></a>
+  <span id="workspace" class="workspace" data-i18n="本地工作空间">本地工作空间</span>
+  <nav aria-label="工作空间导航" data-i18n-label="工作空间导航"><button id="tabTraining" type="button" data-panel="Training" aria-controls="panelTraining" hidden data-i18n="训练数据">训练数据</button><button id="tabTalk" data-panel="Talk" aria-controls="notebook" aria-expanded="true" data-i18n="对话">对话</button><button id="stop" type="button" disabled data-i18n="■ 停止">■ 停止</button><button id="language" type="button" aria-label="Switch to English">EN</button><button id="theme" aria-label="切换深浅主题" data-i18n-label="切换深浅主题">◐</button></nav>
 </header>
-<main>
-  <div class="workbench">
-  <section id="office" class="office" data-status="idle" aria-label="像素办公室" data-i18n-label="像素办公室">
-    <section class="task-board" aria-label="任务板" data-i18n-label="任务板">
-      <span class="eyebrow" data-i18n="TASK BOARD / 任务板">TASK BOARD / 任务板</span><h2 id="boardTitle" data-i18n="想一起完成什么？">想一起完成什么？</h2>
-      <p id="goalSummary" class="lead" data-i18n="阅读代码、处理文件，或把一个想法变成现实。">阅读代码、处理文件，或把一个想法变成现实。</p>
-      <div id="boardPlan" class="board-plan"></div>
-      <button id="deliverable" class="deliverable" data-panel="Talk" hidden><span aria-hidden="true">▤</span><span><strong data-i18n="搭档的成果">搭档的成果</strong><small id="resultPreview"></small></span><span class="deliverable-action" data-i18n="打开成果 ↗">打开成果 ↗</span></button>
-      <p id="boardStatus" class="status-line" data-i18n="随时可以开始">随时可以开始</p>
-      <div id="welcome" class="welcome"><button data-prompt="阅读 README.md，概括这个项目的用途和启动方法。" data-i18n="读懂项目 ↗">读懂项目 ↗</button><button data-mode="plan" data-prompt="帮我制定一个改进当前项目可读性的计划，先分析，不修改文件。" data-i18n="一起做计划 ↗">一起做计划 ↗</button></div>
-      <button class="board-link" data-panel="Plan" data-i18n="查看完整计划 →">查看完整计划 →</button>
-    </section>
-    <button class="hotspot agent" data-panel="Output" aria-label="点击搭档查看工具执行" data-i18n-label="点击搭档查看工具执行"><span class="speech" id="agentStatus" data-i18n="准备好后，把任务交给我。">准备好后，把任务交给我。</span><span class="agent-target" aria-hidden="true"></span><span class="buddy-label" data-i18n="查看搭档正在做什么">查看搭档正在做什么</span></button>
-    <button class="hotspot cabinet" data-panel="File"><span class="cabinet-label"><span data-i18n="▤ 成果柜">▤ 成果柜</span><small data-i18n="查看文件改动">查看文件改动</small></span></button>
-    <div class="scene-nav"><button data-panel="Talk"><strong data-i18n="对话">对话</strong><small data-i18n="一起讨论你的目标">一起讨论你的目标</small></button><button data-panel="Plan"><strong data-i18n="计划">计划</strong><small data-i18n="任务一步步推进">任务一步步推进</small></button><button data-panel="Output"><strong data-i18n="工具">工具</strong><small data-i18n="搭档如何使用能力">搭档如何使用能力</small></button></div>
+<main class="workbench">
+  <aside id="panelTasks" class="sidebar" aria-label="任务" data-i18n-label="任务">
+    <div class="sidebar-heading"><h2 data-i18n="任务">任务</h2><button id="new" data-i18n="＋ 新任务">＋ 新任务</button></div>
+    <label class="search"><input id="search" type="search" placeholder="搜索任务" data-i18n-placeholder="搜索任务" aria-label="搜索任务" data-i18n-label="搜索任务"></label>
+    <nav id="threads" data-i18n-empty="还没有任务，从右侧对话开始。" aria-label="最近任务" data-i18n-label="最近任务"></nav>
+    <div class="buddy"><img src="/assets/spongebob.svg" alt="海绵宝宝" data-i18n-label="海绵宝宝" width="48" height="60"><span><strong data-i18n="你的搭档">你的搭档</strong><small id="agentStatus" data-i18n="随时可以开始">随时可以开始</small></span></div>
+  </aside>
+  <section id="workspaceView" class="workspace-view" data-status="idle" aria-label="任务工作空间" data-i18n-label="任务工作空间">
+    <header class="workspace-heading"><h1 id="title" data-i18n="新任务">新任务</h1><span id="runStatus" class="badge" data-status="idle" data-i18n="就绪">就绪</span></header>
+    <div id="taskContext" class="task-context" hidden><span id="taskContextLabel" data-i18n="子任务">子任务</span><button id="parentTask" type="button" data-i18n="返回主任务">返回主任务</button></div>
+    <div class="tabs" role="tablist" aria-label="任务内容" data-i18n-label="任务内容"><button id="tabResult" role="tab" aria-controls="panelResult" aria-selected="true" data-panel="Result" data-i18n="成果">成果</button><button id="tabPlan" role="tab" aria-controls="panelPlan" aria-selected="false" tabindex="-1" data-panel="Plan" data-i18n="计划">计划</button><button id="tabOutput" role="tab" aria-controls="panelOutput" aria-selected="false" tabindex="-1" data-panel="Output" data-i18n="工具">工具</button><button id="tabFile" role="tab" aria-controls="panelFile" aria-selected="false" tabindex="-1" data-panel="File" data-i18n="文件">文件</button></div>
+    <div id="panelResult" class="panel result-panel" role="tabpanel" aria-labelledby="tabResult">
+      <div id="resultEmpty" class="result-empty"><span class="sea-mark" aria-hidden="true">≈</span><h2 id="resultTitle" data-i18n="想一起完成什么？">想一起完成什么？</h2><p id="goalSummary" data-i18n="阅读代码、处理文件，或把一个想法变成现实。">阅读代码、处理文件，或把一个想法变成现实。</p><div id="welcome" class="welcome"><button data-prompt="阅读 README.md，概括这个项目的用途和启动方法。" data-i18n="读懂项目 ↗">读懂项目 ↗</button><button data-mode="plan" data-prompt="帮我制定一个改进当前项目可读性的计划，先分析，不修改文件。" data-i18n="一起做计划 ↗">一起做计划 ↗</button></div></div>
+      <article id="result" class="markdown" hidden></article>
+    </div>
+    <div id="panelPlan" class="panel" role="tabpanel" aria-labelledby="tabPlan" hidden><p class="panel-label" data-i18n="任务步骤">任务步骤</p><div id="plan" data-i18n-empty="Agent 更新计划后，步骤会出现在这里。"></div></div>
+    <div id="panelOutput" class="panel" role="tabpanel" aria-labelledby="tabOutput" hidden><p class="panel-label" data-i18n="搭档的执行记录">搭档的执行记录</p><div id="toolOutput" data-i18n-empty="工具调用的参数、结果和运行状态会出现在这里。"></div></div>
+    <div id="panelFile" class="panel" role="tabpanel" aria-labelledby="tabFile" hidden><p class="panel-label" data-i18n="当前任务的文件改动">当前任务的文件改动</p><div id="changedFiles" data-i18n-empty="当前任务还没有文件改动。"></div><div id="fileStatus" role="status" aria-live="polite"></div><pre id="file" hidden></pre></div>
+    <div id="panelTraining" class="panel training-panel" aria-labelledby="tabTraining" hidden>
+      <button type="button" id="backTraining" class="training-action" data-i18n="← 返回对话">← 返回对话</button>
+      <div id="trainingData"><h3 data-i18n="本地模型 · 训练数据">本地模型 · 训练数据</h3><section class="training-status"><strong id="trainingState"></strong><p id="trainingCount"></p><p id="trainingConditions"></p></section><h4 data-i18n="当前任务中标记的消息">当前任务中标记的消息</h4><div id="trainingExamples"></div><h4 data-i18n="最近训练">最近训练</h4><div id="trainingJobs"></div><p class="training-note" data-i18n="标记只用于后续训练；取消标记不会回退已生成的模型参数。">标记只用于后续训练；取消标记不会回退已生成的模型参数。</p></div>
+      <div id="trainingReview" hidden><h3 data-i18n="确认训练内容">确认训练内容</h3><label class="training-context"><input type="checkbox" id="trainingIncludePrevious"><span data-i18n="包含上一轮问答">包含上一轮问答</span></label><div id="trainingQuestion"></div><label for="trainingAnswer" data-i18n="用于训练的回答">用于训练的回答</label><textarea id="trainingAnswer" rows="6"></textarea><p class="training-note" data-i18n="可以修正训练副本，原始对话保持不变。">可以修正训练副本，原始对话保持不变。</p><button type="button" id="confirmTraining" data-i18n="确认加入训练">确认加入训练</button></div>
+      <p id="trainingNotice" role="status" aria-live="polite"></p>
+    </div>
   </section>
-    <aside id="notebook" class="notebook" aria-label="工作记录" data-i18n-label="工作记录">
-      <header class="notebook-heading"><strong data-i18n="工作记录">工作记录</strong><button id="tabTraining" type="button" data-panel="Training" aria-controls="panelTraining" hidden data-i18n="训练数据">训练数据</button><button id="closeNotebook" aria-label="收起工作记录" data-i18n-label="收起工作记录">×</button></header>
-      <div class="tabs" role="tablist" aria-label="工作记录" data-i18n-label="工作记录">
-        <button id="tabTalk" role="tab" aria-controls="panelTalk" aria-selected="true" data-panel="Talk" data-i18n="对话">对话</button><button id="tabPlan" role="tab" aria-controls="panelPlan" aria-selected="false" data-panel="Plan" data-i18n="计划">计划</button><button id="tabOutput" role="tab" aria-controls="panelOutput" aria-selected="false" data-panel="Output" data-i18n="工具">工具</button><button id="tabFile" role="tab" aria-controls="panelFile" aria-selected="false" data-panel="File" data-i18n="文件">文件</button><button id="tabTasks" role="tab" aria-controls="panelTasks" aria-selected="false" data-panel="Tasks" data-i18n="任务">任务</button>
-      </div>
-      <div id="taskContext" class="task-context" hidden><span id="taskContextLabel" data-i18n="子任务">子任务</span><button id="parentTask" type="button" data-i18n="返回主任务">返回主任务</button></div>
-      <div id="panelTalk" class="panel conversation" role="tabpanel" aria-labelledby="tabTalk"><div id="messages" class="messages" data-i18n-empty="这里记录你和搭档的对话。先给它一个任务吧。" aria-label="对话消息" data-i18n-label="对话消息"></div><div id="activity" class="activity" role="status" aria-live="polite" hidden></div><button id="jumpBottom" class="jump-bottom" hidden data-i18n="↓ 回到最新">↓ 回到最新</button></div>
-      <div id="panelPlan" class="panel" role="tabpanel" aria-labelledby="tabPlan" hidden><p class="panel-label" data-i18n="任务步骤">任务步骤</p><div id="plan" data-i18n-empty="Agent 更新计划后，步骤会出现在这里。"></div></div>
-      <div id="panelOutput" class="panel" role="tabpanel" aria-labelledby="tabOutput" hidden><p class="panel-label" data-i18n="搭档的执行记录">搭档的执行记录</p><div id="toolOutput" data-i18n-empty="工具调用的参数、结果和运行状态会出现在这里。"></div></div>
-      <div id="panelFile" class="panel" role="tabpanel" aria-labelledby="tabFile" hidden><p class="panel-label" data-i18n="当前任务的文件改动">当前任务的文件改动</p><div id="changedFiles" data-i18n-empty="当前任务还没有文件改动。"></div><div id="fileStatus" role="status" aria-live="polite"></div><pre id="file" hidden></pre></div>
-      <div id="panelTasks" class="panel" role="tabpanel" aria-labelledby="tabTasks" hidden><label class="search"><input id="search" placeholder="搜索任务" data-i18n-placeholder="搜索任务" aria-label="搜索任务" data-i18n-label="搜索任务"></label><nav id="threads" aria-label="最近任务" data-i18n-label="最近任务"></nav></div>
-
-      <div id="panelTraining" class="panel training-panel" aria-labelledby="tabTraining" hidden>
-        <button type="button" id="backTraining" class="training-action" data-i18n="← 返回对话">← 返回对话</button>
-        <div id="trainingData">
-          <h3 data-i18n="本地模型 · 训练数据">本地模型 · 训练数据</h3>
-          <section class="training-status"><strong id="trainingState"></strong><p id="trainingCount"></p><p id="trainingConditions" >自动开始条件：新增 100 条确认样本、无执行中任务、空闲 10 分钟、已接电。</p></section>
-          <h4 data-i18n="当前任务中标记的消息">当前任务中标记的消息</h4><div id="trainingExamples"></div>
-          <h4 data-i18n="最近训练">最近训练</h4><div id="trainingJobs"></div>
-          <p class="training-note" data-i18n="标记只用于后续训练；取消标记不会回退已生成的模型参数。">标记只用于后续训练；取消标记不会回退已生成的模型参数。</p>
-        </div>
-        <div id="trainingReview" hidden>
-          <h3 data-i18n="确认训练内容">确认训练内容</h3>
-          <label class="training-context"><input type="checkbox" id="trainingIncludePrevious"><span data-i18n="包含上一轮问答">包含上一轮问答</span></label>
-          <div id="trainingQuestion"></div>
-          <label for="trainingAnswer" data-i18n="用于训练的回答">用于训练的回答</label><textarea id="trainingAnswer" rows="6"></textarea>
-          <p class="training-note" data-i18n="可以修正训练副本，原始对话保持不变。">可以修正训练副本，原始对话保持不变。</p>
-          <button type="button" id="confirmTraining" data-i18n="确认加入训练">确认加入训练</button>
-        </div>
-        <p id="trainingNotice" role="status" aria-live="polite"></p>
-      </div>
-      <div class="composer-area">
-        <div id="status" role="status" aria-live="polite" hidden></div>
-        <div class="caption"><span id="phaseLabel" data-i18n="就绪">就绪</span><span id="phaseCaption" data-i18n="给搭档一个任务，我们一起推进">给搭档一个任务，我们一起推进</span></div>
-        <form class="composer"><textarea id="input" rows="1" placeholder="描述你的任务，或随时补充想法…" data-i18n-placeholder="描述你的任务，或随时补充想法…" aria-label="输入消息" data-i18n-label="输入消息"></textarea><select id="mode" aria-label="执行模式" data-i18n-label="执行模式"><option value="" data-i18n="执行">执行</option><option value="plan" data-i18n="计划">计划</option></select><button id="send" type="submit" aria-label="发送消息" data-i18n-label="发送消息" data-i18n="发送 ↗">发送 ↗</button></form>
-        <div class="composer-note"><span id="composerHint" data-i18n="在当前项目中工作">在当前项目中工作</span><span data-i18n="Enter 发送 · Shift + Enter 换行">Enter 发送 · Shift + Enter 换行</span></div>
-      </div>
-    </aside>
-  </div>
+  <aside id="notebook" class="notebook" aria-label="对话" data-i18n-label="对话">
+    <header class="notebook-heading"><strong data-i18n="对话">对话</strong><button id="closeNotebook" aria-label="收起对话" data-i18n-label="收起对话">×</button></header>
+    <div id="panelTalk" class="conversation" aria-labelledby="tabTalk"><div id="messages" class="messages" data-i18n-empty="这里记录你和搭档的对话。先给它一个任务吧。" aria-label="对话消息" data-i18n-label="对话消息"></div><div id="activity" class="activity" role="status" aria-live="polite" hidden></div><button id="jumpBottom" class="jump-bottom" hidden data-i18n="↓ 回到最新">↓ 回到最新</button></div>
+    <div class="composer-area"><div id="status" role="status" aria-live="polite" hidden></div><div class="caption"><span id="phaseLabel" data-i18n="就绪">就绪</span><span id="phaseCaption" data-i18n="给搭档一个任务，我们一起推进">给搭档一个任务，我们一起推进</span></div><form class="composer"><textarea id="input" rows="1" placeholder="描述你的任务，或随时补充想法…" data-i18n-placeholder="描述你的任务，或随时补充想法…" aria-label="输入消息" data-i18n-label="输入消息"></textarea><select id="mode" aria-label="执行模式" data-i18n-label="执行模式"><option value="" data-i18n="执行">执行</option><option value="plan" data-i18n="计划">计划</option></select><button id="send" type="submit" aria-label="发送消息" data-i18n-label="发送消息" data-i18n="发送 ↗">发送 ↗</button></form><div class="composer-note"><span id="composerHint" data-i18n="在当前项目中工作">在当前项目中工作</span><span data-i18n="Enter 发送 · Shift + Enter 换行">Enter 发送 · Shift + Enter 换行</span></div></div>
+  </aside>
 </main>
 </body>
 </html>

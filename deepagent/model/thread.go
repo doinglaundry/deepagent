@@ -166,8 +166,15 @@ func (t *ThreadRecord) DisplayStatus(now time.Time) string {
 	if t.Status != ThreadStatusOpen {
 		return t.Status
 	}
-	if t.LastRun != nil && t.LastRun.Status == "blocked" {
-		return "blocked"
+	if t.LastRun != nil {
+		if t.LastRun.Status == RunStatusBlocked {
+			return "blocked"
+		}
+		// Worker 可在两轮之间保留租约；已结束且没有新输入时仍应显示空闲。
+		finished := t.LastRun.Status == RunStatusFinished || t.LastRun.Status == RunStatusFailed || t.LastRun.Status == RunStatusInterrupted
+		if finished && t.PendingInputs == 0 {
+			return "idle"
+		}
 	}
 	if t.OwnsLease(t.LeaseToken, now) {
 		return "running"

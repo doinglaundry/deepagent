@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 class Element {
   constructor(tag = 'div') {
-    this.tag = tag; this.children = []; this.value = ''; this._text = ''; this.dataset = {}; this.style = {};
+    this.hidden = false; this.tag = tag; this.children = []; this.value = ''; this._text = ''; this.dataset = {}; this.style = {};
     this.attributes = {}; this.classes = new Set();
     this.classList = {add: value => this.classes.add(value), remove: value => this.classes.delete(value), contains: value => this.classes.has(value), toggle: value => this.classes.has(value) ? this.classes.delete(value) : this.classes.add(value)};
   }
@@ -234,26 +234,30 @@ test('untitled task names never fall back to internal database IDs', async () =>
 });
 
 
-test('office reflects runtime state and only offers stop during active execution', () => {
+test('workspace reflects runtime state and only offers stop during active execution', () => {
   const app = load(() => undefined);
   app.context.showThread({id: 'one', title: '读代码', status: 'running'});
-  assert.equal(app.get('office').dataset.status, 'running');
+  assert.equal(app.get('workspaceView').dataset.status, 'running');
   assert.equal(app.get('agentStatus').textContent, '正在处理任务');
   app.context.showThread({id: 'one', status: 'blocked'});
   assert.equal(app.get('agentStatus').textContent, '需要你的回复');
   assert.equal(app.get('stop').disabled, true);
 });
 
-test('office opens one notebook at the selected destination', () => {
+test('workspace tabs preserve the conversation and task sidebar', () => {
   const app = load(() => undefined);
-  app.get('notebook').hidden = true;
+  app.get('notebook').hidden = false;
+  app.get('panelTalk').hidden = false;
+  app.get('panelTasks').hidden = false;
   app.context.showPanel('Output');
   assert.equal(app.get('notebook').hidden, false);
   assert.equal(app.get('panelOutput').hidden, false);
-  assert.equal(app.get('panelTalk').hidden, true);
-  assert.equal(app.get('panelTasks').hidden, true);
+  assert.equal(app.get('panelResult').hidden, true);
+  assert.equal(app.get('panelTalk').hidden, false);
+  assert.equal(app.get('panelTasks').hidden, false);
+  app.context.showPanel('Training');
+  assert.equal(app.get('.composer-area').hidden, false);
 });
-
 
 test('hidden conversation does not opt into automatic scrolling', () => {
   const app = load(() => undefined);
@@ -271,31 +275,33 @@ test('returning to conversation follows latest only when the reader previously f
   messages.clientHeight = 400; messages.scrollHeight = 2000; messages.scrollTop = 1600;
   app.get('notebook').hidden = false; app.get('panelTalk').hidden = false;
   app.context.showPanel('Output');
+  app.get('closeNotebook').onclick();
   messages.scrollHeight = 2500;
   app.context.showPanel('Talk');
   assert.equal(messages.scrollTop, 2500);
   messages.scrollTop = 100;
   app.context.showPanel('File');
+  app.get('closeNotebook').onclick();
   messages.scrollHeight = 3000;
   app.context.showPanel('Talk');
   assert.equal(messages.scrollTop, 100);
 });
 
-test('task board only presents a successful current Run as completed', () => {
+test('result workspace only presents a successful current Run as completed', () => {
   const app = load(() => undefined);
   app.context.renderEvent({sequence: '1', run_id: 'old-run', kind: 'assistant', text: '旧成果'}, 'thread');
   app.context.showThread({status: 'idle', run_id: 'new-run', run_status: 'failed'});
-  assert.equal(app.get('deliverable').hidden, true, 'failure must not reuse an old result');
-  assert.equal(app.get('boardTitle').textContent, '这次任务没有完成');
+  assert.equal(app.get('result').hidden, true, 'failure must not reuse an old result');
+  assert.equal(app.get('resultTitle').textContent, '这次任务没有完成');
   app.context.showThread({status: 'idle', run_id: 'new-run', run_status: 'interrupted'});
-  assert.equal(app.get('deliverable').hidden, true, 'interruption must not look successful');
-  assert.equal(app.get('boardTitle').textContent, '这次任务已停止');
+  assert.equal(app.get('result').hidden, true, 'interruption must not look successful');
+  assert.equal(app.get('resultTitle').textContent, '这次任务已停止');
   app.context.showThread({status: 'idle', run_id: 'new-run', run_status: 'finished'});
-  assert.equal(app.get('deliverable').hidden, true, 'an old Run cannot supply the current result');
+  assert.equal(app.get('result').hidden, true, 'an old Run cannot supply the current result');
   app.context.renderEvent({sequence: '2', run_id: 'new-run', kind: 'assistant', text: '新成果'}, 'thread');
   app.context.showThread({status: 'idle', run_id: 'new-run', run_status: 'finished'});
-  assert.equal(app.get('deliverable').hidden, false);
-  assert.equal(app.get('resultPreview').textContent, '新成果');
+  assert.equal(app.get('result').hidden, false);
+  assert.equal(app.get('result').textContent, '新成果');
 });
 
 
@@ -342,7 +348,7 @@ test('conversation shows compact tool activity that opens the matching details i
   details[0].scrollIntoView = () => scrolled = true;
   links[0].onclick();
   assert.equal(app.get('panelOutput').hidden, false);
-  assert.equal(app.get('panelTalk').hidden, true);
+  assert.equal(app.get('panelTalk').hidden, false);
   assert.equal(details[0].open, true);
   assert.equal(scrolled, true);
 });
@@ -864,4 +870,50 @@ test('failed previous-context preview can be unchecked without losing the edited
   await app.get('trainingIncludePrevious').onchange();
   assert.equal(app.get('trainingAnswer').value,'edited');
   assert.equal(app.get('confirmTraining').disabled,false);
+});
+
+
+test('new tasks clear the rendered result and reopen the conversation', () => {
+  const app = load(() => undefined);
+  app.context.renderEvent({sequence: '1', run_id: 'run', kind: 'assistant', text: '### Result\n\nFull result'}, 'thread');
+  app.context.showThread({status: 'idle', run_id: 'run', run_status: 'finished'});
+  assert.equal(app.get('result').textContent, 'ResultFull result');
+  app.get('notebook').hidden = true;
+  app.context.reset(null);
+  assert.equal(app.get('result').hidden, true);
+  assert.equal(app.get('result').textContent, '');
+  assert.equal(app.get('panelResult').hidden, false);
+  assert.equal(app.get('notebook').hidden, false);
+});
+
+test('collapsed conversation cannot opt into scrolling while reading results', () => {
+  const app = load(() => undefined);
+  app.get('notebook').hidden = true;
+  app.get('messages').scrollTop = 1600;
+  app.get('messages').scrollHeight = 2000;
+  app.get('messages').clientHeight = 400;
+  assert.equal(app.context.isNearBottom(), false);
+});
+
+test('long finished replies collapse in chat while the complete result remains readable', () => {
+  const app = load(() => undefined);
+  const text = '完整成果。'.repeat(150);
+  app.context.renderEvent({sequence: '1', run_id: 'run', kind: 'assistant', text}, 'thread');
+  const reply = app.get('messages').querySelectorAll('details')[0];
+  assert.ok(reply);
+  assert.notEqual(reply.open, true);
+  app.context.showThread({status: 'idle', run_id: 'run', run_status: 'finished'});
+  assert.equal(app.get('result').textContent, text);
+});
+test('workspace tabs do not remove the topbar training entry from keyboard navigation', () => {
+  const app = load(() => undefined);
+  app.get('tabTraining').hidden = false;
+  app.get('tabTraining').tabIndex = 0;
+  app.context.showPanel('Output');
+  assert.equal(app.get('tabTraining').tabIndex, 0);
+  app.context.showPanel('Training');
+  assert.equal(app.get('panelTraining').hidden, false);
+  app.context.showPanel('Talk');
+  assert.equal(app.get('panelTraining').hidden, true);
+  assert.equal(app.get('tabTraining').tabIndex, 0);
 });

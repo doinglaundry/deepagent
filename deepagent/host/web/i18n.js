@@ -1,6 +1,19 @@
 // Interface labels only. User messages, model replies and file contents stay unchanged.
 let language = localStorage.language === 'en' ? 'en' : 'zh';
 const english = {
+  "查看完整回复": "Read full reply",
+  "静海": "Still sea",
+  "工作空间导航": "Workspace navigation",
+  "任务工作空间": "Task workspace",
+  "任务内容": "Task content",
+  "成果": "Result",
+  "还没有任务，从右侧对话开始。": "No tasks yet. Start in the conversation.",
+  "你的搭档": "Your buddy",
+  "海绵宝宝": "SpongeBob SquarePants",
+  "收起对话": "Collapse conversation",
+  "成果已准备好": "Your result is ready",
+  "任务完成，可以继续和搭档讨论": "Task complete. Keep the conversation going.",
+  "成果整理好了。": "Your result is ready.",
   "训练数据": "Training data",
   "← 返回对话": "← Back to conversation",
   "本地模型 · 训练数据": "Local model · Training data",
@@ -31,38 +44,21 @@ const english = {
   "已保存训练副本，原始对话保持不变。": "Training copy saved. The original conversation is unchanged.",
   "已移出后续训练；已生成的模型参数不会因此回退。": "Removed from future training. Existing model parameters are unchanged.",
 
-  "DeepAgent · 像素办公室": "DeepAgent · Pixel Office",
-  "DeepAgent · 小办公室": "DeepAgent · Little Office",
-  "等待你的第一个任务": "Ready for your first task",
+  "DeepAgent · 静海": "DeepAgent · Still Sea",
   "本地工作空间": "Local workspace",
-  "办公室导航": "Office navigation",
   "就绪": "Ready",
   "任务": "Tasks",
   "＋ 新任务": "+ New task",
   "■ 停止": "■ Stop",
   "切换深浅主题": "Toggle light / dark theme",
-  "像素办公室": "Pixel office",
-  "任务板": "Task board",
-  "TASK BOARD / 任务板": "TASK BOARD",
   "想一起完成什么？": "What shall we work on?",
   "阅读代码、处理文件，或把一个想法变成现实。": "Explore code, work with files, or bring an idea to life.",
-  "搭档的成果": "Your buddy’s result",
-  "打开成果 ↗": "Open result ↗",
   "随时可以开始": "Ready when you are",
   "读懂项目 ↗": "Explore project ↗",
   "一起做计划 ↗": "Make a plan ↗",
-  "查看完整计划 →": "View full plan →",
-  "点击搭档查看工具执行": "See what your buddy is working on",
-  "准备好后，把任务交给我。": "Give me a task when you’re ready.",
-  "查看搭档正在做什么": "See what your buddy is doing",
-  "▤ 成果柜": "▤ Results cabinet",
-  "查看项目文件": "Explore project files",
   "对话": "Conversation",
-  "一起讨论你的目标": "Work toward your goal",
   "计划": "Plan",
-  "任务一步步推进": "One step at a time",
   "工具": "Tools",
-  "搭档如何使用能力": "See your buddy’s tools",
   "工作记录": "Work log",
   "收起工作记录": "Collapse work log",
   "文件": "Files",
@@ -116,13 +112,9 @@ const english = {
   "正在处理任务": "Working on your task",
   "需要你的回复": "I need your reply",
   "任务已关闭": "Task closed",
-  "成果已放到柜子里": "Your result is ready",
   "搭档正在接收任务": "Your buddy is getting ready",
   "我们正在推进这件事": "We’re making progress",
   "需要你做一个选择": "Your input is needed",
-  "已完成 · 可以继续追问或回看过程": "Done · Ask a follow-up or review the work log",
-  "任务完成：打开成果，或继续和搭档讨论": "Task complete. Open the result or keep talking with your buddy.",
-  "成果整理好了，点开一起看看。": "Your result is ready. Let’s take a look.",
   "这次任务没有完成": "This task could not be completed",
   "这次任务已停止": "This task was stopped",
   "可以查看执行记录，或补充消息后继续": "Check the work log, or add a message to continue",
@@ -181,7 +173,7 @@ function setLabel(element, text, values = {}) {
 function setLanguage(value) {
   language = value === 'en' ? 'en' : 'zh';
   document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN';
-  document.title = t('DeepAgent · 像素办公室');
+  document.title = t('DeepAgent · 静海');
   try { localStorage.language = language; } catch { /* The switch still works without storage. */ }
   document.querySelectorAll('[data-tool-status]').forEach(element => element.i18nValues.status = t(element.dataset.toolStatus));
   document.querySelectorAll('[data-i18n]').forEach(element => setLabel(element, element.dataset.i18n, element.i18nValues));

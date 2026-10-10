@@ -2,17 +2,17 @@
 
 English · [简体中文](README.md)
 
-**A coding companion in a pixel office.** Use natural language to explore code, edit files, run commands, and review progress and results. Built with Go and Eino Graph, with local and Docker filesystems.
+**A local coding companion that helps you get things done.** Use natural language to explore code, edit files, run commands, and review progress and results. Built with Go and Eino Graph, with local and Docker filesystems.
 
-![DeepAgent pixel-office concept](docs/images/pixel-office.png)
+![DeepAgent ocean workspace](docs/images/ocean-workspace.png)
 
-*Product prototype: follow progress on the task board, work with your companion, and find results in the cabinet.*
+*Running application: tasks on the left, results in the center, and conversation on the right, with SpongeBob as your companion.*
 
 [Quick start](#quick-start) · [Architecture](#architecture) · [Development guide](docs/development.md)
 
 ## Features
 
-- **Pixel office**: Chinese and English UI, with conversation, plans, tools, changed files, and parent/child tasks.
+- **Ocean workspace**: Chinese/English and light/dark themes; a task tree, results, plans, tools, and changed files alongside persistent conversation.
 - **Coding tools**: file operations, search, patches, commands, and background shell jobs. Local and Docker environments share the same tools.
 - **Ongoing conversations**: streaming responses, additional input during execution, persistent history, and context compaction.
 - **Approval and resume**: resume interrupted execution from a checkpoint. “Always allow” applies only to the authorized tool within the current task.
@@ -111,7 +111,7 @@ The cloud agent can call a local MLX model through `ask_local_model`. After conf
 
 1. Click **Use for training** below a completed reply to preview the original Q&A and optionally include the previous exchange.
 2. Edit the training answer copy and confirm. The original conversation stays unchanged.
-3. Open **Training data** in the work log header to review selections, remove marks, and check training progress.
+3. Open **Training data** in the top bar to review selections, remove marks, and check training progress.
 
 With `local_model.auto_train: true`, QLoRA fine-tuning starts automatically after at least **100 new confirmed examples**, **10 idle minutes**, and a connection to **AC power**. API conversations continue during training. New parameters remain **pending validation** and never replace the active model automatically. Removing a mark only affects future training.
 

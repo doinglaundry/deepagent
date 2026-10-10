@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"eino-cli/deepagent/manager"
 	agentmodel "eino-cli/deepagent/model"
@@ -17,7 +18,7 @@ import (
 
 func TestEmbeddedWebClient(t *testing.T) {
 	handler := New(nil, t.TempDir()).Handler()
-	for _, path := range []string{"/", "/app.js", "/training.js", "/i18n.js", "/app.css", "/assets/office.png"} {
+	for _, path := range []string{"/", "/app.js", "/training.js", "/i18n.js", "/app.css", "/assets/ocean.jpg", "/assets/spongebob.svg"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusOK {
@@ -93,9 +94,20 @@ func TestCancelRejectsSimpleCrossOriginForm(t *testing.T) {
 
 func TestThreadViewProjectsCurrentRunOutcome(t *testing.T) {
 	for _, status := range []string{"finished", "failed", "interrupted"} {
-		view := viewThread(&agentmodel.ThreadRecord{ThreadID: 1, LastRun: &agentmodel.RunRecord{RunID: "current-run", Status: status}})
-		if view.RunID != "current-run" || view.RunStatus != status {
-			t.Fatalf("current Run projection = %+v", view)
+		leaseUntil := time.Now().Add(time.Minute)
+		thread := &agentmodel.ThreadRecord{
+			ThreadID: 1, Status: agentmodel.ThreadStatusOpen,
+			LeaseToken: "worker", LeaseUntil: &leaseUntil,
+			LastRun: &agentmodel.RunRecord{RunID: "current-run", Status: status},
+		}
+		view := viewThread(thread)
+		if view.RunID != "current-run" || view.RunStatus != status || view.Status != "idle" {
+			t.Fatalf("completed Run must stay idle while Worker retains its lease: %+v", view)
+		}
+		thread.PendingInputs = 1
+		view = viewThread(thread)
+		if view.Status != "running" {
+			t.Fatalf("pending input must still activate the claimed Thread: %+v", view)
 		}
 	}
 }

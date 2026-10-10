@@ -7,7 +7,7 @@ const messagesByKey = new Map(), toolsByKey = new Map(), promptsByKey = new Map(
 const roundsByRunID = new Map(), changedFilesByPath = new Map();
 const endedRuns = new Set(), inputModesByID = new Map();
 const $ = id => document.getElementById(id);
-const panelNames = ['Talk', 'Plan', 'Output', 'File', 'Tasks'];
+const panelNames = ['Result', 'Plan', 'Output', 'File'];
 const statusLabels = {idle: '就绪', ready: '等待执行', running: '执行中', blocked: '等待你的回复', closing: '关闭中', closed: '已关闭'};
 function report(error, source = 'action') {
   $('status').dataset.errorSource = error ? source : '';
@@ -108,22 +108,22 @@ function setRunStatus(status, runID = $('runStatus').dataset.runID || '', runSta
   setLabel($('phaseCaption'), {idle: '给搭档一个任务，我们一起推进', ready: '任务已收到，准备开始', running: '任务执行中，可以随时补充想法', blocked: '任务暂时停在这里，等待你的回复', closing: '正在结束任务', closed: '这次任务已结束'}[status] || status);
   if (status === 'closed') setLabel($('phaseCaption'), '任务已关闭，仅可查看记录');
   updateComposer();
-  $('office').dataset.status = status; $('office').dataset.outcome = runStatus || '';
+  $('workspaceView').dataset.status = status; $('workspaceView').dataset.outcome = runStatus || '';
   setLabel($('agentStatus'), {idle: '随时可以开始', ready: '任务已收到', running: '正在处理任务', blocked: '需要你的回复', closing: '正在结束任务', closed: '任务已关闭'}[status] || status);
   $('stop').disabled = !['ready', 'running'].includes(status);
   const result = [...messagesByKey.values()].findLast(message => message.finished && message.runID === runID);
   const completed = status === 'idle' && runStatus === 'finished' && !!result;
-  setLabel($('boardTitle'), completed ? '成果已放到柜子里' : {idle: '想一起完成什么？', ready: '搭档正在接收任务', running: '我们正在推进这件事', blocked: '需要你做一个选择', closing: '正在结束任务', closed: '这次任务已结束'}[status] || status);
-  $('deliverable').hidden = !completed;
-  $('resultPreview').textContent = completed ? result.text.slice(0, 70) : '';
-  setLabel($('boardStatus'), completed ? '已完成 · 可以继续追问或回看过程' : $('agentStatus').dataset.i18n);
+  setLabel($('resultTitle'), completed ? '成果已准备好' : {idle: '想一起完成什么？', ready: '搭档正在接收任务', running: '我们正在推进这件事', blocked: '需要你做一个选择', closing: '正在结束任务', closed: '这次任务已结束'}[status] || status);
+  $('result').hidden = !completed; $('resultEmpty').hidden = completed;
+  if (completed && $('result').dataset.message !== result.text) {
+    renderMarkdown($('result'), result.text); $('result').dataset.message = result.text;
+  }
   if (completed) {
-    setLabel($('phaseCaption'), '任务完成：打开成果，或继续和搭档讨论');
-    setLabel($('agentStatus'), '成果整理好了，点开一起看看。');
+    setLabel($('phaseCaption'), '任务完成，可以继续和搭档讨论');
+    setLabel($('agentStatus'), '成果整理好了。');
   }
   if (status === 'idle' && ['failed', 'interrupted'].includes(runStatus)) {
-    setLabel($('boardTitle'), runStatus === 'failed' ? '这次任务没有完成' : '这次任务已停止');
-    setLabel($('boardStatus'), '可以查看执行记录，或补充消息后继续');
+    setLabel($('resultTitle'), runStatus === 'failed' ? '这次任务没有完成' : '这次任务已停止');
     setLabel($('phaseCaption'), '可以查看执行记录，或补充消息后继续');
   }
   if (runStatus === 'finished') {
@@ -178,7 +178,7 @@ function reset(id, draft = '') {
   $('welcome').hidden = !!id;
   $('jumpBottom').hidden = true;
   $('toolOutput').replaceChildren();
-  $('boardPlan').replaceChildren(); setLabel($('goalSummary'), '阅读代码、处理文件，或把一个想法变成现实。');
+  $('result').replaceChildren(); delete $('result').dataset.message; setLabel($('goalSummary'), '阅读代码、处理文件，或把一个想法变成现实。');
   $('plan').replaceChildren();
   changedFilesByPath.clear(); $('changedFiles').replaceChildren();
   $('file').textContent = ''; $('file').hidden = true; delete $('file').dataset.path;
@@ -393,15 +393,19 @@ function pretty(value) {
   try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return String(value); }
 }
 function showPanel(name, focus = false) {
-  if (!$('notebook').hidden && !$('panelTalk').hidden) followConversation = isNearBottom();
-  $('notebook').hidden = false; $('notebook').dataset.panel = name;
-  document.querySelector('.composer-area').hidden = name === 'Training';
+  if (name === 'Tasks') { $('search').focus(); return; }
+  if (name === 'Talk') {
+    $('notebook').hidden = false; $('panelTalk').hidden = false;
+    $('tabTalk').setAttribute('aria-expanded', 'true');
+    if (followConversation) $('messages').scrollTop = $('messages').scrollHeight;
+    name = 'Result';
+  } else if (!$('notebook').hidden) followConversation = isNearBottom();
   panelNames.forEach(panel => {
     $('panel' + panel).hidden = panel !== name;
     $('tab' + panel).setAttribute('aria-selected', String(panel === name));
     $('tab' + panel).tabIndex = panel === name ? 0 : -1;
   });
-  if (name === 'Talk' && followConversation) $('messages').scrollTop = $('messages').scrollHeight;
+  $('panelTraining').hidden = name !== 'Training';
   $('jumpBottom').hidden = isNearBottom();
   if (focus) $('tab' + name).focus();
 }
@@ -526,13 +530,12 @@ function recordChangedFiles(payload, order) {
 }
 
 function renderPlan(payload) {
-  $('plan').replaceChildren(); $('boardPlan').replaceChildren();
+  $('plan').replaceChildren();
   if (payload.explanation) { const explanation = document.createElement('div'); explanation.className = 'plan-explanation'; explanation.textContent = payload.explanation; $('plan').append(explanation); }
   (payload.items || []).forEach(item => {
     const row = document.createElement('div'); row.className = 'plan-step'; row.dataset.status = item.status;
     const marker = document.createElement('span'); marker.className = 'step-marker'; marker.textContent = item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '◉' : '○';
     const text = document.createElement('span'); text.textContent = item.content; row.append(marker, text); $('plan').append(row);
-    if ($('boardPlan').children.length < 3) $('boardPlan').append(row.cloneNode(true));
   });
 }
 function renderEvent(event, target) {
@@ -577,7 +580,15 @@ function renderEvent(event, target) {
     appendToLog(event, record.element);
     if (record.finished && delta) return;
     record.text = delta ? record.text + text : text; record.finished = !delta;
-    renderMarkdown(record.element, record.text);
+    // 长成果在中间完整展示；对话里按需展开，保留历史与训练入口。
+    const content = document.createElement('div');
+    renderMarkdown(content, record.text);
+    record.element.replaceChildren(content);
+    if (record.finished && record.text.length > 600) {
+      const details = document.createElement('details'), summary = document.createElement('summary');
+      const preview = document.createElement('p'); preview.textContent = record.text.replace(/[#*`]/g, '').slice(0, 140) + '…';
+      setLabel(summary, '查看完整回复'); details.append(summary, content); record.element.replaceChildren(preview, details);
+    }
     if (!delta && event.sequence) {
       record.messageID = String(event.sequence); record.threadID = target;
       record.trainingEligible = event.training_eligible || record.trainingEligible;
@@ -596,7 +607,7 @@ function renderEvent(event, target) {
   $('welcome').hidden = true;
 }
 function isNearBottom() {
-  if ($('panelTalk').hidden) return false;
+  if ($('notebook').hidden || $('panelTalk').hidden) return false;
   const messages = $('messages');
   return messages.scrollHeight - messages.scrollTop - messages.clientHeight <= 48;
 }
@@ -687,7 +698,7 @@ document.querySelectorAll('[data-prompt]').forEach(button => button.onclick = ()
 });
 $('closeNotebook').onclick = () => {
   if (!$('panelTalk').hidden) followConversation = isNearBottom();
-  $('notebook').hidden = true; $('input').focus();
+  $('notebook').hidden = true; $('tabTalk').setAttribute('aria-expanded', 'false'); $('tabTalk').focus();
 };
 $('stop').onclick = async () => {
   if (!thread) return;
