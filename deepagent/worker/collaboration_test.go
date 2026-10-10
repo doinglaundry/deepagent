@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	agentmodel "eino-cli/deepagent/model"
@@ -109,5 +110,45 @@ func TestCollaborationToolsUseCanonicalManagerBoundary(t *testing.T) {
 	closed := runCollaborationTool(t, items, "close_task", `{"target":"42","reason":"done"}`)
 	if closed["closed"] != true || backend.closed != 42 {
 		t.Fatalf("close result=%v target=%d", closed, backend.closed)
+	}
+}
+
+// A storage read can reach the wait deadline before the polling select does.
+type deadlineCollaborationBackend struct {
+	collaborationBackendFake
+	readError error
+}
+
+func (backend *deadlineCollaborationBackend) ListThreads(ctx context.Context, _ agentmodel.ListThreadsRequest) (agentmodel.ListThreadsResult, error) {
+	<-ctx.Done()
+	if backend.readError != nil {
+		return agentmodel.ListThreadsResult{}, backend.readError
+	}
+	return agentmodel.ListThreadsResult{}, ctx.Err()
+}
+
+func TestCollaborationWaitDeadlineDuringRead(t *testing.T) {
+	backend := &deadlineCollaborationBackend{}
+	tools := &collaborationTools{manager: backend}
+	input := &collaborationWaitInput{Target: "42", MessageID: "99", TimeoutMS: 1}
+	output, err := tools.wait(context.Background(), input)
+	if err != nil || output != `{"state":"waiting"}` {
+		t.Fatalf("wait deadline: output=%q err=%v", output, err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = tools.wait(ctx, input)
+	if err != context.Canceled {
+		t.Fatalf("parent cancellation was swallowed: %v", err)
+	}
+}
+
+func TestCollaborationWaitPreservesStorageFailureAtDeadline(t *testing.T) {
+	readError := errors.New("storage connection failed")
+	tools := &collaborationTools{manager: &deadlineCollaborationBackend{readError: readError}}
+	_, err := tools.wait(context.Background(), &collaborationWaitInput{Target: "42", MessageID: "99", TimeoutMS: 1})
+	if !errors.Is(err, readError) {
+		t.Fatalf("storage failure was swallowed: %v", err)
 	}
 }

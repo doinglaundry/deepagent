@@ -12,8 +12,7 @@ on:
 jobs:
 
   build:
-    # Ubuntu 22.04 permits Chrome's user-namespace sandbox.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
 
@@ -21,6 +20,14 @@ jobs:
       uses: actions/setup-go@v4
       with:
         go-version-file: 'go.mod'
+
+    # chromedp otherwise prefers Ubuntu's snap Chromium over Google Chrome.
+    - name: Select Google Chrome
+      run: |
+        mkdir -p "$RUNNER_TEMP/browser-bin"
+        ln -s "$(command -v google-chrome)" "$RUNNER_TEMP/browser-bin/headless_shell"
+        echo "$RUNNER_TEMP/browser-bin" >> "$GITHUB_PATH"
+        google-chrome --version
 
     - name: Build
       run: go build -v ./...

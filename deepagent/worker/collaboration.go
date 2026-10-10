@@ -135,6 +135,10 @@ func (m *collaborationTools) wait(ctx context.Context, input *collaborationWaitI
 	defer ticker.Stop()
 	for {
 		result, done, err := m.observe(waitCtx, target, messageID)
+		// 查询超时也表示尚未等到结果；上层取消仍返回错误。
+		if errors.Is(err, context.DeadlineExceeded) && waitCtx.Err() != nil && ctx.Err() == nil {
+			return collaborationJSON(collaborationWaitResult{State: "waiting"})
+		}
 		if err != nil {
 			return "", err
 		}
