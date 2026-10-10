@@ -11,6 +11,7 @@ import (
 
 	"eino-cli/deepagent/graph/computer"
 	"eino-cli/deepagent/helper/serialiser"
+	"eino-cli/deepagent/localmodel"
 	"eino-cli/deepagent/manager"
 	agentmodel "eino-cli/deepagent/model"
 )
@@ -33,6 +34,7 @@ type Config struct {
 
 // Worker owns scanning, claims, input delivery and lease release.
 type Worker struct {
+	LocalModel         *localmodel.Service
 	browserMu          sync.Mutex
 	browsers           map[int64]*computer.Browser
 	browserExpirations map[int64]*time.Timer
@@ -156,6 +158,10 @@ func (w *Worker) RunThread(ctx context.Context, acceptCtx context.Context, claim
 	}()
 	runCtx, stopLease, waitLease := w.startLease(ctx, claim.Lease)
 	defer stopLease()
+	if w.LocalModel != nil {
+		endThread := w.LocalModel.BeginThread()
+		defer endThread()
+	}
 
 	thread, err := w.createThread(runCtx, claim.Thread)
 	var output *agentmodel.TransportThreadOutput

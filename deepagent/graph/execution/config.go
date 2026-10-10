@@ -14,31 +14,32 @@ import (
 )
 
 type Config struct {
-	SubAgents         []*SubAgent
-	SkillLoader       agentmodel.SkillLoader
-	FilesystemConfig  *FilesystemConfig
-	WebConfig         *tools.WebConfig
-	Filesystem        agentmodel.ToolFilesystem
-	Callbacks         []callbacks.Handler
-	Middlewares       []agentmodel.Middleware
-	EnableEagerTools  bool
-	Model             model.ToolCallingChatModel
-	ToolDescriptors   []agentmodel.ToolDescriptor
-	ToolMask          agentmodel.Mask
-	ReadOnlyToolsOnly bool
-	Policy            agentmodel.Policy
-	Parallelism       int
-	MaxSteps          int
-	MaxModelCalls     int
-	Name              string
-	Depth             int
-	ThreadID          string
-	RunID             string
-	Prompts           []*agentmodel.Message
-	Conversation      agentmodel.Conversation
-	Emit              func(context.Context, agentmodel.RuntimeEvent) error
-	DrainInput        func(context.Context, string) ([]agentmodel.RunInput, bool, error)
-	CheckpointStore   compose.CheckPointStore
+	LocalModelParametersFingerprint string
+	SubAgents                       []*SubAgent
+	SkillLoader                     agentmodel.SkillLoader
+	FilesystemConfig                *FilesystemConfig
+	WebConfig                       *tools.WebConfig
+	Filesystem                      agentmodel.ToolFilesystem
+	Callbacks                       []callbacks.Handler
+	Middlewares                     []agentmodel.Middleware
+	EnableEagerTools                bool
+	Model                           model.ToolCallingChatModel
+	ToolDescriptors                 []agentmodel.ToolDescriptor
+	ToolMask                        agentmodel.Mask
+	ReadOnlyToolsOnly               bool
+	Policy                          agentmodel.Policy
+	Parallelism                     int
+	MaxSteps                        int
+	MaxModelCalls                   int
+	Name                            string
+	Depth                           int
+	ThreadID                        string
+	RunID                           string
+	Prompts                         []*agentmodel.Message
+	Conversation                    agentmodel.Conversation
+	Emit                            func(context.Context, agentmodel.RuntimeEvent) error
+	DrainInput                      func(context.Context, string) ([]agentmodel.RunInput, bool, error)
+	CheckpointStore                 compose.CheckPointStore
 }
 
 type Option func(*Config)

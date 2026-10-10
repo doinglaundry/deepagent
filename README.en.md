@@ -104,6 +104,10 @@ sh scripts/build-computer.sh
 
 This requires macOS, Chrome, Swift build tools, and Accessibility and Screen Recording permissions. Visual tasks require a model that supports images and tool calling. When enabled, start Worker using the binary shown above.
 
+## Optional: local personal model
+
+The cloud agent can call a local MLX model through `ask_local_model`. Explicitly confirmed conversations can train QLoRA candidates; adapters are never activated automatically. See the [setup and training guide](docs/local-model.md).
+
 ## Development
 
 ```bash

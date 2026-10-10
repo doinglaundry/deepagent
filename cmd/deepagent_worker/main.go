@@ -19,6 +19,8 @@ import (
 	"eino-cli/deepagent/graph/mcp"
 	"eino-cli/deepagent/graph/modelhub"
 	skillspkg "eino-cli/deepagent/graph/skills"
+	"eino-cli/deepagent/graph/tools"
+	"eino-cli/deepagent/localmodel"
 	"eino-cli/deepagent/manager"
 	agentmodel "eino-cli/deepagent/model"
 	"eino-cli/deepagent/worker"
@@ -97,9 +99,25 @@ func runWorker(ctx context.Context, cfg appconfig.Config) error {
 		}
 		defer desktop.Close(context.WithoutCancel(ctx))
 	}
+	var localModelService *localmodel.Service
+	toolDescriptors := append([]agentmodel.ToolDescriptor(nil), mcpTools...)
+	if cfg.LocalModel != nil {
+		localModelDAO := daldb.NewLocalModelDAO(coordinator.DB(), cfg.LocalModel.ModelName)
+		err = localModelDAO.MigrateSchema(ctx)
+		if err != nil {
+			return err
+		}
+		localModelService, err = localmodel.New(context.WithoutCancel(ctx), *cfg.LocalModel, localModelDAO)
+		if err != nil {
+			return err
+		}
+		defer localModelService.Close()
+		toolDescriptors = append(toolDescriptors, tools.NewLocalModelTool(localModelService))
+	}
 	agentWorker := &worker.Worker{
-		Config: cfg.Worker,
-		Client: coordinator,
+		LocalModel: localModelService,
+		Config:     cfg.Worker,
+		Client:     coordinator,
 		Runtime: worker.RuntimeConfig{
 			FilesystemKind: cfg.FilesystemKind, Docker: cfg.Docker,
 			BrowserOrigins: cfg.BrowserOrigins, ComputerApps: cfg.ComputerApps,
@@ -112,7 +130,7 @@ func runWorker(ctx context.Context, cfg appconfig.Config) error {
 		},
 		Deps: worker.RuntimeDeps{
 			Desktop:        desktop,
-			ConversationDB: conversationDAO, Checkpoint: checkpointStore, Tools: mcpTools, SkillLoader: skillLoader,
+			ConversationDB: conversationDAO, Checkpoint: checkpointStore, Tools: toolDescriptors, SkillLoader: skillLoader,
 			MemoryStore: coordinator, Collaboration: coordinator,
 			IsToolAlwaysAllowed: coordinator.IsToolAlwaysAllowed,
 			GenerateMessageID: func(idCtx context.Context, _ *agentmodel.Message) (string, error) {

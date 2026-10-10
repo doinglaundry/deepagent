@@ -55,23 +55,24 @@ type runStateKey struct{}
 // RunState is the serializable local state of the Eino graph. Live resources
 // belong to Graph, never to this checkpointed value.
 type RunState struct {
-	Version        int
-	ThreadID       string
-	RunID          string
-	Depth          int
-	Phase          Phase
-	ModelCalls     int
-	GraphSteps     int
-	EventSeq       uint64
-	PreparedInputs int
-	HistorySeq     int64
-	ContextUsage   *ContextTokenUsage
-	Consumed       []RunInput
-	Calls          []ToolCallState
-	Plan           []PlanStep
-	Pending        []Interrupt
-	Usage          RunUsage
-	Extensions     map[string]json.RawMessage
+	LocalModelParametersFingerprint string `json:"LocalModelVersion"` // 参数内容指纹；存档键保持不变。
+	Version                         int
+	ThreadID                        string
+	RunID                           string
+	Depth                           int
+	Phase                           Phase
+	ModelCalls                      int
+	GraphSteps                      int
+	EventSeq                        uint64
+	PreparedInputs                  int
+	HistorySeq                      int64
+	ContextUsage                    *ContextTokenUsage
+	Consumed                        []RunInput
+	Calls                           []ToolCallState
+	Plan                            []PlanStep
+	Pending                         []Interrupt
+	Usage                           RunUsage
+	Extensions                      map[string]json.RawMessage
 }
 
 type RunUsage struct {

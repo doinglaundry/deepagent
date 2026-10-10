@@ -60,3 +60,14 @@ browser_origins:
   - "https://example.com"
 computer_apps:
   - "com.apple.TextEdit"
+
+# Optional local personal model. Keep disabled until MLX and a local model snapshot are installed.
+# local_model:
+#   name: my-personal-model
+#   base_model_parameters_path: /absolute/path/to/qwen3-snapshot  # 原模型参数目录
+#   python: /absolute/path/to/mlx-venv/bin/python
+#   fine_tuned_parameters_path: ""  # 微调参数目录；不配置时使用原模型
+#   data_directory: /absolute/path/to/personal-model-state  # 日志、训练数据和候选参数
+#   port: 18080
+#   iterations: 100
+#   auto_train: false

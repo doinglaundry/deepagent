@@ -12,7 +12,7 @@ import (
 )
 
 func (graph *Graph) newRunState(inputMessages []*agentmodel.Message, runOptions RunOptions) *agentmodel.RunState {
-	runState := &agentmodel.RunState{Version: 1, ThreadID: graph.config.ThreadID, RunID: graph.runID, Depth: graph.config.Depth, Phase: agentmodel.PhasePreparing}
+	runState := &agentmodel.RunState{Version: 1, LocalModelParametersFingerprint: graph.config.LocalModelParametersFingerprint, ThreadID: graph.config.ThreadID, RunID: graph.runID, Depth: graph.config.Depth, Phase: agentmodel.PhasePreparing}
 	for i, message := range inputMessages {
 		if message != nil {
 			copy := *message
@@ -37,6 +37,9 @@ func (graph *Graph) newRunState(inputMessages []*agentmodel.Message, runOptions 
 func (graph *Graph) getLocalState(ctx context.Context) (*agentmodel.RunState, error) {
 	var runState *agentmodel.RunState
 	err := compose.ProcessState[*agentmodel.RunState](ctx, func(_ context.Context, localRunState *agentmodel.RunState) error {
+		if localRunState.LocalModelParametersFingerprint != graph.config.LocalModelParametersFingerprint {
+			return errors.New("local model version changed; restore its original configuration before resuming")
+		}
 		if localRunState.PreparedInputs < 0 || localRunState.PreparedInputs > len(localRunState.Consumed) {
 			return fmt.Errorf("invalid prepared input cursor")
 		}

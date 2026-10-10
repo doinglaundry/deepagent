@@ -104,6 +104,10 @@ sh scripts/build-computer.sh
 
 需要 macOS、Chrome、Swift 编译工具，以及辅助功能和屏幕录制权限。视觉任务需要支持图片与工具调用的模型。启用后用上面的二进制启动 Worker。
 
+## 可选：本地个人模型
+
+云端模型可通过 `ask_local_model` 使用本地 MLX 模型。明确确认的问答可用于 QLoRA；训练生成候选版本，不自动替换当前模型。参见[安装、训练及启用说明](docs/local-model.md)。
+
 ## 开发
 
 ```bash

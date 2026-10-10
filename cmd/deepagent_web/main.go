@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	daldb "eino-cli/deepagent/dal/db"
 	"eino-cli/deepagent/host/web"
 	deepmanager "eino-cli/deepagent/manager"
 )
@@ -34,6 +35,15 @@ func main() {
 		os.Exit(1)
 	}
 	s := web.New(m, *root)
+	if cfg.LocalModel != nil {
+		localModelDAO := daldb.NewLocalModelDAO(m.DB(), cfg.LocalModel.ModelName)
+		err = localModelDAO.MigrateSchema(ctx)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		s.EnableLocalModel(localModelDAO)
+	}
 	h := &http.Server{Addr: *addr, Handler: s.Handler(), BaseContext: func(net.Listener) context.Context { return ctx }}
 	go func() { <-ctx.Done(); _ = h.Shutdown(context.Background()) }()
 	slog.Info("DeepAgent UI listening", "addr", *addr)

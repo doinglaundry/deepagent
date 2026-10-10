@@ -1,0 +1,84 @@
+# 本地个人模型（第一版）
+
+```text
+用户 → 现有 Eino Graph → 云端模型
+                         ↓ 选择调用 ask_local_model
+                       MLX 本地模型 → 工具结果 → 云端模型
+
+明确确认问答 → MySQL 样本 → Worker 微调 → 候选 Adapter
+```
+
+没有新 Graph 节点、模型 Router 或第二套 Agent 循环。本地模型只回答一次；训练不作为工具暴露给模型。
+
+## 安装与配置
+
+Apple Silicon Mac，Python 3.11，模型使用本地快照。示例用较小的 Qwen3 验证链路，不代表它已经理解个人偏好。
+
+```bash
+python3.11 -m venv .eino-cli/mlx
+.eino-cli/mlx/bin/pip install 'mlx==0.30.4' 'mlx-lm[train]==0.31.1'
+.eino-cli/mlx/bin/hf download mlx-community/Qwen3-0.6B-4bit --local-dir .eino-cli/models/qwen3
+```
+
+这里固定了实测可用的依赖组合，避免 [MLX GPU stream 的线程兼容问题](https://github.com/ml-explore/mlx-lm/issues/1181)。
+
+在现有 YAML 中添加以下配置；原 `default_model` 继续使用 API 模型。
+
+```yaml
+local_model:
+  name: my-personal-model          # 样本和作业的数据库隔离标识
+  base_model_parameters_path: /absolute/path/.eino-cli/models/qwen3  # 原模型参数目录
+  python: /absolute/path/.eino-cli/mlx/bin/python
+  data_directory: /absolute/path/.eino-cli/personal-model  # 日志、训练数据和候选参数
+  port: 18080
+  iterations: 100
+  auto_train: false
+  # fine_tuned_parameters_path: /absolute/path/to/validated/adapter
+```
+
+重新启动 Web 和 Worker 即可启用。`data_directory` 必须在模型和 Adapter 目录之外。一个 Mac 用户同时只启动一个 MLX Worker；推理和训练共享设备锁。训练期间用户任务继续使用 API 模型；本地工具正忙时立即返回提示，不等待，也不取消训练。Worker 崩溃时，仍存活的子进程继续持锁；先停止该进程，再重启 Worker。
+
+## 确认样本和查看训练记录
+
+第一版提供 HTTP API，暂未增加前端按钮。仅接收明确确认的纯文本问答，可包含多轮对话，不接收工具结果或图片。保存问答快照，后续历史压缩不会影响样本；相同内容自动去重。
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/local-model/examples \
+  -H 'Content-Type: application/json' \
+  -d '{"confirmed":true,"messages":[{"role":"user","content":"怎么向我解释代码？"},{"role":"assistant","content":"先给简短、可读的 Go 代码，再用中文解释。"}]}'
+
+curl http://127.0.0.1:8080/api/local-model/jobs
+```
+
+自动训练需要新增至少 100 条确认样本，且 train/valid/test 三个分区均有数据；数据分割失败时需要继续增加样本。同一首问的多个确认快照始终归到同一分区，避免训练与验证互相泄漏。
+
+作业状态：`running → pending_validation / failed / canceled`。重启后遗留的 running 标为 failed，不会自动重跑。日志和数据保存在 `data_directory/jobs/<job-id>/`。
+
+## 什么时候自动训练
+
+只有 `auto_train: true` 才启用。条件：上次训练尝试之后有至少 100 个新确认样本、接电、十分钟没有任务、当前没有执行中的 Thread。Worker 每五秒检查一次，满足条件后直接创建 running 记录并训练，不提供手动触发接口或待执行队列。失败或取消后，需在本次尝试之后再新增至少 100 条确认样本，才会触发下一次训练。
+
+这是保守的调度门槛，不代表一百条样本就能获得有效个性化。
+
+## 候选模型如何使用
+
+训练采用 MLX QLoRA，并输出留出集 loss；`pending_validation`（待验证）表示训练进程完成、微调参数文件存在，仍需验证回答质量。当前模型不会被自动替换。
+
+先用独立评估问题比较基础模型与候选 Adapter 的回答。确认效果后，等待已有 Run 完成，再将 `fine_tuned_parameters_path` 指向候选目录，重启 Worker。不要覆盖运行中的基础模型或 Adapter 文件。
+
+RunState.LocalModelParametersFingerprint 保存原模型与微调参数的内容指纹。恢复发现指纹不一致会拒绝执行并保留 checkpoint；恢复原配置后可继续原 Run。
+
+实现入口：`graph/tools/local_model.go`（工具）、`localmodel/service.go`（推理与设备生命周期）、`localmodel/training.go`（调度与微调）、`dal/db/local_model.go`（存储）。
+
+## 本机验收记录（2026-10-10）
+
+以下为删除手动触发链路前的验收记录；自动触发的实机测试现使用 100 条样本。
+
+Apple M1 Pro，Qwen3-0.6B-4bit，以上固定依赖组合：
+
+- 真实云端模型通过现有 Graph 调用本地模型，收到 `LOCAL_READY` 后生成最终回复。
+- HTTP 确认 40 条合成样本；真实 QLoRA 训练一步，生成 2,889,527 字节的候选 Adapter，并执行 valid/test loss 计算。
+- 训练期间本地工具立即返回忙碌提示，用户任务不会取消训练；训练结束后基础模型仍正常回答；显式加载候选 Adapter 后收到 `LOCAL_ADAPTER_READY`。
+- 回归覆盖重复样本、数据隔离、进程崩溃后的设备锁、请求取消、checkpoint 版本不一致拒绝恢复及恢复原版本后继续执行。
+
+这是流程验收；合成样本和一步训练没有证明个性化质量提升。第一版不自动收集电脑文件，也没有新增前端训练按钮。

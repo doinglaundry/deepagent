@@ -126,6 +126,9 @@ func (w *Worker) createThread(ctx context.Context, info *agentmodel.ThreadRecord
 		Filesystem:       filesystem,
 		FilesystemConfig: &execution.FilesystemConfig{},
 	}
+	if w.LocalModel != nil {
+		agentConfig.LocalModelParametersFingerprint = w.LocalModel.GetParametersFingerprint()
+	}
 	agentConfig.Policy = agentmodel.PolicyFunc(func(ctx context.Context, call agentmodel.ToolCall, descriptor agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
 		scopeErr := validateComputerTarget(w.Runtime, call)
 		if scopeErr != nil {

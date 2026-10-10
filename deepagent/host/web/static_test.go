@@ -149,3 +149,22 @@ func TestMissingThreadErrorHasNotFoundStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalModelManualTrainingEndpointIsRemoved(t *testing.T) {
+	server := New(nil, t.TempDir())
+	// 删除的接口不应访问存储；查询和确认样本仍由各自接口提供。
+	server.EnableLocalModel(nil)
+	defer func() {
+		recovered := recover()
+		if recovered != nil {
+			t.Fatalf("manual training endpoint still accessed storage: %v", recovered)
+		}
+	}()
+	request := httptest.NewRequest(http.MethodPost, "/api/local-model/train", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("manual training endpoint status=%d; want 404", response.Code)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"eino-cli/deepagent/graph/mcp"
 	"eino-cli/deepagent/graph/modelhub"
 	"eino-cli/deepagent/graph/tools"
+	"eino-cli/deepagent/localmodel"
 	"eino-cli/deepagent/manager"
 	"eino-cli/deepagent/worker"
 
@@ -20,6 +21,7 @@ import (
 type ManagerConfig = manager.Config
 
 type Config struct {
+	LocalModel             *localmodel.Config   `yaml:"local_model"`
 	ComputerEnabled        bool                 `yaml:"computer_enabled"`
 	BrowserOrigins         []string             `yaml:"browser_origins"`
 	ComputerApps           []string             `yaml:"computer_apps"`
