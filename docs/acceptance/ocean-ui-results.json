@@ -75,7 +75,8 @@
       "commit": "228831b651b5b5d60a1a7877ae11b49ac188a6ac",
       "conclusion": "success",
       "url": "https://github.com/doinglaundry/deepagent/actions/runs/38070801551"
-    }
+    },
+    "browserExpiryCleanupRegression": "reproduced before fix; 10 fresh race runs passed after closing Chrome before removing expired records"
   },
   "extendedBrowser": {
     "passed": [

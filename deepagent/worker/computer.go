@@ -162,14 +162,14 @@ func (worker *Worker) retainThreadBrowser(threadID int64, duration time.Duration
 	var timer *time.Timer
 	timer = time.AfterFunc(duration, func() {
 		worker.browserMu.Lock()
+		defer worker.browserMu.Unlock()
 		if worker.browserExpirations[threadID] != timer {
-			worker.browserMu.Unlock()
 			return
 		}
+		// Chrome 完全退出后再移除，避免新建浏览器或停机清理与旧进程并发。
+		browser.Close(context.Background())
 		delete(worker.browserExpirations, threadID)
 		delete(worker.browsers, threadID)
-		worker.browserMu.Unlock()
-		browser.Close(context.Background())
 	})
 	worker.browserExpirations[threadID] = timer
 }

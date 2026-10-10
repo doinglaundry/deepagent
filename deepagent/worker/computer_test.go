@@ -65,6 +65,10 @@ func TestComputer_BlockedBrowserExpiresAndReclaimCancelsExpiry(t *testing.T) {
 		remaining := len(host.browsers)
 		host.browserMu.Unlock()
 		if remaining == 0 {
+			_, err = browser.PerformAction(context.Background(), "observe", agentmodel.ComputerAction{})
+			if err == nil || err.Error() != "browser is closed" {
+				t.Fatalf("expired browser removed before closing: %v", err)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
