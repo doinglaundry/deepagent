@@ -119,16 +119,14 @@ func List(sessionID string) ([]FileInfo, error) {
 		return nil, err
 	}
 	defer directory.Close()
-	entries, err := directory.ReadDir(-1)
+	filenames, err := directory.Readdirnames(-1)
 	if err != nil {
 		return nil, err
 	}
 	var out []FileInfo
-	for _, e := range entries {
-		if e.Type()&os.ModeSymlink != 0 {
-			continue
-		}
-		info, err := e.Info()
+	for _, filename := range filenames {
+		// 使用受限根目录读取属性，兼容 Go 1.25 的目录条目路径。
+		info, err := root.Lstat(filename)
 		if err != nil {
 			continue
 		}
@@ -136,10 +134,10 @@ func List(sessionID string) ([]FileInfo, error) {
 			continue
 		}
 		out = append(out, FileInfo{
-			Filename:  e.Name(),
+			Filename:  filename,
 			Size:      info.Size(),
-			Path:      filepath.Join(base, e.Name()),
-			Extension: filepath.Ext(e.Name()),
+			Path:      filepath.Join(base, filename),
+			Extension: filepath.Ext(filename),
 			Modified:  info.ModTime().Unix(),
 		})
 	}

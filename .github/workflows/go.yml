@@ -12,7 +12,8 @@ on:
 jobs:
 
   build:
-    runs-on: ubuntu-latest
+    # Ubuntu 22.04 permits Chrome's user-namespace sandbox.
+    runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v4
 
