@@ -17,7 +17,7 @@ import (
 	agentmodel "eino-cli/deepagent/model"
 )
 
-//go:embed index.html app.js i18n.js app.css assets
+//go:embed index.html app.js training.js i18n.js app.css assets
 var files embed.FS
 
 type Server struct {
@@ -297,13 +297,14 @@ func (s *Server) submitMessage(w http.ResponseWriter, r *http.Request, threadID 
 }
 
 type eventView struct {
-	Sequence  string          `json:"sequence"`
-	CreatedAt time.Time       `json:"created_at,omitempty"`
-	Status    string          `json:"status,omitempty"`
-	RunID     string          `json:"run_id,omitempty"`
-	Kind      string          `json:"kind"`
-	Text      string          `json:"text,omitempty"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
+	TrainingEligible bool            `json:"training_eligible,omitempty"`
+	Sequence         string          `json:"sequence"`
+	CreatedAt        time.Time       `json:"created_at,omitempty"`
+	Status           string          `json:"status,omitempty"`
+	RunID            string          `json:"run_id,omitempty"`
+	Kind             string          `json:"kind"`
+	Text             string          `json:"text,omitempty"`
+	Payload          json.RawMessage `json:"payload,omitempty"`
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request, threadID int64) {
@@ -315,8 +316,10 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, threadID int64) 
 	}
 	rows := make([]eventView, 0, len(result.Messages))
 	for _, message := range result.Messages {
+		run := result.Runs[message.TriggerRunID]
 		rows = append(rows, eventView{
-			Sequence: strconv.FormatInt(message.MessageID, 10), CreatedAt: message.CreatedAt, RunID: message.TriggerRunID, Kind: message.MessageType,
+			TrainingEligible: message.MessageType == "assistant" && run != nil && run.Status == "finished",
+			Sequence:         strconv.FormatInt(message.MessageID, 10), CreatedAt: message.CreatedAt, RunID: message.TriggerRunID, Kind: message.MessageType,
 			Status: messageDisplayStatus(message, result.Runs[message.TriggerRunID]),
 			Text:   messageText(message), Payload: append(json.RawMessage(nil), message.Payload...),
 		})

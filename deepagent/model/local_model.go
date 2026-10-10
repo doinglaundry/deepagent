@@ -4,10 +4,11 @@ import "time"
 
 // TrainingExample is an explicitly confirmed text conversation, independent of compaction.
 type TrainingExample struct {
-	ModelName string     `gorm:"size:191;primaryKey" json:"model_name"`
-	ID        string     `gorm:"size:64;primaryKey" json:"id"`
-	Messages  []*Message `gorm:"type:longtext;serializer:coordinator_json" json:"messages"`
-	CreatedAt time.Time  `json:"created_at"`
+	ModelName        string     `gorm:"size:191;primaryKey" json:"model_name"`
+	ID               string     `gorm:"size:64;primaryKey" json:"id"`
+	SourceMessageIDs []string   `gorm:"type:text;serializer:coordinator_json" json:"source_message_ids"` // 已保存的回复 ID；同内容可有多个来源。
+	Messages         []*Message `gorm:"type:longtext;serializer:coordinator_json" json:"messages"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 func (TrainingExample) TableName() string { return "agent_training_example" }

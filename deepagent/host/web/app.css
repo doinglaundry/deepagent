@@ -191,3 +191,19 @@ a { color:var(--accent); }
 @media(prefers-reduced-motion:reduce) { *,*:before { animation:none!important; transition:none!important; } }
 
 .tool-screenshot { display:block; width:100%; height:auto; margin-top:12px; border-radius:6px; }
+
+/* 训练入口沿用工作记录；编辑的是训练副本，不是对话内容。 */
+#tabTraining { margin-left:auto; font-size:12px; }
+.training-action { display:inline-block; padding:4px 0; margin:7px 14px 0 0; border:0; background:transparent; color:var(--accent); font-size:12px; }
+.msg .training-action { display:block; }
+.training-highlight { background:var(--soft); outline:1px solid var(--accent); border-radius:8px; }
+.training-panel h3 { font-size:16px; margin:18px 0 12px; }
+.training-panel h4 { font-size:13px; margin:22px 0 8px; }
+.training-status { background:var(--soft); border-radius:8px; padding:12px; }
+.training-status p,.training-note,#trainingJobs small { color:var(--muted); font-size:12px; }
+.training-example { padding:12px 0; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.training-example p { white-space:pre-wrap; margin:6px 0; }
+.training-example small { display:block; color:var(--muted); font-size:12px; }
+.training-context { display:flex; gap:8px; align-items:center; margin:12px 0; font-size:13px; }
+#trainingAnswer { display:block; width:100%; resize:vertical; margin-top:8px; }
+#trainingNotice { font-size:12px; color:var(--accent); overflow-wrap:anywhere; }

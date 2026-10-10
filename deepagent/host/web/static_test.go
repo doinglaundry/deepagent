@@ -17,7 +17,7 @@ import (
 
 func TestEmbeddedWebClient(t *testing.T) {
 	handler := New(nil, t.TempDir()).Handler()
-	for _, path := range []string{"/", "/app.js", "/i18n.js", "/app.css", "/assets/office.png"} {
+	for _, path := range []string{"/", "/app.js", "/training.js", "/i18n.js", "/app.css", "/assets/office.png"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusOK {
@@ -153,7 +153,7 @@ func TestMissingThreadErrorHasNotFoundStatus(t *testing.T) {
 func TestLocalModelManualTrainingEndpointIsRemoved(t *testing.T) {
 	server := New(nil, t.TempDir())
 	// 删除的接口不应访问存储；查询和确认样本仍由各自接口提供。
-	server.EnableLocalModel(nil)
+	server.EnableLocalModel(nil, false)
 	defer func() {
 		recovered := recover()
 		if recovered != nil {

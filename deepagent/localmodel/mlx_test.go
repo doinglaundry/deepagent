@@ -50,7 +50,7 @@ func TestMLXIntegration(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		_, err = localModelDAO.ConfirmTrainingExample(ctx, []*agentmodel.Message{
 			agentmodel.NewUserMessage(fmt.Sprintf("How should you explain code task %d to me?", i)), agentmodel.NewAssistantMessage("Use concise Chinese and show readable Go code first.", nil),
-		})
+		}, "")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -16,6 +16,9 @@ import (
 	agentmodel "eino-cli/deepagent/model"
 )
 
+// MinimumTrainingExamples 是自动训练的新增样本门槛，Web 直接读取同一值。
+const MinimumTrainingExamples = 100
+
 func (service *Service) runTrainingLoop() {
 	defer close(service.trainingLoopDone)
 	if service.localModelDAO == nil {
@@ -52,7 +55,7 @@ func (service *Service) runAutomaticTraining() error {
 
 	// 2. 统计上次训练尝试之后新增的确认样本，不足一百条就继续等待。
 	newExampleCount, err := service.localModelDAO.CountNewTrainingExamples(service.serviceContext)
-	if err != nil || newExampleCount < 100 {
+	if err != nil || newExampleCount < MinimumTrainingExamples {
 		return err
 	}
 

@@ -42,7 +42,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		s.EnableLocalModel(localModelDAO)
+		s.EnableLocalModel(localModelDAO, cfg.LocalModel.EnableAutoTraining)
 	}
 	h := &http.Server{Addr: *addr, Handler: s.Handler(), BaseContext: func(net.Listener) context.Context { return ctx }}
 	go func() { <-ctx.Done(); _ = h.Shutdown(context.Background()) }()

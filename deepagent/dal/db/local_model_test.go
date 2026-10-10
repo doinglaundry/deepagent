@@ -57,20 +57,24 @@ func TestLocalModelDAOJobLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// This opt-in test requires an isolated empty database.
-	for _, row := range []any{&agentmodel.TrainingJob{}, &agentmodel.TrainingExample{}} {
-		err = mysqlClient.DB(ctx, true).Where("1 = 1").Delete(row).Error
-		if err != nil {
-			t.Fatal(err)
+	// 仅清理本测试的模型，避免与 Web 验收或其他包并行执行时删除彼此的样本。
+	cleanup := func() {
+		for _, row := range []any{&agentmodel.TrainingJob{}, &agentmodel.TrainingExample{}} {
+			deleteErr := mysqlClient.DB(ctx, true).Where("model_name IN ?", []string{"test-personal-model", "another-personal-model"}).Delete(row).Error
+			if deleteErr != nil {
+				t.Error(deleteErr)
+			}
 		}
 	}
+	cleanup()
+	t.Cleanup(cleanup)
 	for i := 0; i < 12; i++ {
-		_, err = localModelDAO.ConfirmTrainingExample(ctx, []*agentmodel.Message{agentmodel.NewUserMessage(fmt.Sprint("question ", i)), agentmodel.NewAssistantMessage("confirmed", nil)})
+		_, err = localModelDAO.ConfirmTrainingExample(ctx, []*agentmodel.Message{agentmodel.NewUserMessage(fmt.Sprint("question ", i)), agentmodel.NewAssistantMessage("confirmed", nil)}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	_, err = localModelDAO.ConfirmTrainingExample(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("question 0"), agentmodel.NewAssistantMessage("confirmed", nil)})
+	_, err = localModelDAO.ConfirmTrainingExample(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("question 0"), agentmodel.NewAssistantMessage("confirmed", nil)}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +100,7 @@ func TestLocalModelDAOJobLifecycle(t *testing.T) {
 		t.Fatalf("attempt cursor: count=%d err=%v", newExampleCount, err)
 	}
 	// Messages confirmed after training starts belong to the next training snapshot.
-	laterTrainingExample, err := localModelDAO.ConfirmTrainingExample(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("after request"), agentmodel.NewAssistantMessage("later answer", nil)})
+	laterTrainingExample, err := localModelDAO.ConfirmTrainingExample(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("after request"), agentmodel.NewAssistantMessage("later answer", nil)}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

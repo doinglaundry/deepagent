@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark"><title data-i18n="DeepAgent · 像素办公室">DeepAgent · 像素办公室</title>
-<link rel="stylesheet" href="/app.css"><script src="/i18n.js" defer></script><script src="/app.js" defer></script>
+<link rel="stylesheet" href="/app.css"><script src="/i18n.js" defer></script><script src="/training.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -29,7 +29,7 @@
     <div class="scene-nav"><button data-panel="Talk"><strong data-i18n="对话">对话</strong><small data-i18n="一起讨论你的目标">一起讨论你的目标</small></button><button data-panel="Plan"><strong data-i18n="计划">计划</strong><small data-i18n="任务一步步推进">任务一步步推进</small></button><button data-panel="Output"><strong data-i18n="工具">工具</strong><small data-i18n="搭档如何使用能力">搭档如何使用能力</small></button></div>
   </section>
     <aside id="notebook" class="notebook" aria-label="工作记录" data-i18n-label="工作记录">
-      <header class="notebook-heading"><strong data-i18n="工作记录">工作记录</strong><button id="closeNotebook" aria-label="收起工作记录" data-i18n-label="收起工作记录">×</button></header>
+      <header class="notebook-heading"><strong data-i18n="工作记录">工作记录</strong><button id="tabTraining" type="button" data-panel="Training" aria-controls="panelTraining" hidden data-i18n="训练数据">训练数据</button><button id="closeNotebook" aria-label="收起工作记录" data-i18n-label="收起工作记录">×</button></header>
       <div class="tabs" role="tablist" aria-label="工作记录" data-i18n-label="工作记录">
         <button id="tabTalk" role="tab" aria-controls="panelTalk" aria-selected="true" data-panel="Talk" data-i18n="对话">对话</button><button id="tabPlan" role="tab" aria-controls="panelPlan" aria-selected="false" data-panel="Plan" data-i18n="计划">计划</button><button id="tabOutput" role="tab" aria-controls="panelOutput" aria-selected="false" data-panel="Output" data-i18n="工具">工具</button><button id="tabFile" role="tab" aria-controls="panelFile" aria-selected="false" data-panel="File" data-i18n="文件">文件</button><button id="tabTasks" role="tab" aria-controls="panelTasks" aria-selected="false" data-panel="Tasks" data-i18n="任务">任务</button>
       </div>
@@ -40,6 +40,25 @@
       <div id="panelFile" class="panel" role="tabpanel" aria-labelledby="tabFile" hidden><p class="panel-label" data-i18n="当前任务的文件改动">当前任务的文件改动</p><div id="changedFiles" data-i18n-empty="当前任务还没有文件改动。"></div><div id="fileStatus" role="status" aria-live="polite"></div><pre id="file" hidden></pre></div>
       <div id="panelTasks" class="panel" role="tabpanel" aria-labelledby="tabTasks" hidden><label class="search"><input id="search" placeholder="搜索任务" data-i18n-placeholder="搜索任务" aria-label="搜索任务" data-i18n-label="搜索任务"></label><nav id="threads" aria-label="最近任务" data-i18n-label="最近任务"></nav></div>
 
+      <div id="panelTraining" class="panel training-panel" aria-labelledby="tabTraining" hidden>
+        <button type="button" id="backTraining" class="training-action" data-i18n="← 返回对话">← 返回对话</button>
+        <div id="trainingData">
+          <h3 data-i18n="本地模型 · 训练数据">本地模型 · 训练数据</h3>
+          <section class="training-status"><strong id="trainingState"></strong><p id="trainingCount"></p><p id="trainingConditions" >自动开始条件：新增 100 条确认样本、无执行中任务、空闲 10 分钟、已接电。</p></section>
+          <h4 data-i18n="当前任务中标记的消息">当前任务中标记的消息</h4><div id="trainingExamples"></div>
+          <h4 data-i18n="最近训练">最近训练</h4><div id="trainingJobs"></div>
+          <p class="training-note" data-i18n="标记只用于后续训练；取消标记不会回退已生成的模型参数。">标记只用于后续训练；取消标记不会回退已生成的模型参数。</p>
+        </div>
+        <div id="trainingReview" hidden>
+          <h3 data-i18n="确认训练内容">确认训练内容</h3>
+          <label class="training-context"><input type="checkbox" id="trainingIncludePrevious"><span data-i18n="包含上一轮问答">包含上一轮问答</span></label>
+          <div id="trainingQuestion"></div>
+          <label for="trainingAnswer" data-i18n="用于训练的回答">用于训练的回答</label><textarea id="trainingAnswer" rows="6"></textarea>
+          <p class="training-note" data-i18n="可以修正训练副本，原始对话保持不变。">可以修正训练副本，原始对话保持不变。</p>
+          <button type="button" id="confirmTraining" data-i18n="确认加入训练">确认加入训练</button>
+        </div>
+        <p id="trainingNotice" role="status" aria-live="polite"></p>
+      </div>
       <div class="composer-area">
         <div id="status" role="status" aria-live="polite" hidden></div>
         <div class="caption"><span id="phaseLabel" data-i18n="就绪">就绪</span><span id="phaseCaption" data-i18n="给搭档一个任务，我们一起推进">给搭档一个任务，我们一起推进</span></div>

@@ -18,6 +18,7 @@ English · [简体中文](README.md)
 - **Approval and resume**: resume interrupted execution from a checkpoint. “Always allow” applies only to the authorized tool within the current task.
 - **Extensions**: Skills, MCP, web search, subagent collaboration, and optional long-term memory.
 - **Computer use**: browser and Mac app operations with screenshots and tool approval.
+- **Personal model training**: select replies as training examples, preview and edit a training copy, and fine-tune a local MLX model automatically while idle.
 
 ## Quick start
 
@@ -106,7 +107,15 @@ This requires macOS, Chrome, Swift build tools, and Accessibility and Screen Rec
 
 ## Optional: local personal model
 
-The cloud agent can call a local MLX model through `ask_local_model`. Explicitly confirmed conversations can train QLoRA candidates; adapters are never activated automatically. See the [setup and training guide](docs/local-model.md).
+The cloud agent can call a local MLX model through `ask_local_model`. After configuring a local model on an Apple Silicon Mac, select training data from your conversations:
+
+1. Click **Use for training** below a completed reply to preview the original Q&A and optionally include the previous exchange.
+2. Edit the training answer copy and confirm. The original conversation stays unchanged.
+3. Open **Training data** in the work log header to review selections, remove marks, and check training progress.
+
+With `local_model.auto_train: true`, QLoRA fine-tuning starts automatically after at least **100 new confirmed examples**, **10 idle minutes**, and a connection to **AC power**. API conversations continue during training. New parameters remain **pending validation** and never replace the active model automatically. Removing a mark only affects future training.
+
+See the [setup and training guide](docs/local-model.md) (Chinese).
 
 ## Development
 

@@ -45,6 +45,7 @@ function load(handler, storage = {}) {
     }
   });
   vm.runInContext(fs.readFileSync(__dirname + '/i18n.js', 'utf8'), context);
+  vm.runInContext(fs.readFileSync(__dirname + '/training.js', 'utf8'), context);
   vm.runInContext(fs.readFileSync(__dirname + '/app.js', 'utf8'), context);
   return {context, get, timers, calls};
 }
@@ -694,4 +695,173 @@ test('submission to a removed task keeps the draft without automatically resendi
   assert.equal(app.get('input').value, 'do not lose this question');
   assert.equal(app.calls.filter(call => call.options?.method === 'POST').length, 1);
   assert.equal(app.timers.size, 0);
+});
+
+
+test('training is offered only for a durable completed reply', async () => {
+  const app = load(url => url === '/api/local-model/status' ? {data: {enabled: true, new_example_count: 0, jobs: []}} : undefined);
+  await tick();
+  app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {llm_response_id: 'reply', delta: '你好'}}, 'thread');
+  assert.equal(app.get('messages').querySelectorAll('.training-action').length, 0);
+  app.context.renderEvent({sequence: '9007199254740993', run_id: 'run', kind: 'assistant', training_eligible: true, text: '你好', payload: {llm_response_id: 'reply'}}, 'thread');
+  const actions = app.get('messages').querySelectorAll('.training-action');
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].textContent, '用于训练');
+});
+
+test('an unavailable local model hides training without breaking conversation', async () => {
+  const app = load(url => url === '/api/local-model/status' ? {ok: false, status: 404, data: {error: 'disabled'}} : undefined);
+  await tick();
+  app.context.renderEvent({sequence: '2', run_id: 'run', kind: 'assistant', training_eligible: true, text: '正常回复'}, 'thread');
+  assert.equal(app.get('messages').querySelectorAll('.training-action').length, 0);
+  assert.equal(app.get('messages').querySelectorAll('.msg.assistant')[0].textContent, '正常回复');
+  assert.equal(app.get('tabTraining').hidden, true);
+});
+
+test('training review uses saved IDs and keeps edits when including previous context', async () => {
+  let saved = [], previewCount = 0;
+  const pair = [{role:'user',content:'original question'},{role:'assistant',content:'original answer'}];
+  const app = load((url, options) => {
+    if (url === '/api/local-model/status') return {data:{enabled:true,required_example_count:100,new_example_count:saved.length,jobs:[]}};
+    if (url === '/api/local-model/examples' && options?.method === 'POST') {
+      const body = JSON.parse(options.body);
+      saved = [{source_message_ids:[body.message_id],messages:[pair[0],{role:'assistant',content:body.answer}]}];
+      return {data:saved[0]};
+    }
+    if (url === '/api/local-model/examples') return {data:saved};
+    if (url.startsWith('/api/local-model/examples?')) { previewCount++; return {data:pair}; }
+  });
+  await app.context.select('task'); await tick();
+  app.context.renderEvent({sequence:'9007199254740993',run_id:'run',kind:'assistant',training_eligible:true,text:'original answer'},'task');
+  await app.get('messages').querySelectorAll('.training-action')[0].onclick();
+  assert.equal(app.get('trainingAnswer').value,'original answer');
+  app.get('trainingAnswer').value = 'corrected answer';
+  app.get('trainingIncludePrevious').checked = true;
+  await app.get('trainingIncludePrevious').onchange();
+  assert.equal(app.get('trainingAnswer').value,'corrected answer');
+  await app.get('confirmTraining').onclick();
+  const request = app.calls.find(call => call.url === '/api/local-model/examples' && call.options?.method === 'POST');
+  assert.deepEqual(JSON.parse(request.options.body),{thread_id:'task',message_id:'9007199254740993',include_previous:true,answer:'corrected answer',confirmed:true});
+  assert.equal(previewCount,2);
+  assert.ok(app.get('messages').textContent.includes('original answer'));
+  assert.ok(app.get('messages').textContent.includes('✓ 已加入训练'));
+});
+
+test('a late training preview cannot replace a newly selected reply', async () => {
+  let release;
+  const app = load(url => {
+    if (url === '/api/local-model/status') return {data:{enabled:true,required_example_count:100,jobs:[]}};
+    if (url.includes('message_id=10')) return new Promise(resolve => release = resolve);
+    if (url.includes('message_id=20')) return {data:[{role:'user',content:'second question'},{role:'assistant',content:'second answer'}]};
+  });
+  await tick();
+  app.context.renderEvent({sequence:'10',run_id:'a',kind:'assistant',training_eligible:true,text:'first'},'task');
+  app.context.renderEvent({sequence:'20',run_id:'b',kind:'assistant',training_eligible:true,text:'second'},'task');
+  const buttons = app.get('messages').querySelectorAll('.training-action');
+  const first = buttons[0].onclick();
+  await buttons[1].onclick();
+  release({data:[{role:'user',content:'old question'},{role:'assistant',content:'old answer'}]}); await first;
+  assert.equal(app.get('trainingAnswer').value,'second answer');
+  assert.equal(app.get('trainingQuestion').textContent.includes('old question'),false);
+});
+
+test('training save errors retain the editable answer and allow retry', async () => {
+  const app = load((url,options) => {
+    if (url === '/api/local-model/status') return {data:{enabled:true,required_example_count:100,jobs:[]}};
+    if (options?.method === 'POST') return {ok:false,status:500,data:{error:'database unavailable'}};
+    if (url.includes('message_id=')) return {data:[{role:'user',content:'question'},{role:'assistant',content:'answer'}]};
+  });
+  await tick();
+  app.context.renderEvent({sequence:'10',run_id:'run',kind:'assistant',training_eligible:true,text:'answer'},'task');
+  await app.get('messages').querySelectorAll('.training-action')[0].onclick();
+  app.get('trainingAnswer').value = 'edited answer';
+  await app.get('confirmTraining').onclick();
+  assert.equal(app.get('trainingAnswer').value,'edited answer');
+  assert.equal(app.get('trainingNotice').textContent,'database unavailable');
+  assert.equal(app.get('confirmTraining').disabled,false);
+});
+
+test('saved training marks restore in English and can be removed', async () => {
+  let saved = [{source_message_ids:['10'],messages:[{role:'user',content:'q'},{role:'assistant',content:'a'}]}];
+  const app = load((url,options) => {
+    if (url === '/api/local-model/status') return {data:{enabled:true,required_example_count:100,new_example_count:saved.length,jobs:[]}};
+    if (url === '/api/local-model/examples') return {data:saved};
+    if (options?.method === 'DELETE') { saved = []; return {data:{removed:true}}; }
+  },{language:'en'});
+  await tick();
+  app.context.renderEvent({sequence:'10',run_id:'run',kind:'assistant',training_eligible:true,text:'a'},'task');
+  const button = app.get('messages').querySelectorAll('.training-action')[0];
+  assert.equal(button.textContent,'✓ Selected for training · Undo');
+  await button.onclick();
+  assert.equal(button.textContent,'Use for training');
+  assert.equal(saved.length,0);
+});
+
+test('training preview disables context changes until the initial answer is loaded', async () => {
+  let release;
+  const app = load(url => {
+    if (url === '/api/local-model/status') return {data:{enabled:true,required_example_count:100,jobs:[]}};
+    if (url.includes('message_id=')) return new Promise(resolve => release = resolve);
+  });
+  await tick();
+  app.context.renderEvent({sequence:'10',kind:'assistant',training_eligible:true,text:'answer'},'task');
+  const pending = app.get('messages').querySelectorAll('.training-action')[0].onclick();
+  assert.equal(app.get('trainingIncludePrevious').disabled,true);
+  release({data:[{role:'user',content:'q'},{role:'assistant',content:'a'}]}); await pending;
+  assert.equal(app.get('trainingIncludePrevious').disabled,false);
+  assert.equal(app.get('trainingAnswer').value,'a');
+});
+
+test('populated training lists clear the translatable empty-state label', async () => {
+  const example = {source_message_ids:['10'],messages:[{role:'user',content:'q'},{role:'assistant',content:'a'}]};
+  const app = load(url => {
+    if (url === '/api/local-model/status') return {data:{enabled:true,required_example_count:100,jobs:[]}};
+    if (url === '/api/local-model/examples') return {data:[example]};
+  });
+  await app.context.select('task'); await tick();
+  app.context.renderEvent({sequence:'10',kind:'assistant',training_eligible:true,text:'a'},'task');
+  await app.context.loadTrainingData();
+  assert.equal(app.get('trainingExamples').dataset.i18n,undefined);
+  assert.equal(app.get('trainingExamples').children.length,1);
+});
+
+test('a stale sample list cannot restore a removed training mark', async () => {
+  let release, deferList = false;
+  let saved = [{source_message_ids:['10'],messages:[{role:'user',content:'q'},{role:'assistant',content:'a'}]}];
+  const app = load((url,options) => {
+    if (url === '/api/local-model/status') return {data:{enabled:true,required_example_count:100,jobs:[]}};
+    if (options?.method === 'DELETE') { saved = []; return {data:{removed:true}}; }
+    if (url === '/api/local-model/examples') {
+      if (deferList) { deferList = false; const previous = saved; return new Promise(resolve => release = () => resolve({data:previous})); }
+      return {data:saved};
+    }
+  });
+  await tick();
+  app.context.renderEvent({sequence:'10',kind:'assistant',training_eligible:true,text:'a'},'task');
+  deferList = true;
+  const previousRefresh = app.context.loadTrainingData(); await tick();
+  const button = app.get('messages').querySelectorAll('.training-action')[0];
+  await button.onclick();
+  release(); await previousRefresh;
+  assert.equal(button.textContent,'用于训练');
+});
+
+test('failed previous-context preview can be unchecked without losing the edited answer', async () => {
+  const app = load(url => {
+    if (url === '/api/local-model/status') return {data:{enabled:true,required_example_count:10,new_example_count:3,jobs:[]}};
+    if (url.includes('include_previous=true')) return {ok:false,status:400,data:{error:'only text questions can be selected'}};
+    if (url.includes('message_id=')) return {data:[{role:'user',content:'q'},{role:'assistant',content:'a'}]};
+  },{language:'en'});
+  await tick();
+  assert.equal(app.get('trainingCount').textContent,'New confirmed samples: 3 / 10');
+  app.context.renderEvent({sequence:'10',kind:'assistant',training_eligible:true,text:'a'},'task');
+  await app.get('messages').querySelectorAll('.training-action')[0].onclick();
+  app.get('trainingAnswer').value = 'edited';
+  app.get('trainingIncludePrevious').checked = true;
+  await app.get('trainingIncludePrevious').onchange();
+  assert.equal(app.get('trainingIncludePrevious').disabled,false);
+  app.get('trainingIncludePrevious').checked = false;
+  await app.get('trainingIncludePrevious').onchange();
+  assert.equal(app.get('trainingAnswer').value,'edited');
+  assert.equal(app.get('confirmTraining').disabled,false);
 });

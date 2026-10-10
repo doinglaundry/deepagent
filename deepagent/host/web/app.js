@@ -126,6 +126,11 @@ function setRunStatus(status, runID = $('runStatus').dataset.runID || '', runSta
     setLabel($('boardStatus'), '可以查看执行记录，或补充消息后继续');
     setLabel($('phaseCaption'), '可以查看执行记录，或补充消息后继续');
   }
+  if (runStatus === 'finished') {
+    messagesByKey.forEach(record => {
+      if (record.runID === runID && record.finished) { record.trainingEligible = true; renderTrainingButton(record); }
+    });
+  }
   updateActivity();
 }
 function updateActivity() {
@@ -182,6 +187,7 @@ function reset(id, draft = '') {
   save(draftKey(id), $('input').value);
   $('mode').value = '';
   save('selectedThread', id || '');
+  trainingSource = null; $('trainingReview').hidden = true; $('trainingData').hidden = false;
   showThread({}); updateComposer(); report(null); showPanel('Talk');
 }
 function connectStream(target) {
@@ -389,6 +395,7 @@ function pretty(value) {
 function showPanel(name, focus = false) {
   if (!$('notebook').hidden && !$('panelTalk').hidden) followConversation = isNearBottom();
   $('notebook').hidden = false; $('notebook').dataset.panel = name;
+  document.querySelector('.composer-area').hidden = name === 'Training';
   panelNames.forEach(panel => {
     $('panel' + panel).hidden = panel !== name;
     $('tab' + panel).setAttribute('aria-selected', String(panel === name));
@@ -571,6 +578,11 @@ function renderEvent(event, target) {
     if (record.finished && delta) return;
     record.text = delta ? record.text + text : text; record.finished = !delta;
     renderMarkdown(record.element, record.text);
+    if (!delta && event.sequence) {
+      record.messageID = String(event.sequence); record.threadID = target;
+      record.trainingEligible = event.training_eligible || record.trainingEligible;
+    }
+    record.trainingButton = null; renderTrainingButton(record);
     if (event.created_at) record.element.dataset.time = new Date(event.created_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
   } else if (['input', 'error', 'text'].includes(event.kind)) {
     const key = event.kind + ':' + event.sequence;
@@ -606,6 +618,7 @@ async function poll() {
       });
       if (cursor === previousCursor) break;
     } while (rows.length === 200);
+    if (changed && trainingEnabled) renderTrainingData();
     if (changed && followBottom) $('messages').scrollTop = $('messages').scrollHeight;
     // Open live delivery only after history is loaded, preserving message order.
     if (!eventSource) connectStream(target);
@@ -615,6 +628,7 @@ async function poll() {
       showThread(row); lastRefresh = Date.now();
       if (['idle', 'closed'].includes(row.status)) promptsByKey.forEach(box => resolvePrompt(box));
       await list();
+      if (trainingEnabled && !$('panelTraining').hidden) await loadTrainingData();
     }
     if ($('status').dataset.errorSource === 'poll') report(null);
   } catch (error) {
@@ -698,5 +712,6 @@ document.onkeydown = event => {
   if (event.key === 'Escape') $('closeNotebook').onclick();
 };
 $('input').value = localStorage[draftKey(null)] || ''; updateComposer();
+initializeTraining();
 const selectedThread = localStorage.selectedThread;
 if (selectedThread) select(selectedThread).catch(report); else list().catch(report);
