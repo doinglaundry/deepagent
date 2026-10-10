@@ -23,6 +23,7 @@ import (
 var ErrOutcomeUnknown = errors.New("computer action outcome is unknown; do not retry automatically")
 
 type Browser struct {
+	closeOnce       sync.Once
 	mu              sync.Mutex
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -247,11 +248,20 @@ func (browser *Browser) observe(ctx context.Context, pageURL string) (*agentmode
 }
 
 func (browser *Browser) Close(context.Context) error {
-	browser.cancel()
-	browser.cancelAllocator()
-	browser.mu.Lock()
-	browser.closed = true
-	browser.observation = nil
-	browser.mu.Unlock()
+	browser.closeOnce.Do(func() {
+		// 已启动的 Chrome 先限时正常退出；启动失败时直接走取消清理。
+		browserContext := chromedp.FromContext(browser.ctx)
+		if browserContext.Browser != nil {
+			closeContext, cancel := context.WithTimeout(browser.ctx, 5*time.Second)
+			_ = chromedp.Cancel(closeContext)
+			cancel()
+		}
+		browser.cancel()
+		browser.cancelAllocator()
+		browser.mu.Lock()
+		browser.closed = true
+		browser.observation = nil
+		browser.mu.Unlock()
+	})
 	return nil
 }

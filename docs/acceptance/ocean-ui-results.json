@@ -76,7 +76,8 @@
       "conclusion": "success",
       "url": "https://github.com/doinglaundry/deepagent/actions/runs/38070801551"
     },
-    "browserExpiryCleanupRegression": "reproduced before fix; 10 fresh race runs passed after closing Chrome before removing expired records"
+    "browserExpiryCleanupRegression": "reproduced before fix; 10 fresh race runs passed after closing Chrome before removing expired records",
+    "chromeGracefulShutdown": "concurrent close and missing-executable cleanup: 10 fresh race runs passed; independent reviewer verified both"
   },
   "extendedBrowser": {
     "passed": [

@@ -7,7 +7,9 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -122,5 +124,52 @@ func TestBrowser_OverlayCannotReceiveApprovedElementClick(t *testing.T) {
 	_, err = browser.PerformAction(context.Background(), "click", agentmodel.ComputerAction{URL: observation.URL, ObservationID: observation.ID, ElementID: 1})
 	if err == nil || !strings.Contains(err.Error(), "stale_observation") {
 		t.Fatalf("overlay was clicked: %v", err)
+	}
+}
+
+func TestBrowser_ConcurrentCloseFinishesBeforeProfileRemoval(t *testing.T) {
+	t.Setenv("DEEPAGENT_BROWSER_HEADLESS", "1")
+	profileDirectory := t.TempDir()
+	browser, err := NewBrowser(context.Background(), profileDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer browser.Close(context.Background())
+	var closing sync.WaitGroup
+	for range 2 {
+		closing.Add(1)
+		go func() {
+			defer closing.Done()
+			closeErr := browser.Close(context.Background())
+			if closeErr != nil {
+				t.Errorf("close browser: %v", closeErr)
+			}
+		}()
+	}
+	closing.Wait()
+	err = os.RemoveAll(profileDirectory)
+	if err != nil {
+		t.Fatalf("Chrome is still writing its profile after Close: %v", err)
+	}
+}
+
+func TestBrowser_FailedStartStillCloses(t *testing.T) {
+	allocatorContext, cancelAllocator := chromedp.NewExecAllocator(context.Background(), chromedp.ExecPath(t.TempDir()+"/missing-chrome"))
+	defer cancelAllocator()
+	browserContext, cancel := chromedp.NewContext(allocatorContext)
+	browser := &Browser{ctx: browserContext, cancel: cancel, cancelAllocator: cancelAllocator}
+	err := chromedp.Run(browserContext)
+	if err == nil {
+		t.Fatal("expected missing Chrome executable to fail")
+	}
+	closed := make(chan struct{})
+	go func() {
+		browser.Close(context.Background())
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close hung after Chrome failed to start")
 	}
 }
