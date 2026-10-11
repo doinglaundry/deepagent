@@ -60,7 +60,25 @@
   },
   "desktop": {
     "permissionErrorShown": true,
-    "desktopSuccessTest": "blocked by macOS Accessibility permission"
+    "desktopSuccessTest": "passed",
+    "permissionCheck": "available",
+    "passed": [
+      "actual TextEdit open/click/type/key/save/scroll/observe through Graph and browser approvals",
+      "temporary file contains the exact text entered by native keyboard events",
+      "desktop screenshots are visible in Tools",
+      "stale observation is rejected",
+      "unlisted application is rejected before execution",
+      "pet animates during execution, stops for approval and completion"
+    ],
+    "approvals": 5,
+    "screenshotCount": 14,
+    "errors": [],
+    "permissionSource": "macOS attributed the helper permissions to the responsible ChatGPT app",
+    "nativeFixes": [
+      "initialize NSApplication before first screenshot",
+      "clear inherited Command modifier flags before text input"
+    ],
+    "savedTextBytes": 2333
   },
   "checks": {
     "frontendTestsPassed": 59,
@@ -100,5 +118,23 @@
     ],
     "errors": []
   },
-  "browserChecksPassed": 42
+  "browserChecksPassed": 42,
+  "workingAnimations": {
+    "passed": [
+      "light: wave, body, arms and legs move; redundant text hidden",
+      "dark: wave, body, arms and legs move; redundant text hidden",
+      "animation accessible labels follow language switch",
+      "queued, approval, completion and closing states stop the pet and hide the wave",
+      "reduced motion displays a static wave and static pet",
+      "motion resumes when reduced-motion preference is disabled"
+    ],
+    "errors": [],
+    "realAPIModel": {
+      "passed": true,
+      "realModel": true,
+      "workingMotion": true,
+      "completedMotionStopped": true,
+      "errors": []
+    }
+  }
 }

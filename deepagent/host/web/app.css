@@ -43,7 +43,15 @@ a { color:var(--accent); text-underline-offset:3px; }
 .thread[data-status=running] .task-dot { background:#f0f9fa; box-shadow:0 0 8px #eefcff; }
 .thread[data-status=blocked] .task-dot { background:#efcd88; }
 .buddy { display:flex; gap:9px; align-items:center; padding:14px 7px 2px; border-top:1px solid #ffffff20; margin-top:12px; }
-.buddy img { object-fit:contain; flex-shrink:0; }
+.buddy-character { flex-shrink:0; overflow:visible; transform-origin:50% 100%; }
+.buddy-arm-left { transform-origin:17px 48px; }
+.buddy-arm-right { transform-origin:63px 48px; }
+.buddy-leg-left { transform-origin:28px 78px; }
+.buddy-leg-right { transform-origin:52px 78px; }
+/* 直接沿用任务状态；暂停、审批和结束后恢复静止，不另建动画状态。 */
+.workbench:has(#workspaceView[data-status=running]) .buddy-character { animation:buddy-bob .8s ease-in-out infinite; }
+.workbench:has(#workspaceView[data-status=running]) :is(.buddy-arm,.buddy-leg) { animation:buddy-swing .4s ease-in-out infinite alternate; }
+.workbench:has(#workspaceView[data-status=running]) :is(.buddy-arm-right,.buddy-leg-left) { animation-direction:alternate-reverse; }
 .buddy strong { display:block; font-size:12px; font-weight:500; }
 .buddy small { display:block; color:#b5c9d1; font-size:10px; margin-top:3px; }
 .workspace-view { display:flex; flex-direction:column; min-height:0; min-width:0; background:var(--paper); border:1px solid #ffffff50; border-radius:28px; overflow:hidden; box-shadow:0 18px 50px #0d202b26; }
@@ -59,6 +67,12 @@ h1 { margin:0; min-width:0; flex:1; font-size:20px; line-height:1.4; font-weight
 #plan:empty:before,#toolOutput:empty:before,#changedFiles:empty:before { content:attr(data-empty); color:var(--muted); font-size:13px; }
 .result-empty { display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; min-height:100%; padding:28px 4px; }
 .sea-mark { font-size:72px; line-height:1; font-weight:200; color:#9bafb5; margin-bottom:20px; }
+.working-waves { display:none; width:120px; height:64px; color:var(--accent); overflow:hidden; }
+#workspaceView[data-status=running] .working-waves { display:block; }
+.working-waves path { animation:flowing-wave 2.8s linear infinite; }
+.working-waves path:nth-child(2) { opacity:.55; animation-delay:-.9s; }
+.working-waves path:nth-child(3) { opacity:.25; animation-delay:-1.8s; }
+#workspaceView[data-status=running] .result-empty>:not(.working-waves) { display:none; }
 .result-empty h2 { font-size:27px; font-weight:500; letter-spacing:-1px; line-height:1.4; margin:0 0 12px; }
 .result-empty p { max-width:360px; color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
 .welcome { display:flex; gap:10px; margin-top:18px; }
@@ -148,6 +162,9 @@ pre code { padding:0; }
 .training-context { display:flex; gap:8px; align-items:center; margin:12px 0; font-size:13px; }
 #trainingAnswer { display:block; width:100%; resize:vertical; margin-top:8px; }
 #trainingNotice { font-size:12px; color:var(--accent); overflow-wrap:anywhere; }
+@keyframes flowing-wave { to { transform:translateX(-48px); } }
+@keyframes buddy-bob { 50% { transform:translateY(-3px); } }
+@keyframes buddy-swing { from { transform:rotate(-12deg); } to { transform:rotate(12deg); } }
 @keyframes working { 50% { opacity:.35; } }
 @media(max-width:1250px) { body { padding:10px 14px 18px; } .workbench { grid-template-columns:170px minmax(280px,1fr) minmax(280px,330px); gap:12px; } .workbench:has(.notebook[hidden]) { grid-template-columns:170px 1fr; } .workspace-heading,.panel { padding:22px; } .tabs { padding-left:18px; } }
 @media(prefers-reduced-motion:reduce) { *,*:before { animation:none!important; scroll-behavior:auto!important; } }

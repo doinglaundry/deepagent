@@ -18,7 +18,7 @@ import (
 
 func TestEmbeddedWebClient(t *testing.T) {
 	handler := New(nil, t.TempDir()).Handler()
-	for _, path := range []string{"/", "/app.js", "/training.js", "/i18n.js", "/app.css", "/assets/ocean.jpg", "/assets/spongebob.svg"} {
+	for _, path := range []string{"/", "/app.js", "/training.js", "/i18n.js", "/app.css", "/assets/ocean.jpg"} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusOK {

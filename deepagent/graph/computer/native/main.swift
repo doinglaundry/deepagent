@@ -186,6 +186,8 @@ func getLabel(_ element: AXUIElement) -> String {
             let chars = Array(value.utf16)
             for down in [true, false] {
                 let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)
+                // 上一个快捷键可能留下 Command 标志；普通文字必须清空修饰键。
+                event?.flags = []
                 event?.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: chars); event?.post(tap: .cghidEventTap)
             }
         case "press_key":
@@ -208,6 +210,8 @@ func getLabel(_ element: AXUIElement) -> String {
 
 @main struct ComputerHelper {
     @MainActor static func main() async {
+        // 命令行程序也要先连接窗口服务，避免首次截图触发 CGS_REQUIRE_INIT 崩溃。
+        _ = NSApplication.shared
         if CommandLine.arguments.contains("--request-permissions") {
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options); _ = CGRequestScreenCaptureAccess(); return
