@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -229,5 +230,51 @@ func TestNeedsCompactionUsesTokenLimit(t *testing.T) {
 				t.Fatalf("NeedsCompaction=%t want=%t", needsCompaction, testCase.want)
 			}
 		})
+	}
+}
+
+func TestSummaryCompactionRepairsInterruptedToolCallsWithoutChangingHistory(t *testing.T) {
+	messages := []*agentmodel.Message{
+		agentmodel.NewUserMessage("old task"),
+		agentmodel.NewAssistantMessage("", []schema.ToolCall{
+			{ID: "completed", Function: schema.FunctionCall{Name: "read_file"}},
+			{ID: "interrupted", Function: schema.FunctionCall{Name: "shell"}},
+		}),
+		agentmodel.NewToolMessage("actual result", "completed"),
+		agentmodel.NewUserMessage("continue"),
+		agentmodel.NewAssistantMessage("latest answer", nil),
+		agentmodel.NewUserMessage("new question"),
+	}
+	original := agentmodel.ToEinoMessages(messages)
+	strategy := &SummaryCompaction{KeepRecent: 2, Model: summaryModel{generate: func(_ context.Context, request []*schema.Message) (*schema.Message, error) {
+		pending := make(map[string]bool)
+		for _, message := range request {
+			if message.Role != schema.Tool && len(pending) > 0 {
+				return nil, errors.New("assistant tool_calls must be followed by all tool results")
+			}
+			for _, call := range message.ToolCalls {
+				pending[call.ID] = true
+			}
+			if message.Role == schema.Tool {
+				delete(pending, message.ToolCallID)
+			}
+		}
+		if len(pending) > 0 {
+			return nil, errors.New("missing tool result at end of summary request")
+		}
+		if len(request) != 5 || request[3].Content != "actual result" || request[4].ToolCallID != "interrupted" || !strings.Contains(request[4].Content, "interrupted") {
+			t.Fatalf("summary request lost the real result or interrupted call: %+v", request)
+		}
+		return schema.AssistantMessage("summary", nil), nil
+	}}}
+	summary, coveredMessages, err := strategy.Summarize(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary == nil || coveredMessages != 3 {
+		t.Fatalf("summary=%+v covered=%d", summary, coveredMessages)
+	}
+	if !reflect.DeepEqual(original, agentmodel.ToEinoMessages(messages)) {
+		t.Fatal("synthetic tool result changed the original history")
 	}
 }

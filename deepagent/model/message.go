@@ -138,3 +138,47 @@ func NewAssistantMessage(content string, calls []schema.ToolCall) *Message {
 func NewToolMessage(content, callID string) *Message {
 	return &Message{Role: schema.Tool, Content: content, ToolCallID: callID}
 }
+
+// PatchDanglingToolCalls 为中断后缺失的工具结果补充说明，供对话和摘要模型共用。
+// 只修复请求副本，不改写原始历史，也不重放工具。
+func PatchDanglingToolCalls(messages []*Message) []*Message {
+	patchedMessages := make([]*Message, 0, len(messages))
+	pendingCalls := make(map[string]schema.ToolCall)
+	pendingCallIDs := make([]string, 0)
+	appendInterruptedResults := func() {
+		for _, callID := range pendingCallIDs {
+			toolCall, exists := pendingCalls[callID]
+			if !exists {
+				continue
+			}
+			result := NewToolMessage("Tool execution interrupted; external side effects may have occurred.", callID)
+			result.ToolName = toolCall.Function.Name
+			patchedMessages = append(patchedMessages, result)
+		}
+		clear(pendingCalls)
+		pendingCallIDs = pendingCallIDs[:0]
+	}
+	for _, message := range messages {
+		if message == nil {
+			continue
+		}
+		if len(pendingCalls) > 0 && message.Role != schema.Tool {
+			appendInterruptedResults()
+		}
+		patchedMessages = append(patchedMessages, message)
+		switch message.Role {
+		case schema.Assistant:
+			for _, toolCall := range message.ToolCalls {
+				if toolCall.ID == "" {
+					continue
+				}
+				pendingCalls[toolCall.ID] = toolCall
+				pendingCallIDs = append(pendingCallIDs, toolCall.ID)
+			}
+		case schema.Tool:
+			delete(pendingCalls, message.ToolCallID)
+		}
+	}
+	appendInterruptedResults()
+	return patchedMessages
+}
