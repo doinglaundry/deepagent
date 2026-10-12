@@ -1,6 +1,6 @@
 # 稳定性验收（2026-10-12）
 
-本轮在独立 MySQL、Redis 中启动实际 Web 和 Worker，使用 Chrome 操作网页。主 Agent 的模型、搜索和 MCP 使用本地受控服务，模型服务严格检查工具调用与工具结果的对应关系；另用真实 MLX 模型和原生 Mac 应用补测本地能力。测试数据与开发数据库分离。
+本轮在独立 MySQL、Redis 中启动实际 Web 和 Worker，使用 Chrome 操作网页。主 Agent 的模型、搜索和 MCP 使用本地受控服务，模型服务严格检查工具调用与工具结果的对应关系；另用真实 DeepSeek API、Docker 工作区、MLX 模型和原生 Mac 应用补测实际能力。DeepSeek 仅接收用户明确授权的专用合成问答、测试文件和工具结果，测试数据与开发数据库分离。
 
 ## 已复现并修复
 
@@ -11,8 +11,9 @@
 | 模型只返回角色、用量、空白或推理内容时，任务被错误标记成功 | 中间件处理后校验实际答案，空回答明确失败 | `TestModelStreamRejectsEmptyAnswer` |
 | Chrome 调试连接接通后不响应，启动一直等待 | 启动限时 30 秒；超时清理，成功后解除启动期限 | `TestBrowser_UnresponsiveStartupTimesOut` |
 | TextEdit 长文档的正文控件超出视口后被遗漏，操作只能退回容易过期的坐标点击 | 返回滚动视口内可见部分，保留完整控件边界校验；回退鼠标点击前用系统级命中测试拒绝遮挡 | `TestDesktopIntegrationVisibleTextArea` |
+| Docker 搜索将第一行显示为第 0 行 | 在 AIO 响应边界将零起始行号转换为从 1 开始的行号 | `TestSandboxGrepConvertsZeroBasedLineNumbers`、`TestSmokeGrep` |
 
-五项回归均先在修复前复现失败，再在修复后通过。Chrome 超时后还验证了同一 profile 能重新启动真实 Chrome。
+六项回归均先在修复前复现失败，再在修复后通过。Chrome 超时后还验证了同一 profile 能重新启动真实 Chrome。
 
 ## 实际网页与进程验收
 
@@ -29,6 +30,26 @@
 - 历史压缩后继续对话和读取计划。
 
 独立进程测试 `TestWebAndIndependentWorkerProcesses` 通过，覆盖审批重启、并行子代理审批、追问和工具执行期间 Worker 崩溃后的恢复。
+
+## 真实 DeepSeek 与 Docker 补测
+
+真实 DeepSeek 的 13 项检查通过：普通问答、多轮读文件、写入审批及同任务记忆、其他工具独立审批、提问后重启 Worker 并继续原 Run、三轮长对话压缩、刷新后回忆标记、运行中停止 Shell、停止后继续对话和刷新。专用数据库确认产生了 `compact` 记录，未仅凭长对话判定压缩通过。
+
+实际 Docker 工作区的 6 项流程检查通过：
+
+- `Web → Worker → Graph → Docker` 文件创建、读取与容器内命令执行；核对实际挂载的专用目录。
+- 下一轮编辑、glob 和 grep。
+- 后台 Shell 返回任务 ID，下一轮仍能读取同一容器内的任务结果。
+- 补丁、读取、删除文件，以及无 JavaScript 异常。
+- Thread 空闲释放后，实际容器被清理。
+
+行号修复后，另用新构建的 Worker 经真实 DeepSeek 和网页确认 `grep` 返回 `docker.txt:1:DOCKER_EDIT_OK`。
+
+这里的“同一容器跨 Run”验证正常完成后的生命周期；审批阻塞会释放 Thread 资源，恢复后可以重新创建容器，挂载文件仍然保留。
+
+另修复了 `aio_smoke` 测试仍引用迁移前类型导致的编译错误。真实沙箱的命令、文件读写追加、目录/glob、grep 四项测试通过；搜索断言确认第 1、3 行，不再只检查匹配数量。
+
+初次网页脚本的停止按钮选择器错误、停止状态预期错误，以及审批提交后的旧状态等待、跨审批错误要求同一容器，均作为验收脚本失败保留。修正脚本后分别补测，未把这些失败的整次执行计作通过。模型未启用本地功能时的 `/api/local-model/status` 404 是前端能力探测，训练入口按设计隐藏。
 
 ## 本地能力补测
 
@@ -64,6 +85,9 @@ DEEPAGENT_DESKTOP_TEST_HELPER='/编译好的/deepagent-computer' \
 | `go test -race -count=1 -timeout=2m ./...`，使用独立 MySQL/Redis | 通过 |
 | `node --test deepagent/host/web/app.test.cjs` | 59/59 通过 |
 | 修改文件的 gofmt、禁止 if 初始化语句检查、`git diff --check` | 通过 |
+| `go test -tags=aio_smoke -run '^$' ./...` | 全仓带标签编译通过 |
+| 最终 `go test -race -tags=aio_smoke -count=1 -timeout=2m ./...`，独立空库及真实沙箱 | 通过 |
+| 真实 Docker 下 `go test -race -tags=aio_smoke -count=1 -timeout=90s -v ./deepagent/sandbox/aio` | 通过 |
 | 独立代码审查 | 未发现阻断问题 |
 
 先停止可能领取测试任务或占用 MLX 设备的验收 Worker，再使用独立空库复测：
@@ -78,6 +102,6 @@ node --test deepagent/host/web/app.test.cjs
 
 ## 验收边界
 
-这轮没有完成外部 DeepSeek 实际模型、第三方 MCP 和 Docker 工作区验收。外部模型测试被自动审批拒绝，需要用户明确允许专用合成测试数据发往 DeepSeek 后才能继续。
+这轮覆盖了真实 DeepSeek、本机缓存的 AIO Docker 镜像和本地受控 MCP；未连接第三方 MCP 服务，也未验证其他模型提供商、其他容器镜像或长期运行中的所有故障组合。
 
 以上结果证明已覆盖场景通过，不能证明软件不存在任何 Bug。测试执行前的失败日志与修复后的日志分别保留，未将先前失败的整仓测试计作通过。

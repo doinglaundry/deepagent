@@ -316,7 +316,7 @@ func (s *Sandbox) Grep(ctx context.Context, path, pattern string, opts agentmode
 		for i := range count {
 			matches = append(matches, agentmodel.SandboxGrepMatch{
 				Path:       sandbox.ReverseResolvePath(s.mounts, file),
-				LineNumber: data.LineNumbers[i],
+				LineNumber: data.LineNumbers[i] + 1, // AIO 返回零起始行号；工具行号统一从 1 开始。
 				Line:       s.maskOutput(truncateLine(data.Matches[i], 200)),
 			})
 			if len(matches) >= maxResults {

@@ -226,3 +226,28 @@ func TestDockerProjectInstructionsIgnoreMissingFileOnly(t *testing.T) {
 		})
 	}
 }
+
+// AIO 的 file/search 返回从零开始的行号，工具接口统一从 1 开始。
+func TestSandboxGrepConvertsZeroBasedLineNumbers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/file/find":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"files": []string{"/workspace/a.txt"}}})
+		case "/v1/file/search":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"matches": []string{"hello world", "hello again"}, "line_numbers": []int{0, 2}}})
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	provider := newSandbox("sandbox", "thread", server.URL, nil)
+	matches, truncated, err := provider.Grep(context.Background(), "/workspace", "hello", agentmodel.SandboxGrepOptions{Glob: "*.txt"})
+	if err != nil || truncated || len(matches) != 2 {
+		t.Fatalf("matches=%v truncated=%v err=%v", matches, truncated, err)
+	}
+	if matches[0].LineNumber != 1 || matches[1].LineNumber != 3 {
+		t.Fatalf("expected one-based line numbers 1 and 3, got %v", matches)
+	}
+}

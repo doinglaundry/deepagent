@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"eino-cli/deepagent/sandbox"
+	agentmodel "eino-cli/deepagent/model"
 )
 
-// To run: AIO_SMOKE_URL=http://localhost:8090 go test -tags=aio_smoke -v ./backend/sandbox/aio/...
+// To run: AIO_SMOKE_URL=http://localhost:8090 go test -tags=aio_smoke -v ./deepagent/sandbox/aio/...
 // Requires a real all-in-one-sandbox container reachable at that URL.
 
 func smokeBox(t *testing.T) *Sandbox {
@@ -75,7 +75,7 @@ func TestSmokeListAndGlob(t *testing.T) {
 		t.Fatalf("expected >=2 entries, got %v", entries)
 	}
 
-	matches, _, err := s.Glob(ctx, "/tmp/eino-smoke-glob", "*.txt", sandbox.GlobOpts{MaxResults: 10})
+	matches, _, err := s.Glob(ctx, "/tmp/eino-smoke-glob", "*.txt", agentmodel.SandboxGlobOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}
@@ -91,11 +91,14 @@ func TestSmokeGrep(t *testing.T) {
 	if executeCommandErr != nil {
 		t.Fatalf("seed: %v", executeCommandErr)
 	}
-	hits, _, err := s.Grep(ctx, "/tmp/eino-smoke-grep", "hello", sandbox.GrepOpts{MaxResults: 10})
+	hits, _, err := s.Grep(ctx, "/tmp/eino-smoke-grep", "hello", agentmodel.SandboxGrepOptions{MaxResults: 10})
 	if err != nil {
 		t.Fatalf("grep: %v", err)
 	}
 	if len(hits) != 2 {
 		t.Fatalf("expected 2 hello matches, got %v", hits)
+	}
+	if hits[0].LineNumber != 1 || hits[1].LineNumber != 3 {
+		t.Fatalf("expected one-based line numbers 1 and 3, got %v", hits)
 	}
 }
