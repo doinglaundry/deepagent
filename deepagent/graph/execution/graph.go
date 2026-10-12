@@ -41,13 +41,9 @@ type Graph struct {
 	runState          *agentmodel.RunState
 }
 
-func New(ctx context.Context, opts ...Option) (*Graph, error) {
-	config := Config{MaxSteps: 1000, Parallelism: 4, Name: "deepagent"}
-	for _, option := range opts {
-		if option != nil {
-			option(&config)
-		}
-	}
+// New 接管配置副本；调用方仍拥有共享的模型、文件系统和历史存储。
+func New(ctx context.Context, config Config) (*Graph, error) {
+	config = *config.Clone()
 	if config.Model == nil {
 		return nil, errors.New("model is required")
 	}
@@ -83,12 +79,11 @@ func New(ctx context.Context, opts ...Option) (*Graph, error) {
 }
 
 // Invoke executes the Eino Graph once. Resume restores its saved local state.
-func (graph *Graph) Invoke(ctx context.Context, input []*agentmodel.Message, opts ...RunOptionFunc) (result *agentmodel.Message, err error) {
+func (graph *Graph) Invoke(ctx context.Context, inputs []agentmodel.RunInput, runOptions RunOptions) (result *agentmodel.Message, err error) {
 	ctx, err = graph.beginInvoke(ctx)
 	if err != nil {
 		return nil, err
 	}
-	runOptions := RunOptions{}
 	var runState *agentmodel.RunState
 	initialCheckpointSaved := false
 	defer func() {
@@ -100,12 +95,6 @@ func (graph *Graph) Invoke(ctx context.Context, input []*agentmodel.Message, opt
 		graph.endInvoke(err)
 	}()
 
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&runOptions)
-		}
-	}
-
 	graph.runID, err = graph.resolveRunID(ctx, runOptions)
 	if err != nil {
 		return nil, err
@@ -115,7 +104,7 @@ func (graph *Graph) Invoke(ctx context.Context, input []*agentmodel.Message, opt
 		return nil, err
 	}
 	graph.toolExecutor = newToolExecutor(graph.toolSet, graph.config.Parallelism, graph.config.Policy)
-	runState = graph.newRunState(input, runOptions)
+	runState = graph.newRunState(inputs)
 	if len(runOptions.ResumeInterruptIDs) > 0 {
 		ctx = compose.Resume(ctx, runOptions.ResumeInterruptIDs...)
 	}

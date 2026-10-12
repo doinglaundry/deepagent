@@ -195,7 +195,7 @@ func TestWorker_FinishedRunKeepsThreadUntilIdleTimeout(t *testing.T) {
 	host := testHost(client)
 	host.IdleTimeout = 100 * time.Millisecond
 	done := make(chan error, 1)
-	go func() { done <- runTestThread(host, thread, ctx, ctx, testClaim(), output.Items) }()
+	go func() { done <- runTestThread(host, thread, ctx, ctx, testClaim(), output) }()
 
 	for _, text := range []string{"first", "second"} {
 		posted, err := thread.SubmitInput(ctx, agentmodel.NewUserMessage(text))
@@ -258,7 +258,7 @@ func TestWorker_FailedRunReleasesThreadWithoutWaitingForIdle(t *testing.T) {
 	}
 	host := testHost(client)
 	done := make(chan error, 1)
-	go func() { done <- runTestThread(host, thread, ctx, ctx, testClaim(), output.Items) }()
+	go func() { done <- runTestThread(host, thread, ctx, ctx, testClaim(), output) }()
 	_, err = thread.SubmitInput(ctx, agentmodel.NewUserMessage("fail"))
 	if err != nil {
 		t.Fatal(err)
@@ -527,7 +527,7 @@ func TestWorker_InterruptTimeoutPersistsBeforeRelease(t *testing.T) {
 			} else {
 				stopAccept()
 			}
-			err = runTestThread(host, thread, ctx, acceptCtx, claim, output.Items)
+			err = runTestThread(host, thread, ctx, acceptCtx, claim, output)
 			if err != nil {
 				t.Fatal(err)
 			}

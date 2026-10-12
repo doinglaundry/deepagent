@@ -252,21 +252,20 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest agentmodel
 	config.ToolMask = tools.CombineMasks(oldMask, func(_ context.Context, toolInfo *schema.ToolInfo) bool {
 		return toolInfo.Name != "task" && toolInfo.Name != "ask_user"
 	})
-	childGraph, err := New(ctx, WithConfig(&config))
+	childGraph, err := New(ctx, config)
 	if err != nil {
 		return nil, err
 	}
 	defer childGraph.Close(context.Background())
-	var inputMessages []*agentmodel.Message
+	var inputs []agentmodel.RunInput
 	if !isResuming {
-		inputMessages = append(inputMessages, agentmodel.NewUserMessage(childRequest.Prompt))
+		inputs = append(inputs, agentmodel.RunInput{Message: agentmodel.NewUserMessage(childRequest.Prompt)})
 	}
-	response, err := childGraph.Invoke(ctx, inputMessages, func(runOptions *RunOptions) {
-		if checkpointStore != nil {
-			runOptions.CheckpointID = "child"
-		}
-
-	})
+	runOptions := RunOptions{}
+	if checkpointStore != nil {
+		runOptions.CheckpointID = "child"
+	}
+	response, err := childGraph.Invoke(ctx, inputs, runOptions)
 	if checkpointStore != nil {
 		_, blocked := compose.ExtractInterruptInfo(err)
 		if blocked {

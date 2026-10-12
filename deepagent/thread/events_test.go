@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,91 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 )
+
+func TestThreadInitSharesOutputChannelAndKeepsCallerEventsOpen(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	events := make(chan agentmodel.RunEvent, 1)
+	thread := newTestThread("thread-alpha", &runpkg.Config{}, events, ThreadOptions{})
+	defer thread.Close(ctx)
+	var output <-chan agentmodel.TransportThreadOutputItem
+	output, err := thread.Init(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputs := make(chan (<-chan agentmodel.TransportThreadOutputItem), 8)
+	initErrors := make(chan error, 8)
+	var initializers sync.WaitGroup
+	for range 8 {
+		initializers.Add(1)
+		go func() {
+			defer initializers.Done()
+			repeated, initErr := thread.Init(ctx)
+			outputs <- repeated
+			initErrors <- initErr
+		}()
+	}
+	initializers.Wait()
+	for range 8 {
+		initErr := <-initErrors
+		if initErr != nil || <-outputs != output {
+			t.Fatalf("Init must reuse one output channel: %v", initErr)
+		}
+	}
+	events <- agentmodel.RunEvent{ID: "final", RunID: "run", Type: agentmodel.EventRunEnd, Payload: agentmodel.RunEndPayload{Status: "finished"}}
+	err = thread.Close(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, ok := <-output
+	if !ok || item.Event == nil || item.Event.ID != "final" || item.Event.ThreadID != "thread-alpha" || item.Yield == nil || item.Yield.Reason != "finished" {
+		t.Fatalf("final output lost: %+v", item)
+	}
+	_, ok = <-output
+	if ok {
+		t.Fatal("output channel must close after final delivery")
+	}
+	// Thread owns its output channel; Events still belongs to the caller.
+	events <- agentmodel.RunEvent{ID: "caller-owned"}
+	close(events)
+}
+
+func TestThreadOutputItemKeepsTerminalIdentityAndConversionErrors(t *testing.T) {
+	timestamp := time.Unix(1000, 0)
+	for _, status := range []string{"finished", "blocked", "failed", "interrupted"} {
+		t.Run(status, func(t *testing.T) {
+			item, err := threadOutputItem("thread-alpha", agentmodel.RunEvent{
+				ID: "event", ThreadID: "child", RunID: "run", TS: timestamp,
+				Type:               agentmodel.EventRunEnd,
+				Payload:            agentmodel.RunEndPayload{Status: status, CheckpointID: "checkpoint", InterruptID: "interrupt"},
+				ConsumedInputs:     []*agentmodel.Message{{MessageID: "message"}},
+				ConsumedInputsMeta: []any{map[string]string{"caller": "original"}},
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if item == nil || item.Event == nil || item.Yield == nil || item.Yield.Reason != status || item.Yield.Err != nil {
+				t.Fatalf("terminal event and yield must stay together: %+v", item)
+			}
+			event := item.Event
+			if event.ID != "event" || event.ThreadID != "thread-alpha" || event.RunID != "run" || event.TS != timestamp || event.Metadata["agent_event_id"] != "event" {
+				t.Fatalf("output identity changed: %+v", event)
+			}
+			var payload agentmodel.RunFinishedEventPayload
+			err = json.Unmarshal(event.Payload, &payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if payload.Status != status || !reflect.DeepEqual(payload.ConsumedMessageIDs, []string{"message"}) || !reflect.DeepEqual(payload.ConsumedInputsMeta, []map[string]string{{"caller": "original"}}) {
+				t.Fatalf("terminal payload changed: %s", event.Payload)
+			}
+		})
+	}
+	item, err := threadOutputItem("thread-alpha", agentmodel.RunEvent{Type: agentmodel.EventRunEnd, Payload: "invalid"}, nil)
+	if err == nil || item != nil {
+		t.Fatalf("conversion failure must not become a successful yield: item=%+v err=%v", item, err)
+	}
+}
 
 func TestThreadAdapter_InputConsumedPreservesIndividualIdentityAndMedia(t *testing.T) {
 	first, second := agentmodel.NewUserMessage("first"), agentmodel.NewUserMessage("describe")
@@ -211,7 +297,7 @@ func TestThreadCloseDrainsFinalEventAndClosesOutput(t *testing.T) {
 	count := 0
 	for {
 		select {
-		case item, ok := <-output.Items:
+		case item, ok := <-output:
 			if !ok {
 				if count != 1 {
 					t.Fatalf("final events=%d", count)
@@ -248,7 +334,7 @@ func TestThreadCloseTimeoutCanRetryWhileOutputDrains(t *testing.T) {
 	drained := make(chan int, 1)
 	go func() {
 		n := 0
-		for range output.Items {
+		for range output {
 			n++
 		}
 		drained <- n
@@ -290,7 +376,7 @@ func TestThreadBridgeDrainsAfterLeaseCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := 0
-	for range output.Items {
+	for range output {
 		n++
 	}
 	if n != 1 {
@@ -311,7 +397,7 @@ func TestThreadOutputSurfacesConversionFailure(t *testing.T) {
 	defer adapter.Close(ctx)
 	bus <- agentmodel.RunEvent{RunID: "run", Type: agentmodel.EventToolStart, Payload: "invalid payload"}
 	select {
-	case item := <-output.Items:
+	case item := <-output:
 		if item.Err == nil {
 			t.Fatal("conversion failure was silently discarded")
 		}
@@ -480,16 +566,17 @@ func TestThreadAdapter_ToolFailureRemainsVisibleInPersistedPayload(t *testing.T)
 }
 
 func TestThreadOutput_ModelRequestPublishesOnlyThinkingPhase(t *testing.T) {
-	output, err := workerEvent("session", "thread", agentmodel.RunEvent{
+	item, err := threadOutputItem("thread", agentmodel.RunEvent{
 		ID: "event", RunID: "run", Type: agentmodel.EventLLMRequesting,
 		Payload: agentmodel.LLMRequestingPayload{Messages: []*agentmodel.Message{agentmodel.NewUserMessage("private request")}},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output == nil {
+	if item == nil || item.Event == nil {
 		t.Fatal("model activity was discarded before reaching the UI")
 	}
+	output := item.Event
 	if output.Type != "agent_activity" || output.RunID != "run" || string(output.Payload) != `{"phase":"thinking"}` {
 		t.Fatalf("unexpected activity: %+v", output)
 	}

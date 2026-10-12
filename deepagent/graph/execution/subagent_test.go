@@ -38,11 +38,11 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 	config := Config{Model: parentModel, RunID: "run", Parallelism: 2, CheckpointStore: &checkpointMemory{}, Policy: agentmodel.PolicyFunc(func(context.Context, agentmodel.ToolCall, agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
 		return agentmodel.Decision{Action: agentmodel.Allow}, nil
 	}), ToolDescriptors: []agentmodel.ToolDescriptor{task}}
-	graph, err := New(ctx, WithConfig(&config))
+	graph, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("delegate")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("delegate")}}, RunOptions{CheckpointID: "checkpoint"})
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 2 {
 		t.Fatalf("expected two child approvals: %v", err)
@@ -55,11 +55,11 @@ func TestChildAgent_ParallelApprovalsResumeTogether(t *testing.T) {
 		answers[interrupt.ID] = &agentmodel.ApprovalResult{CallID: approval.CallID, Approved: true}
 	}
 	config.Conversation = graph.conversation
-	resumed, err := New(ctx, WithConfig(&config))
+	resumed, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := resumed.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResume(ids...), WithResumeData(answers))
+	out, err := resumed.Invoke(ctx, nil, RunOptions{CheckpointID: "checkpoint", ResumeInterruptIDs: ids, ResumeData: answers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,21 +82,21 @@ func TestCheckpoint_ChildConversationRestoresProviderUsage(t *testing.T) {
 		}
 	}}
 	config := Config{Depth: 1, RunID: "child-run", Model: chatModel, Conversation: initial, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
-	graph, err := New(ctx, WithConfig(&config))
+	graph, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("work")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("work")}}, RunOptions{CheckpointID: "checkpoint"})
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
 	}
 	config.Conversation = fresh
-	restored, err := New(ctx, WithConfig(&config))
+	restored, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}))
+	_, err = restored.Invoke(ctx, nil, RunOptions{CheckpointID: "checkpoint", ResumeData: map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestChildAgent_DirectoryConfigurationReachesTaskGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, SubAgents: agents}))
+	graph, err := New(context.Background(), Config{Model: chatModel, SubAgents: agents})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,14 +137,14 @@ func TestChildAgent_DirectoryConfigurationReachesTaskGraph(t *testing.T) {
 	if err != nil || !strings.Contains(string(raw), "reviewer") {
 		t.Fatalf("task schema does not advertise loaded agent: %s %v", raw, err)
 	}
-	_, executeErr := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("delegate")})
+	_, executeErr := graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("delegate")}}, RunOptions{})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
 	if len(chatModel.inputs) != 3 || len(chatModel.inputs[1]) != 2 || chatModel.inputs[1][0].Content != "review loaded configuration" || chatModel.inputs[1][1].Content != "review task" {
 		t.Fatalf("loaded child config not used: %+v", chatModel.inputs)
 	}
-	_, err = New(context.Background(), WithConfig(&Config{Model: &sequenceModel{}, SubAgents: append(agents, &SubAgent{Name: "reviewer"})}))
+	_, err = New(context.Background(), Config{Model: &sequenceModel{}, SubAgents: append(agents, &SubAgent{Name: "reviewer"})})
 	if err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("duplicate configured child accepted: %v", err)
 	}
@@ -164,17 +164,17 @@ func TestChildAgent_TaskStreamingReturnsOnlyFinalAnswer(t *testing.T) {
 	}}
 	var chunks []string
 	tool := &countingTool{}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, SubAgents: []*SubAgent{{Name: "general-purpose"}}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
+	graph, err := New(context.Background(), Config{Model: chatModel, SubAgents: []*SubAgent{{Name: "general-purpose"}}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
 		chunk, ok := event.Data.(agentmodel.ToolCallOutputChunkPayload)
 		if ok && chunk.CallID == "task-call" {
 			chunks = append(chunks, chunk.Chunk)
 		}
 		return nil
-	}}))
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("delegate")})
+	out, err := graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("delegate")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestChildAgent_NamedCapabilitiesAndContext(t *testing.T) {
 		Model: chatModel,
 		// This configuration is intentionally unusable without a backend. The
 		// named child's disabled filesystem must prevent it from being assembled.
-		FilesystemConfig: &FilesystemConfig{},
+		FilesystemConfig: &tools.FilesystemConfig{},
 		SubAgents:        []*SubAgent{{Name: "reviewer", SystemPrompt: "review carefully"}},
 	})
 	result, err := runner.Run(context.Background(), agentmodel.ChildRequest{Name: "reviewer", Prompt: "selected context\nreview task"}, nil)
@@ -243,7 +243,10 @@ func TestChildAgent_TaskIsRegisteredOnParentGraph(t *testing.T) {
 		{schema.AssistantMessage("child result", nil)},
 		{schema.AssistantMessage("parent result", nil)},
 	}}
-	graph, err := New(context.Background(), WithModel(chatModel), WithSubAgents(&SubAgent{Name: "general-purpose"}))
+	graph, err := New(context.Background(), Config{Model: chatModel, SubAgents: []*SubAgent{
+
+		&SubAgent{Name: "general-purpose"}}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +254,7 @@ func TestChildAgent_TaskIsRegisteredOnParentGraph(t *testing.T) {
 	if !ok {
 		t.Fatal("task is not registered")
 	}
-	result, err := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("delegate")})
+	result, err := graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("delegate")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +393,7 @@ func TestLoadSubAgentsRejectsInvalidAndEscapingSpecs(t *testing.T) {
 func TestChildAgent_RequiresExplicitRegistration(t *testing.T) {
 	ctx := context.Background()
 	chatModel := &sequenceModel{}
-	graph, err := New(ctx, WithModel(chatModel))
+	graph, err := New(ctx, Config{Model: chatModel})
 	if err != nil {
 		t.Fatal(err)
 	}

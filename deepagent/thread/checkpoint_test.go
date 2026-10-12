@@ -61,7 +61,7 @@ func TestThread_ApprovalCancellationRestoresInputOwnershipWithoutReplay(t *testi
 	}
 	for {
 		select {
-		case item := <-output.Items:
+		case item := <-output:
 			if item.Yield == nil {
 				continue
 			}

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +19,8 @@ import (
 	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/chromedp/chromedp"
+	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsutil"
 )
 
 func TestBrowser_RealActionsAndStaleObservation(t *testing.T) {
@@ -172,4 +177,60 @@ func TestBrowser_FailedStartStillCloses(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Close hung after Chrome failed to start")
 	}
+}
+
+// Chrome 接通调试 WebSocket 后也可能不再响应；不能无限占用 Worker。
+func TestBrowser_UnresponsiveStartupTimesOut(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, _, _, err := ws.UpgradeHTTP(r, w)
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		for {
+			_, _, err = wsutil.ReadClientData(connection)
+			if err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	helper := filepath.Join(t.TempDir(), "chrome")
+	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	err := os.WriteFile(helper, []byte(fmt.Sprintf("#!/bin/sh\nprintf 'DevTools listening on %s\\n' >&2\nexec sleep 60\n", websocketURL)), 0700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalOptions := chromedp.DefaultExecAllocatorOptions
+	chromedp.DefaultExecAllocatorOptions[len(originalOptions)-1] = chromedp.ExecPath(helper)
+	defer func() { chromedp.DefaultExecAllocatorOptions = originalOptions }()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	profileDirectory := t.TempDir()
+	go func() {
+		browser, err := NewBrowser(ctx, profileDirectory)
+		if browser != nil {
+			browser.Close(context.Background())
+		}
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("unresponsive startup: %v", err)
+		}
+	case <-time.After(35 * time.Second):
+		cancel()
+		<-result
+		t.Fatal("browser startup has no deadline")
+	}
+	// 超时清理后，同一 profile 仍能启动真正的 Chrome。
+	chromedp.DefaultExecAllocatorOptions = originalOptions
+	t.Setenv("DEEPAGENT_BROWSER_HEADLESS", "1")
+	browser, err := NewBrowser(ctx, profileDirectory)
+	if err != nil {
+		t.Fatalf("startup timeout prevented the next browser: %v", err)
+	}
+	defer browser.Close(context.Background())
 }

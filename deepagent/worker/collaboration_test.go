@@ -4,7 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"testing"
+	"time"
+
+	"eino-cli/deepagent/dal/cache"
+	"eino-cli/deepagent/manager"
 
 	agentmodel "eino-cli/deepagent/model"
 
@@ -150,5 +156,83 @@ func TestCollaborationWaitPreservesStorageFailureAtDeadline(t *testing.T) {
 	_, err := tools.wait(context.Background(), &collaborationWaitInput{Target: "42", MessageID: "99", TimeoutMS: 1})
 	if !errors.Is(err, readError) {
 		t.Fatalf("storage failure was swallowed: %v", err)
+	}
+}
+
+// 长会话和工具密集的 Run 都可能超过 ListMessages 的单页上限。
+func TestCollaborationWaitBeyondFirstMessagePage(t *testing.T) {
+	dsn := os.Getenv("DEEPAGENT_TEST_MYSQL_DSN")
+	redisAddress := os.Getenv("DEEPAGENT_TEST_REDIS_ADDR")
+	if dsn == "" || redisAddress == "" {
+		t.Skip("set dedicated DEEPAGENT_TEST_MYSQL_DSN and DEEPAGENT_TEST_REDIS_ADDR")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	backend, err := manager.Open(ctx, manager.Config{MySQLDSN: dsn, RedisAddr: redisAddress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	database := backend.DB().DB(ctx, true)
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	for _, test := range []struct {
+		name         string
+		oldMessages  int
+		toolMessages int
+	}{
+		{name: "input_after_first_page", oldMessages: 1100},
+		{name: "answer_after_first_page", toolMessages: 1100},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			created, err := backend.Submit(ctx, agentmodel.SubmitRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			threadID := created.Thread.ThreadID
+			t.Cleanup(func() {
+				for _, table := range []any{&agentmodel.MailboxMessage{}, &agentmodel.RunRecord{}, &agentmodel.ThreadRecord{}} {
+					database.Where("thread_id = ?", threadID).Delete(table)
+				}
+			})
+			runID := fmt.Sprintf("pagination-%d", threadID)
+			err = database.Create(&agentmodel.RunRecord{ThreadID: threadID, RunID: runID, Status: agentmodel.RunStatusFinished}).Error
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows := make([]*agentmodel.MailboxMessage, 0, test.oldMessages+test.toolMessages+3)
+			appendMessage := func(kind, text string) int64 {
+				messageID, err := cache.GenerateID(ctx, backend.Redis())
+				if err != nil {
+					t.Fatal(err)
+				}
+				payload, err := json.Marshal(agentmodel.MessageEventPayload{Parts: []agentmodel.OutputMessagePart{{Type: agentmodel.OutputMessagePartTypeText, Text: text}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows = append(rows, &agentmodel.MailboxMessage{ThreadID: threadID, MessageID: messageID, TriggerRunID: runID, Status: agentmodel.MessageStatusAccepted, MessageType: kind, Payload: payload})
+				return messageID
+			}
+			for i := 0; i < test.oldMessages; i++ {
+				appendMessage("assistant", "old response")
+			}
+			inputID := appendMessage(agentmodel.MessageTypeInput, "current question")
+			appendMessage("assistant", "intermediate response")
+			for i := 0; i < test.toolMessages; i++ {
+				appendMessage("tool", "tool output")
+			}
+			appendMessage("assistant", "latest complete answer")
+			err = database.CreateInBatches(rows, 100).Error
+			if err != nil {
+				t.Fatal(err)
+			}
+			tools := &collaborationTools{manager: backend}
+			result, done, err := tools.observe(ctx, threadID, inputID)
+			if err != nil || !done || result.State != "completed" || result.Result != "latest complete answer" {
+				t.Fatalf("long task lost its answer: result=%+v done=%v err=%v", result, done, err)
+			}
+		})
 	}
 }

@@ -2,8 +2,10 @@ package manager
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -14,37 +16,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-func TestToolCallOutputRoutingFromPublicPayload(t *testing.T) {
-	delta, result := "partial result", "completed result"
-	cases := []struct {
-		name    string
-		payload agentmodel.ToolCallEventPayload
-		action  outputEventAction
-	}{
-		{"streaming", agentmodel.ToolCallEventPayload{ToolCallID: "call-1", OutputDelta: &delta}, outputActionLiveOnly},
-		{"completed", agentmodel.ToolCallEventPayload{ToolCallID: "call-1", ResultJSON: &result, Status: agentmodel.ToolCallStatusFinished}, outputActionSaveMessage},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			raw, err := json.Marshal(tc.payload)
-			if err != nil {
-				t.Fatal(err)
-			}
-			payload, err := parseOutputPayload(raw)
-			if err != nil {
-				t.Fatal(err)
-			}
-			rule := outputEventRuleFor(agentmodel.EventTypeToolCall.String(), payload)
-			if rule.action != tc.action || rule.messageType != "tool" {
-				t.Fatalf("rule = %+v, want action %d and tool message type", rule, tc.action)
-			}
-			if tc.payload.OutputDelta != nil && (payload.OutputDelta == nil || *payload.OutputDelta != delta) {
-				t.Fatalf("output delta lost in %s", raw)
-			}
-		})
-	}
-}
 
 // These tests use an isolated database selected explicitly by the caller.
 func releaseTestManager(t *testing.T) (*Manager, *agentmodel.ThreadRecord) {
@@ -292,5 +263,79 @@ func TestSessionSequenceResumesFromExistingCounter(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("session replay timed out")
+	}
+}
+
+func TestManager_OutputRoutingPreservesDurableKeys(t *testing.T) {
+	for _, scenario := range []struct {
+		name, kind, payload, messageType, key, sender string
+		originalID                                    int64
+	}{
+		{"assistant", "assistant_message", `{"llm_response_id":"response"}`, "assistant", "response", agentmodel.MailboxSenderTypeAgent, 77},
+		{"assistant fallback", "assistant_message", `{}`, "assistant", "77", agentmodel.MailboxSenderTypeAgent, 77},
+		{"tool", "tool_call", `{"tool_call_id":"call"}`, "tool", "call", agentmodel.MailboxSenderTypeAgent, 77},
+		{"approval", "input_required", `{"kind":"approval","interrupt_id":"question"}`, "approval", "question", agentmodel.MailboxSenderTypeSystem, 77},
+		{"question", "input_required", `{"kind":"plan_input","interrupt_id":"question"}`, "question", "question", agentmodel.MailboxSenderTypeSystem, 77},
+		{"interrupt", "input_required", `{"kind":"custom","interrupt_id":"question"}`, "interrupt", "question", agentmodel.MailboxSenderTypeSystem, 77},
+		{"latest plan", "plan_updated", `{}`, "plan", "latest", agentmodel.MailboxSenderTypeSystem, 77},
+		{"error event ID", "error", `{"message":"failed"}`, "error", "77", agentmodel.MailboxSenderTypeSystem, 77},
+		{"error hash", "error", `{"message":"failed"}`, "error", "", agentmodel.MailboxSenderTypeSystem, 0},
+		{"empty tool delta", "tool_call", `{"tool_call_id":"call","output_delta":""}`, "", "", "", 77},
+		{"tool delta", "tool_call", `{"tool_call_id":"call","output_delta":"partial"}`, "", "", "", 77},
+		{"assistant delta", "assistant_delta", `{}`, "", "", "", 77},
+		{"activity", "agent_activity", `{}`, "", "", "", 77},
+		{"input consumed", "input_consumed", `{}`, "", "", "", 77},
+		{"unknown", "extension_event", `{}`, "", "", "", 77},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			manager, thread := releaseTestManager(t)
+			ctx := context.Background()
+			frame := agentmodel.OutputFrame{EventID: scenario.originalID, EventType: scenario.kind, Payload: []byte(scenario.payload)}
+			// 重投原始输出仍只更新同一条记录，重新分配的 EventID 不能改变去重键。
+			for range 2 {
+				err := manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{frame})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			rows, err := manager.messages.Get(ctx, &agentmodel.MailboxMessageFilter{ThreadIDs: []int64{thread.ThreadID}, Primary: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario.messageType == "" {
+				if len(rows) != 0 {
+					t.Fatalf("live event became durable: %+v", rows)
+				}
+				return
+			}
+			key := scenario.key
+			if key == "" {
+				key = fmt.Sprintf("%x", sha256.Sum256(frame.Payload))
+			}
+			key = "run:" + scenario.messageType + ":" + key
+			if len(rows) != 1 || rows[0].OutputKey == nil || *rows[0].OutputKey != key || rows[0].MessageType != scenario.messageType || rows[0].Sender.Type != scenario.sender {
+				t.Fatalf("key=%s rows=%+v", key, rows)
+			}
+		})
+	}
+}
+
+func TestManager_InvalidLivePayloadRollsBackWholeBatch(t *testing.T) {
+	for _, kind := range []string{"extension_event", "assistant_delta", "tool_call"} {
+		t.Run(kind, func(t *testing.T) {
+			manager, thread := releaseTestManager(t)
+			ctx := context.Background()
+			err := manager.SaveOutput(ctx, thread.ThreadID, thread.LeaseToken, "run", []agentmodel.OutputFrame{
+				{EventType: "assistant_message", Payload: []byte(`{"llm_response_id":"response"}`)},
+				{EventType: kind, Payload: []byte(`{"broken":`)},
+			})
+			if err == nil {
+				t.Fatal("malformed live payload accepted")
+			}
+			rows, err := manager.messages.Get(ctx, &agentmodel.MailboxMessageFilter{ThreadIDs: []int64{thread.ThreadID}, Primary: true})
+			if err != nil || len(rows) != 0 {
+				t.Fatalf("batch not rolled back: rows=%+v err=%v", rows, err)
+			}
+		})
 	}
 }

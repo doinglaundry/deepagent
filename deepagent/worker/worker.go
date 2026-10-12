@@ -164,7 +164,7 @@ func (w *Worker) RunThread(ctx context.Context, acceptCtx context.Context, claim
 	}
 
 	thread, err := w.createThread(runCtx, claim.Thread)
-	var output *agentmodel.TransportThreadOutput
+	var output <-chan agentmodel.TransportThreadOutputItem
 	if err == nil {
 		output, err = thread.Init(runCtx)
 		if err != nil {
@@ -197,7 +197,7 @@ func (w *Worker) RunThread(ctx context.Context, acceptCtx context.Context, claim
 		worker: w, ctx: runCtx, acceptDone: acceptCtx.Done(), claim: claim, thread: thread,
 		idleSince: time.Now(), wasActive: active != nil,
 	}
-	result, closeErr := run.run(output.Items)
+	result, closeErr := run.run(output)
 	retainBrowser = result.reason == "blocked" && closeErr == nil
 	return run.finish(result, closeErr, waitLease)
 }

@@ -158,9 +158,20 @@ func (m *collaborationTools) observe(ctx context.Context, threadID, messageID in
 	if err != nil {
 		return collaborationWaitResult{}, false, err
 	}
-	messages, err := m.manager.ListMessages(ctx, agentmodel.ListMessagesRequest{ThreadID: threadID, Limit: 1000})
+	request := agentmodel.ListMessagesRequest{ThreadID: threadID, AfterID: messageID - 1, Limit: 1000}
+	messages, err := m.manager.ListMessages(ctx, request)
 	if err != nil {
 		return collaborationWaitResult{}, false, err
+	}
+	// 跳过目标输入之前的历史，并读完后续页，避免把中间回复当成最终结果。
+	page := messages
+	for len(page.Messages) == int(request.Limit) {
+		request.AfterID = page.Messages[len(page.Messages)-1].MessageID
+		page, err = m.manager.ListMessages(ctx, request)
+		if err != nil {
+			return collaborationWaitResult{}, false, err
+		}
+		messages.Messages = append(messages.Messages, page.Messages...)
 	}
 	var input *agentmodel.MailboxMessage
 	for _, message := range messages.Messages {

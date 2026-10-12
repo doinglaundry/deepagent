@@ -16,6 +16,7 @@ import (
 	"eino-cli/deepagent/graph/execution"
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
 	"eino-cli/deepagent/graph/middleware"
+	"eino-cli/deepagent/graph/tools"
 	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/components/model"
@@ -111,14 +112,14 @@ func TestCoreGraphUsesDockerWorkspaceTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := &sandboxGraphModel{readOnly: readOnly}
-			agent, err := execution.New(context.Background(), execution.WithConfig(&execution.Config{ThreadID: "thread", Model: m, Filesystem: files, FilesystemConfig: &execution.FilesystemConfig{ReadOnly: readOnly}, Policy: agentmodel.PolicyFunc(func(context.Context, agentmodel.ToolCall, agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
+			agent, err := execution.New(context.Background(), execution.Config{ThreadID: "thread", Model: m, Filesystem: files, FilesystemConfig: &tools.FilesystemConfig{ReadOnly: readOnly}, Policy: agentmodel.PolicyFunc(func(context.Context, agentmodel.ToolCall, agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
 				return agentmodel.Decision{Action: agentmodel.Allow}, nil
-			})}))
+			})})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer agent.Close(context.Background())
-			result, err := agent.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("inspect file")})
+			result, err := agent.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("inspect file")}}, execution.RunOptions{})
 			if err != nil || result.Content != "done" {
 				t.Fatalf("result=%v err=%v", result, err)
 			}

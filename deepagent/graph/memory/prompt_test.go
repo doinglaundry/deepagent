@@ -60,12 +60,12 @@ func TestMemoryPrompt_ReadsCurrentScopeBeforeEachModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	chatModel := &promptModel{}
-	graph, err := execution.New(ctx, execution.WithConfig(&execution.Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}, Middlewares: []agentmodel.Middleware{NewPrompt(service, "user/one")}}))
+	graph, err := execution.New(ctx, execution.Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}, Middlewares: []agentmodel.Middleware{NewPrompt(service, "user/one")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, executeErr := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, executeErr := graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, execution.RunOptions{})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -92,12 +92,12 @@ func TestMemoryPrompt_ReadFailurePreventsModel(t *testing.T) {
 	want := errors.New("memory store unavailable")
 	service := &promptService{err: want}
 	chatModel := &promptModel{}
-	graph, err := execution.New(context.Background(), execution.WithConfig(&execution.Config{Model: chatModel, Middlewares: []agentmodel.Middleware{NewPrompt(service, "user/one")}}))
+	graph, err := execution.New(context.Background(), execution.Config{Model: chatModel, Middlewares: []agentmodel.Middleware{NewPrompt(service, "user/one")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, execution.RunOptions{})
 	if !errors.Is(err, want) || len(chatModel.inputs) != 0 {
 		t.Fatalf("err=%v model=%d", err, len(chatModel.inputs))
 	}

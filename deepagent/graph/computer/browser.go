@@ -41,11 +41,15 @@ func NewBrowser(ctx context.Context, profileDir string) (*Browser, error) {
 	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(context.WithoutCancel(ctx), options...)
 	browserCtx, cancel := chromedp.NewContext(allocatorCtx)
 	browser := &Browser{ctx: browserCtx, cancel: cancel, cancelAllocator: cancelAllocator}
-	stopStartup := context.AfterFunc(ctx, cancel)
+	// Chrome 启动和调试连接均受限时保护；成功后不把启动期限带入浏览器生命周期。
+	startupContext, cancelStartup := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelStartup()
+	stopStartup := context.AfterFunc(startupContext, cancel)
 	err := chromedp.Run(browserCtx, chromedp.EmulateViewport(1280, 800))
 	stopStartup()
-	if err == nil {
-		err = ctx.Err()
+	startupError := startupContext.Err()
+	if startupError != nil {
+		err = startupError
 	}
 	if err != nil {
 		browser.Close(context.Background())

@@ -58,11 +58,13 @@ func NewWebTools(ctx context.Context, webConfig *WebConfig) ([]agentmodel.ToolDe
 	if maxBytes == 0 {
 		maxBytes = 1 << 20
 	}
+	// 只配置 enabled 时启用默认工具；指定单项开关时保留该选择。
+	enableDefaults := webConfig.Enabled && !webConfig.EnableFetchURL && !webConfig.EnableWebSearch
 	var toolDescriptors []agentmodel.ToolDescriptor
-	if webConfig.EnableFetchURL {
+	if webConfig.EnableFetchURL || enableDefaults {
 		toolDescriptors = append(toolDescriptors, agentmodel.ToolDescriptor{Tool: &webTool{client: httpClient, maxBytes: maxBytes}, ReadOnly: true})
 	}
-	if webConfig.EnableWebSearch && webConfig.SearchURL != "" {
+	if (webConfig.EnableWebSearch || enableDefaults) && webConfig.SearchURL != "" {
 		toolDescriptors = append(toolDescriptors, agentmodel.ToolDescriptor{Tool: &webTool{client: httpClient, maxBytes: maxBytes, searchURL: webConfig.SearchURL, headers: webConfig.Headers}, ReadOnly: true})
 	}
 	if webConfig.ToolMask == nil {

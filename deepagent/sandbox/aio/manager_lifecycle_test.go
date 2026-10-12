@@ -38,16 +38,13 @@ func TestNewScopesOrphansToOwnSandbox(t *testing.T) {
 	if !ok {
 		t.Fatalf("manager type = %T", manager)
 	}
-	if len(m.warmPool) != 1 {
-		t.Fatalf("warm pool size = %d, want 1", len(m.warmPool))
+	_, err = m.GetSandboxIdBySessionId(context.Background(), "session-foreign")
+	if err == nil {
+		t.Fatal("manager acquired a foreign session")
 	}
-	_, ok = m.warmPool[ownID]
-	if !ok {
-		t.Fatalf("warm pool does not contain own sandbox %q", ownID)
-	}
-	_, ok = m.warmPool[foreignID]
-	if ok {
-		t.Fatalf("warm pool contains foreign sandbox %q", foreignID)
+	id, err := m.GetSandboxIdBySessionId(context.Background(), sessionID)
+	if err != nil || id != ownID {
+		t.Fatalf("owned sandbox acquisition: id=%q error=%v", id, err)
 	}
 
 	m.Shutdown()
@@ -88,9 +85,7 @@ func TestShutdownIsTerminalAndClearsState(t *testing.T) {
 	m.mu.Unlock()
 
 	m.Shutdown()
-	if len(m.sandboxes) != 0 || len(m.infos) != 0 || len(m.lastActivity) != 0 || len(m.warmPool) != 0 {
-		t.Fatalf("shutdown state: sandboxes=%d infos=%d activity=%d warm=%d", len(m.sandboxes), len(m.infos), len(m.lastActivity), len(m.warmPool))
-	}
+
 	_, err = m.Get(context.Background(), m.sandboxID)
 	if err == nil {
 		t.Fatal("Get returned a provider after shutdown")
@@ -116,61 +111,53 @@ func TestShutdownIsTerminalAndClearsState(t *testing.T) {
 	}
 }
 
-func TestLifecycleOperationsIgnoreForeignSandboxState(t *testing.T) {
+func TestLifecycleOperationsIgnoreForeignSandbox(t *testing.T) {
 	prefix := "eino-test-sandbox"
 	sessionID := "session-scope"
-	logPath := installFakeDocker(t, nil)
+	ownedName := prefix + "-" + deriveSandboxID(sessionID)
+	logPath := installFakeDocker(t, []string{ownedName})
 	manager, err := New(&config.Config{Sandbox: config.SandboxConfig{
-		Use:             "docker",
-		Image:           "test-image",
-		ContainerPrefix: prefix,
+		Use: "docker", Image: "test-image", ContainerPrefix: prefix,
 	}}, sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, ok := manager.(*Manager)
-	if !ok {
-		t.Fatalf("manager type = %T", manager)
+	m := manager.(*Manager)
+	defer m.Shutdown()
+	_, err = m.GetSandboxIdBySessionId(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned, err := m.Get(context.Background(), m.sandboxID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	foreignID := deriveSandboxID("session-foreign-scope")
-	foreignInfo := SandboxInfo{SandboxID: foreignID, ContainerID: "foreign-container"}
-	old := time.Now().Add(-time.Hour)
+	_, err = m.Get(context.Background(), foreignID)
+	if err == nil {
+		t.Fatal("Get returned the owned container for a foreign ID")
+	}
+	_, err = m.discoverOrCreate(context.Background(), foreignID)
+	if err == nil {
+		t.Fatal("created a container for a foreign ID")
+	}
+	err = m.Release(context.Background(), foreignID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.attachLocked(foreignID, SandboxInfo{SandboxID: foreignID, ContainerID: "foreign-container"})
+	m.mu.Unlock()
 	m.cfg.Sandbox.IdleTimeout = time.Minute
-	m.mu.Lock()
-	m.sandboxes[foreignID] = newSandbox(foreignID, "session-foreign-scope", "http://localhost:18080", nil)
-	m.infos[foreignID] = foreignInfo
-	m.lastActivity[foreignID] = old
-	m.warmPool[foreignID] = warmEntry{info: foreignInfo, releasedAt: old}
-	m.mu.Unlock()
-
 	m.cleanupIdle()
-	_, ok = m.sandboxes[foreignID]
-	if !ok {
-		t.Fatal("cleanup removed foreign active sandbox")
+	stillOwned, err := m.Get(context.Background(), m.sandboxID)
+	if err != nil || stillOwned != owned {
+		t.Fatal("foreign operations changed the owned container")
 	}
-	_, ok = m.warmPool[foreignID]
-	if !ok {
-		t.Fatal("cleanup removed foreign warm sandbox")
-	}
-
-	m.cfg.Sandbox.Replicas = 1
-	m.mu.Lock()
-	m.sandboxes[m.sandboxID] = newSandbox(m.sandboxID, sessionID, "http://localhost:18080", nil)
-	m.infos[m.sandboxID] = SandboxInfo{SandboxID: m.sandboxID, ContainerID: "owned-active"}
-	m.lastActivity[m.sandboxID] = time.Now()
-	m.mu.Unlock()
-	_, ok = m.warmPool[foreignID]
-	if !ok {
-		t.Fatal("eviction removed foreign warm sandbox")
-	}
-
 	m.Shutdown()
 	lines := readFakeDockerLog(t, logPath)
-	if countLine(lines, "rm -f foreign-container") != 0 {
-		t.Fatalf("foreign container was removed: %v", lines)
-	}
-	if countLine(lines, "rm -f owned-active") != 1 {
-		t.Fatalf("owned active container was not evicted: %v", lines)
+	if countLine(lines, "rm -f foreign-container") != 0 || countLine(lines, "rm -f "+ownedName) != 1 {
+		t.Fatalf("unexpected container removals: %v", lines)
 	}
 }
 
@@ -190,6 +177,7 @@ inspect)
   printf '%%s\n' '[{"NetworkSettings":{"Ports":{"8080/tcp":[{"HostPort":"18080"}]}},"Created":"2026-01-01T00:00:00Z"}]'
   ;;
 rm)
+  [ "$FAKE_DOCKER_FAIL_REMOVAL" != "1" ] || exit 1
   ;;
 run)
   printf 'fake-container-id\n'
@@ -227,6 +215,83 @@ func countLine(lines []string, want string) int {
 		}
 	}
 	return count
+}
+
+func TestIdleContainerGetsWarmGraceBeforeRemoval(t *testing.T) {
+	sessionID := "idle-grace"
+	name := "test-" + deriveSandboxID(sessionID)
+	logPath := installFakeDocker(t, []string{name})
+	manager, err := New(&config.Config{Sandbox: config.SandboxConfig{Use: "docker", ContainerPrefix: "test"}}, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := manager.(*Manager)
+	defer m.Shutdown()
+	_, err = m.GetSandboxIdBySessionId(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 只推进此容器的空闲时间，不依赖测试机器的执行速度。
+	m.cfg.Sandbox.IdleTimeout = time.Minute
+	m.container.idleSince = time.Now().Add(-time.Hour)
+	m.cleanupIdle()
+	_, err = m.Get(context.Background(), m.sandboxID)
+	if err == nil {
+		t.Fatal("idle container remained live")
+	}
+	m.cleanupIdle()
+	if countLine(readFakeDockerLog(t, logPath), "rm -f "+name) != 0 {
+		t.Fatal("live-to-warm transition skipped the warm grace period")
+	}
+	_, err = m.GetSandboxIdBySessionId(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.Get(context.Background(), m.sandboxID)
+	if err != nil {
+		t.Fatal("warm container could not be reused:", err)
+	}
+	err = m.Release(context.Background(), m.sandboxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.container.idleSince = time.Now().Add(-time.Hour)
+	err = m.Release(context.Background(), m.sandboxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.cleanupIdle()
+	if countLine(readFakeDockerLog(t, logPath), "rm -f "+name) != 1 {
+		t.Fatal("duplicate release extended the warm grace period")
+	}
+	if countLine(readFakeDockerLog(t, logPath), "inspect "+name) != 1 {
+		t.Fatal("warm reuse unnecessarily rediscovered the container")
+	}
+}
+
+func TestIdleRemovalFailureKeepsContainerForRetry(t *testing.T) {
+	sessionID := "idle-retry"
+	name := "test-" + deriveSandboxID(sessionID)
+	logPath := installFakeDocker(t, []string{name})
+	t.Setenv("FAKE_DOCKER_FAIL_REMOVAL", "1")
+	manager, err := New(&config.Config{Sandbox: config.SandboxConfig{Use: "docker", ContainerPrefix: "test"}}, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := manager.(*Manager)
+	defer m.Shutdown()
+	m.cfg.Sandbox.IdleTimeout = time.Minute
+	m.container.idleSince = time.Now().Add(-time.Hour)
+	m.cleanupIdle()
+	t.Setenv("FAKE_DOCKER_FAIL_REMOVAL", "")
+	m.cleanupIdle()
+	if countLine(readFakeDockerLog(t, logPath), "rm -f "+name) != 2 {
+		t.Fatal("failed container removal was not retried")
+	}
+	m.Shutdown()
+	if countLine(readFakeDockerLog(t, logPath), "rm -f "+name) != 2 {
+		t.Fatal("successfully removed container was retained")
+	}
 }
 
 func TestNewRejectsUnsafeSessionBeforeContainerCommands(t *testing.T) {

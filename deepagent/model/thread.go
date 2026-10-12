@@ -129,10 +129,6 @@ type TransportThreadOutputItem struct {
 	Yield *TransportThreadYield
 }
 
-type TransportThreadOutput struct {
-	Items <-chan TransportThreadOutputItem
-}
-
 // context
 // ThreadIdentity is the stable identity of one Run thread. It only holds
 // plain values resolved from the Run thread spec; it never carries the

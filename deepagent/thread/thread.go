@@ -83,7 +83,7 @@ func NewThread(cfg ThreadConfig) (*Thread, error) {
 	}, nil
 }
 
-func (t *Thread) Init(ctx context.Context) (*agentmodel.TransportThreadOutput, error) {
+func (t *Thread) Init(ctx context.Context) (<-chan agentmodel.TransportThreadOutputItem, error) {
 	ctx = t.withThreadInfo(ctx)
 	err := t.ensureOpen()
 	if err != nil {
@@ -99,10 +99,6 @@ func (t *Thread) Init(ctx context.Context) (*agentmodel.TransportThreadOutput, e
 	if t.closed {
 		return nil, agentmodel.TransportErrThreadClosed
 	}
-	if t.outputBridge.output != nil {
-		return t.outputBridge.output, nil
-	}
-
 	t.startThreadOutputObserver(ctx)
 	return t.outputBridge.start(ctx, t), nil
 }

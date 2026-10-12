@@ -10,6 +10,8 @@ import (
 
 	checkpointer "eino-cli/deepagent/graph/checkpoint"
 	"eino-cli/deepagent/graph/execution"
+	"eino-cli/deepagent/graph/middleware"
+	"eino-cli/deepagent/graph/tools"
 	agentmodel "eino-cli/deepagent/model"
 )
 
@@ -69,13 +71,14 @@ func (r *Run) Execute(ctx context.Context) (result *agentmodel.Message, err erro
 		r.mu.Unlock()
 	}()
 
-	cfg := *r.config.Graph.Clone()
+	cfg := r.config.Graph
 	if r.config.EnablePlan {
-		execution.WithPlan(nil)(&cfg)
+		cfg.ToolDescriptors = append(cfg.ToolDescriptors, tools.NewUpdatePlanTool(nil))
+		cfg.Middlewares = append(cfg.Middlewares, middleware.NewPlan())
 	}
 	cfg.RunID = r.id
 	cfg.Emit = r.forwardGraphEvent
-	compiledGraph, err := execution.New(ctx, execution.WithConfig(&cfg))
+	compiledGraph, err := execution.New(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -89,27 +92,21 @@ func (r *Run) Execute(ctx context.Context) (result *agentmodel.Message, err erro
 		r.cancel(context.Canceled)
 	}
 	inputs := r.Inputs()
-	messages := make([]*agentmodel.Message, 0, len(inputs))
 	options := execution.RunOptions{}
 	if r.config.Resume != nil {
 		options = *r.config.Resume
 	} else if cfg.CheckpointStore != nil {
 		options.CheckpointID = r.id
 	}
-	for _, input := range inputs {
-		messages = append(messages, input.Message)
-		options.InputIDs = append(options.InputIDs, input.MessageID)
-		options.InputMeta = append(options.InputMeta, input.Meta)
-	}
 	var first *agentmodel.Message
-	if len(messages) > 0 {
-		first = messages[0]
+	if len(inputs) > 0 {
+		first = inputs[0].Message
 	}
 	err = r.PublishEvent(ctx, agentmodel.EventRunStart, agentmodel.RunStartPayload{Input: first})
 	if err != nil {
 		return nil, err
 	}
-	return compiledGraph.Invoke(ctx, messages, func(target *execution.RunOptions) { *target = options })
+	return compiledGraph.Invoke(ctx, inputs, options)
 }
 
 func (r *Run) ID() string            { return r.id }

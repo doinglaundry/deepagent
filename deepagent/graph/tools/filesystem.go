@@ -17,15 +17,16 @@ import (
 // FilesystemPrompt describes the shared local and Docker tool contracts.
 const FilesystemPrompt = "Use filesystem tools to inspect and edit files. Paths are scoped to the configured filesystem. Read file offsets are one-based line numbers."
 
-type FilesystemToolOptions struct {
-	ReadOnly       bool
-	EnableCommands bool
-	EnablePatch    bool
-	CommandTimeout time.Duration
+// FilesystemConfig 的零值启用全部文件工具；ReadOnly 优先，禁止所有写入和命令。
+type FilesystemConfig struct {
+	ReadOnly          bool
+	DisableExecute    bool
+	DisableApplyPatch bool
+	CommandTimeout    time.Duration
 }
 
 // NewFilesystemTools is the only filesystem tool factory for local and Docker.
-func NewFilesystemTools(filesystem agentmodel.ToolFilesystem, options FilesystemToolOptions) ([]agentmodel.ToolDescriptor, error) {
+func NewFilesystemTools(filesystem agentmodel.ToolFilesystem, config FilesystemConfig) ([]agentmodel.ToolDescriptor, error) {
 	if filesystem == nil {
 		return nil, fmt.Errorf("filesystem is required")
 	}
@@ -39,20 +40,20 @@ func NewFilesystemTools(filesystem agentmodel.ToolFilesystem, options Filesystem
 		return nil, err
 	}
 	toolDescriptors = append(toolDescriptors, semanticSearchDescriptor)
-	if options.ReadOnly {
+	if config.ReadOnly {
 		return toolDescriptors, nil
 	}
 	toolDescriptors = append(toolDescriptors, NewWriteFileTool(filesystem), NewEditFileTool(filesystem), NewDeleteFileTool(filesystem))
-	if options.EnablePatch {
+	if !config.DisableApplyPatch {
 		toolDescriptors = append(toolDescriptors, NewApplyPatchTool(filesystem))
 	}
-	if options.EnableCommands {
+	if !config.DisableExecute {
 		lintDescriptor, err := NewReadLintsTool(filesystem, filesystem)
 		if err != nil {
 			return nil, err
 		}
 		toolDescriptors = append(toolDescriptors, lintDescriptor)
-		toolDescriptors = append(toolDescriptors, NewCommandTools(filesystem, options.CommandTimeout)...)
+		toolDescriptors = append(toolDescriptors, NewCommandTools(filesystem, config.CommandTimeout)...)
 	}
 	return toolDescriptors, nil
 }

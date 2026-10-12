@@ -104,7 +104,7 @@ func (t *Thread) callThreadOutputObserver(ctx context.Context, obs agentmodel.Th
 
 func (t *Thread) forwardAgentEvent(ctx context.Context, ev agentmodel.RunEvent) bool {
 	usage := t.ContextManager().GetContextUsage()
-	item, err := threadOutputItem(t.sessionID, t.ThreadID, ev, &usage)
+	item, err := threadOutputItem(t.ThreadID, ev, &usage)
 	if err != nil {
 		return t.outputBridge.deliver(ctx, t, agentmodel.TransportThreadOutputItem{Err: err})
 	}
@@ -126,7 +126,7 @@ func (t *Thread) emitAgentEvent(ctx context.Context, ev agentmodel.RunEvent) {
 		return
 	}
 	usage := t.ContextManager().GetContextUsage()
-	item, err := threadOutputItem(t.sessionID, t.ThreadID, ev, &usage)
+	item, err := threadOutputItem(t.ThreadID, ev, &usage)
 	if err != nil {
 		bridge.send(ctx, agentmodel.TransportThreadOutputItem{Err: err})
 		return
@@ -140,16 +140,34 @@ func (t *Thread) emitAgentEvent(ctx context.Context, ev agentmodel.RunEvent) {
 
 const metadataAgentEventID = "agent_event_id"
 
-func threadOutputItem(sessionID string, threadID string, ev agentmodel.RunEvent, usage *agentmodel.ContextTokenUsage) (item *agentmodel.TransportThreadOutputItem, err error) {
-	event, err := workerEvent(sessionID, threadID, ev, usage)
+// threadOutputItem 在此一次完成事件转换；终态事件和 Worker 的结束信号一起交付。
+func threadOutputItem(threadID string, ev agentmodel.RunEvent, usage *agentmodel.ContextTokenUsage) (*agentmodel.TransportThreadOutputItem, error) {
+	if isHiddenInternalToolEvent(ev) {
+		return nil, nil
+	}
+	eventType, eventPayload, err := agentEventPayloadForOutput(ev, usage)
 	if err != nil {
 		return nil, err
 	}
-	yield := yieldFromAgentEvent(ev)
-	if event == nil && yield == nil {
+	if eventPayload == nil {
 		return nil, nil
 	}
-	return &agentmodel.TransportThreadOutputItem{Event: event, Yield: yield}, nil
+	payload, err := json.Marshal(eventPayload)
+	if err != nil {
+		return nil, err
+	}
+	return &agentmodel.TransportThreadOutputItem{
+		Event: &agentmodel.TransportEvent{
+			ID:       ev.ID,
+			ThreadID: threadID,
+			RunID:    ev.RunID,
+			Type:     agentmodel.TransportEventType(eventType.String()),
+			Payload:  payload,
+			Metadata: map[string]string{metadataAgentEventID: ev.ID},
+			TS:       ev.TS,
+		},
+		Yield: yieldFromAgentEvent(ev),
+	}, nil
 }
 
 func yieldFromAgentEvent(ev agentmodel.RunEvent) *agentmodel.TransportThreadYield {
@@ -176,49 +194,20 @@ func yieldFromAgentEvent(ev agentmodel.RunEvent) *agentmodel.TransportThreadYiel
 	}
 }
 
-func workerEvent(_ string, threadID string, ev agentmodel.RunEvent, usage *agentmodel.ContextTokenUsage) (output *agentmodel.TransportEvent, err error) {
-	if isHiddenInternalToolEvent(ev) {
-		return nil, nil
-	}
-
-	eventType, eventPayload, err := agentEventPayloadForOutput(ev, usage)
-	if err != nil {
-		return nil, err
-	}
-	if eventPayload == nil {
-		return nil, nil
-	}
-	payload, err := json.Marshal(eventPayload)
-	if err != nil {
-		return nil, err
-	}
-	event := &agentmodel.TransportEvent{
-		ID:       ev.ID,
-		ThreadID: threadID,
-		RunID:    ev.RunID,
-		Type:     agentmodel.TransportEventType(eventType.String()),
-		Payload:  payload,
-		Metadata: map[string]string{metadataAgentEventID: ev.ID},
-		TS:       ev.TS,
-	}
-	return event, nil
-}
-
 const threadOutputBridgeBufferSize = 4096
 
 type threadOutputBridge struct {
 	agentEvents <-chan agentmodel.RunEvent
 	inbox       chan agentmodel.TransportThreadOutputItem
 	items       chan agentmodel.TransportThreadOutputItem
-	output      *agentmodel.TransportThreadOutput
 	done        chan struct{}
 	finish      chan struct{}
 	finishOnce  sync.Once
 }
 
-func (b *threadOutputBridge) start(ctx context.Context, runtime *Thread) *agentmodel.TransportThreadOutput {
-	if b.output != nil {
-		return b.output
+func (b *threadOutputBridge) start(ctx context.Context, runtime *Thread) <-chan agentmodel.TransportThreadOutputItem {
+	if b.items != nil {
+		return b.items
 	}
 	b.inbox = make(chan agentmodel.TransportThreadOutputItem, threadOutputBridgeBufferSize)
 	b.items = make(chan agentmodel.TransportThreadOutputItem, threadOutputBridgeBufferSize)
@@ -231,8 +220,7 @@ func (b *threadOutputBridge) start(ctx context.Context, runtime *Thread) *agentm
 		defer close(b.items)
 		runtime.runOutputBridge(bridgeCtx, b)
 	}(b.done)
-	b.output = &agentmodel.TransportThreadOutput{Items: b.items}
-	return b.output
+	return b.items
 }
 
 func (b *threadOutputBridge) stopAndWait(ctx context.Context) error {

@@ -173,6 +173,10 @@ func (graph *Graph) callModel(ctx context.Context, runState *agentmodel.RunState
 			return nil, fmt.Errorf("middleware returned nil model message")
 		}
 	}
+	// 角色、用量和推理分片不代表已经生成答案，不能据此宣告任务完成。
+	if strings.TrimSpace(response.Content) == "" && len(response.ToolCalls) == 0 && len(response.MultiContent) == 0 && len(response.AssistantGenMultiContent) == 0 {
+		return nil, fmt.Errorf("empty model response")
+	}
 	err = graph.conversation.AddHistory(ctx, runState.RunID, response)
 	if err != nil {
 		return nil, err

@@ -19,11 +19,11 @@ func TestLocalModelFingerprintAndCompletedToolSurviveCheckpoint(t *testing.T) {
 		{schema.AssistantMessage("done", nil)},
 	}}
 	config := Config{Model: apiModel, RunID: "personal", LocalModelParametersFingerprint: "v1", CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: countingLocalModelTool, ReadOnly: true}, tools.NewFollowUpTool()}}
-	graph, err := New(ctx, WithConfig(&config))
+	graph, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("local-checkpoint"))
+	_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{CheckpointID: "local-checkpoint"})
 	interrupt, ok := compose.ExtractInterruptInfo(err)
 	if !ok || countingLocalModelTool.count != 1 {
 		t.Fatalf("calls=%d interrupt=%v err=%v", countingLocalModelTool.count, ok, err)
@@ -39,21 +39,21 @@ func TestLocalModelFingerprintAndCompletedToolSurviveCheckpoint(t *testing.T) {
 	}
 	config.Conversation = graph.conversation
 	config.LocalModelParametersFingerprint = "v2"
-	changedParametersGraph, err := New(ctx, WithConfig(&config))
+	changedParametersGraph, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resumeAnswer := WithResumeData(map[string]any{interrupt.InterruptContexts[0].ID: &agentmodel.FollowUpInfo{UserAnswer: "yes"}})
-	_, err = changedParametersGraph.Invoke(ctx, nil, WithCheckpointID("local-checkpoint"), resumeAnswer)
+	resumeAnswer := map[string]any{interrupt.InterruptContexts[0].ID: &agentmodel.FollowUpInfo{UserAnswer: "yes"}}
+	_, err = changedParametersGraph.Invoke(ctx, nil, RunOptions{CheckpointID: "local-checkpoint", ResumeData: resumeAnswer})
 	if err == nil || !strings.Contains(err.Error(), "local model version changed") {
 		t.Fatalf("changed version accepted: %v", err)
 	}
 	config.LocalModelParametersFingerprint = "v1"
-	restoredGraph, err := New(ctx, WithConfig(&config))
+	restoredGraph, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := restoredGraph.Invoke(ctx, nil, WithCheckpointID("local-checkpoint"), resumeAnswer)
+	result, err := restoredGraph.Invoke(ctx, nil, RunOptions{CheckpointID: "local-checkpoint", ResumeData: resumeAnswer})
 	if err != nil || result.Content != "done" || countingLocalModelTool.count != 1 {
 		t.Fatalf("resume result=%+v calls=%d err=%v", result, countingLocalModelTool.count, err)
 	}

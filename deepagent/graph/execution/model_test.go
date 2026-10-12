@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	agentmodel "eino-cli/deepagent/model"
@@ -45,12 +46,12 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 		}
 		return nil
 	}}
-	graph, err := New(context.Background(), WithConfig(&config))
+	graph, err := New(context.Background(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,12 +71,12 @@ func TestModelStreamPreservesInterleavedCallsAndFinalUsage(t *testing.T) {
 	}
 	// Fresh Graphs must not retain any collector state from earlier streams.
 	config.Emit = nil
-	next, err := New(context.Background(), WithConfig(&config))
+	next, err := New(context.Background(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer next.Close(context.Background())
-	message, err := next.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("next")})
+	message, err := next.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("next")}}, RunOptions{})
 	if err != nil || message.Content != "new" || len(message.ToolCalls) != 0 {
 		t.Fatalf("cross-stream state: message=%+v err=%v", message, err)
 	}
@@ -98,12 +99,12 @@ func TestModelStreamPropagatesStreamFailureWithoutReplay(t *testing.T) {
 	writer.Send(nil, want)
 	writer.Close()
 	chatModel := &failedModelStream{reader: stream}
-	graph, err := New(context.Background(), WithModel(chatModel))
+	graph, err := New(context.Background(), Config{Model: chatModel})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if !errors.Is(err, want) || chatModel.calls != 1 {
 		t.Fatalf("stream error swallowed or replayed: err=%v calls=%d", err, chatModel.calls)
 	}
@@ -165,12 +166,12 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 		{newUsageReply("done")}, {newUsageReply("new run")},
 	}}
 	var totals []agentmodel.RunUsage
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error {
+	graph, err := New(ctx, Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error {
 		if e.Kind == "tokens" {
 			totals = append(totals, e.Data.(agentmodel.RunUsage))
 		}
 		return nil
-	}}))
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,13 +180,13 @@ func TestRun_TokenEventsAccumulateWithoutChangingContextUsage(t *testing.T) {
 		if i > 0 {
 			config := graph.config
 			config.Conversation = graph.conversation
-			graph, err = New(ctx, WithConfig(&config))
+			graph, err = New(ctx, config)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer graph.Close(ctx)
 		}
-		_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+		_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -209,11 +210,11 @@ func TestCheckpoint_ResumeContinuesCumulativeUsage(t *testing.T) {
 		{newUsageReply("done")},
 	}}
 	config := Config{ThreadID: "thread", RunID: "run", Model: chatModel, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
-	first, err := New(ctx, WithConfig(&config))
+	first, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{CheckpointID: "checkpoint"})
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -223,7 +224,7 @@ func TestCheckpoint_ResumeContinuesCumulativeUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A different Conversation forces restoration from the checkpoint snapshot.
-	next, err := New(ctx, WithConfig(&config))
+	next, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +233,7 @@ func TestCheckpoint_ResumeContinuesCumulativeUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = next.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}))
+	_, err = next.Invoke(ctx, nil, RunOptions{CheckpointID: "checkpoint", ResumeData: map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,17 +253,17 @@ func TestRun_LegacyExtraUsageUsesConversation(t *testing.T) {
 				want = 5
 			}
 			var totals []agentmodel.RunUsage
-			graph, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{responses: [][]*schema.Message{{response}}}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
+			graph, err := New(context.Background(), Config{Model: &sequenceModel{responses: [][]*schema.Message{{response}}}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
 				if event.Kind == "tokens" {
 					totals = append(totals, event.Data.(agentmodel.RunUsage))
 				}
 				return nil
-			}}))
+			}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer graph.Close(context.Background())
-			_, executeErr := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+			_, executeErr := graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 			if executeErr != nil {
 				t.Fatal(executeErr)
 			}
@@ -280,11 +281,11 @@ func TestRootResumeRestoresProviderContextBeforeNextModel(t *testing.T) {
 		{newUsageReply("done")},
 	}}
 	config := Config{ThreadID: "thread", RunID: "run", Model: chatModel, CheckpointStore: &checkpointMemory{}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}
-	first, err := New(ctx, WithConfig(&config))
+	first, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{CheckpointID: "checkpoint"})
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -306,7 +307,7 @@ func TestRootResumeRestoresProviderContextBeforeNextModel(t *testing.T) {
 		}
 		return nil
 	}
-	next, err = New(ctx, WithConfig(&config))
+	next, err = New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,11 +316,40 @@ func TestRootResumeRestoresProviderContextBeforeNextModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = next.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}))
+	_, err = next.Invoke(ctx, nil, RunOptions{CheckpointID: "checkpoint", ResumeData: map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !checked {
 		t.Fatal("restored context boundary not observed")
+	}
+}
+
+func TestModelStreamRejectsEmptyAnswer(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		chunks []*schema.Message
+	}{
+		{name: "role_only", chunks: []*schema.Message{{Role: schema.Assistant}}},
+		{name: "usage_only", chunks: []*schema.Message{{ResponseMeta: &schema.ResponseMeta{Usage: &schema.TokenUsage{TotalTokens: 10}}}}},
+		{name: "whitespace", chunks: []*schema.Message{{Role: schema.Assistant, Content: " \n"}}},
+		{name: "reasoning_without_answer", chunks: []*schema.Message{{Role: schema.Assistant, ReasoningContent: "thinking"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			chatModel := &sequenceModel{responses: [][]*schema.Message{test.chunks}}
+			graph, err := New(ctx, Config{Model: chatModel})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer graph.Close(ctx)
+			_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("question")}}, RunOptions{})
+			if err == nil || !strings.Contains(err.Error(), "empty model response") {
+				t.Fatalf("empty answer was reported as successful: %v", err)
+			}
+			if len(graph.conversation.GetHistory(ctx)) != 1 || chatModel.calls != 1 {
+				t.Fatal("empty answer was persisted or model was replayed")
+			}
+		})
 	}
 }

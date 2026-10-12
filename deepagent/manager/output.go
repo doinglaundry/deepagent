@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,7 +40,8 @@ func (c *Manager) SaveOutput(ctx context.Context, threadID int64, leaseToken, ru
 			if txErr != nil {
 				return txErr
 			}
-			payload, txErr := parseOutputPayload(output.Payload)
+			var payload outputPayload
+			txErr = json.Unmarshal(output.Payload, &payload)
 			if txErr != nil {
 				return txErr
 			}
@@ -47,12 +49,10 @@ func (c *Manager) SaveOutput(ctx context.Context, threadID int64, leaseToken, ru
 			if txErr != nil {
 				return txErr
 			}
-			rule := outputEventRuleFor(output.EventType, payload)
-			switch rule.action {
-			case outputActionUpdateInput:
+			if output.EventType == agentmodel.EventTypeRunStatus.String() {
 				txErr = c.updateInputExecution(txCtx, threadID, output, payload)
-			case outputActionSaveMessage:
-				txErr = c.saveOutputMessage(txCtx, threadID, output, payload, originalID, rule)
+			} else {
+				txErr = c.saveOutputMessage(txCtx, threadID, output, payload, originalID)
 			}
 			if txErr != nil {
 				return txErr
@@ -109,17 +109,52 @@ func (c *Manager) updateInputExecution(ctx context.Context, threadID int64, outp
 	return err
 }
 
-func (c *Manager) saveOutputMessage(ctx context.Context, threadID int64, output *agentmodel.OutputFrame, payload outputPayload, originalID int64, rule outputEventRule) (err error) {
-	key := outputMessageKey(output, payload, originalID, rule)
-	if rule.messageType == "tool" {
-		err = c.mergeToolOutput(ctx, threadID, key, output)
+// 固定事件直接决定消息类型和去重键；流式增量与未知事件只广播。
+func (c *Manager) saveOutputMessage(ctx context.Context, threadID int64, output *agentmodel.OutputFrame, payload outputPayload, originalID int64) error {
+	var messageType, key string
+	sender := agentmodel.MailboxSenderTypeSystem
+	switch output.EventType {
+	case agentmodel.EventTypeAssistantMessage.String():
+		messageType, key, sender = "assistant", payload.LLMResponseID, agentmodel.MailboxSenderTypeAgent
+	case agentmodel.EventTypeToolCall.String():
+		if payload.OutputDelta != nil {
+			return nil
+		}
+		messageType, key, sender = "tool", payload.ToolCallID, agentmodel.MailboxSenderTypeAgent
+	case agentmodel.EventTypeInputRequired.String():
+		key = payload.InterruptID
+		switch payload.Kind {
+		case agentmodel.InputRequiredKindApproval:
+			messageType = "approval"
+		case agentmodel.InputRequiredKindPlanInput:
+			messageType = "question"
+		default:
+			messageType = "interrupt"
+		}
+	case agentmodel.EventTypePlanUpdated.String():
+		messageType, key = "plan", "latest"
+	case agentmodel.EventTypeError.String():
+		messageType = "error"
+	default:
+		return nil
+	}
+	// 优先使用业务身份，其次原始事件 ID；匿名事件才用内容哈希。
+	if key == "" && originalID != 0 {
+		key = strconv.FormatInt(originalID, 10)
+	}
+	if key == "" {
+		key = fmt.Sprintf("%x", sha256.Sum256(output.Payload))
+	}
+	key = output.RunID + ":" + messageType + ":" + key
+	if messageType == "tool" {
+		err := c.mergeToolOutput(ctx, threadID, key, output)
 		if err != nil {
 			return err
 		}
 	}
 	return c.messages.Create(ctx, &agentmodel.MailboxMessage{
-		MessageID: output.EventID, ThreadID: threadID, Sender: &agentmodel.MailboxSender{Type: rule.sender, ID: "model"},
-		MessageType: rule.messageType, Payload: output.Payload,
+		MessageID: output.EventID, ThreadID: threadID, Sender: &agentmodel.MailboxSender{Type: sender, ID: "model"},
+		MessageType: messageType, Payload: output.Payload,
 		Metadata: output.Metadata, TriggerRunID: output.RunID, CreatedAt: output.CreatedAt, OutputKey: &key,
 	})
 }

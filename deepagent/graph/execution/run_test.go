@@ -27,7 +27,7 @@ func TestSelectBackendProvidesCommandExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer filesystem.Close(ctx)
-	graph, err := New(ctx, WithModel(chatModel), WithFilesystem(filesystem))
+	graph, err := New(ctx, Config{Model: chatModel, FilesystemConfig: &deeptools.FilesystemConfig{}, Filesystem: filesystem})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,23 +43,41 @@ func TestSelectBackendProvidesCommandExecution(t *testing.T) {
 	}
 }
 
-func TestFeatureConfigPresenceControlsEnablement(t *testing.T) {
-	configured := buildTestConfig()
-	if configured.FilesystemConfig != nil || configured.WebConfig != nil {
-		t.Fatalf("zero config unexpectedly enables features: %+v", configured)
-	}
-
-	configured = buildTestConfig(WithFilesystemConfig(nil), WithWeb())
-	if configured.FilesystemConfig == nil {
-		t.Fatal("WithFilesystemConfig() did not create filesystem config")
-	}
-	if configured.WebConfig == nil || !configured.WebConfig.EnableWebSearch || !configured.WebConfig.EnableFetchURL {
-		t.Fatalf("WithWeb() config = %+v", configured.WebConfig)
+func TestFilesystemFeatureRequiresConfigAndFilesystem(t *testing.T) {
+	filesystem := newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
+	for _, test := range []struct {
+		name       string
+		config     *deeptools.FilesystemConfig
+		filesystem agentmodel.ToolFilesystem
+		read       bool
+		write      bool
+		command    bool
+	}{
+		{name: "no config", filesystem: filesystem},
+		{name: "no filesystem", config: &deeptools.FilesystemConfig{}},
+		{name: "defaults", config: &deeptools.FilesystemConfig{}, filesystem: filesystem, read: true, write: true, command: true},
+		{name: "read only", config: &deeptools.FilesystemConfig{ReadOnly: true}, filesystem: filesystem, read: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			chatModel := &publicModel{}
+			graph, err := New(context.Background(), Config{Model: chatModel, FilesystemConfig: test.config, Filesystem: test.filesystem})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer graph.Close(context.Background())
+			names := make(map[string]bool)
+			for _, info := range chatModel.infos {
+				names[info.Name] = true
+			}
+			if names["read_file"] != test.read || names["write_file"] != test.write || names["execute"] != test.command {
+				t.Fatalf("unexpected model tools: %v", names)
+			}
+		})
 	}
 }
 
 func TestNew_RequiresModel(t *testing.T) {
-	_, err := New(context.Background())
+	_, err := New(context.Background(), Config{})
 	if err == nil || !strings.Contains(err.Error(), "model is required") {
 		t.Fatalf("expected model required error, got %v", err)
 	}
@@ -70,10 +88,7 @@ func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T
 	config := &Config{ReadOnlyToolsOnly: true}
 	chatModel := &publicModel{}
 	config.Model = chatModel
-	graph, err := New(ctx, WithConfig(config), WithTools(
-		agentmodel.ToolDescriptor{Tool: &fakeToolCounter{}},
-		agentmodel.ToolDescriptor{Tool: &explicitReadOnlyTool{}, ReadOnly: true},
-	))
+	graph, err := New(ctx, Config{Model: chatModel, ReadOnlyToolsOnly: true, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &fakeToolCounter{}}, {Tool: &explicitReadOnlyTool{}, ReadOnly: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,23 +98,27 @@ func TestCollectAllTools_ReadOnlyBoundaryRejectsUnknownCapabilities(t *testing.T
 	}
 }
 
-func TestWithConfigCopiesInput(t *testing.T) {
-	source := &Config{FilesystemConfig: &FilesystemConfig{ReadOnly: true}, Prompts: []*agentmodel.Message{agentmodel.NewSystemMessage("original")}}
-	configured := buildTestConfig(WithConfig(source))
-	configured.Prompts[0] = agentmodel.NewSystemMessage("changed")
-	configured.FilesystemConfig.ReadOnly = false
+func TestNewCopiesConfiguration(t *testing.T) {
+	source := Config{Model: &publicModel{}, FilesystemConfig: &deeptools.FilesystemConfig{ReadOnly: true}, Prompts: []*agentmodel.Message{agentmodel.NewSystemMessage("original")}}
+	graph, err := New(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer graph.Close(context.Background())
+	graph.config.Prompts[0] = agentmodel.NewSystemMessage("changed")
+	graph.config.FilesystemConfig.ReadOnly = false
 	if source.Prompts[0].Content != "original" || !source.FilesystemConfig.ReadOnly {
-		t.Fatal("WithConfig mutated the source")
+		t.Fatal("Graph mutated caller configuration")
 	}
 }
 
 func TestToolMaskExcludesToolFromModel(t *testing.T) {
 	chatModel := &publicModel{}
-	graph, err := New(context.Background(), WithConfig(&Config{
+	graph, err := New(context.Background(), Config{
 		Model:           chatModel,
 		ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &fakeToolCounter{}}},
 		ToolMask:        func(_ context.Context, info *schema.ToolInfo) bool { return info.Name != "counter" },
-	}))
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,18 +131,18 @@ func TestToolMaskExcludesToolFromModel(t *testing.T) {
 func TestToolPolicyDeniesWithoutRunningTool(t *testing.T) {
 	counter := &fakeToolCounter{}
 	chatModel := &publicModel{call: true}
-	graph, err := New(context.Background(), WithConfig(&Config{
+	graph, err := New(context.Background(), Config{
 		Model:           chatModel,
 		ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter}},
 		Policy: agentmodel.PolicyFunc(func(context.Context, agentmodel.ToolCall, agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
 			return agentmodel.Decision{Action: agentmodel.Deny, Reason: "blocked"}, nil
 		}),
-	}))
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +168,10 @@ func TestPublicEntryUsesCanonicalAgentAndContext(t *testing.T) {
 		return ctx
 	}).Build()
 	var err error
-	agent, err = New(ctx, WithModel(chatModel), WithDefaultCallbacks(handler))
+	agent, err = New(ctx, Config{Model: chatModel, Callbacks: []callbacks.Handler{
+
+		handler}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +180,7 @@ func TestPublicEntryUsesCanonicalAgentAndContext(t *testing.T) {
 	if canonical != agent {
 		t.Fatal("extra agent wrapper")
 	}
-	_, err = agent.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, err = agent.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,27 +189,17 @@ func TestPublicEntryUsesCanonicalAgentAndContext(t *testing.T) {
 	}
 }
 
-func TestPublicResumeOptionsMergeWithoutMutatingCaller(t *testing.T) {
-	data := map[string]any{"first": 1}
-	var opts RunOptions
-	WithResumeData(data)(&opts)
-	WithResumeData(map[string]any{"second": 2})(&opts)
-	if len(data) != 1 || len(opts.ResumeData) != 2 {
-		t.Fatal("resume options lost prior answers or mutated caller")
-	}
-}
-
 func TestPublicConversationDoesNotDuplicateHistory(t *testing.T) {
 	ctx := context.Background()
 	chatModel := &publicModel{call: true}
 	currentMiddleware := &promptContractMiddleware{}
 	history := conversation.New("", nil, nil, nil, 0, nil)
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, Conversation: history}), WithMiddleware(currentMiddleware), WithTools(agentmodel.ToolDescriptor{Tool: &fakeToolCounter{}}))
+	graph, err := New(ctx, Config{Model: chatModel, Conversation: history, Middlewares: []agentmodel.Middleware{currentMiddleware}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &fakeToolCounter{}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +225,7 @@ func TestRun_ConcurrentRunsDoNotShareState(t *testing.T) {
 	agents := make([]*Graph, 2)
 	for i := range agents {
 		var err error
-		agents[i], err = New(ctx, WithConfig(config))
+		agents[i], err = New(ctx, *config)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -225,7 +237,7 @@ func TestRun_ConcurrentRunsDoNotShareState(t *testing.T) {
 	results := make(chan error, 2)
 	for _, agent := range agents {
 		go func(graph *Graph) {
-			out, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+			out, err := graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 			if err == nil && (out == nil || out.Content != "done") {
 				err = fmt.Errorf("unexpected output: %v", out)
 			}
@@ -256,20 +268,19 @@ func TestRun_SecondRunRejectedWithoutSideEffects(t *testing.T) {
 	ctx := context.Background()
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
 	currentMiddleware := &resourceMiddleware{name: "resource"}
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, Middlewares: []agentmodel.Middleware{currentMiddleware}}))
+	graph, err := New(ctx, Config{Model: chatModel, Middlewares: []agentmodel.Middleware{currentMiddleware}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("first")})
+	_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("first")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	state := graph.runState
 	history := graph.conversation.GetHistory(ctx)
-	optionsCalled := false
-	out, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("second")}, func(*RunOptions) { optionsCalled = true })
-	if err == nil || out != nil || optionsCalled || chatModel.calls != 1 || currentMiddleware.closed != 1 {
-		t.Fatalf("out=%v err=%v options=%v model=%d closed=%d", out, err, optionsCalled, chatModel.calls, currentMiddleware.closed)
+	out, err := graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("second")}}, RunOptions{})
+	if err == nil || out != nil || chatModel.calls != 1 || currentMiddleware.closed != 1 {
+		t.Fatalf("out=%v err=%v model=%d closed=%d", out, err, chatModel.calls, currentMiddleware.closed)
 	}
 	if graph.runState != state || !reflect.DeepEqual(history, graph.conversation.GetHistory(ctx)) {
 		t.Fatal("rejected run changed state or history")
@@ -290,13 +301,13 @@ func TestRun_NewAgentsShareCallerOwnedFilesystem(t *testing.T) {
 	}
 	defer filesystem.Close(context.Background())
 	for i := 0; i < 2; i++ {
-		graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, Filesystem: filesystem, FilesystemConfig: &FilesystemConfig{DisableApplyPatch: true}, Policy: agentmodel.PolicyFunc(func(context.Context, agentmodel.ToolCall, agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
+		graph, err := New(context.Background(), Config{Model: chatModel, Filesystem: filesystem, FilesystemConfig: &deeptools.FilesystemConfig{DisableApplyPatch: true}, Policy: agentmodel.PolicyFunc(func(context.Context, agentmodel.ToolCall, agentmodel.ToolDescriptor) (agentmodel.Decision, error) {
 			return agentmodel.Decision{Action: agentmodel.Allow}, nil
-		})}))
+		})})
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("where")})
+		_, err = graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("where")}}, RunOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -314,7 +325,7 @@ func TestRun_NewAgentsShareCallerOwnedFilesystem(t *testing.T) {
 
 func TestClose_ConcurrentCallWaitsForUnstartedResourceCleanup(t *testing.T) {
 	currentMiddleware := &blockingResourceMiddleware{entered: make(chan struct{}), release: make(chan struct{})}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{}, Middlewares: []agentmodel.Middleware{currentMiddleware}}))
+	graph, err := New(context.Background(), Config{Model: &sequenceModel{}, Middlewares: []agentmodel.Middleware{currentMiddleware}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +352,7 @@ func TestNew_ConstructionFailureClosesResourcesInReverseOrder(t *testing.T) {
 	var order []string
 	first := &resourceMiddleware{name: "first", order: &order, closeErr: closeErr}
 	second := &resourceMiddleware{name: "second", order: &order}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{}, Middlewares: []agentmodel.Middleware{first, second}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &failingInfoTool{err: want}}}}))
+	graph, err := New(context.Background(), Config{Model: &sequenceModel{}, Middlewares: []agentmodel.Middleware{first, second}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &failingInfoTool{err: want}}}})
 	if graph != nil || !errors.Is(err, want) || !errors.Is(err, closeErr) {
 		t.Fatalf("agent=%v err=%v", graph, err)
 	}
@@ -352,7 +363,7 @@ func TestNew_ConstructionFailureClosesResourcesInReverseOrder(t *testing.T) {
 
 func TestClose_UnstartedAgentClosesConstructedResourcesOnce(t *testing.T) {
 	currentMiddleware := &resourceMiddleware{name: "resource"}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{}, Middlewares: []agentmodel.Middleware{currentMiddleware}}))
+	graph, err := New(context.Background(), Config{Model: &sequenceModel{}, Middlewares: []agentmodel.Middleware{currentMiddleware}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,15 +381,15 @@ func TestClose_UnstartedAgentClosesConstructedResourcesOnce(t *testing.T) {
 func TestRun_FailedStartClosesResourcesAndPreservesBothErrors(t *testing.T) {
 	want, closeErr := errors.New("before run failed"), errors.New("close failed")
 	currentMiddleware := &resourceMiddleware{name: "resource", beforeErr: want, closeErr: closeErr}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{}, Middlewares: []agentmodel.Middleware{currentMiddleware}}))
+	graph, err := New(context.Background(), Config{Model: &sequenceModel{}, Middlewares: []agentmodel.Middleware{currentMiddleware}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if !errors.Is(err, want) || !errors.Is(err, closeErr) || currentMiddleware.closed != 1 {
 		t.Fatalf("err=%v closed=%d", err, currentMiddleware.closed)
 	}
-	_, err = graph.Invoke(context.Background(), nil)
+	_, err = graph.Invoke(context.Background(), nil, RunOptions{})
 	if err == nil || currentMiddleware.closed != 1 {
 		t.Fatalf("failed run allowed reuse: err=%v closed=%d", err, currentMiddleware.closed)
 	}
@@ -395,7 +406,7 @@ func TestRun_CloseCancelsCheckpointRead(t *testing.T) {
 	ctx := context.Background()
 	store := &cancelableCheckpointRead{entered: make(chan struct{})}
 	chatModel := &sequenceModel{}
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, CheckpointStore: store}))
+	graph, err := New(ctx, Config{Model: chatModel, CheckpointStore: store})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +414,7 @@ func TestRun_CloseCancelsCheckpointRead(t *testing.T) {
 	defer cancelRun()
 	finished := make(chan error, 1)
 	go func() {
-		_, runErr := graph.Invoke(runCtx, nil, WithCheckpointID("saved"))
+		_, runErr := graph.Invoke(runCtx, nil, RunOptions{CheckpointID: "saved"})
 		finished <- runErr
 	}()
 	select {
@@ -411,7 +422,7 @@ func TestRun_CloseCancelsCheckpointRead(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("checkpoint read did not start")
 	}
-	_, err = graph.Invoke(ctx, nil)
+	_, err = graph.Invoke(ctx, nil, RunOptions{})
 	if err == nil {
 		t.Fatal("second run entered during checkpoint read")
 	}
@@ -441,11 +452,11 @@ func TestRun_ModelOpenErrorClosesReturnedStream(t *testing.T) {
 	reader, writer := schema.Pipe[*agentmodel.Message](0)
 	defer writer.Close()
 	want := errors.New("model opening failed")
-	graph, err := New(context.Background(), WithConfig(&Config{Model: &sequenceModel{}, Middlewares: []agentmodel.Middleware{&streamErrorMiddleware{reader: reader, err: want}}}))
+	graph, err := New(context.Background(), Config{Model: &sequenceModel{}, Middlewares: []agentmodel.Middleware{&streamErrorMiddleware{reader: reader, err: want}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if !errors.Is(err, want) {
 		t.Fatal(err)
 	}
@@ -484,5 +495,71 @@ func TestToolExecutor_OpenErrorClosesReturnedStream(t *testing.T) {
 	case <-time.After(time.Second):
 		reader.Close()
 		t.Fatal("stream was not closed")
+	}
+}
+
+// 同一条输入的 ID、消息和 metadata 一起传递，Graph 只修改自己的消息副本。
+func TestInvokePreservesCompleteInputs(t *testing.T) {
+	ctx := context.Background()
+	identified := agentmodel.NewUserMessage("identified")
+	identified.MessageID, identified.ThreadID, identified.RunID = "source", "old-thread", "old-run"
+	anonymous := agentmodel.NewUserMessage("anonymous")
+	anonymous.MessageID = "not-the-delivery-id"
+	inputs := []agentmodel.RunInput{
+		{MessageID: "skip", Meta: "skip"},
+		{MessageID: "delivery", Message: identified, Meta: map[string]string{"sender": "user"}},
+		{Message: anonymous, Meta: "second-meta"},
+	}
+	var consumed []agentmodel.RunInput
+	graph, err := New(ctx, Config{Model: &publicModel{}, ThreadID: "thread", RunID: "run", Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
+		if event.Kind == "input_consumed" {
+			consumed = append(consumed, event.Data.(agentmodel.RunInput))
+		}
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer graph.Close(ctx)
+	_, err = graph.Invoke(ctx, inputs, RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consumed) != 2 || consumed[0].MessageID != "delivery" || consumed[1].MessageID != "" {
+		t.Fatalf("input identity changed: %+v", consumed)
+	}
+	if consumed[0].Message.MessageID != "delivery" || consumed[1].Message.MessageID != "" || consumed[0].Message.ThreadID != "thread" || consumed[0].Message.RunID != "run" {
+		t.Fatalf("graph message identity changed: %+v", consumed)
+	}
+	if !reflect.DeepEqual(consumed[0].Meta, inputs[1].Meta) || consumed[1].Meta != "second-meta" {
+		t.Fatal("input metadata lost or shifted past nil message")
+	}
+	if identified.MessageID != "source" || identified.ThreadID != "old-thread" || identified.RunID != "old-run" || anonymous.MessageID != "not-the-delivery-id" {
+		t.Fatal("Graph mutated caller messages")
+	}
+}
+
+func TestInvokeKeepsDefaultAndInvocationCallbacks(t *testing.T) {
+	ctx := context.Background()
+	var defaultCalls, invocationCalls int
+	defaultHandler := (&callbacks.HandlerBuilder{}).OnStartFn(func(ctx context.Context, _ *callbacks.RunInfo, _ callbacks.CallbackInput) context.Context {
+		defaultCalls++
+		return ctx
+	}).Build()
+	invocationHandler := (&callbacks.HandlerBuilder{}).OnStartFn(func(ctx context.Context, _ *callbacks.RunInfo, _ callbacks.CallbackInput) context.Context {
+		invocationCalls++
+		return ctx
+	}).Build()
+	graph, err := New(ctx, Config{Model: &publicModel{}, Callbacks: []callbacks.Handler{defaultHandler}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer graph.Close(ctx)
+	_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{Callbacks: []callbacks.Handler{invocationHandler}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultCalls == 0 || invocationCalls != defaultCalls {
+		t.Fatalf("default=%d invocation=%d", defaultCalls, invocationCalls)
 	}
 }

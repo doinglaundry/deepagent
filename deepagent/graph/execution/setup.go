@@ -13,8 +13,8 @@ import (
 // configure 将配置装配为当前 Graph 使用的工具、模型和中间件，不构图、不调用模型。
 // 文件系统归 Thread 管理；装配失败时，这里只清理中间件资源。
 func (graph *Graph) configure(ctx context.Context) (err error) {
-	// 使用配置副本补齐本次 RunID，避免修改原配置。
-	config := *graph.config.Clone()
+	// New 已复制配置；这里补齐用于工具装配的 RunID。
+	config := graph.config
 	config.RunID = graph.runID
 	// 中间件只处理提示和执行钩子，不注册工具。
 	middlewares, err := graph.newRunMiddlewares(ctx)
@@ -66,18 +66,12 @@ func newToolSet(ctx context.Context, config Config) (*tools.ToolSet, error) {
 	if config.SkillLoader != nil {
 		toolDescriptors = append(toolDescriptors, tools.NewActivateSkillTool(config.SkillLoader))
 	}
-	filesystemConfig := config.FilesystemConfig
-	if filesystemConfig != nil && config.Filesystem != nil {
-		featureToolDescriptors, err := tools.NewFilesystemTools(config.Filesystem, tools.FilesystemToolOptions{
-			ReadOnly:       filesystemConfig.ReadOnly,
-			EnableCommands: !filesystemConfig.DisableExecute,
-			EnablePatch:    !filesystemConfig.DisableApplyPatch,
-			CommandTimeout: filesystemConfig.CommandTimeout,
-		})
+	if config.FilesystemConfig != nil && config.Filesystem != nil {
+		filesystemToolDescriptors, err := tools.NewFilesystemTools(config.Filesystem, *config.FilesystemConfig)
 		if err != nil {
 			return nil, err
 		}
-		toolDescriptors = append(toolDescriptors, featureToolDescriptors...)
+		toolDescriptors = append(toolDescriptors, filesystemToolDescriptors...)
 	}
 	if config.WebConfig != nil {
 		featureToolDescriptors, err := tools.NewWebTools(ctx, config.WebConfig)

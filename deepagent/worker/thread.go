@@ -124,7 +124,7 @@ func (w *Worker) createThread(ctx context.Context, info *agentmodel.ThreadRecord
 		SkillLoader:      w.Deps.SkillLoader,
 		WebConfig:        w.Runtime.Web,
 		Filesystem:       filesystem,
-		FilesystemConfig: &execution.FilesystemConfig{},
+		FilesystemConfig: &tools.FilesystemConfig{},
 	}
 	if w.LocalModel != nil {
 		agentConfig.LocalModelParametersFingerprint = w.LocalModel.GetParametersFingerprint()

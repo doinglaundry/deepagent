@@ -49,7 +49,7 @@ func TestWorkerCanonicalRuntimeSubmitToYield(t *testing.T) {
 	assistant := false
 	for {
 		select {
-		case item, ok := <-output.Items:
+		case item, ok := <-output:
 			if !ok {
 				t.Fatal("output closed before yield")
 			}
@@ -105,7 +105,7 @@ func TestWorkerCreatesCanonicalRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output == nil || output.Items == nil {
+	if output == nil {
 		t.Fatal("Thread.Init must initialize the output stream")
 	}
 	err = runtime.Close(context.Background())
@@ -275,7 +275,7 @@ esac
 				if !errors.Is(err, historyErr) || output != nil {
 					t.Fatalf("lost initialization failure: output=%v err=%v", output, err)
 				}
-			} else if err != nil || output == nil || output.Items == nil {
+			} else if err != nil || output == nil {
 				t.Fatalf("Thread was not initialized: output=%v err=%v", output, err)
 			}
 			if cleanupCount() != 0 {

@@ -99,7 +99,7 @@ func TestDockerFilesystemToolsUseProvider(t *testing.T) {
 	}
 	defer dockerFilesystem.Close(ctx)
 	toolsByName := map[string]einotool.InvokableTool{}
-	toolDescriptors, err := tools.NewFilesystemTools(dockerFilesystem, tools.FilesystemToolOptions{EnableCommands: true, EnablePatch: true})
+	toolDescriptors, err := tools.NewFilesystemTools(dockerFilesystem, tools.FilesystemConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

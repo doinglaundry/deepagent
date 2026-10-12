@@ -24,7 +24,7 @@ func TestTools_AllRegisteredNamesSchemasAndArgumentAliases(t *testing.T) {
 	defer filesystem.Close(ctx)
 	toolsByName := map[string]einotool.InvokableTool{}
 	descriptorsByName := map[string]agentmodel.ToolDescriptor{}
-	toolDescriptors, err := NewFilesystemTools(filesystem, FilesystemToolOptions{EnableCommands: true, EnablePatch: true})
+	toolDescriptors, err := NewFilesystemTools(filesystem, FilesystemConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestWorkspaceToolSchemasMatchLocalAndDocker(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer dockerFilesystem.Close(ctx)
-	for _, options := range []FilesystemToolOptions{{ReadOnly: true}, {EnableCommands: true, EnablePatch: true}} {
+	for _, options := range []FilesystemConfig{{ReadOnly: true}, {}} {
 		toolSchemas := make([]map[string]any, 0, 2)
 		for _, filesystem := range []agentmodel.ToolFilesystem{localFilesystem, dockerFilesystem} {
 			toolDescriptors, err := NewFilesystemTools(filesystem, options)
@@ -336,7 +336,7 @@ func (patchProbe *applyPatchProbe) ApplyPatch(_ context.Context, patch string) (
 
 func TestReadOnlyFilesystemOmitsMutations(t *testing.T) {
 	filesystem := newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
-	toolDescriptors, err := NewFilesystemTools(filesystem, FilesystemToolOptions{ReadOnly: true, EnableCommands: true, EnablePatch: true})
+	toolDescriptors, err := NewFilesystemTools(filesystem, FilesystemConfig{ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,6 +355,42 @@ func TestReadOnlyFilesystemOmitsMutations(t *testing.T) {
 	expectedToolNames := []string{"list_files", "read_file", "glob", "grep", "rg", "semantic_search"}
 	if !reflect.DeepEqual(toolNames, expectedToolNames) {
 		t.Fatalf("read-only tools = %v, want %v", toolNames, expectedToolNames)
+	}
+}
+
+func TestFilesystemConfigSelectsTools(t *testing.T) {
+	filesystem := newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: t.TempDir(), VirtualMode: true})
+	for _, test := range []struct {
+		name     string
+		config   FilesystemConfig
+		count    int
+		writable bool
+		commands bool
+		patch    bool
+	}{
+		{name: "defaults", count: 14, writable: true, commands: true, patch: true},
+		{name: "without commands", config: FilesystemConfig{DisableExecute: true}, count: 10, writable: true, patch: true},
+		{name: "without patch", config: FilesystemConfig{DisableApplyPatch: true}, count: 13, writable: true, commands: true},
+		{name: "files only", config: FilesystemConfig{DisableExecute: true, DisableApplyPatch: true}, count: 9, writable: true},
+		{name: "read only", config: FilesystemConfig{ReadOnly: true}, count: 6},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			descriptors, err := NewFilesystemTools(filesystem, test.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			names := make(map[string]bool)
+			for _, descriptor := range descriptors {
+				info, err := descriptor.Tool.Info(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				names[info.Name] = true
+			}
+			if len(names) != test.count || !names["read_file"] || names["write_file"] != test.writable || names["execute"] != test.commands || names["apply_patch"] != test.patch {
+				t.Fatalf("unexpected filesystem tools: %v", names)
+			}
+		})
 	}
 }
 

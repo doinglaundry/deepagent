@@ -11,24 +11,18 @@ import (
 	"github.com/cloudwego/eino/compose"
 )
 
-func (graph *Graph) newRunState(inputMessages []*agentmodel.Message, runOptions RunOptions) *agentmodel.RunState {
+// 输入 ID 是投递身份，即使为空也覆盖消息原有的 ID；nil 消息不进入执行。
+func (graph *Graph) newRunState(inputs []agentmodel.RunInput) *agentmodel.RunState {
 	runState := &agentmodel.RunState{Version: 1, LocalModelParametersFingerprint: graph.config.LocalModelParametersFingerprint, ThreadID: graph.config.ThreadID, RunID: graph.runID, Depth: graph.config.Depth, Phase: agentmodel.PhasePreparing}
-	for i, message := range inputMessages {
-		if message != nil {
-			copy := *message
-			copy.ThreadID, copy.RunID = graph.config.ThreadID, graph.runID
-			consumedInput := agentmodel.RunInput{MessageID: copy.MessageID, Message: &copy}
-			if i < len(runOptions.InputIDs) {
-				consumedInput.MessageID = runOptions.InputIDs[i]
-				consumedInput.Message.MessageID = consumedInput.MessageID
-			}
-			if i < len(runOptions.InputMeta) {
-				consumedInput.Meta = runOptions.InputMeta[i]
-			}
-			runState.Consumed = append(runState.Consumed, consumedInput)
+	for _, input := range inputs {
+		if input.Message == nil {
+			continue
 		}
+		message := *input.Message
+		message.MessageID, message.ThreadID, message.RunID = input.MessageID, graph.config.ThreadID, graph.runID
+		input.Message = &message
+		runState.Consumed = append(runState.Consumed, input)
 	}
-
 	return runState
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	filesystempkg "eino-cli/deepagent/graph/filesystem"
+	"eino-cli/deepagent/graph/tools"
 	agentmodel "eino-cli/deepagent/model"
 
 	"github.com/cloudwego/eino/compose"
@@ -21,11 +22,11 @@ func TestRun_ModelToolModel(t *testing.T) {
 	call := schema.ToolCall{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{call})}, {schema.AssistantMessage("done", nil)}}}
 	tool := &countingTool{}
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}}))
+	graph, err := New(ctx, Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	out, err := graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +41,11 @@ func TestRun_ModelToolModel(t *testing.T) {
 func TestRun_ReturnDirectDoesNotCallModelAgain(t *testing.T) {
 	ctx := context.Background()
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "direct"}}})}}}
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, ReturnDirect: true}}}))
+	graph, err := New(ctx, Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, ReturnDirect: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	out, err := graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,11 +60,11 @@ func TestRun_ApprovalDenyNeverExecutesTool(t *testing.T) {
 	tool := &countingTool{}
 	model := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "approved-call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}, {schema.AssistantMessage("denied acknowledged", nil)}}}
 	config := Config{Model: model, RunID: "run", ThreadID: "thread", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: tool, RequiresApproval: true}}}
-	first, err := New(ctx, WithConfig(&config))
+	first, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("do it")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("do it")}}, RunOptions{CheckpointID: "checkpoint"})
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatalf("expected checkpointed interruption, got %v", err)
@@ -76,12 +77,12 @@ func TestRun_ApprovalDenyNeverExecutesTool(t *testing.T) {
 		t.Fatalf("approval lost tool identity: %+v", info.InterruptContexts[0].Info)
 	}
 	config.Conversation = first.conversation
-	restored, err := New(ctx, WithConfig(&config))
+	restored, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reason := "do not change this file"
-	out, err := restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "approved-call", Approved: false, DisapproveReason: &reason}}))
+	out, err := restored.Invoke(ctx, nil, RunOptions{CheckpointID: "checkpoint", ResumeData: map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "approved-call", Approved: false, DisapproveReason: &reason}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,12 +110,12 @@ func TestRun_FilesystemWriteRequiresApprovalWithoutExplicitPolicy(t *testing.T) 
 	}}
 	config := Config{ThreadID: "thread", RunID: "run", Model: model, CheckpointStore: store,
 		Filesystem:       newTestLocalFilesystem(t, &filesystempkg.LocalFilesystemConfig{RootDir: root, VirtualMode: true}),
-		FilesystemConfig: &FilesystemConfig{DisableExecute: true, DisableApplyPatch: true}}
-	first, err := New(ctx, WithConfig(&config))
+		FilesystemConfig: &tools.FilesystemConfig{DisableExecute: true, DisableApplyPatch: true}}
+	first, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("write")}, WithCheckpointID("checkpoint"))
+	_, err = first.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("write")}}, RunOptions{CheckpointID: "checkpoint"})
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
 		descriptor, found := first.toolSet.GetToolDescriptor("write_file")
@@ -125,13 +126,13 @@ func TestRun_FilesystemWriteRequiresApprovalWithoutExplicitPolicy(t *testing.T) 
 		t.Fatalf("write ran before approval: %v", statErr)
 	}
 	config.Conversation = first.conversation
-	restored, err := New(ctx, WithConfig(&config))
+	restored, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{
+	_, err = restored.Invoke(ctx, nil, RunOptions{CheckpointID: "checkpoint", ResumeData: map[string]any{
 		info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "write", Approved: true},
-	}))
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,11 +148,11 @@ func TestRun_FilesystemWriteRequiresApprovalWithoutExplicitPolicy(t *testing.T) 
 func TestCheckpoint_SaveFailureDoesNotPublishBlocked(t *testing.T) {
 	ctx := context.Background()
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Type: "function", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, CheckpointStore: &checkpointMemory{fail: true}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}}))
+	graph, err := New(ctx, Config{Model: chatModel, CheckpointStore: &checkpointMemory{fail: true}, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}, RequiresApproval: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("input")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("input")}}, RunOptions{CheckpointID: "checkpoint"})
 	if err == nil {
 		t.Fatal("checkpoint failure swallowed")
 	}
@@ -174,11 +175,11 @@ func TestRun_ResumeDoesNotRepeatCompletedTool(t *testing.T) {
 	approvalTool := &namedCountingTool{name: "approval"}
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "1", Type: "function", Function: schema.FunctionCall{Name: "first", Arguments: "{}"}}, {ID: "2", Type: "function", Function: schema.FunctionCall{Name: "approval", Arguments: "{}"}}})}, {schema.AssistantMessage("done", nil)}}}
 	config := Config{Model: chatModel, RunID: "run", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: firstTool}, {Tool: approvalTool, RequiresApproval: true}}}
-	graph, err := New(ctx, WithConfig(&config))
+	graph, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("input")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("input")}}, RunOptions{CheckpointID: "checkpoint"})
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok {
 		t.Fatal(err)
@@ -187,23 +188,23 @@ func TestRun_ResumeDoesNotRepeatCompletedTool(t *testing.T) {
 		t.Fatal("wrong pre-interrupt side effects")
 	}
 	config.Conversation = graph.conversation
-	restored, err := New(ctx, WithConfig(&config))
+	restored, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}))
+	_, err = restored.Invoke(ctx, nil, RunOptions{CheckpointID: "checkpoint", ResumeData: map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if firstTool.count != 1 || approvalTool.count != 1 {
 		t.Fatalf("replayed tools first=%d approved=%d", firstTool.count, approvalTool.count)
 	}
-	replay, err := New(ctx, WithConfig(&config))
+	replay, err := New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer replay.Close(ctx)
-	_, err = replay.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}))
+	_, err = replay.Invoke(ctx, nil, RunOptions{CheckpointID: "checkpoint", ResumeData: map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{Approved: true}}})
 	if err == nil || firstTool.count != 1 || approvalTool.count != 1 || chatModel.calls != 2 {
 		t.Fatalf("completed checkpoint replayed: err=%v first=%d approved=%d model=%d", err, firstTool.count, approvalTool.count, chatModel.calls)
 	}
@@ -229,11 +230,11 @@ func TestRun_EagerExecutesBeforeModelStreamEnds(t *testing.T) {
 					return agentmodel.Decision{Action: agentmodel.Allow}, nil
 				})
 			}
-			graph, err := New(ctx, WithConfig(config))
+			graph, err := New(ctx, *config)
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+			result, err := graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -248,7 +249,7 @@ func TestRun_EmitsTokensAndReturnsFinalMessage(t *testing.T) {
 	ctx := context.Background()
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("hel", nil), schema.AssistantMessage("lo", nil)}}}
 	var text string
-	graph, err := New(ctx, WithConfig(&Config{
+	graph, err := New(ctx, Config{
 		Model: chatModel,
 		Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
 			if event.Kind == "llm_token" {
@@ -256,12 +257,12 @@ func TestRun_EmitsTokensAndReturnsFinalMessage(t *testing.T) {
 			}
 			return nil
 		},
-	}))
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	result, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	result, err := graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,13 +280,13 @@ func TestRun_CancelAndAgentCloseReleaseResources(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			chatModel := &cancelModel{started: make(chan struct{}), stopped: make(chan struct{})}
-			graph, err := New(ctx, WithModel(chatModel))
+			graph, err := New(ctx, Config{Model: chatModel})
 			if err != nil {
 				t.Fatal(err)
 			}
 			finished := make(chan error, 1)
 			go func() {
-				_, runErr := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("wait")})
+				_, runErr := graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("wait")}}, RunOptions{})
 				finished <- runErr
 			}()
 			select {
@@ -327,14 +328,14 @@ func TestRun_CancelAndAgentCloseReleaseResources(t *testing.T) {
 func TestGraph_InterruptBeforeInvokeDoesNotClaimExecution(t *testing.T) {
 	ctx := context.Background()
 	model := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("answer", nil)}}}
-	compiledGraph, err := New(ctx, WithModel(model))
+	compiledGraph, err := New(ctx, Config{Model: model})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if compiledGraph.Interrupt() {
 		t.Fatal("unstarted graph claimed an active interruption")
 	}
-	result, err := compiledGraph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	result, err := compiledGraph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

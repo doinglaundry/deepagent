@@ -12,10 +12,11 @@ type SandboxInfo struct {
 	CreatedAt     time.Time
 }
 
-// warmEntry is a released sandbox whose container is still up for re-acquire.
-type warmEntry struct {
-	info       SandboxInfo
-	releasedAt time.Time
+// managedContainer 是本会话唯一的容器；sandbox 为 nil 时已释放，但容器仍可复用。
+type managedContainer struct {
+	sandbox   *Sandbox
+	info      SandboxInfo
+	idleSince time.Time // 访问或释放时重新计时；释放后保留一个完整的空闲窗口。
 }
 
 const (

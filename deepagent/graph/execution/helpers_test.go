@@ -384,14 +384,6 @@ func (pendingSnapshotStore *pendingSnapshotStore) Set(ctx context.Context, id st
 	return pendingSnapshotStore.checkpointMemory.Set(ctx, id, raw)
 }
 
-func buildTestConfig(opts ...Option) *Config {
-	config := &Config{}
-	for _, opt := range opts {
-		opt(config)
-	}
-	return config
-}
-
 type publicModel struct {
 	infos  []*schema.ToolInfo
 	inputs [][]*schema.Message
@@ -561,11 +553,11 @@ func testChildApprovalResume(t *testing.T, allow bool) {
 	}}
 	store := &checkpointMemory{}
 	graphConfig := Config{SubAgents: []*SubAgent{{Name: "general-purpose"}}, Model: chatModel, ThreadID: "parent", RunID: "run", CheckpointStore: store, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: first}, {Tool: approved, RequiresApproval: true}}}
-	graph, err := New(ctx, WithConfig(&graphConfig))
+	graph, err := New(ctx, graphConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("delegate")}, WithCheckpointID("checkpoint"))
+	_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("delegate")}}, RunOptions{CheckpointID: "checkpoint"})
 	info, ok := compose.ExtractInterruptInfo(err)
 	if !ok || len(info.InterruptContexts) != 1 {
 		t.Fatalf("missing child approval: %v %+v", err, info)
@@ -580,11 +572,11 @@ func testChildApprovalResume(t *testing.T, allow bool) {
 		t.Fatal("child checkpoint not embedded")
 	}
 	graphConfig.Conversation = graph.conversation
-	restored, err := New(ctx, WithConfig(&graphConfig))
+	restored, err := New(ctx, graphConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := restored.Invoke(ctx, nil, WithCheckpointID("checkpoint"), WithResumeData(map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "approved", Approved: allow}}))
+	out, err := restored.Invoke(ctx, nil, RunOptions{CheckpointID: "checkpoint", ResumeData: map[string]any{info.InterruptContexts[0].ID: &agentmodel.ApprovalResult{CallID: "approved", Approved: allow}}})
 	if err != nil {
 		t.Fatal(err)
 	}

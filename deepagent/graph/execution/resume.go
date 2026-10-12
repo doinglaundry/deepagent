@@ -74,7 +74,10 @@ type approvalCancelKey struct{}
 func init() { schema.RegisterName[*initialCheckpoint]("deepagent_initial_checkpoint_v1") }
 
 func (graph *Graph) invokeGraph(ctx context.Context, runState *agentmodel.RunState, runOptions RunOptions) (result *agentmodel.Message, initialCheckpointSaved bool, err error) {
-	invokeOptions := append([]compose.Option(nil), runOptions.composeOpts...)
+	var invokeOptions []compose.Option
+	if len(runOptions.Callbacks) > 0 {
+		invokeOptions = append(invokeOptions, compose.WithCallbacks(runOptions.Callbacks...))
+	}
 	if len(graph.config.Callbacks) > 0 {
 		invokeOptions = append(invokeOptions, compose.WithCallbacks(graph.config.Callbacks...))
 	}

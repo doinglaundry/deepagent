@@ -22,11 +22,11 @@ func TestRun_CompactionEventsAtEachSamplingBoundary(t *testing.T) {
 		{schema.AssistantMessage("done", nil)},
 	}}
 	var events []agentmodel.RuntimeEvent
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, Conversation: c, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error { events = append(events, e); return nil }}))
+	graph, err := New(ctx, Config{Model: chatModel, Conversation: c, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &countingTool{}}}, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error { events = append(events, e); return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, executeErr := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, executeErr := graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -64,16 +64,16 @@ func TestRun_FailedCompactionNeverPublishesSuccessOrCallsModel(t *testing.T) {
 	want := errors.New("compaction store failed")
 	c := &compactionEventConversation{Conversation: conversation.New("thread", nil, nil, nil, 0, nil), err: want}
 	chatModel := &sequenceModel{}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, Conversation: c, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error {
+	graph, err := New(context.Background(), Config{Model: chatModel, Conversation: c, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error {
 		if e.Kind == "context_compacted" {
 			t.Error("published false success")
 		}
 		return nil
-	}}))
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if !errors.Is(err, want) || chatModel.calls != 0 {
 		t.Fatalf("err=%v calls=%d", err, chatModel.calls)
 	}
@@ -90,17 +90,17 @@ func TestRun_AutomaticThresholdCompactionRetainsRecentInput(t *testing.T) {
 	}
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
 	compacted := false
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, Conversation: history, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error {
+	graph, err := New(ctx, Config{Model: chatModel, Conversation: history, Emit: func(_ context.Context, e agentmodel.RuntimeEvent) error {
 		if e.Kind == "context_compacted" {
 			compacted = true
 		}
 		return nil
-	}}))
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(ctx)
-	_, err = graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("newest")})
+	_, err = graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("newest")}}, RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,13 +114,13 @@ func TestRun_ToolPanicDoesNotHangCleanup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})}}}
-	graph, err := New(ctx, WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &panicTool{}}}}))
+	graph, err := New(ctx, Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &panicTool{}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := graph.Invoke(ctx, []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+		_, err := graph.Invoke(ctx, []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 		done <- err
 	}()
 	select {
@@ -146,14 +146,14 @@ func TestRun_ModelAndToolStreamsPreserveOrder(t *testing.T) {
 		{schema.AssistantMessage("calling", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "stream_tool", Arguments: "{}"}}})},
 		{schema.AssistantMessage("done", nil)},
 	}}
-	graph, err := New(context.Background(), WithConfig(&Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &eventStreamTool{}}}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
+	graph, err := New(context.Background(), Config{Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &eventStreamTool{}}}, Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
 		events = append(events, event)
 		return nil
-	}}))
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, executeErr := graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, executeErr := graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if executeErr != nil {
 		t.Fatal(executeErr)
 	}
@@ -208,7 +208,7 @@ func TestRun_InputConsumedEventsFollowSuccessfulHistoryWrites(t *testing.T) {
 			meta := map[string]string{"Sender": "user"}
 			var consumed []agentmodel.RunInput
 			chatModel := &sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("done", nil)}}}
-			graph, err := New(ctx, WithConfig(&Config{Model: chatModel, Conversation: history, Emit: func(ctx context.Context, event agentmodel.RuntimeEvent) error {
+			graph, err := New(ctx, Config{Model: chatModel, Conversation: history, Emit: func(ctx context.Context, event agentmodel.RuntimeEvent) error {
 				if event.Kind != "input_consumed" {
 					return nil
 				}
@@ -219,12 +219,12 @@ func TestRun_InputConsumedEventsFollowSuccessfulHistoryWrites(t *testing.T) {
 				}
 				consumed = append(consumed, input)
 				return nil
-			}}))
+			}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer graph.Close(ctx)
-			_, err = graph.Invoke(ctx, messages, WithInputMetadata(meta, "second-meta"))
+			_, err = graph.Invoke(ctx, []agentmodel.RunInput{{MessageID: messages[0].MessageID, Message: messages[0], Meta: meta}, {Message: messages[1], Meta: "second-meta"}}, RunOptions{})
 			want := 2
 			if fail {
 				want = 1
@@ -253,7 +253,7 @@ func TestRun_ToolEndDistinguishesFailedMutation(t *testing.T) {
 		{schema.AssistantMessage("failed tool handled", nil)},
 	}}
 	failed := false
-	graph, err := New(context.Background(), WithConfig(&Config{
+	graph, err := New(context.Background(), Config{
 		Model: chatModel, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: &failingContractTool{failure: errors.New("permission denied")}}},
 		Emit: func(_ context.Context, event agentmodel.RuntimeEvent) error {
 			if event.Kind != "tool_end" {
@@ -271,12 +271,12 @@ func TestRun_ToolEndDistinguishesFailedMutation(t *testing.T) {
 			failed = fields["IsError"] == true
 			return nil
 		},
-	}))
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer graph.Close(context.Background())
-	_, err = graph.Invoke(context.Background(), []*agentmodel.Message{agentmodel.NewUserMessage("go")})
+	_, err = graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("go")}}, RunOptions{})
 	if err != nil || !failed {
 		t.Fatalf("failed tool reported as success: err=%v failure=%v", err, failed)
 	}

@@ -155,3 +155,48 @@ func TestSearchUsesConfiguredEndpoint(t *testing.T) {
 		t.Fatalf("web_search = %q, %v", output, err)
 	}
 }
+
+// A documented web.enabled-only configuration must expose usable tools.
+func TestWebEnabledUsesDefaultToolsAndPreservesExplicitSelection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("WEB_ENABLED_OK " + r.URL.Query().Get("q")))
+	}))
+	defer server.Close()
+	for _, testCase := range []struct {
+		name   string
+		config WebConfig
+		want   []string
+	}{
+		{name: "disabled", config: WebConfig{}, want: nil},
+		{name: "enabled_read", config: WebConfig{Enabled: true}, want: []string{"read_url"}},
+		{name: "enabled_search", config: WebConfig{Enabled: true, SearchURL: server.URL}, want: []string{"read_url", "web_search"}},
+		{name: "explicit_read", config: WebConfig{Enabled: true, EnableFetchURL: true, SearchURL: server.URL}, want: []string{"read_url"}},
+		{name: "explicit_search", config: WebConfig{Enabled: true, EnableWebSearch: true, SearchURL: server.URL}, want: []string{"web_search"}},
+		{name: "select_read_without_master", config: WebConfig{EnableFetchURL: true}, want: []string{"read_url"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			descriptors, err := NewWebTools(ctx, &testCase.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(descriptors) != len(testCase.want) {
+				t.Fatalf("registered %d tools, want %v", len(descriptors), testCase.want)
+			}
+			for index, descriptor := range descriptors {
+				info, err := descriptor.Tool.Info(ctx)
+				if err != nil || info.Name != testCase.want[index] {
+					t.Fatalf("tool %d: info=%+v err=%v", index, info, err)
+				}
+				arguments := `{"url":"` + server.URL + `"}`
+				if info.Name == "web_search" {
+					arguments = `{"query":"selection works"}`
+				}
+				output, err := descriptor.Tool.(tool.InvokableTool).InvokableRun(ctx, arguments)
+				if err != nil || !strings.Contains(output, "WEB_ENABLED_OK") {
+					t.Fatalf("%s unusable: output=%q err=%v", info.Name, output, err)
+				}
+			}
+		})
+	}
+}
