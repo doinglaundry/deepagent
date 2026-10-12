@@ -353,3 +353,88 @@ func TestModelStreamRejectsEmptyAnswer(t *testing.T) {
 		})
 	}
 }
+
+type finalAnswerModel struct {
+	sequenceModel
+	finalToolChoice *schema.ToolChoice
+}
+
+func (chatModel *finalAnswerModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return chatModel, nil
+}
+
+func (chatModel *finalAnswerModel) Stream(ctx context.Context, input []*schema.Message, options ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	if chatModel.calls == 1 {
+		chatModel.finalToolChoice = model.GetCommonOptions(nil, options...).ToolChoice
+	}
+	return chatModel.sequenceModel.Stream(ctx, input, options...)
+}
+
+func TestFinalModelCallSummarizesWithoutExecutingMoreTools(t *testing.T) {
+	chatModel := &finalAnswerModel{sequenceModel: sequenceModel{responses: [][]*schema.Message{
+		{schema.AssistantMessage("", []schema.ToolCall{{ID: "call", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})},
+		{schema.AssistantMessage("Here are the available results; further research was stopped.", nil)},
+	}}}
+	counter := &countingTool{}
+	graph, err := New(context.Background(), Config{Model: chatModel, MaxModelCalls: 2, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer graph.Close(context.Background())
+	output, err := graph.Invoke(context.Background(), []agentmodel.RunInput{{Message: agentmodel.NewUserMessage("research")}}, RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.Content, "available results") || counter.count.Load() != 1 || chatModel.calls != 2 {
+		t.Fatalf("output=%v calls=%d tool=%d", output, chatModel.calls, counter.count.Load())
+	}
+	if chatModel.finalToolChoice == nil || *chatModel.finalToolChoice != schema.ToolChoiceForbidden {
+		t.Fatal("final request still permits tools")
+	}
+	found := false
+	for _, message := range chatModel.inputs[1] {
+		if message.Role == schema.System && strings.Contains(message.Content, "Summarize") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing final answer instruction")
+	}
+}
+
+func TestResearchBudgetForcesSummaryBeforeModelCallLimit(t *testing.T) {
+	chatModel := &finalAnswerModel{sequenceModel: sequenceModel{responses: [][]*schema.Message{{schema.AssistantMessage("Only verified findings.", nil)}}}}
+	graph, err := New(context.Background(), Config{Model: chatModel, MaxModelCalls: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer graph.Close(context.Background())
+	graph.toolExecutor = newToolExecutor(graph.toolSet, graph.config.Parallelism, graph.config.Policy)
+	state := graph.newRunState([]agentmodel.RunInput{{Message: agentmodel.NewUserMessage("research")}})
+	state.WebSearchFailures = 3
+	_, err = graph.callModel(context.Background(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chatModel.calls != 1 || !strings.Contains(chatModel.inputs[0][0].Content, "budget has been reached") {
+		t.Fatal("research budget did not trigger early final answer")
+	}
+}
+
+func TestFinalModelCallCannotEagerlyExecuteUnexpectedTools(t *testing.T) {
+	call := schema.AssistantMessage("", []schema.ToolCall{{ID: "extra", Function: schema.FunctionCall{Name: "counter", Arguments: "{}"}}})
+	chatModel := &sequenceModel{responses: [][]*schema.Message{{call}}}
+	counter := &countingTool{}
+	graph, err := New(context.Background(), Config{Model: chatModel, MaxModelCalls: 2, EnableEagerTools: true, ToolDescriptors: []agentmodel.ToolDescriptor{{Tool: counter, ReadOnly: true, ParallelSafe: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer graph.Close(context.Background())
+	graph.toolExecutor = newToolExecutor(graph.toolSet, graph.config.Parallelism, graph.config.Policy)
+	state := graph.newRunState(nil)
+	state.ModelCalls = 1
+	_, err = graph.callModel(context.Background(), state)
+	if !errors.Is(err, ErrExceedMaxModelCalls) || counter.count.Load() != 0 {
+		t.Fatalf("unexpected final tool ran: err=%v count=%d", err, counter.count.Load())
+	}
+}

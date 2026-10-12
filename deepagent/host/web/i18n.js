@@ -1,6 +1,7 @@
 // Interface labels only. User messages, model replies and file contents stay unchanged.
 let language = localStorage.language === 'en' ? 'en' : 'zh';
 const english = {
+  "思考过程": "Reasoning",
   "查看完整回复": "Read full reply",
   "静海": "Still sea",
   "工作空间导航": "Workspace navigation",

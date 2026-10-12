@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 	"unicode"
 
 	agentmodel "eino-cli/deepagent/model"
@@ -37,6 +38,8 @@ func (graph *Graph) callModel(ctx context.Context, runState *agentmodel.RunState
 	}
 	runState.Phase = agentmodel.PhaseModeling
 	runState.ModelCalls++
+	// 留最后一次调用整理结果，避免工具循环把全部次数耗光后只返回报错。
+	finalAnswerOnly := (graph.config.MaxModelCalls > 1 && runState.ModelCalls == graph.config.MaxModelCalls) || runState.WebSearchFailures >= 3 || runState.WebSearchDuration >= 2*time.Minute
 	prompts := append([]*agentmodel.Message(nil), graph.config.Prompts...)
 	for _, currentMiddleware := range graph.middlewares {
 		promptMessages, err := currentMiddleware.BuildPrompt(ctx)
@@ -55,12 +58,19 @@ func (graph *Graph) callModel(ctx context.Context, runState *agentmodel.RunState
 			return nil, err
 		}
 	}
+	if finalAnswerOnly {
+		requestMessages = append([]*agentmodel.Message{agentmodel.NewSystemMessage("The execution or Web research budget has been reached. Summarize the results already obtained, state what could not be verified and why, and provide a useful final answer. Do not call any tools or invent missing results.")}, requestMessages...)
+	}
 	err = graph.emitEvent(ctx, runState, "llm_requesting", "", agentmodel.LLMRequestingPayload{Messages: requestMessages})
 	if err != nil {
 		return nil, err
 	}
 	modelHandler := agentmodel.ModelHandler(func(ctx context.Context, input []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
-		stream, err := graph.chatModel.Stream(ctx, agentmodel.ToEinoMessages(input))
+		var options []model.Option
+		if finalAnswerOnly {
+			options = append(options, model.WithToolChoice(schema.ToolChoiceForbidden))
+		}
+		stream, err := graph.chatModel.Stream(ctx, agentmodel.ToEinoMessages(input), options...)
 		if stream == nil {
 			return nil, err
 		}
@@ -124,7 +134,7 @@ func (graph *Graph) callModel(ctx context.Context, runState *agentmodel.RunState
 		messagePart := *chunk
 		messagePart.ToolCalls = nil
 		messageChunks = append(messageChunks, &messagePart)
-		if graph.enableEagerTools {
+		if graph.enableEagerTools && !finalAnswerOnly {
 			for _, toolCall := range readyToolCalls {
 				hasStartedEagerTool, err := graph.toolExecutor.startEagerToolIfAllowed(ctx, toolCall, func(ctx context.Context, toolCall agentmodel.ToolCall, chunk string) error {
 					return graph.emitEvent(ctx, runState, "tool_call_output_chunk", toolCall.ID, agentmodel.ToolCallOutputChunkPayload{Name: toolCall.Name, CallID: toolCall.ID, Chunk: chunk})
@@ -172,6 +182,9 @@ func (graph *Graph) callModel(ctx context.Context, runState *agentmodel.RunState
 		if response == nil {
 			return nil, fmt.Errorf("middleware returned nil model message")
 		}
+	}
+	if finalAnswerOnly && len(response.ToolCalls) > 0 {
+		return nil, fmt.Errorf("%w: final response must not call tools", ErrExceedMaxModelCalls)
 	}
 	// 角色、用量和推理分片不代表已经生成答案，不能据此宣告任务完成。
 	if strings.TrimSpace(response.Content) == "" && len(response.ToolCalls) == 0 && len(response.MultiContent) == 0 && len(response.AssistantGenMultiContent) == 0 {

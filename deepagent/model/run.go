@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/gob"
 	"encoding/json"
+	"time"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -73,6 +74,9 @@ type RunState struct {
 	Pending                         []Interrupt
 	Usage                           RunUsage
 	Extensions                      map[string]json.RawMessage
+	// 联网预算随 checkpoint 保存；只累计网页请求用时，不计审批和模型思考。
+	WebSearchDuration time.Duration
+	WebSearchFailures int
 }
 
 type RunUsage struct {

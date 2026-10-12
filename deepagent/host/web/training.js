@@ -12,7 +12,7 @@ async function loadTrainingData() {
   messagesByKey.forEach(renderTrainingButton); renderTrainingData();
 }
 function renderTrainingButton(record) {
-  if (!trainingEnabled || !record.finished || !record.messageID || !record.trainingEligible) return;
+  if (!trainingEnabled || !record.finished || !record.text || !record.messageID || !record.trainingEligible) return;
   let button = record.trainingButton;
   if (!button) {
     button = document.createElement('button'); button.type = 'button'; button.className = 'training-action';

@@ -3,11 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	agentmodel "eino-cli/deepagent/model"
@@ -32,7 +34,7 @@ type WebConfig struct {
 }
 
 func NewDefaultWebConfig() *WebConfig {
-	return &WebConfig{Enabled: true, MaxResults: 5, Topic: "general", EnableWebSearch: true, EnableFetchURL: true, TimeoutSeconds: 30, MaxBytes: 1 << 20}
+	return &WebConfig{Enabled: true, MaxResults: 5, Topic: "general", EnableWebSearch: true, EnableFetchURL: true, TimeoutSeconds: 20, MaxBytes: 1 << 20}
 }
 
 // NewWebTools supplies model-callable Web actions without owning agent lifecycle.
@@ -50,7 +52,7 @@ func NewWebTools(ctx context.Context, webConfig *WebConfig) ([]agentmodel.ToolDe
 	if httpClient == nil {
 		timeout := time.Duration(webConfig.TimeoutSeconds) * time.Second
 		if timeout <= 0 {
-			timeout = 30 * time.Second
+			timeout = 20 * time.Second
 		}
 		httpClient = &http.Client{Timeout: timeout}
 	}
@@ -60,12 +62,14 @@ func NewWebTools(ctx context.Context, webConfig *WebConfig) ([]agentmodel.ToolDe
 	}
 	// 只配置 enabled 时启用默认工具；指定单项开关时保留该选择。
 	enableDefaults := webConfig.Enabled && !webConfig.EnableFetchURL && !webConfig.EnableWebSearch
+	// 同一 Run 的搜索和读网页共用预算；串行访问避免并行请求透支额度。
+	requestMutex, standaloneBudget := &sync.Mutex{}, &agentmodel.RunState{}
 	var toolDescriptors []agentmodel.ToolDescriptor
 	if webConfig.EnableFetchURL || enableDefaults {
-		toolDescriptors = append(toolDescriptors, agentmodel.ToolDescriptor{Tool: &webTool{client: httpClient, maxBytes: maxBytes}, ReadOnly: true})
+		toolDescriptors = append(toolDescriptors, agentmodel.ToolDescriptor{Tool: &webTool{client: httpClient, maxBytes: maxBytes, requestMutex: requestMutex, standaloneBudget: standaloneBudget}, ReadOnly: true})
 	}
 	if (webConfig.EnableWebSearch || enableDefaults) && webConfig.SearchURL != "" {
-		toolDescriptors = append(toolDescriptors, agentmodel.ToolDescriptor{Tool: &webTool{client: httpClient, maxBytes: maxBytes, searchURL: webConfig.SearchURL, headers: webConfig.Headers}, ReadOnly: true})
+		toolDescriptors = append(toolDescriptors, agentmodel.ToolDescriptor{Tool: &webTool{client: httpClient, maxBytes: maxBytes, requestMutex: requestMutex, standaloneBudget: standaloneBudget, searchURL: webConfig.SearchURL, headers: webConfig.Headers}, ReadOnly: true})
 	}
 	if webConfig.ToolMask == nil {
 		return toolDescriptors, nil
@@ -85,10 +89,12 @@ func NewWebTools(ctx context.Context, webConfig *WebConfig) ([]agentmodel.ToolDe
 }
 
 type webTool struct {
-	client    *http.Client
-	maxBytes  int64
-	searchURL string
-	headers   map[string]string
+	client           *http.Client
+	maxBytes         int64
+	searchURL        string
+	headers          map[string]string
+	requestMutex     *sync.Mutex
+	standaloneBudget *agentmodel.RunState
 }
 
 func (webTool *webTool) Info(context.Context) (*schema.ToolInfo, error) {
@@ -101,7 +107,7 @@ func (webTool *webTool) Info(context.Context) (*schema.ToolInfo, error) {
 	})}, nil
 }
 
-func (webTool *webTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
+func (webTool *webTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (output string, err error) {
 	var webArgs struct {
 		URL   string `json:"url"`
 		Query string `json:"query"`
@@ -122,6 +128,39 @@ func (webTool *webTool) InvokableRun(ctx context.Context, arguments string, _ ..
 	if err != nil || parsedURL.Host == "" || parsedURL.User != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
 		return "", fmt.Errorf("valid HTTP(S) URL without credentials is required")
 	}
+	webTool.requestMutex.Lock()
+	defer webTool.requestMutex.Unlock()
+	err = ctx.Err()
+	if err != nil {
+		return "", err
+	}
+	runState := agentmodel.GetRunState(ctx)
+	if runState == nil {
+		runState = webTool.standaloneBudget
+	}
+	remaining := 2*time.Minute - runState.WebSearchDuration
+	if remaining <= 0 || runState.WebSearchFailures >= 3 {
+		return "", errors.New("Web research stopped: budget exhausted. Summarize available results and explain unavailable sources; do not retry through shell or another provider.")
+	}
+	// 每次请求最多 20 秒，全部联网请求累计最多 2 分钟；用户取消不记作网站失败。
+	parentContext := ctx
+	ctx, cancel := context.WithTimeout(ctx, min(20*time.Second, remaining))
+	defer cancel()
+	startedAt := time.Now()
+	defer func() {
+		runState.WebSearchDuration += time.Since(startedAt)
+		if parentContext.Err() != nil {
+			return
+		}
+		if err == nil {
+			runState.WebSearchFailures = 0
+		} else {
+			runState.WebSearchFailures++
+			if runState.WebSearchFailures >= 3 || runState.WebSearchDuration >= 2*time.Minute {
+				err = fmt.Errorf("Web research stopped. Summarize available results; do not retry through shell or another provider: %w", err)
+			}
+		}
+	}()
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return "", err
@@ -152,6 +191,10 @@ func (webTool *webTool) InvokableRun(ctx context.Context, arguments string, _ ..
 		return "", err
 	}
 	defer httpResponse.Body.Close()
+	// Cloudflare 明确标注的验证页不是正文，即使 HTTP 状态恰好是 200。
+	if httpResponse.Header.Get("cf-mitigated") == "challenge" {
+		return "", errors.New("browser verification required; ask the user to verify this site in their browser instead of retrying HTTP requests")
+	}
 	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
 		return "", fmt.Errorf("web request returned HTTP %d", httpResponse.StatusCode)
 	}
@@ -163,11 +206,22 @@ func (webTool *webTool) InvokableRun(ctx context.Context, arguments string, _ ..
 	if truncated {
 		responseBody = responseBody[:webTool.maxBytes]
 	}
-	content := string(responseBody)
-	if strings.Contains(httpResponse.Header.Get("Content-Type"), "text/html") {
-		content = extractVisibleText(content)
+	if httpResponse.Request != nil {
+		parsedURL = httpResponse.Request.URL
 	}
-	encodedResponse, err := json.Marshal(map[string]any{"url": targetURL, "content": content, "truncated": truncated})
+	content := string(responseBody)
+	var links []string
+	if strings.Contains(httpResponse.Header.Get("Content-Type"), "text/html") {
+		content, links = extractWebPage(content, parsedURL)
+		host := parsedURL.Hostname()
+		// 只识别已确认的搜索站点提示，不能看到文章里有 captcha 一词就误判。
+		googleChallenge := host == "www.google.com" && (parsedURL.Path == "/sorry/index" || (len(content) < 1000 && strings.Contains(string(responseBody), "/httpservice/retry/enablejs")))
+		braveChallenge := host == "search.brave.com" && strings.Contains(content, "Your request has been flagged as being suspicious")
+		if googleChallenge || braveChallenge {
+			return "", errors.New("browser verification or JavaScript is required; no search results were retrieved. Ask the user to open this page in their browser; do not retry this URL")
+		}
+	}
+	encodedResponse, err := json.Marshal(map[string]any{"url": parsedURL.String(), "content": content, "links": links, "truncated": truncated})
 	return string(encodedResponse), err
 }
 
@@ -185,16 +239,36 @@ func buildSearchURL(endpointURL, query string) string {
 	return parsedURL.String()
 }
 
-func extractVisibleText(htmlSource string) string {
+func extractWebPage(htmlSource string, pageURL *url.URL) (string, []string) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlSource))
 	var textBuilder strings.Builder
+	var links []string
+	seenLinks := make(map[string]bool)
 	hiddenDepth := 0
 	for {
 		switch tokenizer.Next() {
 		case html.ErrorToken:
-			return strings.Join(strings.Fields(textBuilder.String()), " ")
+			return strings.Join(strings.Fields(textBuilder.String()), " "), links
 		case html.StartTagToken:
-			tagName := tokenizer.Token().Data
+			token := tokenizer.Token()
+			tagName := token.Data
+			if tagName == "a" && hiddenDepth == 0 && len(links) < 50 {
+				for _, attribute := range token.Attr {
+					if attribute.Key != "href" {
+						continue
+					}
+					reference, err := url.Parse(attribute.Val)
+					if err != nil {
+						continue
+					}
+					resolved := pageURL.ResolveReference(reference)
+					href := resolved.String()
+					if (resolved.Scheme == "https" || resolved.Scheme == "http") && resolved.User == nil && !seenLinks[href] {
+						links = append(links, href)
+						seenLinks[href] = true
+					}
+				}
+			}
 			if tagName == "script" || tagName == "style" {
 				hiddenDepth++
 			}

@@ -11,7 +11,7 @@ class Element {
   get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
   set textContent(value) { this._text = value; this.children = []; }
   append(...children) { children.forEach(child => this.insertBefore(child, null)); }
-  replaceChildren(...children) { this._text = ''; this.children = children; }
+  replaceChildren(...children) { this.children.forEach(child => child.parentNode = null); this.children = []; this._text = ''; this.append(...children); }
   insertBefore(child, before) {
     if (child.parentNode) child.parentNode.children.splice(child.parentNode.children.indexOf(child), 1);
     const index = this.children.indexOf(before);
@@ -454,7 +454,8 @@ test('live activity follows model, tool, reply and blocked events; finished Runs
   app.context.renderEvent({run_id: 'run', kind: 'run_status', payload: {status: 'started'}}, 'thread');
   app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {thinking_content_delta: 'private reasoning'}}, 'thread');
   assert.equal(app.get('activity').textContent, '正在思考');
-  assert.ok(!app.get('messages').textContent.includes('private reasoning'));
+  assert.ok(app.get('messages').textContent.includes('private reasoning'));
+  assert.ok(!app.get('result').textContent.includes('private reasoning'));
   app.context.renderEvent({run_id: 'run', kind: 'run_status', payload: {status: 'finished'}}, 'thread');
   assert.equal(app.get('activity').hidden, true);
 });
@@ -998,4 +999,49 @@ test('workspace tabs do not remove the topbar training entry from keyboard navig
   app.context.showPanel('Talk');
   assert.equal(app.get('panelTraining').hidden, true);
   assert.equal(app.get('tabTraining').tabIndex, 0);
+});
+
+
+test('reasoning streams separately from the answer and keeps the disclosure open', () => {
+  const app = load(() => undefined);
+  app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {llm_response_id: 'reply', thinking_content_delta: '先检查'}}, 'thread');
+  const details = app.get('messages').querySelectorAll('.reasoning')[0];
+  assert.ok(details, 'reasoning-only chunks must be visible');
+  assert.ok(!details.open, 'reasoning starts collapsed');
+  assert.equal(details.querySelectorAll('summary')[0].textContent, '思考过程');
+  details.open = true;
+  app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {llm_response_id: 'reply', thinking_content_delta: '输入。', delta: '答案'}}, 'thread');
+  assert.equal(app.get('messages').querySelectorAll('.reasoning')[0], details);
+  assert.equal(details.open, true);
+  assert.equal(details.querySelectorAll('.reasoning-content')[0].textContent, '先检查输入。');
+  assert.equal(app.get('messages').querySelectorAll('.msg.assistant').length, 1);
+});
+
+test('durable reasoning replaces streamed chunks without duplication or late changes', () => {
+  const app = load(() => undefined, {language: 'en'});
+  app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {llm_response_id: 'reply', thinking_content_delta: 'Checking'}}, 'thread');
+  const final = {sequence: '12', run_id: 'run', kind: 'assistant', payload: {llm_response_id: 'reply', thinking_content: 'Checking input.', parts: [{type: 'text', text: 'Answer.'}]}};
+  app.context.renderEvent(final, 'thread');
+  app.context.renderEvent(final, 'thread');
+  app.context.renderEvent({run_id: 'run', kind: 'assistant_delta', payload: {llm_response_id: 'reply', thinking_content_delta: 'late', delta: 'late'}}, 'thread');
+  const details = app.get('messages').querySelectorAll('.reasoning');
+  assert.equal(details.length, 1);
+  assert.equal(details[0].querySelectorAll('summary')[0].textContent, 'Reasoning');
+  assert.equal(details[0].querySelectorAll('.reasoning-content')[0].textContent, 'Checking input.');
+  assert.ok(!app.get('messages').textContent.includes('late'));
+  assert.ok(app.get('messages').textContent.includes('Answer.'));
+  app.context.setRunStatus('idle', 'run', 'finished');
+  assert.equal(app.get('result').textContent, 'Answer.');
+});
+
+test('tool-selection reasoning is neither a final answer nor a training sample', () => {
+  const app = load(() => undefined);
+  vm.runInContext('trainingEnabled = true', app.context);
+  app.context.renderEvent({sequence: '1', run_id: 'run', kind: 'assistant', training_eligible: true, payload: {llm_response_id: 'tool-choice', thinking_content: 'Need a tool.', parts: []}}, 'thread');
+  app.context.setRunStatus('idle', 'run', 'finished');
+  assert.equal(app.get('messages').querySelectorAll('.reasoning').length, 1);
+  assert.equal(app.get('messages').querySelectorAll('button').length, 0);
+  assert.ok(!app.get('result').textContent.includes('Need a tool.'));
+  app.context.renderEvent({sequence: '2', run_id: 'next', kind: 'assistant', payload: {llm_response_id: 'reply', parts: [{type: 'text', text: 'No reasoning returned.'}]}}, 'thread');
+  assert.equal(app.get('messages').querySelectorAll('.reasoning').length, 1, 'no invented reasoning');
 });

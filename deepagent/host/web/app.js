@@ -111,7 +111,7 @@ function setRunStatus(status, runID = $('runStatus').dataset.runID || '', runSta
   $('workspaceView').dataset.status = status; $('workspaceView').dataset.outcome = runStatus || '';
   setLabel($('agentStatus'), {idle: '随时可以开始', ready: '任务已收到', running: '正在处理任务', blocked: '需要你的回复', closing: '正在结束任务', closed: '任务已关闭'}[status] || status);
   $('stop').disabled = !['ready', 'running'].includes(status);
-  const result = [...messagesByKey.values()].findLast(message => message.finished && message.runID === runID);
+  const result = [...messagesByKey.values()].findLast(message => message.finished && message.text && message.runID === runID);
   const completed = status === 'idle' && runStatus === 'finished' && !!result;
   setLabel($('resultTitle'), completed ? '成果已准备好' : {idle: '想一起完成什么？', ready: '搭档正在接收任务', running: '我们正在推进这件事', blocked: '需要你做一个选择', closing: '正在结束任务', closed: '这次任务已结束'}[status] || status);
   $('result').hidden = !completed; $('resultEmpty').hidden = completed;
@@ -574,14 +574,16 @@ function renderEvent(event, target) {
     let record = messagesByKey.get(key);
     const delta = event.kind === 'assistant_delta';
     const text = delta ? payload.delta || '' : eventText(event);
-    if (!text) return;
+    const reasoning = delta ? payload.thinking_content_delta || '' : payload.thinking_content || '';
+    if (!text && !reasoning && !record) return;
     if (!record) {
       const element = document.createElement('div'); element.className = 'msg assistant'; element.dataset.i18nRole = '搭档'; element.dataset.role = t('搭档');
-      record = {element, runID: event.run_id, text: '', finished: false}; messagesByKey.set(key, record);
+      record = {element, runID: event.run_id, text: '', reasoning: '', finished: false}; messagesByKey.set(key, record);
     }
     appendToLog(event, record.element);
     if (record.finished && delta) return;
     record.text = delta ? record.text + text : text; record.finished = !delta;
+    record.reasoning = delta ? record.reasoning + reasoning : reasoning || record.reasoning;
     // 长成果在中间完整展示；对话里按需展开，保留历史与训练入口。
     const content = document.createElement('div');
     renderMarkdown(content, record.text);
@@ -590,6 +592,17 @@ function renderEvent(event, target) {
       const details = document.createElement('details'), summary = document.createElement('summary');
       const preview = document.createElement('p'); preview.textContent = record.text.replace(/[#*`]/g, '').slice(0, 140) + '…';
       setLabel(summary, '查看完整回复'); details.append(summary, content); record.element.replaceChildren(preview, details);
+    }
+    // 同一个展开节点持续更新，避免流式分片把用户正在阅读的内容重新折叠。
+    if (record.reasoning) {
+      if (!record.reasoningDetails) {
+        record.reasoningDetails = document.createElement('details'); record.reasoningDetails.className = 'reasoning';
+        const summary = document.createElement('summary'); setLabel(summary, '思考过程');
+        record.reasoningContent = document.createElement('div'); record.reasoningContent.className = 'reasoning-content';
+        record.reasoningDetails.append(summary, record.reasoningContent);
+      }
+      record.reasoningContent.textContent = record.reasoning;
+      record.element.insertBefore(record.reasoningDetails, record.element.children[0] || null);
     }
     if (!delta && event.sequence) {
       record.messageID = String(event.sequence); record.threadID = target;

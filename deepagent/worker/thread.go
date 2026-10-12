@@ -158,6 +158,13 @@ func (w *Worker) createThread(ctx context.Context, info *agentmodel.ThreadRecord
 		agentConfig.ToolDescriptors = append(agentConfig.ToolDescriptors, items...)
 		agentConfig.Prompts = append(agentConfig.Prompts, agentmodel.NewSystemMessage(collaborationPrompt))
 	}
+	agentConfig.Prompts = append(agentConfig.Prompts, agentmodel.NewSystemMessage(
+		"For online research, use web_search and read_url only. "+
+			"Each request has a 20-second limit; total web request time is limited to two minutes. "+
+			"Stop after three consecutive network failures or a budget-exhausted result and summarize verified findings and unavailable sources. "+
+			"Do not use shell, curl, scripts, sleeps, browser tools, or subagents to bypass these limits. "+
+			"If no Web tools are available, explain that online research is unavailable. "+
+			"Local compilation, training and other long-running work are not subject to these research limits."))
 	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)
 	if prompt != "" {
 		agentConfig.Prompts = append(agentConfig.Prompts, agentmodel.NewSystemMessage(prompt))

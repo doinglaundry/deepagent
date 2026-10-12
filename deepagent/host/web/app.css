@@ -168,3 +168,7 @@ pre code { padding:0; }
 @keyframes working { 50% { opacity:.35; } }
 @media(max-width:1250px) { body { padding:10px 14px 18px; } .workbench { grid-template-columns:170px minmax(280px,1fr) minmax(280px,330px); gap:12px; } .workbench:has(.notebook[hidden]) { grid-template-columns:170px 1fr; } .workspace-heading,.panel { padding:22px; } .tabs { padding-left:18px; } }
 @media(prefers-reduced-motion:reduce) { *,*:before { animation:none!important; scroll-behavior:auto!important; } }
+
+.reasoning { margin-bottom:12px; color:var(--muted); font-size:12px; }
+.reasoning summary { cursor:pointer; padding:4px 0; }
+.reasoning-content { max-height:260px; overflow:auto; white-space:pre-wrap; line-height:1.75; padding:10px 0 4px 12px; border-left:1px solid var(--border); overflow-wrap:anywhere; }
