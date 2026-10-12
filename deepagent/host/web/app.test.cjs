@@ -80,6 +80,88 @@ test('failed submission retains draft and exposes server error', async () => {
   assert.equal(app.get('messages').children.length, 0);
 });
 
+test('sending in an existing task preserves the separate new-task draft', async () => {
+  const app = load(() => undefined, {'draft:session:new': 'unsent new task'});
+  app.context.reset('existing');
+  app.get('input').value = 'existing task follow-up';
+  await app.context.submit('existing task follow-up');
+  app.get('new').onclick();
+  assert.equal(app.get('input').value, 'unsent new task');
+});
+
+test('first successful submission clears its own new-task draft', async () => {
+  const app = load((url, options) => url === '/api/threads' && options?.method === 'POST' ? {data: {id: 'created'}} : undefined,
+    {'draft:session:new': 'send this new task'});
+  await app.context.submit('send this new task');
+  app.get('new').onclick();
+  assert.equal(app.get('input').value, '');
+});
+
+test('retry after creating a task preserves its draft without leaving a stale new-task draft', async () => {
+  let attempts = 0;
+  const app = load((url, options) => {
+    if (url === '/api/threads' && options?.method === 'POST') return {data: {id: 'created'}};
+    if (url.endsWith('/messages')) {
+      attempts++;
+      if (attempts === 1) return {ok: false, status: 500, data: {error: 'temporary send failure'}};
+    }
+  }, {'draft:session:new': 'retry this task'});
+  await app.context.submit('retry this task');
+  assert.equal(app.get('input').value, 'retry this task');
+  assert.equal(app.context.localStorage['draft:session:created'], 'retry this task');
+  await app.context.submit('retry this task');
+  app.get('new').onclick();
+  assert.equal(app.get('input').value, '');
+});
+
+test('late successful send clears its original draft without changing another task', async () => {
+  let release;
+  const app = load(url => url.endsWith('/messages') ? new Promise(resolve => release = resolve) : undefined);
+  app.context.reset('original');
+  app.get('input').value = 'accepted message';
+  const sending = app.context.submit('accepted message');
+  app.context.reset('other');
+  app.get('input').value = 'accepted message';
+  app.get('input').oninput();
+  release({data: {}});
+  await sending;
+  assert.equal(app.get('input').value, 'accepted message');
+  assert.equal(app.context.localStorage['draft:session:other'], 'accepted message');
+  app.context.reset('original');
+  assert.equal(app.get('input').value, '');
+});
+
+test('late successful send preserves edits after returning to its original task', async () => {
+  let release;
+  const app = load(url => url.endsWith('/messages') ? new Promise(resolve => release = resolve) : undefined);
+  app.context.reset('original');
+  app.get('input').value = 'accepted message';
+  const sending = app.context.submit('accepted message');
+  app.context.reset('other');
+  app.context.reset('original');
+  app.get('input').value = 'new unsent message';
+  app.get('input').oninput();
+  release({data: {}});
+  await sending;
+  assert.equal(app.get('input').value, 'new unsent message');
+  app.context.reset('other');
+  app.context.reset('original');
+  assert.equal(app.get('input').value, 'new unsent message');
+});
+
+test('late successful send clears the accepted draft after returning to its original task', async () => {
+  let release;
+  const app = load(url => url.endsWith('/messages') ? new Promise(resolve => release = resolve) : undefined);
+  app.context.reset('original');
+  app.get('input').value = 'accepted message';
+  const sending = app.context.submit('accepted message');
+  app.context.reset('other');
+  app.context.reset('original');
+  release({data: {}});
+  await sending;
+  assert.equal(app.get('input').value, '');
+});
+
 test('follow-up shows typed question and options; failed resume remains retryable', async () => {
   const app = load(url => url.endsWith('/messages') ? {ok: false, data: {error: 'checkpoint unavailable'}} : undefined);
   const box = app.context.required({run_id: 'run'}, {

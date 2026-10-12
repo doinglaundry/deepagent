@@ -234,12 +234,14 @@ async function submit(text) {
       const row = await api('/api/threads', {method: 'POST', body: JSON.stringify({session_id: session, name: text.split('\n')[0].slice(0, 48)})});
       if (current !== generation) return;
       thread = row.id; save('selectedThread', thread); showThread(row);
+      save(draftKey(thread), $('input').value); save(draftKey(null), '');
     }
     const target = thread;
     await api('/api/threads/' + target + '/messages', {method: 'POST', body: JSON.stringify({text, mode})});
+    if (thread === target && $('input').value === draft) $('input').value = '';
+    if (localStorage[draftKey(target)] === draft) save(draftKey(target), '');
     if (current !== generation) return;
-    if ($('input').value === draft) $('input').value = '';
-    save(draftKey(target), $('input').value); save(draftKey(null), '');
+    save(draftKey(target), $('input').value);
     $('welcome').hidden = true;
     setRunStatus('ready', ''); showPanel('Talk');
     report(null); await list();
