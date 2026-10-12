@@ -41,6 +41,7 @@ func getLabel(_ element: AXUIElement) -> String {
     var imageWidth = 0, imageHeight = 0
     var elements: [AXUIElement] = []
     var elementFrames: [CGRect] = []
+    var elementVisibleFrames: [CGRect] = []
     var elementLabels: [String] = []
     var image = ""
     var focusedElement: CFTypeRef?
@@ -89,24 +90,28 @@ func getLabel(_ element: AXUIElement) -> String {
     func observe(_ bundleID: String) async throws -> [String: Any] {
         let (window, axWindow) = try await getWindow(bundleID)
         let png = try await capture(window)
-        elements = []; elementFrames = []; elementLabels = []
+        elements = []; elementFrames = []; elementVisibleFrames = []; elementLabels = []
         var descriptions: [[String: Any]] = [], text: [String] = [], visited = 0
         let scale = min(1, 1280 / max(window.frame.width, window.frame.height))
-        func walk(_ element: AXUIElement, _ depth: Int) {
+        func walk(_ element: AXUIElement, _ depth: Int, _ visibleBounds: CGRect) {
             guard depth < 20 && visited < 1500 && elements.count < 150 else { return }
             visited += 1
             let label = getLabel(element)
             if !label.isEmpty && text.joined().count < 8000 { text.append(label) }
             let role = getAttribute(element, kAXRoleAttribute) as? String ?? ""
             let interactive = [kAXButtonRole, kAXTextFieldRole, kAXTextAreaRole, kAXCheckBoxRole, kAXRadioButtonRole, kAXPopUpButtonRole, "AXLink"].contains(role)
-            if interactive, let rect = getFrame(element), rect.width > 0, rect.height > 0, window.frame.contains(rect) {
-                elements.append(element); elementFrames.append(rect); elementLabels.append(label)
-                descriptions.append(["element_id": elements.count, "role": role, "name": label, "x": (rect.minX-window.frame.minX)*scale, "y": (rect.minY-window.frame.minY)*scale, "width": rect.width*scale, "height": rect.height*scale])
+            let rect = getFrame(element)
+            let visibleRect = rect?.intersection(visibleBounds)
+            // 长文档控件可能大于滚动视口，只返回实际可见的部分；完整边界仍用于过期校验。
+            if interactive, let rect = rect, let visibleRect = visibleRect, !visibleRect.isNull && !visibleRect.isEmpty {
+                elements.append(element); elementFrames.append(rect); elementVisibleFrames.append(visibleRect); elementLabels.append(label)
+                descriptions.append(["element_id": elements.count, "role": role, "name": label, "x": (visibleRect.minX-window.frame.minX)*scale, "y": (visibleRect.minY-window.frame.minY)*scale, "width": visibleRect.width*scale, "height": visibleRect.height*scale])
             }
+            let childBounds = role == kAXScrollAreaRole ? (visibleRect ?? visibleBounds) : visibleBounds
             let children = getAttribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
-            for child in children { walk(child, depth+1) }
+            for child in children { walk(child, depth+1, childBounds) }
         }
-        walk(axWindow, 0)
+        walk(axWindow, 0, window.frame)
         observationID = UUID().uuidString; appID = bundleID; windowID = window.windowID; frame = window.frame
         let axApp = AXUIElementCreateApplication(window.owningApplication!.processID)
         focusedElement = getAttribute(axApp, kAXFocusedUIElementAttribute)
@@ -170,7 +175,22 @@ func getLabel(_ element: AXUIElement) -> String {
             if elementID > 0 {
                 let result = AXUIElementPerformAction(elements[elementID-1], kAXPressAction as CFString)
                 if result == .actionUnsupported || result == .notImplemented {
-                    let rect = elementFrames[elementID-1]; click(CGPoint(x: rect.midX, y: rect.midY))
+                    actionStarted = false
+                    let rect = elementVisibleFrames[elementID-1]
+                    let point = CGPoint(x: rect.midX, y: rect.midY)
+                    // 回退为鼠标点击时确认命中原控件，避免滚动或遮挡后点到别处。
+                    var hit: AXUIElement?
+                    let hitResult = AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &hit)
+                    guard hitResult == .success else { try fail("stale_observation: click target unavailable") }
+                    var depth = 0
+                    while let candidate = hit, !CFEqual(candidate, elements[elementID-1]), depth < 20 {
+                        let parent = getAttribute(candidate, kAXParentAttribute)
+                        hit = parent != nil && CFGetTypeID(parent!) == AXUIElementGetTypeID() ? (parent as! AXUIElement) : nil
+                        depth += 1
+                    }
+                    guard let hit = hit, CFEqual(hit, elements[elementID-1]) else { try fail("stale_observation: click target changed") }
+                    actionStarted = true
+                    click(point)
                 } else if result != .success { try fail("AX click failed: \(result.rawValue)") }
             } else {
                 guard let x = request["x"] as? Double, let y = request["y"] as? Double, x >= 0 && y >= 0 && x < Double(imageWidth) && y < Double(imageHeight) else { try fail("coordinates outside screenshot") }
