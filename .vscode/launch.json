@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "DeepAgent Web",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/deepagent_web",
+      "cwd": "${workspaceFolder}",
+      "output": "${workspaceFolder}/.eino-cli/bin/deepagent-web-debug",
+      "args": [
+        "--config",
+        "yaml/deepagent.yaml",
+        "--root",
+        ".",
+        "--addr",
+        "127.0.0.1:8080"
+      ]
+    },
+    {
+      "name": "DeepAgent Worker",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/deepagent_worker",
+      "cwd": "${workspaceFolder}",
+      "output": "${workspaceFolder}/.eino-cli/bin/deepagent-worker-debug",
+      "args": [
+        "--config",
+        "yaml/deepagent.yaml"
+      ]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "DeepAgent: Web + Worker",
+      "configurations": [
+        "DeepAgent Web",
+        "DeepAgent Worker"
+      ],
+      "stopAll": true
+    }
+  ]
+}

@@ -326,6 +326,24 @@ deepagent/
 
 ## 开发与验证
 
+### VS Code 断点调试
+
+1. 用 VS Code 打开仓库根目录，安装 Go 扩展；保持 MySQL、Redis 运行。
+2. 在 `yaml/deepagent.yaml` 配好存储和模型。如果使用环境变量，请从已设置这些变量的终端启动 VS Code。
+3. 将本地配置的 `worker.lease_ms` 设为 `1800000`（30 分钟），避免长时间断点导致默认 60 秒租约过期；正常运行建议恢复 `60000`。
+4. 停掉原有 Web、Worker，在「运行和调试」选择 **DeepAgent: Web + Worker**，按 F5。
+5. 打开 <http://127.0.0.1:8080>，发送消息即可命中 Web 或 Worker 的断点。两个进程需要分别继续执行，断点不会跨进程自动单步跳转。
+
+可先在 `deepagent/host/web/server.go` 的 `submitMessage` 和 `deepagent/worker/worker.go` 的 `RunThread` 打断点，再往下跟到 `Run.Execute` 和 Graph。
+
+调试二进制输出到 `.eino-cli/bin`，方便 Worker 找到同目录的 `deepagent-computer`；开启 Computer Use 时先运行 `sh scripts/build-computer.sh`。停止任意一个联合调试会话会同时停止另一个。
+
+macOS 首次调试可能弹出系统授权，请允许调试器访问。如果调试启动一直等待，可按 [Delve 官方说明](https://github.com/go-delve/delve/blob/master/Documentation/installation/README.md#macos-considerations) 在终端执行下面的命令，输入管理员密码后重试 F5：
+
+```bash
+sudo /usr/sbin/DevToolsSecurity -enable
+```
+
 ```bash
 # 编译全部包
 go build ./...
