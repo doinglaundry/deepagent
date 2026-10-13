@@ -126,6 +126,13 @@ func (w *Worker) createThread(ctx context.Context, info *agentmodel.ThreadRecord
 		Filesystem:       filesystem,
 		FilesystemConfig: &tools.FilesystemConfig{},
 	}
+	if w.Runtime.Web != nil {
+		webConfig := *w.Runtime.Web
+		webConfig.GetBrowser = func(browserCtx context.Context) (*computer.Browser, error) {
+			return w.getThreadBrowser(browserCtx, info.ThreadID)
+		}
+		agentConfig.WebConfig = &webConfig
+	}
 	if w.LocalModel != nil {
 		agentConfig.LocalModelParametersFingerprint = w.LocalModel.GetParametersFingerprint()
 	}
@@ -162,7 +169,7 @@ func (w *Worker) createThread(ctx context.Context, info *agentmodel.ThreadRecord
 		"For online research, use web_search and read_url only. "+
 			"Each request has a 20-second limit; total web request time is limited to two minutes. "+
 			"Stop after three consecutive network failures or a budget-exhausted result and summarize verified findings and unavailable sources. "+
-			"Do not use shell, curl, scripts, sleeps, browser tools, or subagents to bypass these limits. "+
+			"Web tools may open Chrome and pause for human verification; wait for the user to complete it. Do not solve CAPTCHAs or retry a source the user canceled. Do not use shell, curl, scripts, sleeps, browser tools, or subagents to bypass these limits. "+
 			"If no Web tools are available, explain that online research is unavailable. "+
 			"Local compilation, training and other long-running work are not subject to these research limits."))
 	prompt := strings.TrimSpace(w.Runtime.SystemPrompt)

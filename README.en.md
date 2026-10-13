@@ -93,6 +93,10 @@ Shared interfaces and data types live in [`deepagent/model`](deepagent/model); e
 
 A Thread can execute multiple Runs in sequence, with one active at a time. Approval pauses save progress; resuming preserves the original RunID. Parent and child agents use the same Graph implementation.
 
+## Web research
+
+Enable `web.enabled: true` to search through Chrome without a search API key. When verification is required, complete it in the opened Chrome window, then click **Verification completed, continue**. A search API is optional; see the [network guide](docs/network.md).
+
 ## Optional: browser and Mac operations
 
 Computer use is disabled by default. Set `computer_enabled: true` in your local YAML, configure `browser_origins` and `computer_apps`, and build the native helper:

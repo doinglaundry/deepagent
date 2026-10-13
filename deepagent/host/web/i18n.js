@@ -1,6 +1,10 @@
 // Interface labels only. User messages, model replies and file contents stay unchanged.
 let language = localStorage.language === 'en' ? 'en' : 'zh';
 const english = {
+  "需要浏览器验证": "Browser verification required",
+  "请在已打开的 Chrome 中完成验证或登录，然后回来继续。": "Complete verification or sign in in the opened Chrome window, then return here.",
+  "已完成验证，继续": "Verification completed, continue",
+  "停止读取": "Stop reading",
   "思考过程": "Reasoning",
   "查看完整回复": "Read full reply",
   "静海": "Still sea",

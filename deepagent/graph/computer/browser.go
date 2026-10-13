@@ -23,6 +23,7 @@ import (
 var ErrOutcomeUnknown = errors.New("computer action outcome is unknown; do not retry automatically")
 
 type Browser struct {
+	SessionID       string // 只标识当前 Chrome 实例，用于拒绝过期的验证续跑。
 	closeOnce       sync.Once
 	mu              sync.Mutex
 	ctx             context.Context
@@ -40,7 +41,7 @@ func NewBrowser(ctx context.Context, profileDir string) (*Browser, error) {
 	options = append(options, chromedp.UserDataDir(profileDir), chromedp.Flag("headless", os.Getenv("DEEPAGENT_BROWSER_HEADLESS") == "1"), chromedp.WindowSize(1280, 800))
 	allocatorCtx, cancelAllocator := chromedp.NewExecAllocator(context.WithoutCancel(ctx), options...)
 	browserCtx, cancel := chromedp.NewContext(allocatorCtx)
-	browser := &Browser{ctx: browserCtx, cancel: cancel, cancelAllocator: cancelAllocator}
+	browser := &Browser{SessionID: uuid.NewString(), ctx: browserCtx, cancel: cancel, cancelAllocator: cancelAllocator}
 	// Chrome 启动和调试连接均受限时保护；成功后不把启动期限带入浏览器生命周期。
 	startupContext, cancelStartup := context.WithTimeout(ctx, 30*time.Second)
 	defer cancelStartup()
@@ -89,10 +90,10 @@ func (browser *Browser) PerformAction(ctx context.Context, operation string, act
 	}
 	expectedURL := currentURL
 	if operation != "open" {
-		if action.URL != "" && action.URL != currentURL {
+		if action.URL != "" && action.URL != currentURL && operation != "read" {
 			return nil, errors.New("stale_observation: page URL changed")
 		}
-		if operation != "observe" {
+		if operation != "observe" && operation != "read" {
 			err = browser.validateObservation(operationCtx, operation, action, currentURL)
 			if err != nil {
 				return nil, err
@@ -107,8 +108,15 @@ func (browser *Browser) PerformAction(ctx context.Context, operation string, act
 			return nil, errors.New("valid HTTP(S) URL is required")
 		}
 		expectedURL = action.URL
-		actions = []chromedp.Action{chromedp.Navigate(action.URL), chromedp.WaitReady("body", chromedp.ByQuery)}
+		actions = []chromedp.Action{
+			chromedp.Navigate(action.URL), chromedp.WaitReady("body", chromedp.ByQuery),
+			// 等页面完成初次渲染；验证页可以立即交给用户，不等其外部脚本加载。
+			chromedp.Poll(`document.readyState === 'complete' || document.title === 'Just a moment...' || !!document.querySelector('#challenge-form,#challenge-stage,#challenge-running')`, nil),
+		}
 	case "observe":
+	case "read":
+		// 用户验证可能改变路径；仍须经过下方 origin 检查，再读取当前页。
+		expectedURL = action.URL
 	case "click":
 		x, y := 0.0, 0.0
 		if action.ElementID > 0 {
@@ -226,7 +234,9 @@ func (browser *Browser) observe(ctx context.Context, pageURL string) (*agentmode
 	script := `(() => {
   const elements=[...document.querySelectorAll('button,a,input,textarea,select,[role="button"],[contenteditable="true"]')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&r.x>=0&&r.y>=0&&r.bottom<=innerHeight&&r.right<=innerWidth}).slice(0,150);
   window.__deepagentElements=elements;window.__deepagentFocused=document.activeElement;window.__deepagentScrollY=scrollY;
-  return {url:location.href,text:(document.body?.innerText||'').slice(0,8000),width:innerWidth,height:innerHeight,scroll_y:scrollY,elements:elements.map((e,i)=>{const r=e.getBoundingClientRect();return {element_id:i+1,role:e.tagName.toLowerCase(),name:(e.innerText||e.getAttribute('aria-label')||e.placeholder||'').slice(0,120),x:r.x,y:r.y,width:r.width,height:r.height}})};
+  const links=[...new Set([...document.querySelectorAll('a[href]')].filter(a=>/^https?:$/.test(a.protocol)&&!a.username&&!a.password).map(a=>a.href))].slice(0,50);
+  const verification=document.title==='Just a moment...'||!!document.querySelector('#challenge-form,#challenge-stage,#challenge-running,iframe[src*="challenges.cloudflare.com"]')||(location.hostname==='www.google.com'&&location.pathname.startsWith('/sorry/'))||(location.hostname==='search.brave.com'&&document.body?.innerText.includes('Your request has been flagged as being suspicious'));
+  return {verification_required:verification,links,url:location.href,text:(document.body?.innerText||'').slice(0,8000),width:innerWidth,height:innerHeight,scroll_y:scrollY,elements:elements.map((e,i)=>{const r=e.getBoundingClientRect();return {element_id:i+1,role:e.tagName.toLowerCase(),name:(e.innerText||e.getAttribute('aria-label')||e.placeholder||'').slice(0,120),x:r.x,y:r.y,width:r.width,height:r.height}})};
  })()`
 	var raw json.RawMessage
 	var screenshot []byte

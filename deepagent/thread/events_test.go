@@ -145,17 +145,18 @@ func TestThreadAdapter_ContextUsagePreservesTokensAndRatio(t *testing.T) {
 func TestThreadAdapter_FollowUpIncludesQuestion(t *testing.T) {
 	payload := followUpRequiredPayload(agentmodel.FollowUpRequestedPayload{
 		InterruptID: "interrupt-1", CheckpointID: "checkpoint-1",
-		Info: &agentmodel.FollowUpInfo{Question: "选择哪个目录？", Questions: []string{"src", "docs"}},
+		Info: &agentmodel.FollowUpInfo{Question: "选择哪个目录？", Questions: []string{"src", "docs"}, BrowserURL: "https://example.com/article"},
 	})
 	var info struct {
-		Question  string   `json:"question"`
-		Questions []string `json:"questions"`
+		Question   string   `json:"question"`
+		Questions  []string `json:"questions"`
+		BrowserURL string   `json:"browser_url"`
 	}
 	err := json.Unmarshal(payload.Info, &info)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Question != "选择哪个目录？" || !reflect.DeepEqual(info.Questions, []string{"src", "docs"}) {
+	if info.Question != "选择哪个目录？" || !reflect.DeepEqual(info.Questions, []string{"src", "docs"}) || info.BrowserURL != "https://example.com/article" {
 		t.Fatalf("follow-up lost question or choices: %s", payload.Info)
 	}
 	if payload.InterruptID != "interrupt-1" || payload.CheckpointID != "checkpoint-1" {

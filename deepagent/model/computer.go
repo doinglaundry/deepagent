@@ -26,13 +26,15 @@ type ComputerElement struct {
 
 // ComputerObservation is one actual screen and its accessible elements.
 type ComputerObservation struct {
-	ID       string            `json:"observation_id"`
-	URL      string            `json:"url,omitempty"`
-	App      string            `json:"app,omitempty"`
-	Text     string            `json:"text"`
-	Width    int               `json:"width"`
-	Height   int               `json:"height"`
-	ScrollY  float64           `json:"scroll_y,omitempty"`
-	Elements []ComputerElement `json:"elements,omitempty"`
-	Image    string            `json:"png,omitempty"`
+	VerificationRequired bool              `json:"verification_required,omitempty"`
+	Links                []string          `json:"links,omitempty"`
+	ID                   string            `json:"observation_id"`
+	URL                  string            `json:"url,omitempty"`
+	App                  string            `json:"app,omitempty"`
+	Text                 string            `json:"text"`
+	Width                int               `json:"width"`
+	Height               int               `json:"height"`
+	ScrollY              float64           `json:"scroll_y,omitempty"`
+	Elements             []ComputerElement `json:"elements,omitempty"`
+	Image                string            `json:"png,omitempty"`
 }

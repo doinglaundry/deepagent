@@ -1045,3 +1045,24 @@ test('tool-selection reasoning is neither a final answer nor a training sample',
   app.context.renderEvent({sequence: '2', run_id: 'next', kind: 'assistant', payload: {llm_response_id: 'reply', parts: [{type: 'text', text: 'No reasoning returned.'}]}}, 'thread');
   assert.equal(app.get('messages').querySelectorAll('.reasoning').length, 1, 'no invented reasoning');
 });
+
+
+test('browser verification offers continue and cancel without requiring a typed answer', async () => {
+  for (const [label, answer] of [['已完成验证，继续', 'continue'], ['停止读取', 'cancel']]) {
+    const app = load(() => ({data: {}}));
+    const box = app.context.required({run_id: 'run'}, {
+      kind: 'follow_up', checkpoint_id: 'checkpoint', interrupt_id: 'verification',
+      info: {question: 'Verify in Chrome', browser_url: 'https://example.com/article'}
+    }, 'original');
+    assert.equal(box.querySelectorAll('input').length, 0);
+    assert.ok(box.textContent.includes('https://example.com/article') || box.children.some(e => e.textContent.includes('https://example.com/article')));
+    const button = box.children.find(e => e.tag === 'button' && e.dataset.i18n === label);
+    assert.ok(button, 'missing browser verification action: ' + label);
+    await button.onclick();
+    const request = app.calls.find(c => c.url.endsWith('/messages'));
+    const resume = JSON.parse(request.options.body).resume;
+    assert.equal(resume.interrupt_id, 'verification');
+    assert.equal(resume.interrupt.data.user_answer, answer);
+    assert.equal(resume.run_id, 'run');
+  }
+});

@@ -196,6 +196,9 @@ func (childRunner *childRunner) Run(ctx context.Context, childRequest agentmodel
 			return nil
 		}
 	}
+	if config.WebConfig != nil {
+		config.WebConfig.GetBrowser = nil // 子代理不得接管用户浏览器。
+	}
 	config.Callbacks = nil
 	config.SubAgents = nil
 	config.MaxModelCalls = childRequest.MaxModelCalls

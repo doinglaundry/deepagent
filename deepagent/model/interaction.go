@@ -32,6 +32,7 @@ type InterruptOptions struct {
 }
 
 type FollowUpInfo struct {
+	BrowserURL           string // 非空时等待用户在同一个 Chrome 页面完成验证。
 	Question, UserAnswer string
 	Questions            []string
 }

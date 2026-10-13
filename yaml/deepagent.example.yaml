@@ -53,7 +53,7 @@ mcp: []
 web:
   enabled: false
   # 网页请求单次最多 20 秒、每次 Run 累计 2 分钟、连续失败 3 次停止。
-  # 配置正式搜索 API 后才会启用 web_search；只启用 enabled 会提供 read_url。
+  # 不配置 search_url 时通过可见 Chrome 搜索；网页验证会暂停等用户完成。
   # search_url: https://api.search.brave.com/res/v1/web/search
   # headers:
   #   X-Subscription-Token: "${BRAVE_SEARCH_API_KEY}"

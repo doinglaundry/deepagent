@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"eino-cli/deepagent/graph/computer"
 	agentmodel "eino-cli/deepagent/model"
 	"io"
 	"net/http"
@@ -391,5 +392,60 @@ func TestWebToolReturnsRedirectDestinationAndResolvedSourceLinks(t *testing.T) {
 	}
 	if page.URL != server.URL+"/docs/final" || len(page.Links) != 1 || page.Links[0] != server.URL+"/report" || !strings.Contains(page.Content, "captcha implementation") {
 		t.Fatalf("page lost its sources: %s", output)
+	}
+}
+
+func TestWebSearchWithoutAPIRegistersBrowserSearchAndHonorsMask(t *testing.T) {
+	calls := 0
+	config := &WebConfig{Enabled: true, GetBrowser: func(context.Context) (*computer.Browser, error) {
+		calls++
+		return nil, fmt.Errorf("browser must be created only when used")
+	}}
+	descriptors, err := NewWebTools(context.Background(), config)
+	if err != nil || len(descriptors) != 2 {
+		t.Fatalf("keyless search not registered: %d %v", len(descriptors), err)
+	}
+	info, err := descriptors[1].Tool.Info(context.Background())
+	if err != nil || info.Name != "web_search" || calls != 0 {
+		t.Fatalf("unexpected lazy search setup: %+v %v", info, err)
+	}
+	config.ToolMask = func(_ context.Context, info *schema.ToolInfo) bool { return info.Name == "read_url" }
+	descriptors, err = NewWebTools(context.Background(), config)
+	if err != nil || len(descriptors) != 1 || calls != 0 {
+		t.Fatal("tool mask or lazy creation was lost")
+	}
+}
+
+func TestBrowserFallbackRejectsChildAgentBeforeOpeningChrome(t *testing.T) {
+	client := &http.Client{Transport: webRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{"Cf-Mitigated": []string{"challenge"}}, Body: io.NopCloser(strings.NewReader("challenge")), Request: request}, nil
+	})}
+	calls := 0
+	descriptors, err := NewWebTools(context.Background(), &WebConfig{EnableFetchURL: true, HTTPClient: client, GetBrowser: func(context.Context) (*computer.Browser, error) {
+		calls++
+		return nil, fmt.Errorf("child must not open Chrome")
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := agentmodel.WithRunState(context.Background(), &agentmodel.RunState{Depth: 1})
+	_, err = descriptors[0].Tool.(tool.InvokableTool).InvokableRun(ctx, `{"url":"https://example.com"}`)
+	if err == nil || calls != 0 || !strings.Contains(err.Error(), "main agent") {
+		t.Fatalf("child browser access: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestResolveSearchLinkOnlyDecodesValidBingHTTPDestinations(t *testing.T) {
+	for _, testCase := range []struct{ input, expected string }{
+		{"https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9nby5kZXYvZG9jLw", "https://go.dev/doc/"},
+		{"https://www.bing.com/ck/a?u=broken", "https://www.bing.com/ck/a?u=broken"},
+		{"https://example.com/ck/a?u=a1aHR0cHM6Ly9nby5kZXYvZG9jLw", "https://example.com/ck/a?u=a1aHR0cHM6Ly9nby5kZXYvZG9jLw"},
+		{"https://www.bing.com/ck/a?u=a1ZmlsZTovLy9ldGMvcGFzc3dk", "https://www.bing.com/ck/a?u=a1ZmlsZTovLy9ldGMvcGFzc3dk"},
+		{"https://www.bing.com/ck/a?u=a1aHR0cHM6Ly91c2VyQGV4YW1wbGUuY29tLw", "https://www.bing.com/ck/a?u=a1aHR0cHM6Ly91c2VyQGV4YW1wbGUuY29tLw"},
+	} {
+		actual := resolveSearchLink(testCase.input)
+		if actual != testCase.expected {
+			t.Fatalf("resolved %q to %q; expected %q", testCase.input, actual, testCase.expected)
+		}
 	}
 }

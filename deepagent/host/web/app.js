@@ -278,7 +278,7 @@ async function resume(target, run, payload, box) {
 function required(ev, p, target) {
   const box = document.createElement('div'); box.className = 'prompt'; box.dataset.run = ev.run_id || ''; box.dataset.interrupt = p.interrupt_id;
   const title = document.createElement('strong');
-  setLabel(title, p.kind === 'approval' ? '需要批准' : '需要回答'); box.append(title);
+  setLabel(title, p.info?.browser_url ? '需要浏览器验证' : p.kind === 'approval' ? '需要批准' : '需要回答'); box.append(title);
   const button = (label, response) => {
     const b = document.createElement('button'); setLabel(b, label);
     b.onclick = async () => {
@@ -321,6 +321,11 @@ function required(ev, p, target) {
     button('始终允许此工具', () => ({approval: {approved: true, always_allow: true}}));
     button('拒绝', () => ({approval: {approved: false, reason: 'user denied'}}));
     const scope = document.createElement('small'); setLabel(scope, '当前任务中不再询问此工具'); box.append(scope);
+  } else if (p.kind === 'follow_up' && p.info?.browser_url) {
+    const hint = document.createElement('div'); setLabel(hint, '请在已打开的 Chrome 中完成验证或登录，然后回来继续。'); box.append(hint);
+    const url = document.createElement('div'); url.textContent = p.info.browser_url; box.append(url);
+    button('已完成验证，继续', () => ({interrupt: {kind: 'follow_up', data: {user_answer: 'continue'}}}));
+    button('停止读取', () => ({interrupt: {kind: 'follow_up', data: {user_answer: 'cancel'}}}));
   } else if (p.kind === 'plan_input') {
     const answers = {};
     (p.questions || []).forEach(q => {

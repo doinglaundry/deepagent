@@ -219,7 +219,7 @@ memory_dir: .eino-cli/shared-memory
 memory_lease_ttl: 30s
 ```
 
-- Web 搜索需要配置搜索服务；页面读取与搜索使用各自的工具。
+- Web 搜索可选搜索 API；未配置时使用可见 Chrome。遇到人机验证会暂停，人工完成后从同一页面续跑，见 [联网说明](network.md)。
 - MCP 当前连接 HTTP 服务；stdio 服务需要额外的 HTTP bridge。
 - Skills 按需激活，内置技能资源位于 `deepagent/skills/public/`。
 - 长期记忆在 Run 完成后提取和整理；模型执行复用同一 Graph。作用域优先使用 `memory_user_id`，其次 UserID，再其次 SessionID。
@@ -375,7 +375,7 @@ bash scripts/test-distributed.sh
 | Worker 无法启动 | 环境变量是否在该终端生效；模型名称、数据库连接和 Docker 配置是否合法 |
 | 工具执行停住 | Web 是否有待回复的问题或审批 |
 | Docker 文件工具不可用 | 镜像是否提供 AIO API，Docker 服务是否可访问 |
-| `web_search` 不可用 | 是否启用 Web 并配置 `search_url` |
+| `web_search` 不可用 | 是否启用 Web；未配置 `search_url` 时确认本机 Chrome 可启动 |
 | 子任务一直等待 | Worker 是否还有可用并发名额 |
 
 ## 浏览器与 Mac 操作

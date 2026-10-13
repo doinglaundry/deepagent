@@ -93,6 +93,10 @@ flowchart LR
 
 一个 Thread 可以先后执行多个 Run，同一时刻执行一个。审批暂停保存执行进度，恢复沿用原 RunID。模型与子代理复用同一套 Graph。
 
+## 联网搜索
+
+开启 `web.enabled: true` 即可通过 Chrome 搜索，不需要搜索 API 密钥。遇到验证码时暂停，由你在打开的 Chrome 中完成验证，再点击“已完成验证，继续”。可选接入搜索 API，见 [联网说明](docs/network.md)。
+
 ## 可选：浏览器与 Mac 操作
 
 默认关闭。在本地 YAML 中设置 `computer_enabled: true`，填写 `browser_origins` 和 `computer_apps`，再构建原生辅助程序：

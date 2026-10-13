@@ -192,9 +192,10 @@ func agentEventPayloadForOutput(ev agentmodel.RunEvent, usage *agentmodel.Contex
 				entry.ArgumentsJSON = stringPtrIfNotEmpty(item.ApprovalInfo.Arguments)
 			case item.FollowUpInfo != nil:
 				entry.Info, err = json.Marshal(struct {
-					Question  string   `json:"question,omitempty"`
-					Questions []string `json:"questions,omitempty"`
-				}{Question: item.FollowUpInfo.Question, Questions: item.FollowUpInfo.Questions})
+					Question   string   `json:"question,omitempty"`
+					Questions  []string `json:"questions,omitempty"`
+					BrowserURL string   `json:"browser_url,omitempty"`
+				}{Question: item.FollowUpInfo.Question, Questions: item.FollowUpInfo.Questions, BrowserURL: item.FollowUpInfo.BrowserURL})
 				if err != nil {
 					return "", nil, err
 				}
@@ -415,10 +416,12 @@ func convertApprovalRequiredPayload(payload agentmodel.ApprovalRequiredPayload) 
 
 func followUpRequiredPayload(payload agentmodel.FollowUpRequestedPayload) *agentmodel.InterruptRequiredEventPayload {
 	info := struct {
-		Question  string   `json:"question,omitempty"`
-		Questions []string `json:"questions,omitempty"`
+		Question   string   `json:"question,omitempty"`
+		Questions  []string `json:"questions,omitempty"`
+		BrowserURL string   `json:"browser_url,omitempty"`
 	}{}
 	if payload.Info != nil {
+		info.BrowserURL = payload.Info.BrowserURL
 		info.Question = payload.Info.Question
 		info.Questions = append([]string(nil), payload.Info.Questions...)
 	}
