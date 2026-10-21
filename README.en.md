@@ -14,6 +14,7 @@ English · [简体中文](README.md)
 
 - **Ocean workspace**: Chinese/English and light/dark themes; a task tree, results, plans, tools, and changed files alongside persistent conversation.
 - **Coding tools**: file operations, search, patches, commands, and background shell jobs. Local and Docker environments share the same tools.
+- **Message inspector**: search by task, run, or message ID; inspect inputs, model requests and raw responses, tool arguments and results, with subtasks, pagination, filters, and export.
 - **Ongoing conversations**: streaming responses, additional input during execution, persistent history, and context compaction.
 - **Approval and resume**: resume interrupted execution from a checkpoint. “Always allow” applies only to the authorized tool within the current task.
 - **Extensions**: Skills, MCP, web search, subagent collaboration, and optional long-term memory.
@@ -67,6 +68,18 @@ go run ./cmd/deepagent_web --config yaml/deepagent.yaml --root . --addr 127.0.0.
 Open [127.0.0.1:8080](http://127.0.0.1:8080) and try: **“Read README.en.md and explain this project's execution flow.”**
 
 `--root` sets the agent's working directory. Web and Worker must connect to the same MySQL and Redis instances. Both processes must be running to execute tasks.
+
+## Message inspector
+
+Use **Messages** in the top bar, or open [127.0.0.1:8080/admin/](http://127.0.0.1:8080/admin/). Opening it from Agent selects the current task automatically.
+
+- **Task ID**: inspect the task, optionally including its subtasks.
+- **Run ID**: inspect one execution. Identical tool call IDs in separate runs remain separate.
+- **Message ID**: locate a message with nearby context. Click a displayed ID to copy its full value.
+
+Messages are grouped by execution. Requests include the final model context, tool definitions, and tool choice. Raw responses preserve stream chunks received at the Eino model boundary, separately from middleware-processed output, including chunks received before validation failures or interruption. Tool details show both arguments and results; pending inputs, approvals, and resume inputs are also available.
+
+Filters and JSON export apply to **loaded messages**; use “Load more” for further pages. Recent searches stay in your browser. The bilingual inspector is read-only. Requests and raw responses not recorded before this feature cannot be recovered. Provider HTTP authentication details are not collected.
 
 ## Architecture
 

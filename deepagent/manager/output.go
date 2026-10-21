@@ -114,6 +114,10 @@ func (c *Manager) saveOutputMessage(ctx context.Context, threadID int64, output 
 	var messageType, key string
 	sender := agentmodel.MailboxSenderTypeSystem
 	switch output.EventType {
+	case agentmodel.EventTypeModelRequest.String():
+		messageType, key, sender = "model_request", payload.LLMResponseID, agentmodel.MailboxSenderTypeAgent
+	case agentmodel.EventTypeModelResponse.String():
+		messageType, key, sender = "model_response", payload.LLMResponseID, agentmodel.MailboxSenderTypeAgent
 	case agentmodel.EventTypeAssistantMessage.String():
 		messageType, key, sender = "assistant", payload.LLMResponseID, agentmodel.MailboxSenderTypeAgent
 	case agentmodel.EventTypeToolCall.String():

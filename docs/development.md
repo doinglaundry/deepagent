@@ -391,3 +391,36 @@ sh scripts/build-computer.sh
 浏览器工具使用独立 Chrome；桌面工具操作指定应用窗口。每次动作使用最新截图的 `observation_id`；界面变化或 Worker 重启后需要重新观察。动作沿用现有工具审批，“始终允许”不会扩大网站或应用范围。截图显示在工作记录的工具页，模型请求只保留最近的电脑截图，历史仍保留全部截图。电脑工具仅根 Agent 可用，桌面在本机按 Run 互斥。
 
 审批暂停时 Chrome 最多保留五分钟；同一 Worker 及时续跑可复用页面。超时或重启 Worker 后旧观察失效，需要重新打开和观察，不会按旧截图执行动作。
+
+
+## 消息后台验收
+
+单元与竞态回归：
+
+```bash
+go test -race -p 1 ./...
+node --test deepagent/host/web/app.test.cjs deepagent/host/web/管理系统/app.test.cjs
+```
+
+真实存储功能测试使用**专用测试库**，不要与运行中的 Worker 共用：
+
+```bash
+export DEEPAGENT_TEST_MYSQL_DSN='USER:PASSWORD@tcp(127.0.0.1:3306)/deepagent_inspection_test?parseTime=true'
+export DEEPAGENT_TEST_REDIS_ADDR='127.0.0.1:6379'
+go test -p 1 ./deepagent/dal/db ./deepagent/manager -run 'TestInspectMessages|TestManager_OutputRouting' -count=1
+```
+
+浏览器集成测试需要本机 Chrome 和已安装的 Playwright。它启动独立 Web、Worker 和可控模型 HTTP 服务，实际使用 MySQL、Redis 与 Chrome；模型响应可控，以便稳定复现工具、中断、失败和重试。请换用另一个专用空库，避免 Worker 领取其他测试的数据。
+
+```bash
+go build -o /tmp/deepagent-inspect-web ./cmd/deepagent_web
+go build -o /tmp/deepagent-inspect-worker ./cmd/deepagent_worker
+export DEEPAGENT_TEST_WEB=/tmp/deepagent-inspect-web
+export DEEPAGENT_TEST_WORKER=/tmp/deepagent-inspect-worker
+export PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright
+node scripts/test-message-admin.cjs
+```
+
+脚本输出验收报告、截图与服务日志的临时目录，退出时关闭自己启动的 Web、Worker、模型与浏览器。覆盖查询三种 ID、请求与响应记录、工具详情、复制、导出、中英切换、Worker 重启后续跑、父子任务、105 条输入分页、网络故障重试和文本防注入。已有独立进程回归仍可使用 `scripts/test-distributed.sh`。
+
+首次启动迁移的并发验收可设置 `DEEPAGENT_TEST_MIGRATION_DSN` 为另一个专用空库，运行 `go test -race ./deepagent/dal/db -run TestMigrateMailboxConcurrentFirstStart -count=1`。该用例模拟八个独立连接同时建表，不清空已有数据库。

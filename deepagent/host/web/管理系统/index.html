@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepAgent · 消息管理</title>
+    <link rel="stylesheet" href="/admin/app.css" />
+    <script defer src="/admin/app.js"></script>
+  </head>
+  <body>
+    <svg class="icon-library" aria-hidden="true">
+      <symbol id="icon-search" viewBox="0 0 24 24">
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m16 16 5 5" />
+      </symbol>
+      <symbol id="icon-input" viewBox="0 0 24 24">
+        <circle cx="12" cy="7" r="3" />
+        <path d="M5 21v-3a7 7 0 0 1 14 0v3" />
+      </symbol>
+      <symbol id="icon-model" viewBox="0 0 24 24">
+        <path d="m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3Z" />
+      </symbol>
+      <symbol id="icon-tool" viewBox="0 0 24 24">
+        <path
+          d="M14 5a6 6 0 0 0-7 8L2 18a3 3 0 0 0 4 4l6-6a6 6 0 0 0 8-8l-4 4-4-4 4-4Z"
+        />
+      </symbol>
+      <symbol id="icon-error" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v6m0 3v1" />
+      </symbol>
+      <symbol id="icon-system" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="4" />
+        <path d="M8 9h8m-8 6h8" />
+      </symbol>
+    </svg>
+    <div class="workspace">
+      <aside class="sidebar">
+        <a class="brand" href="/" title="DeepAgent"
+          ><svg viewBox="0 0 32 32" aria-hidden="true">
+            <path
+              d="M5 20c-2-10 14-6 13-16 11 3 11 16 3 17 9 8-9 11-16-1Z"
+              fill="currentColor"
+            /></svg
+          ><strong>DeepAgent</strong></a
+        >
+        <p class="sidebar-label" data-i18n>消息管理</p>
+        <button id="newQuery" class="nav-item selected">
+          <svg class="icon"><use href="#icon-search" /></svg
+          ><span data-i18n>消息查询</span>
+        </button>
+        <p class="sidebar-label recent-heading" data-i18n>最近查询</p>
+        <nav id="recent" aria-label="最近查询"></nav>
+        <div class="sidebar-footer">
+          <a href="/" data-i18n>返回 Agent</a
+          ><button id="language" type="button">English</button>
+        </div>
+        <div class="connection" id="connection" role="status" data-i18n>
+          只读消息查询
+        </div>
+      </aside>
+      <main>
+        <header class="search-header">
+          <form id="searchForm" class="search-box">
+            <svg class="icon"><use href="#icon-search" /></svg>
+            <select id="queryKind" aria-label="查询类型">
+              <option value="thread" data-i18n>任务 ID</option>
+              <option value="run" data-i18n>执行 ID</option>
+              <option value="message" data-i18n>消息 ID</option>
+            </select>
+            <input
+              id="queryID"
+              aria-label="查询 ID"
+              placeholder="输入完整 ID"
+              data-i18n-placeholder="输入完整 ID"
+              autocomplete="off"
+              required
+            />
+            <button class="primary" type="submit" data-i18n>查询</button>
+          </form>
+          <span class="search-hint" data-i18n>支持任务 / 执行 / 消息 ID</span>
+        </header>
+        <section
+          id="notice"
+          class="notice"
+          role="status"
+          aria-live="polite"
+          hidden
+        ></section>
+        <section id="empty" class="empty">
+          <svg class="empty-icon"><use href="#icon-search" /></svg>
+          <h1 data-i18n>查询任务的完整消息</h1>
+          <p data-i18n>从 Agent 打开消息管理，或输入任务、执行、消息 ID。</p>
+          <p data-i18n>查看输入、模型请求、工具调用和执行结果。</p>
+        </section>
+        <section id="results" hidden>
+          <div class="task-heading">
+            <div>
+              <h1 id="taskTitle"></h1>
+              <div class="task-identity">
+                <span data-i18n>任务</span
+                ><button id="copyThread" class="copy-id"></button
+                ><a id="openTask" data-i18n>打开任务</a>
+              </div>
+            </div>
+            <div class="actions">
+              <label
+                ><input id="includeSubtasks" type="checkbox" /><span data-i18n
+                  >包含子任务</span
+                ></label
+              ><button id="refresh" data-i18n>刷新</button
+              ><button id="export" data-i18n>导出已加载消息</button>
+            </div>
+          </div>
+          <nav id="filters" class="filters" aria-label="消息类型"></nav>
+          <p id="pageStatus" class="page-status" aria-live="polite"></p>
+          <div id="timeline" class="timeline"></div>
+          <button id="loadMore" class="load-more" hidden data-i18n>
+            加载更多
+          </button>
+          <p class="history-note" data-i18n>
+            模型请求从此功能启用后开始记录，旧记录无法补回。查询不会修改原始数据。
+          </p>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

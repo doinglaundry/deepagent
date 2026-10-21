@@ -157,7 +157,7 @@ function renderActivity(event) {
     return;
   }
   if ($('runStatus').dataset.status !== 'running') return;
-  if (event.kind === 'agent_activity' && payload.phase === 'thinking') activityPhase = 'thinking';
+  if (event.kind === 'model_request' || event.kind === 'agent_activity' && payload.phase === 'thinking') activityPhase = 'thinking';
   else if (event.kind === 'tool_call' && payload.status === 'started' && !toolsByKey.get(event.run_id + ':' + payload.tool_call_id)?.finished) activityPhase = payload.tool_name?.startsWith('browser_') ? 'browser' : payload.tool_name?.startsWith('computer_') ? 'computer' : 'tools';
   else if (event.kind === 'assistant_delta') {
     if (payload.delta) activityPhase = 'responding';
@@ -200,7 +200,7 @@ function connectStream(target) {
     try {
       const event = JSON.parse(message.data);
       // Questions come from durable history; live deltas only decorate those same messages.
-      if (!['assistant_delta', 'assistant_message', 'tool_call', 'plan_updated', 'agent_activity', 'run_status'].includes(event.kind)) return;
+      if (!['assistant_delta', 'assistant_message', 'tool_call', 'plan_updated', 'agent_activity', 'model_request', 'run_status'].includes(event.kind)) return;
       const follow = isNearBottom();
       renderEvent(event, target);
       if (follow) $('messages').scrollTop = $('messages').scrollHeight;
@@ -214,6 +214,7 @@ async function select(id) {
   try {
     const row = await api('/api/threads/' + id);
     if (current !== generation) return;
+    if (row.session_id) { session = row.session_id; save('session', session); }
     showThread(row);
     await list();
     if (current !== generation) return;
@@ -547,7 +548,7 @@ function renderPlan(payload) {
 }
 function renderEvent(event, target) {
   renderActivity(event);
-  if (['agent_activity', 'run_status'].includes(event.kind)) return;
+  if (['agent_activity', 'model_request', 'model_response', 'run_status'].includes(event.kind)) return;
   const payload = event.payload || {};
   if (event.kind === 'input') {
     inputModesByID.set(String(event.sequence), payload.mode || '');
@@ -744,5 +745,6 @@ document.onkeydown = event => {
 };
 $('input').value = localStorage[draftKey(null)] || ''; updateComposer();
 initializeTraining();
-const selectedThread = localStorage.selectedThread;
+$('openAdmin').onclick = () => { $('openAdmin').href = '/admin/' + (thread ? '?kind=thread&id=' + encodeURIComponent(thread) : ''); };
+const selectedThread = new URLSearchParams(location.search).get('thread') || localStorage.selectedThread;
 if (selectedThread) select(selectedThread).catch(report); else list().catch(report);

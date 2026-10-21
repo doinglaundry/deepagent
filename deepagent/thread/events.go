@@ -45,7 +45,11 @@ func agentEventPayloadForOutput(ev agentmodel.RunEvent, usage *agentmodel.Contex
 		out.ContextUsage = contextUsage
 		return agentmodel.EventTypeRunStatus, out, nil
 	case agentmodel.EventLLMRequesting:
-		return agentmodel.EventTypeAgentActivity, &agentmodel.AgentActivityEventPayload{Phase: "thinking"}, nil
+		request, err := agentEventPayload[agentmodel.LLMRequestingPayload](ev)
+		return agentmodel.EventTypeModelRequest, request, err
+	case agentmodel.EventLLMResponse:
+		request, err := agentEventPayload[agentmodel.LLMResponsePayload](ev)
+		return agentmodel.EventTypeModelResponse, request, err
 	case agentmodel.EventInputConsumed:
 		input, err := agentEventPayload[agentmodel.RunInput](ev)
 		if err != nil {
@@ -72,6 +76,7 @@ func agentEventPayloadForOutput(ev agentmodel.RunEvent, usage *agentmodel.Contex
 			return "", nil, err
 		}
 		out := &agentmodel.MessageEventPayload{
+			Message:       payload.Message,
 			LLMResponseID: payload.LLMResponseID,
 			ContextUsage:  contextUsage,
 		}

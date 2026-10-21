@@ -36,7 +36,7 @@ function load(handler, storage = {}) {
   const calls = [];
   const context = vm.createContext({
     document: {getElementById: get, querySelector: get, querySelectorAll: () => [], createElement: tag => new Element(tag), createTextNode: text => { const node = new Element('#text'); node.textContent = text; return node; }, body: new Element('body'), documentElement: new Element('html')},
-    localStorage: {session: 'session', ...storage}, crypto: {randomUUID: () => 'session'},
+    URLSearchParams, location: {search: ''}, localStorage: {session: 'session', ...storage}, crypto: {randomUUID: () => 'session'},
     setTimeout: fn => { timers.set(++nextTimer, fn); return nextTimer; }, clearTimeout: id => timers.delete(id),
     fetch: async (url, options) => {
       calls.push({url, options});

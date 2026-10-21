@@ -172,3 +172,5 @@ pre code { padding:0; }
 .reasoning { margin-bottom:12px; color:var(--muted); font-size:12px; }
 .reasoning summary { cursor:pointer; padding:4px 0; }
 .reasoning-content { max-height:260px; overflow:auto; white-space:pre-wrap; line-height:1.75; padding:10px 0 4px 12px; border-left:1px solid var(--border); overflow-wrap:anywhere; }
+
+.topbar nav a { color: inherit; font-size: 13px; text-decoration: none; padding: 8px 12px; border: 1px solid currentColor; border-radius: 10px; }

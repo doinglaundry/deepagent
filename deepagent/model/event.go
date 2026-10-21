@@ -36,7 +36,19 @@ type LLMEnd struct {
 	LLMResponseID string
 }
 
-type LLMRequestingPayload struct{ Messages []*Message }
+// 在模型边界记录实际发送的上下文；响应 ID 将本次请求与模型输出关联。
+type LLMRequestingPayload struct {
+	Messages      []*Message         `json:"messages"`
+	Tools         []*schema.ToolInfo `json:"tools,omitempty"`
+	ToolChoice    schema.ToolChoice  `json:"tool_choice,omitempty"`
+	LLMResponseID string             `json:"llm_response_id,omitempty"`
+}
+
+// LLMResponsePayload 保留处理前的流式分片，校验失败时也能查看模型实际返回了什么。
+type LLMResponsePayload struct {
+	Chunks        []*Message `json:"chunks"`
+	LLMResponseID string     `json:"llm_response_id"`
+}
 
 type ToolStartPayload struct {
 	Name          string
@@ -73,6 +85,8 @@ const (
 	EventTypeError              OutputEventType = "error"
 	EventTypeAssistantDelta     OutputEventType = "assistant_delta"
 	EventTypeAgentActivity      OutputEventType = "agent_activity"
+	EventTypeModelRequest       OutputEventType = "model_request"
+	EventTypeModelResponse      OutputEventType = "model_response"
 	EventTypeTokens             OutputEventType = "tokens"
 	RunStatusStarted                            = "started"
 	RunStatusFinished                           = "finished"
@@ -141,6 +155,7 @@ type OutputSender struct {
 }
 
 type MessageEventPayload struct {
+	Message            *Message            `json:"message,omitempty"`
 	Status             string              `json:"status,omitempty"`
 	Parts              []OutputMessagePart `json:"parts,omitempty"`
 	MessageID          *string             `json:"message_id,omitempty"`
@@ -303,6 +318,7 @@ const (
 	EventRunStart                      RunEventType = "turn_start"
 	EventInputConsumed                 RunEventType = "input_consumed"
 	EventLLMRequesting                 RunEventType = "llm_requesting"
+	EventLLMResponse                   RunEventType = "llm_response"
 	EventLLMToken                      RunEventType = "llm_token"
 	EventLLMEnd                        RunEventType = "llm_end"
 	EventTokens                        RunEventType = "tokens"

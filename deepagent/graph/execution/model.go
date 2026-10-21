@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -14,11 +15,12 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 )
 
 var ErrExceedMaxModelCalls = errors.New("exceeds max model calls")
 
-func (graph *Graph) callModel(ctx context.Context, runState *agentmodel.RunState) (*agentmodel.RunState, error) {
+func (graph *Graph) callModel(ctx context.Context, runState *agentmodel.RunState) (_ *agentmodel.RunState, err error) {
 	if graph.config.MaxModelCalls > 0 && runState.ModelCalls >= graph.config.MaxModelCalls {
 		return nil, fmt.Errorf("%w: maximum model calls exceeded: %d", ErrExceedMaxModelCalls, graph.config.MaxModelCalls)
 	}
@@ -61,11 +63,44 @@ func (graph *Graph) callModel(ctx context.Context, runState *agentmodel.RunState
 	if finalAnswerOnly {
 		requestMessages = append([]*agentmodel.Message{agentmodel.NewSystemMessage("The execution or Web research budget has been reached. Summarize the results already obtained, state what could not be verified and why, and provide a useful final answer. Do not call any tools or invent missing results.")}, requestMessages...)
 	}
-	err = graph.emitEvent(ctx, runState, "llm_requesting", "", agentmodel.LLMRequestingPayload{Messages: requestMessages})
-	if err != nil {
-		return nil, err
-	}
+	// 中间件可能修改内容或提前拒绝响应；单独保留模型边界收到的原始分片。
+	// 锁保护可能预读流的中间件；结束时只发布已经收到的快照，不等待剩余网络数据。
+	var rawResponses []*agentmodel.LLMResponsePayload
+	var rawResponseMutex sync.Mutex
+	defer func() {
+		rawResponseMutex.Lock()
+		responses := make([]agentmodel.LLMResponsePayload, 0, len(rawResponses))
+		for _, response := range rawResponses {
+			responses = append(responses, agentmodel.LLMResponsePayload{LLMResponseID: response.LLMResponseID, Chunks: append([]*agentmodel.Message(nil), response.Chunks...)})
+		}
+		rawResponseMutex.Unlock()
+		// 用户停止后也保存已接收内容，收尾最多等两秒。
+		saveContext, cancelSave := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancelSave()
+		for _, response := range responses {
+			if len(response.Chunks) > 0 {
+				err = errors.Join(err, graph.emitEvent(saveContext, runState, "llm_response", "", response))
+			}
+		}
+	}()
 	modelHandler := agentmodel.ModelHandler(func(ctx context.Context, input []*agentmodel.Message) (*schema.StreamReader[*agentmodel.Message], error) {
+		// 放在最终调用边界，保留 WrapModel 修改后的请求和每次重试。
+		toolInfos, err := graph.toolSet.GetToolInfos(ctx)
+		if err != nil {
+			return nil, err
+		}
+		response := &agentmodel.LLMResponsePayload{LLMResponseID: uuid.NewString()}
+		rawResponseMutex.Lock()
+		rawResponses = append(rawResponses, response)
+		rawResponseMutex.Unlock()
+		request := agentmodel.LLMRequestingPayload{Messages: input, Tools: toolInfos, LLMResponseID: response.LLMResponseID}
+		if finalAnswerOnly {
+			request.ToolChoice = schema.ToolChoiceForbidden
+		}
+		err = graph.emitEvent(ctx, runState, "llm_requesting", "", request)
+		if err != nil {
+			return nil, err
+		}
 		var options []model.Option
 		if finalAnswerOnly {
 			options = append(options, model.WithToolChoice(schema.ToolChoiceForbidden))
@@ -75,7 +110,17 @@ func (graph *Graph) callModel(ctx context.Context, runState *agentmodel.RunState
 			return nil, err
 		}
 		converted := schema.StreamReaderWithConvert(stream, func(chunk *schema.Message) (*agentmodel.Message, error) {
-			return agentmodel.FromEino(chunk), nil
+			message := agentmodel.FromEino(chunk)
+			snapshot := agentmodel.CopyMessage(message)
+			if message != nil && snapshot == nil {
+				return nil, errors.New("cannot snapshot model response")
+			}
+			rawResponseMutex.Lock()
+			if snapshot != nil {
+				response.Chunks = append(response.Chunks, snapshot)
+			}
+			rawResponseMutex.Unlock()
+			return message, nil
 		})
 		return converted, err
 	})

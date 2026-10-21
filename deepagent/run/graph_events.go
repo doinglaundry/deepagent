@@ -31,6 +31,12 @@ func (r *Run) forwardGraphEvent(ctx context.Context, event agentmodel.RuntimeEve
 	}
 	payload := event.Data
 	switch value := payload.(type) {
+	case agentmodel.LLMRequestingPayload:
+		if value.LLMResponseID == "" {
+			value.LLMResponseID = r.modelResponseID
+		}
+		r.modelResponseID = value.LLMResponseID
+		payload = value
 	case agentmodel.LLMTokenChunk:
 		value.LLMResponseID = r.modelResponseID
 		payload = value

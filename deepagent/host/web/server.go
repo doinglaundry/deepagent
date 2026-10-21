@@ -17,7 +17,7 @@ import (
 	agentmodel "eino-cli/deepagent/model"
 )
 
-//go:embed index.html app.js training.js i18n.js app.css assets
+//go:embed index.html app.js training.js i18n.js app.css assets 管理系统/index.html 管理系统/app.js 管理系统/app.css
 var files embed.FS
 
 type Server struct {
@@ -31,6 +31,7 @@ func New(coordinator *manager.Manager, root string) *Server {
 	s.Mux.Handle("/", http.FileServerFS(files))
 	s.Mux.HandleFunc("/api/threads", s.threads)
 	s.Mux.HandleFunc("/api/threads/", s.thread)
+	s.registerAdmin()
 	return s
 }
 
@@ -363,7 +364,7 @@ func messageText(message *agentmodel.MailboxMessage) string {
 	}
 	var payload struct {
 		Delta   string
-		Message string
+		Message json.RawMessage
 		Parts   []struct{ Text string }
 	}
 	if json.Unmarshal(message.Payload, &payload) != nil {
@@ -372,8 +373,10 @@ func messageText(message *agentmodel.MailboxMessage) string {
 	if payload.Delta != "" {
 		return payload.Delta
 	}
-	if payload.Message != "" {
-		return payload.Message
+	var errorText string
+	_ = json.Unmarshal(payload.Message, &errorText)
+	if errorText != "" {
+		return errorText
 	}
 	var parts []string
 	for _, part := range payload.Parts {

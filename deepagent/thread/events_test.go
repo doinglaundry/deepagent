@@ -566,7 +566,7 @@ func TestThreadAdapter_ToolFailureRemainsVisibleInPersistedPayload(t *testing.T)
 	}
 }
 
-func TestThreadOutput_ModelRequestPublishesOnlyThinkingPhase(t *testing.T) {
+func TestThreadOutput_ModelRequestPreservesMessages(t *testing.T) {
 	item, err := threadOutputItem("thread", agentmodel.RunEvent{
 		ID: "event", RunID: "run", Type: agentmodel.EventLLMRequesting,
 		Payload: agentmodel.LLMRequestingPayload{Messages: []*agentmodel.Message{agentmodel.NewUserMessage("private request")}},
@@ -578,8 +578,27 @@ func TestThreadOutput_ModelRequestPublishesOnlyThinkingPhase(t *testing.T) {
 		t.Fatal("model activity was discarded before reaching the UI")
 	}
 	output := item.Event
-	if output.Type != "agent_activity" || output.RunID != "run" || string(output.Payload) != `{"phase":"thinking"}` {
-		t.Fatalf("unexpected activity: %+v", output)
+	var request struct {
+		Messages []*agentmodel.Message `json:"messages"`
+	}
+	err = json.Unmarshal(output.Payload, &request)
+	if err != nil || output.Type != "model_request" || output.RunID != "run" || len(request.Messages) != 1 || request.Messages[0].Content != "private request" {
+		t.Fatalf("model request lost: event=%+v payload=%s err=%v", output, output.Payload, err)
+	}
+}
+
+func TestThreadOutput_ModelResponsePreservesToolCalls(t *testing.T) {
+	message := agentmodel.NewAssistantMessage("inspect", []schema.ToolCall{{ID: "call-a", Function: schema.FunctionCall{Name: "read_file", Arguments: `{"path":"README.md"}`}}})
+	item, err := threadOutputItem("thread", agentmodel.RunEvent{ID: "event", RunID: "run", Type: agentmodel.EventLLMEnd, Payload: agentmodel.LLMEnd{Message: message, LLMResponseID: "response"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Message *agentmodel.Message `json:"message"`
+	}
+	err = json.Unmarshal(item.Event.Payload, &response)
+	if err != nil || response.Message == nil || len(response.Message.ToolCalls) != 1 || response.Message.ToolCalls[0].ID != "call-a" {
+		t.Fatalf("raw model response missing: %s err=%v", item.Event.Payload, err)
 	}
 }
 

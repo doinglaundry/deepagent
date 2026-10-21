@@ -271,6 +271,7 @@ func TestManager_OutputRoutingPreservesDurableKeys(t *testing.T) {
 		name, kind, payload, messageType, key, sender string
 		originalID                                    int64
 	}{
+		{"model request", "model_request", `{"llm_response_id":"request-1","messages":[{"role":"user","content":"hello"}]}`, "model_request", "request-1", agentmodel.MailboxSenderTypeAgent, 77},
 		{"assistant", "assistant_message", `{"llm_response_id":"response"}`, "assistant", "response", agentmodel.MailboxSenderTypeAgent, 77},
 		{"assistant fallback", "assistant_message", `{}`, "assistant", "77", agentmodel.MailboxSenderTypeAgent, 77},
 		{"tool", "tool_call", `{"tool_call_id":"call"}`, "tool", "call", agentmodel.MailboxSenderTypeAgent, 77},
